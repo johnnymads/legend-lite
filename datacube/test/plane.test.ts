@@ -104,6 +104,30 @@ describe('snapping goes through the planner', () => {
     );
   });
 
+  it('snaps EVERY source column, so any later view answers from the snap', async () => {
+    const planner = new RecordingPlanner();
+    const c = new CubeController(new RecordingEngine(), planner);
+    // a measure over one column: the other is still copied
+    await c.update(SNAPSHOT);
+    planner.pure.length = 0;
+    await c.snap('test');
+    assert.ok(planner.pure.includes('#>{trades::DB.TRADES}#->select(~[region, notional])'),
+      `planner saw: ${planner.pure.join(' ;; ')}`);
+  });
+
+  it('snaps a FRESH cube, one that groups and measures nothing', async () => {
+    // It used to select only the columns the view referenced -- none, for a
+    // freshly opened table -- and the planner refused `select(~[])`.
+    const planner = new RecordingPlanner();
+    const c = new CubeController(new RecordingEngine(), planner);
+    await c.update({ ...SNAPSHOT, measures: [], columns: [...SNAPSHOT.columns, { name: 'trade date', type: 'StrictDate' }] });
+    planner.pure.length = 0;
+    await c.snap('test');
+    assert.ok(planner.pure.includes("#>{trades::DB.TRADES}#->select(~[region, notional, 'trade date'])"),
+      `planner saw: ${planner.pure.join(' ;; ')}`);
+    assert.equal(c.snaps.isSnapped, true);
+  });
+
   it('materialises what the planner returned', async () => {
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();

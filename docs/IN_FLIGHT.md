@@ -68,6 +68,13 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-26 17:40 warehouse: **DataCube's Live/Snap now works against the warehouse (this
+  commit):** Live runs on the warehouse as the signed-in user; Snap copies the user's rows into
+  DuckDB-WASM (datacube/src/warehouse.ts, cube.ts, snap.ts; WAREHOUSE_D1_DESIGN_2026_09_26.md).
+  Cross-area (rule 7): `MODULE.bazel` gains rules_js's `pnpm` extension (two lines: `@pnpm`, so the
+  DataCube lock file is updated through Bazel, never a machine's pnpm). New test in `//...`:
+  `//datacube:live_snap_test` (~20 s, starts the native warehouse). Still owed to you: the
+  static-pivot planner form (a reader's live pivot is refused until then) -- to design together.
 - 2026-09-26 15:50 warehouse: **the foundations left core (this commit).** `//base` (top level,
   `com.legend.base.Nullable`/`NonNull`, package unchanged: no annotation site changed), `//json`
   (`com.legend.json.Json`, moved with `move_classes.py --group E`; the JSON escape-WRITE table

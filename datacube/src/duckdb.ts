@@ -42,6 +42,15 @@ export interface ArrowishConnection {
   send?(sql: string): Promise<AsyncIterable<ArrowishTable>>;
   /** Cancel a query started with `send()`. True if it was still pending. */
   cancelSent?(): Promise<boolean>;
+  /**
+   * Load one Arrow IPC stream into a table: `create` makes it, otherwise the
+   * rows are appended. How a snap of a REMOTE plane lands here: the server's
+   * Arrow chunks, unconverted.
+   */
+  insertArrowFromIPCStream?(
+    buffer: Uint8Array,
+    options: { name: string; schema?: string; create?: boolean },
+  ): void | Promise<void>;
   close?(): void | Promise<void>;
 }
 
@@ -355,6 +364,37 @@ export class DuckDbEngine implements QueryEngine {
         return this.#stream(sql, epoch, signal, started);
       }
       return this.#whole(sql, epoch, signal, started);
+    });
+  }
+
+  /**
+   * Replace `target` with the rows of `chunks`, each a whole Arrow IPC stream
+   * (the warehouse's chunks): the first creates the table, the rest append.
+   * On the query queue, so no query reads a half-loaded table.
+   */
+  async loadArrow(
+    target: { readonly schema?: string; readonly table: string },
+    chunks: AsyncIterable<Uint8Array>,
+  ): Promise<void> {
+    const insert = this.#conn.insertArrowFromIPCStream;
+    if (typeof insert !== 'function') {
+      throw new Error('this DuckDB connection cannot load Arrow data');
+    }
+    const qi = (n: string) => `"${n.replace(/"/g, '""')}"`;
+    const qualified = target.schema ? `${qi(target.schema)}.${qi(target.table)}` : qi(target.table);
+    return this.#serialised(async () => {
+      if (target.schema) await this.#conn.query(`CREATE SCHEMA IF NOT EXISTS ${qi(target.schema)}`);
+      await this.#conn.query(`DROP TABLE IF EXISTS ${qualified}`);
+      let first = true;
+      for await (const bytes of chunks) {
+        await insert.call(this.#conn, bytes, {
+          name: target.table,
+          ...(target.schema ? { schema: target.schema } : {}),
+          create: first,
+        });
+        first = false;
+      }
+      if (first) throw new Error(`no data came back to load into ${qualified}`);
     });
   }
 

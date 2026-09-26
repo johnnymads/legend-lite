@@ -1,0 +1,205 @@
+// LIVE VERSUS SNAP, over a real warehouse (docs/WAREHOUSE_D1_DESIGN_2026_09_26.md).
+//
+// One cube, two engines, one planner: every case of the cube corpus runs LIVE on
+// the warehouse (the Bazel-built native binary), as a READER granted only the
+// trades table, through the real WarehouseEngine; then the rows that reader may
+// read are SNAPPED into DuckDB-WASM through the real SnapManager (the server's
+// Arrow chunks, loaded unconverted) and every case runs again, locally. The
+// answers must agree:
+//
+//   - a case whose SQL ends in ORDER BY is compared row for row; one without is
+//     compared as a multiset (SQL promises no order, and the product must not
+//     add one it did not ask for);
+//   - the rows are unique on (book, year, qtr), the key every order-sensitive
+//     window in the corpus orders through, so no answer depends on how an
+//     engine orders ties;
+//   - the pivots are REFUSED live (a reader's SQL must be one SELECT; a dynamic
+//     PIVOT is not) and answer when snapped. They are named below, so a new
+//     refusal fails this test rather than passing unnoticed.
+//
+// Plus the source path a person takes: the catalog lists what the reader may
+// read, inferModel turns it into a model, and a query over it agrees on both
+// engines; a table the reader was not granted is refused.
+
+import assert from 'node:assert/strict';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { after, before, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { DuckDbEngine, type ArrowishConnection } from '../../src/duckdb.ts';
+import { inferModel } from '../../src/infer.ts';
+import type { ResultTable } from '../../src/result.ts';
+import { PlanThenRun } from '../../src/runner.ts';
+import { SnapManager } from '../../src/snap.ts';
+import { listObjects, signIn, WarehouseEngine } from '../../src/warehouse.ts';
+import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { CASES, grammars, MODEL, RUNTIME } from '../wasm-differential/cases.ts';
+
+const RUNFILES = fileURLToPath(new URL('../../../', import.meta.url));
+const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
+const SOURCE = '#>{trades::DB.TRADES}#';
+const COLUMNS = ['region', 'desk', 'book', 'year', 'qtr', 'notional', 'pnl', 'qty'];
+
+/** The cases a READER cannot run live: dynamic pivots (the static form is owed). */
+const REFUSED_LIVE = ['pivot', 'pivot-two-measures', 'tree-detail-pivot', 'window-row-under-pivot'];
+
+// Unique on (book, year, qtr); NULLs in the measures and in a dimension.
+const ROWS = `
+  ('EMEA','Rates','B1',2023,'Q1',100.5,1.25,10), ('EMEA','Rates','B1',2024,'Q2',200.25,-3.5,20),
+  ('EMEA','FX','B3',2023,'Q1',50.0,0.5,5),       ('EMEA','FX','B3',2023,'Q3',75.0,2.0,6),
+  ('AMER','Rates','B2',2024,'Q3',300.75,7.0,30), ('AMER','FX','B4',2023,'Q4',NULL,NULL,7),
+  ('AMER','Credit','B5',2022,'Q1',12.5,0.25,NULL),('APAC','Credit','B6',2024,'Q1',75.0,2.0,3),
+  ('APAC','Rates','B7',2022,'Q2',10.0,0.0,1),     (NULL,'Rates','B8',2024,'Q4',42.0,-1.0,4)`;
+const DDL = [
+  `CREATE TABLE TRADES (region VARCHAR(32), desk VARCHAR(32), book VARCHAR(32), year INTEGER,
+     qtr VARCHAR(8), notional DOUBLE, pnl DOUBLE, qty INTEGER)`,
+  `INSERT INTO TRADES VALUES ${ROWS}`,
+  `CREATE TABLE secret (s VARCHAR)`,
+  `INSERT INTO secret VALUES ('the secret')`,
+  `GRANT SELECT ON TABLE TRADES TO rita`,
+];
+
+let server: ChildProcess;
+let base = '';
+let live: WarehouseEngine;
+let local: DuckDbEngine;
+let planner: WasmPlanner;
+
+async function asOwner(sql: string, token: string): Promise<void> {
+  const r = await fetch(`${base}/sql/v1/statements`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, catalog: 'main', waitMs: 30_000 }),
+  });
+  const s = await r.json() as { state: string; error?: { message: string } };
+  assert.equal(s.state, 'succeeded', `${sql}: ${s.error?.message ?? ''}`);
+}
+
+before(async () => {
+  const binary = path.join(RUNFILES, process.env['WAREHOUSE_BINARY'] ?? '');
+  const library = path.join(RUNFILES, process.env['WAREHOUSE_DUCKDB_LIBRARY'] ?? '');
+  const data = mkdtempSync(path.join(tmpdir(), 'live-snap-'));
+  server = spawn(binary, ['--port', '0', '--data', data, '--user', 'alice:alice-pw', '--user', 'rita:rita-pw',
+    '--owner', 'alice', '--duckdb-library', library], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const port = await new Promise<number>((ok, fail) => {
+    let err = '';
+    server.stderr!.on('data', (b: Buffer) => {
+      err += String(b);
+      // the warehouse's own account, in this test's log: a server-side reason is then never invisible
+      for (const line of String(b).split('\n')) if (line) process.stderr.write(`[warehouse] ${line}\n`);
+      const m = /listening on 127\.0\.0\.1:(\d+)/.exec(err);
+      if (m) ok(Number(m[1]));
+    });
+    server.on('exit', (code) => fail(new Error(`the warehouse exited (${code}): ${err}`)));
+  });
+  base = `http://127.0.0.1:${port}`;
+
+  const alice = await signIn(base, 'alice', 'alice-pw');
+  for (const sql of DDL) await asOwner(sql, alice.token);
+  live = new WarehouseEngine(await signIn(base, 'rita', 'rita-pw'));
+
+  const require = createRequire(import.meta.url);
+  const duckdb = require('@duckdb/duckdb-wasm/blocking');
+  const dist = path.dirname(require.resolve('@duckdb/duckdb-wasm/blocking'));
+  const db = await duckdb.createDuckDB({
+    mvp: { mainModule: path.join(dist, 'duckdb-mvp.wasm'), mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs') },
+    eh: { mainModule: path.join(dist, 'duckdb-eh.wasm'), mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs') },
+  }, new duckdb.VoidLogger(), duckdb.NODE_RUNTIME);
+  await db.instantiate();
+  local = new DuckDbEngine(db.connect() as ArrowishConnection);
+  planner = new WasmPlanner({ model: MODEL, runtime: RUNTIME, assetBaseUrl: MODULE_DIR, cache: false });
+});
+
+after(() => {
+  server?.kill();
+});
+
+/** A result as comparable text: its columns, then its rows (sorted unless ordered). */
+function shape(r: ResultTable, ordered: boolean): string {
+  const rows: string[] = [];
+  for (let i = 0; i < r.rowCount; i++) {
+    rows.push(JSON.stringify(r.columns.map((c) => {
+      const v = c.values[i];
+      return v instanceof Date ? v.toISOString() : v;
+    })));
+  }
+  if (!ordered) rows.sort();
+  return `${r.columns.map((c) => `${c.name}:${c.type}`).join(',')}\n${rows.join('\n')}`;
+}
+
+function ordered(sql: string): boolean {
+  const lines = sql.trim().split('\n');
+  return lines.some((l, i) => i >= lines.length - 2 && /^ORDER BY /.test(l.trim()));
+}
+
+it('every cube case answers the same live on the warehouse and snapped in the tab', async () => {
+  const snapshot = CASES[0]!.snapshot;
+  const liveRunner = new PlanThenRun(planner, live);
+  const localRunner = new PlanThenRun(planner, local);
+
+  const liveAnswers = new Map<string, { sql: string; rows: ResultTable } | { refused: string }>();
+  for (const [i, { name, grammar }] of grammars().entries()) {
+    try {
+      const out = await liveRunner.run(grammar, CASES[i]!.snapshot, CASES[i]!.scope);
+      liveAnswers.set(name, out);
+    } catch (e: unknown) {
+      liveAnswers.set(name, { refused: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  // SNAP: exactly the rows the reader may read, through the real SnapManager
+  const sourceSql = await planner.plan(`${SOURCE}->select(~[${COLUMNS.join(', ')}])`, snapshot);
+  const snaps = new SnapManager(local, live);
+  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', expression: SOURCE } });
+  assert.equal(info.rowCount, 10, 'the snap holds every row the reader may read');
+
+  const refused: string[] = [];
+  const differ: string[] = [];
+  let compared = 0;
+  for (const [i, { name, grammar }] of grammars().entries()) {
+    const snapped = await localRunner.run(grammar, CASES[i]!.snapshot, CASES[i]!.scope);
+    const l = liveAnswers.get(name)!;
+    if ('refused' in l) {
+      refused.push(name);
+      assert.match(l.refused, /FORBIDDEN/, `${name} failed live for another reason: ${l.refused}`);
+      continue;
+    }
+    const inOrder = ordered(l.sql);
+    const a = shape(l.rows, inOrder);
+    const b = shape(snapped.rows, inOrder);
+    if (a !== b) differ.push(`${name}\n  live:    ${a.slice(0, 400)}\n  snapped: ${b.slice(0, 400)}`);
+    compared += 1;
+  }
+  assert.deepEqual(refused, REFUSED_LIVE, 'the cases refused live changed');
+  assert.deepEqual(differ, [], `live and snapped disagree:\n${differ.join('\n')}`);
+  assert.equal(compared, CASES.length - REFUSED_LIVE.length);
+  await snaps.release();
+});
+
+it('a person\'s path: the catalog, a model from it, the same answer on both engines', async () => {
+  const objects = await listObjects({ baseUrl: base, token: (await signIn(base, 'rita', 'rita-pw')).token,
+    principal: 'rita', expiresAt: '' });
+  assert.deepEqual(objects.map((o) => `${o.schema}.${o.name}`), ['main.TRADES'],
+    'the reader sees exactly what it was granted');
+  const trades = objects[0]!;
+  const m = inferModel(trades.columns, { table: trades.name, schema: trades.schema });
+  const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
+  const pure = `${m.source}->groupBy(~[region], ~[notional:x|$x.notional:y|$y->sum()])->sort([~region->ascending()])`;
+  const snapshot = { ...CASES[0]!.snapshot, source: { expression: m.source } };
+  const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
+  const snaps = new SnapManager(local, live);
+  await snaps.snap(await own.plan(`${m.source}->select(~[${COLUMNS.join(', ')}])`, snapshot), 0,
+    { target: { schema: trades.schema, table: trades.name, expression: m.source } });
+  const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
+  assert.equal(shape(localOut.rows, true), shape(liveOut.rows, true));
+  assert.equal(liveOut.rows.rowCount, 4);
+  await snaps.release();
+});
+
+it('a table the reader was not granted is refused, live', async () => {
+  await assert.rejects(live.execute('SELECT * FROM secret', 0), /FORBIDDEN/);
+});

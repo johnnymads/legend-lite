@@ -131,7 +131,7 @@
   .dc-sep { color: #666; }
   /* Explicit, not inherited: a control with only half its colours set
      is what renders dark-on-dark under a forced theme. */
-  #samplepick, #samplerows {
+  #samplepick, #samplerows, #whurl, #whuser, #whpass, #whtable {
     font: inherit; color: #000; background: #fff;
     border: 1px solid rgba(0,0,0,.35); border-radius: 3px;
     padding: 2px 4px;
@@ -139,13 +139,14 @@
   #samplepick { min-width: 20em; max-width: 30em; }
   #samplerows { width: 7em; }
   #sampledownload { font-size: 12px; opacity: .75; }
-  #sampleopen {
+  #sampleopen, #whconnect, #whopen {
     font: inherit; cursor: pointer; padding: 2px 8px;
     border: 1px solid rgba(128,128,128,.4); border-radius: 3px;
     background: transparent; color: inherit;
   }
-  #sampleopen:hover { border-color: rgba(128,128,128,.8); }
-  #uploadnote.bad { color: #b00020; }
+  #sampleopen:hover, #whconnect:hover, #whopen:hover { border-color: rgba(128,128,128,.8); }
+  #uploadnote.bad, #whnote.bad { color: #b00020; }
+  #whnote { color: #555; }
 </style>
 </head>
 <body>
@@ -185,6 +186,19 @@
         <button id="sampleopen" type="button">Open</button>
         <a id="sampledownload" href="#" title="save the generated file instead">download</a>
         <span id="uploadnote">CSV, Parquet or JSON. It stays in this tab.</span>
+      </div>
+      <!-- A WAREHOUSE: Live runs there, as you; Snap copies the rows you may
+           read into this tab. The development sign-in (the warehouse's own
+           users); single sign-on replaces it without changing the rest. -->
+      <div id="warehousebar" class="dc-uploadbar">
+        <label for="whurl">Or a warehouse</label>
+        <input id="whurl" type="url" placeholder="http://127.0.0.1:8080" size="24">
+        <input id="whuser" type="text" placeholder="user" size="10" autocomplete="username">
+        <input id="whpass" type="password" placeholder="password" size="10" autocomplete="current-password">
+        <button id="whconnect" type="button">Connect</button>
+        <select id="whtable" hidden></select>
+        <button id="whopen" type="button" hidden>Open</button>
+        <span id="whnote">Live runs on the warehouse as you; Snap copies your rows into this tab.</span>
       </div>
     </div>
   </div>

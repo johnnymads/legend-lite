@@ -175,6 +175,13 @@ function kindOf(pureType: string): 'dimension' | 'measure' {
 export interface InferOptions {
   /** Table name the data was ingested under. */
   readonly table: string;
+  /**
+   * Its schema, when it has one: a warehouse's `sales.v_orders`. The model
+   * then declares `Schema sales ( Table v_orders ... )`, and the planner
+   * writes `"sales"."v_orders"` -- the same name on the warehouse and in a
+   * local snap, so one model reads both.
+   */
+  readonly schema?: string;
   /** Package for the generated elements. Must be a valid Pure path. */
   readonly pkg?: string;
 }
@@ -209,6 +216,7 @@ export function inferModel(
 
   const pkg = options.pkg ?? 'local';
   const table = options.table;
+  const schema = options.schema;
 
   const cols = described.map((c) => {
     const sql = sqlTypeOf(c.type);
@@ -220,13 +228,21 @@ export function inferModel(
     .map((c) => `        ${quoteIdent(c.name)} ${c.sql}`)
     .join(',\n');
 
+  const tableBlock = `Table ${quoteIdent(table)}
+    (
+${columnLines}
+    )`;
+  const body = schema
+    ? `    Schema ${quoteIdent(schema)}
+    (
+        ${tableBlock.replace(/\n/g, '\n    ')}
+    )`
+    : `    ${tableBlock}`;
+
   const model = `###Relational
 Database ${pkg}::DB
 (
-    Table ${quoteIdent(table)}
-    (
-${columnLines}
-    )
+${body}
 )
 
 ###Connection
@@ -251,7 +267,9 @@ Runtime ${pkg}::RT
   return {
     model,
     runtime: `${pkg}::RT`,
-    source: `#>{${pkg}::DB.${quoteIdent(table)}}#`,
+    source: schema
+      ? `#>{${pkg}::DB.${quoteIdent(schema)}.${quoteIdent(table)}}#`
+      : `#>{${pkg}::DB.${quoteIdent(table)}}#`,
     columns: cols.map((c) => ({ name: c.name, type: c.pure, kind: c.kind })),
   };
 }

@@ -13,10 +13,10 @@ import {
   type ColumnModel,
 } from './grid/columns.ts';
 import type { CubeSnapshot } from './snapshot.ts';
-import { CubeRefusal, referencedColumns } from './snapshot.ts';
-import { childAggregateQuery, serialize, type LevelScope } from './serialize.ts';
+import { CubeRefusal } from './snapshot.ts';
+import { childAggregateQuery, ident, serialize, type LevelScope } from './serialize.ts';
 import type { ResultTable } from './result.ts';
-import { SnapManager } from './snap.ts';
+import { SnapManager, type RemoteSource } from './snap.ts';
 import {
   PlanThenRun,
   type QueryRunner,
@@ -100,7 +100,17 @@ export interface CubeControllerOptions {
    * is `#>{db.TABLE}#`, and the snapped source must be another
    * relation the SAME model declares -- so the host names it.
    */
-  readonly snapTarget?: { readonly table: string; readonly expression: string };
+  readonly snapTarget?: { readonly schema?: string; readonly table: string; readonly expression: string };
+  /**
+   * A LIVE engine on another machine (the warehouse), beside the local pair.
+   *
+   * Live queries run there; snapping copies the rows the user may read into
+   * the local store and queries run here until released. One planner above
+   * both. The plane is the user's explicit choice (the Live/Snap button),
+   * fixed engines chosen at construction -- never a fallback: a live failure
+   * is an error, not quietly answered from a snap (snap.ts, rule 2).
+   */
+  readonly live?: QueryEngine & RemoteSource;
   /** How many undo steps to keep. */
   readonly historyLimit?: number;
   /** Fired whenever undo/redo availability changes, for the UI. */
@@ -122,7 +132,8 @@ export interface CubeControllerOptions {
 }
 
 export class CubeController {
-  readonly #runner: QueryRunner;
+  /** What answers queries while live: the local pair, a remote engine's pair, or a runner. */
+  readonly #liveRunner: QueryRunner;
   /**
    * The local pair, when there is one.
    *
@@ -174,13 +185,14 @@ export class CubeController {
     const local = asRunner
       ? null
       : new PlanThenRun(second as Planner, first as QueryEngine);
-    this.#runner = asRunner ?? (local as PlanThenRun);
     this.#local = local;
     const options = asRunner
       ? ((second as CubeControllerOptions | undefined) ?? {})
       : third;
+    this.#liveRunner = asRunner
+      ?? (options.live ? new PlanThenRun(second as Planner, options.live) : (local as PlanThenRun));
     this.#options = options;
-    this.#snaps = new SnapManager(local ? local.engine : null);
+    this.#snaps = new SnapManager(local ? local.engine : null, options.live ?? null);
     this.#history = new History(
       options.historyLimit !== undefined
         ? { limit: options.historyLimit }
@@ -190,6 +202,14 @@ export class CubeController {
 
   get snaps(): SnapManager {
     return this.#snaps;
+  }
+
+  /**
+   * What answers the next query: while snapped the local pair (the snap is
+   * there), otherwise the live runner. The plane is the user's choice.
+   */
+  get #runner(): QueryRunner {
+    return this.#snaps.isSnapped && this.#local ? this.#local : this.#liveRunner;
   }
 
   /** Which arrangement answers queries, for diagnostics. */
@@ -456,7 +476,14 @@ export class CubeController {
     // accessor and the hand-built SQL was nonsense. "One planner"
     // is an architectural commitment and this was the one place
     // that quietly broke it.
-    const columns = referencedColumns(snapshot).join(', ');
+    //
+    // EVERY source column, not the ones this view references: a snap is
+    // something to keep exploring (rule 3, "drillable grain"), so a column
+    // added to the view after snapping must answer from the snap too. A
+    // fresh cube references none, which made this `select(~[])` and the
+    // planner refuse it. Names go through `ident`, so a column called
+    // `trade date` is a name, not grammar.
+    const columns = snapshot.columns.map((c) => ident(c.name)).join(', ');
     const pure = `${snapshot.source.expression}->select(~[${columns}])`;
     if (!this.#local) {
       // The SnapManager says the same thing; saying it here too

@@ -21,7 +21,12 @@ js_library(
         "package.json",
         "tsconfig.json",
     ],
-    deps = [":node_modules/@duckdb/duckdb-wasm"],
+    deps = [
+        ":node_modules/@duckdb/duckdb-wasm",
+        # Arrow JS: the warehouse's result chunks are Arrow IPC streams (warehouse.ts). The same
+        # 17.0.0 DuckDB-WASM already brings, so the bundle carries one copy.
+        ":node_modules/apache-arrow",
+    ],
 )
 
 _TESTS = glob(["test/*.test.ts"])
@@ -97,6 +102,7 @@ typescript.tsc_test(
         "tsconfig.json",
         ":node_modules/@duckdb/duckdb-wasm",
         ":node_modules/@types/jsdom",
+        ":node_modules/apache-arrow",
         ":node_modules/@types/node",
         ":node_modules/jsdom",
         ":node_modules/playwright",
@@ -212,6 +218,44 @@ js_test(
         "--test-reporter=./test/strict-reporter.mjs",
         "--test-reporter-destination=stderr",
     ],
+)
+
+# LIVE VERSUS SNAP over a real warehouse (docs/WAREHOUSE_D1_DESIGN_2026_09_26.md):
+# every cube case live on the Bazel-built native warehouse as a reader, then
+# snapped into DuckDB-WASM, the answers compared. Not on Windows (the native
+# image is not built there yet).
+js_test(
+    name = "live_snap_test",
+    size = "medium",
+    chdir = package_name(),
+    data = [
+        "test/live-snap/live-snap.ts",
+        "test/strict-reporter.mjs",
+        "test/wasm-differential/cases.ts",
+        ":node_modules/@duckdb/duckdb-wasm",
+        ":src",
+        "//warehouse:duckdb_library",
+        "//warehouse:server_native",
+        "//wasm:planner",
+    ],
+    entry_point = "test/live-snap/live-snap.ts",
+    env = {
+        "WAREHOUSE_BINARY": "$(rootpath //warehouse:server_native)",
+        "WAREHOUSE_DUCKDB_LIBRARY": "$(rootpath //warehouse:duckdb_library)",
+    },
+    node_options = [
+        "--experimental-strip-types",
+        "--experimental-wasm-exnref",
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=./test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 # ── THE DEMO SITE ───────────────────────────────────────────────────────────────

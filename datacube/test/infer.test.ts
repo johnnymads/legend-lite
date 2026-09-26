@@ -302,3 +302,18 @@ describe('the facts that belong to legend-lite', () => {
     assert.equal(PIVOT_SEPARATOR, '__|__');
   });
 });
+
+describe('inferModel with a schema (a warehouse table)', () => {
+  it('declares the table inside its schema and reads it by the qualified name', () => {
+    const m = inferModel([{ name: 'id', type: 'INTEGER' }, { name: 'region', type: 'VARCHAR' }],
+      { table: 'v_orders', schema: 'sales' });
+    assert.match(m.model, /Schema sales\n {4}\(\n {8}Table v_orders\n {8}\(\n {12}id INTEGER,\n {12}region VARCHAR\(4096\)\n {8}\)\n {4}\)/);
+    assert.equal(m.source, '#>{local::DB.sales.v_orders}#');
+  });
+
+  it('is byte-for-byte the unqualified model when there is none', () => {
+    const cols = [{ name: 'id', type: 'INTEGER' }];
+    assert.equal(inferModel(cols, { table: 't' }).model, inferModel(cols, { table: 't', schema: undefined as unknown as string }).model);
+    assert.doesNotMatch(inferModel(cols, { table: 't' }).model, /Schema/);
+  });
+});

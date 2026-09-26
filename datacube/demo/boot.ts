@@ -19,6 +19,14 @@ import type { Planner } from '../src/cube.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { mountRemote } from '../src/remote.ts';
 import { ingestFile } from '../src/upload.ts';
+import { inferModel } from '../src/infer.ts';
+import {
+  listObjects,
+  signIn,
+  WarehouseEngine,
+  type CatalogObject,
+  type WarehouseSession,
+} from '../src/warehouse.ts';
 import { makeWindow, type WindowSpec } from '../src/ui/window.ts';
 import type { MenuItem } from '../src/ui/menu.ts';
 import {
@@ -365,6 +373,12 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     snap: CubeSnapshot,
     config: CubeConfiguration,
     dims: { name: string; columns: string[] }[],
+    // A warehouse source: Live runs on it, Snap copies into `engine`, and the
+    // snap lands under the source's own name so one model reads both.
+    place: {
+      readonly live?: WarehouseEngine;
+      readonly snapTarget?: { readonly schema?: string; readonly table: string; readonly expression: string };
+    } = {},
   ): CubeApp {
     // PARK THE STATUS TEXT FIRST.
     //
@@ -380,8 +394,20 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     const created: CubeApp = new CubeApp(host, snap, {
       engine,
       planner,
+      ...(place.live ? { live: place.live } : {}),
+      // With a warehouse, the host's text says where the rows are: live
+      // there as the signed-in user, or a snap in this tab.
+      ...(place.live ? {
+        onPlane: () => {
+          const live = place.live as WarehouseEngine;
+          const state = created.controller.snaps.state;
+          status.textContent = state.mode === 'snapped'
+            ? `snapped: ${state.snap.rowCount.toLocaleString()} rows in this tab (${live.principal})`
+            : `live on the warehouse as ${live.principal}`;
+        },
+      } : {}),
       configuration: config,
-      snapTarget,
+      snapTarget: place.snapTarget ?? snapTarget,
       storage: window.localStorage,
       showColumnZone: true,
       // THE HOST'S TEXT, IN THE STATUS BAR. Planner progress during
@@ -530,8 +556,103 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     pick.addEventListener('change', showPick);
     showPick();
 
+    // A numeric column the inference judged key-like -- a year, an id, a
+    // postcode -- must not get thousands separators. "2,019" is the kind of
+    // wrong that reads as a bug in the data rather than in the formatting.
+    // One rule for every inferred source: a file, or a warehouse table.
+    const keyLikeFormats = (columns: readonly { name: string; type: string; kind?: string }[]) =>
+      Object.fromEntries(
+        columns
+          .filter((c) => c.kind === 'dimension' && (c.type === 'Integer' || c.type === 'Float'))
+          .map((c) => [c.name, {
+            format: { kind: 'number' as const, displayCommas: false, maximumFractionDigits: 0 },
+          }]),
+      );
+
     // Narrowed once: the check above does not reach into a function.
     const useModel = setModel;
+
+    // A WAREHOUSE. Sign in (the development sign-in: the warehouse's own
+    // users), list what this user may read, and open one: the model comes
+    // from the catalog's columns exactly as an uploaded file's comes from
+    // DESCRIBE. Live runs there, as the user; Snap copies the user's rows
+    // into this tab's DuckDB under the same name, so one model reads both.
+    const whBar = document.getElementById('warehousebar');
+    if (whBar) {
+      const whUrl = must('whurl') as HTMLInputElement;
+      const whUser = must('whuser') as HTMLInputElement;
+      const whPass = must('whpass') as HTMLInputElement;
+      const whTable = must('whtable') as HTMLSelectElement;
+      const whOpen = must('whopen');
+      const whNote = must('whnote');
+      let session: WarehouseSession | undefined;
+      let objects: CatalogObject[] = [];
+      const say = (text: string, bad = false): void => {
+        whNote.classList.toggle('bad', bad);
+        whNote.textContent = text;
+      };
+      must('whconnect').addEventListener('click', () => {
+        void (async () => {
+          say('signing in…');
+          try {
+            session = await signIn(whUrl.value.trim(), whUser.value.trim(), whPass.value);
+            whPass.value = ''; // the token is what is kept, in memory, never the password
+            objects = await listObjects(session);
+            whTable.replaceChildren(...objects.map((o, i) => {
+              const opt = document.createElement('option');
+              opt.value = String(i);
+              opt.textContent = `${o.schema}.${o.name}`;
+              return opt;
+            }));
+            whTable.hidden = objects.length === 0;
+            whOpen.hidden = objects.length === 0;
+            say(objects.length === 0
+              ? `signed in as ${session.principal}: nothing is granted to you yet`
+              : `signed in as ${session.principal}: ${objects.length} table(s) you may read`);
+          } catch (e) {
+            say(e instanceof Error ? e.message : String(e), true);
+          }
+        })();
+      });
+      whOpen.addEventListener('click', () => {
+        const chosen = objects[Number(whTable.value)];
+        if (!chosen || !session) return;
+        void (async () => {
+          try {
+            const m = inferModel(chosen.columns, { table: chosen.name, schema: chosen.schema });
+            useModel(m.model, m.runtime);
+            app.dispose();
+            app = makeApp(
+              {
+                source: { expression: m.source },
+                columns: m.columns,
+                derived: [],
+                rows: [],
+                pivotOn: [],
+                measures: [],
+                sorts: [],
+                epoch: 1,
+              },
+              {
+                ...DEFAULT_CONFIGURATION,
+                reportTitle: `${chosen.schema}.${chosen.name}`,
+                columns: keyLikeFormats(m.columns),
+              },
+              [],
+              {
+                live: new WarehouseEngine(session as WarehouseSession),
+                snapTarget: { schema: chosen.schema, table: chosen.name, expression: m.source },
+              },
+            );
+            status.textContent = `live on the warehouse as ${(session as WarehouseSession).principal}`;
+            await app.open();
+            say(`${chosen.schema}.${chosen.name}: live on the warehouse as ${(session as WarehouseSession).principal}`);
+          } catch (e) {
+            say(e instanceof Error ? e.message : String(e), true);
+          }
+        })();
+      });
+    }
     async function openFile(file: File): Promise<void> {
       note.classList.remove('bad');
       note.textContent = `reading ${file.name}…`;
@@ -557,22 +678,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           {
             ...DEFAULT_CONFIGURATION,
             reportTitle: opened.fileName,
-            // A numeric column the inference judged key-like -- a
-            // year, an id, a postcode -- must not get thousands
-            // separators. "2,019" is the kind of wrong that reads
-            // as a bug in the data rather than in the formatting.
-            columns: Object.fromEntries(
-              opened.columns
-                .filter((c) => c.kind === 'dimension'
-                  && (c.type === 'Integer' || c.type === 'Float'))
-                .map((c) => [c.name, {
-                  format: {
-                    kind: 'number' as const,
-                    displayCommas: false,
-                    maximumFractionDigits: 0,
-                  },
-                }]),
-            ),
+            columns: keyLikeFormats(opened.columns),
           },
           [],
         );

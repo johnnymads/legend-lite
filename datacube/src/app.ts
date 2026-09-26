@@ -47,6 +47,7 @@ import { carryOver } from './adhoc/outline.ts';
 import { AdHocSession } from './adhoc/session.ts';
 import { drillQuery } from './drill.ts';
 import type { QueryEngine } from './engine.ts';
+import type { RemoteSource } from './snap.ts';
 import { exportFileName, toCsv, toEml } from './export.ts';
 import {
   ALERT_WINDOW,
@@ -135,6 +136,11 @@ export type CubeAppQuerySource =
   | {
     readonly engine: QueryEngine;
     readonly planner: Planner;
+    /**
+     * A remote LIVE engine (the warehouse). Queries run there while live;
+     * Snap copies the user's rows into `engine` and queries run here.
+     */
+    readonly live?: QueryEngine & RemoteSource;
     readonly runner?: undefined;
   }
   | {
@@ -225,7 +231,7 @@ export interface CubeAppBaseOptions {
    * relation has to be one the model declares -- a generated
    * `dc_snap_1` is a SQL identifier and means nothing to a compiler.
    */
-  readonly snapTarget?: { readonly table: string; readonly expression: string };
+  readonly snapTarget?: { readonly schema?: string; readonly table: string; readonly expression: string };
 }
 
 /**
@@ -555,6 +561,7 @@ export class CubeApp {
     // nobody's plane exercised.
     const deps: CubeControllerOptions = {
       ...(options.snapTarget ? { snapTarget: options.snapTarget } : {}),
+      ...(options.runner === undefined && options.live ? { live: options.live } : {}),
       historyLimit: numericSetting(this.#settings, 'dataCube.editor.maxHistoryStackSize'),
       onView: (view) => this.#onView(view),
       // Upstream's "Loading..." overlay while a query runs.
@@ -2893,15 +2900,19 @@ export class CubeApp {
       const snapped = state.mode === 'snapped';
       snap.textContent = snapped ? 'Snapped' : 'Live';
       snap.classList.toggle('dc-on', snapped);
+      // Where the data is, when Live is a warehouse: the plane is a place.
+      const remote = this.#options.runner === undefined && this.#options.live !== undefined;
       if (state.mode === 'snapped') {
         const taken = state.snap.takenAt.toLocaleTimeString();
         snap.title =
           `${state.snap.label} — frozen at ${taken}, ` +
-          `${state.snap.rowCount.toLocaleString()} rows. ` +
+          `${state.snap.rowCount.toLocaleString()} rows` +
+          (remote ? ', a copy in this tab' : '') + '. ' +
           `Click to go live.`;
       } else {
-        snap.title = 'Live data, which may move while you work. '
-          + 'Click to snap.';
+        snap.title = remote
+          ? 'Live — running on the warehouse, as you. Click to snap a copy of your rows into this tab.'
+          : 'Live data, which may move while you work. Click to snap.';
       }
     };
     this.#paintSnap = paint;

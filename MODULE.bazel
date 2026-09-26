@@ -36,6 +36,11 @@ npm.npm_translate_lock(
 )
 use_repo(npm, "npm")
 
+# pnpm itself, pinned by rules_js: the lock file is updated through Bazel, never a machine's pnpm:
+#   bazel run -- @pnpm//:pnpm --dir $PWD/datacube install --lockfile-only
+pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm")
+use_repo(pnpm, "pnpm")
+
 maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
 
 # ── THE JAR POOLS ───────────────────────────────────────────────────────────────

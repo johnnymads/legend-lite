@@ -66,50 +66,51 @@ by hand, not tests. DuckDB-WASM and the WASM planner already run inside `js_test
 warehouse is a Bazel-built native binary (`//warehouse:server_native`), so a mode differential can
 be an ordinary `js_test` in `bazel test //...` with no JVM in it.
 
-## Plan
+## What was built (2026-09-26): Live and Snap
 
-**Decisions needed first (the user's):**
+Direct mode is the cube's **Live/Snap button**, not a separate page (user, 2026-09-26):
 
-1. **Arrow JS as the page's own dependency** (`apache-arrow` 17.0.0 in datacube/package.json). It
-   ships already, inside DuckDB-WASM; declaring it adds no bytes. Recommended: yes.
-2. **Pivots: DECIDED (user, 2026-09-26): the static pivot, by a double query.** The cube first
-   asks for the pivot column's distinct values (an ordinary query a reader may run), then asks
-   for the pivot with those values as a static `IN` list and **no pre-filter** (measured equal to
-   today's dynamic pivot, NULL-key groups included). The second half is a planner form legend-lite
-   does not emit today, in the untangle's area: it is designed with them before it is written.
-3. **Browser access.** Recommended: `--allow-origin ORIGIN` on the warehouse (repeatable, exact
-   origins, no wildcard, preflight answered), rather than serving the page from the warehouse.
+| | Live | Snap |
+|---|---|---|
+| plans | legend-lite in WASM | the same planner |
+| runs | **the warehouse**, as the signed-in user | **DuckDB-WASM in the tab** |
+| data | current, entitlement-filtered by the server | a frozen copy of every source column of the rows the user may read, under the source's own name, so one model reads both |
 
-**Stages, each landed green before the next:**
+- **`datacube/src/warehouse.ts`**: `signIn`, `listObjects`, and `WarehouseEngine`, a `QueryEngine`
+  that speaks the HTTP SQL API (submit, poll, fetch each Arrow chunk, close; cancel on abort) and
+  returns the local plane's `ResultTable` through `tableFromIPC` and the existing `toResultTable`.
+  **TypeScript, hand-rolled** (user decision after weighing it against the Java binding in WASM
+  and an OpenAPI spec): its reference is `NativeBinding.java`; both clients are held to the real
+  server in the chain. **Trigger to revisit:** the first outside consumer or a third client of the
+  API gets an OpenAPI spec; the first non-warehouse backend called from the browser moves client
+  logic into the Java bindings in WASM.
+- **The controller holds two runners, fixed at construction**: live (the planner + the warehouse)
+  and local (the planner + DuckDB-WASM); the active one follows the plane the user clicked. No
+  fallback: a live failure is an error, never answered from a snap (snap.ts, rule 2).
+- **Snapping from a remote live plane**: rows counted on the warehouse (the 10M ceiling), the
+  server's Arrow chunks loaded into DuckDB-WASM unconverted (`insertArrowFromIPCStream`, schema
+  included). **A snap copies every source column** (it selected only the columns the view
+  referenced, so a fresh cube planned `select(~[])` and was refused, in local mode too). Snapping
+  "this view's columns" and a progressive cache are later ideas; the progressive one needs every
+  later fetch to see the snap's data (a held read-only warehouse session gives exactly that).
+- **The source**: "Or a warehouse" in the Data window: URL, user, password (the DEVELOPMENT
+  sign-in; the password is sent once and only the token is kept, in memory), then the tables the
+  user may read; `inferModel` (now with an optional schema: `Schema sales ( Table v_orders )`,
+  planned as `"sales"."v_orders"`) turns the catalog's columns into the model. Production sign-in
+  is single sign-on (OIDC): the warehouse verifies the provider's token; nothing else changes.
+- **Arrow JS** is the page's own dependency (`apache-arrow` 17.0.0, the copy DuckDB-WASM already
+  brings; the lock file is updated through Bazel's pnpm, `@pnpm`): the bundle grew 7.6 KB
+  (unminified), the client plus the part of Arrow's reader DuckDB-WASM did not already use.
 
-- **D1a — the protocol in the module** (a cross-area edit to `wasm/`, announced first): a boundary
-  class beside `planner.Wasm` exporting the binding's steps (login, submit, next, fetch chunk,
-  close, cancel, catalog objects), each answering one JSON string; the chunk's bytes are not
-  decoded in Java. The module differential (the planner differential's pattern) holds the exports
-  equal on the JVM and in WebAssembly over recorded responses.
-- **D1b — the warehouse:** `--allow-origin` and preflight; the catalog call added to the binding
-  (both directions), tested through the server.
-- **D1c — the page:** `WarehouseEngine` implements `QueryEngine`: the planner's worker drives the
-  protocol through the module's exports and `fetch`; each Arrow chunk goes through `tableFromIPC`
-  into the existing `toResultTable`. `signal` cancels the statement. Sign-in (token in memory
-  only), and a warehouse source in the source picker: the catalog call's objects through
-  `inferModel`.
-- **D1d — the mode differential,** a `js_test` in `//...`: starts `//warehouse:server_native`,
-  loads the cube corpus's data as an owner, grants it to a reader, and runs every cube case
-  through Local and Direct as that reader. Ordered cases compare exactly; cases without an order
-  compare as multisets; the corpus data has no ties on a window's order keys (so no case is
-  order-dependent by accident); pivots are expected refusals until decision 2's planner leg lands.
-- **D1e — the browser check:** the demo in Direct mode against a running warehouse (sign in, pick
-  a table, the grid fills, a denied table says so), in the existing harness pattern.
+**Proof:**
+- `//datacube:live_snap_test` (in `//...`): the Bazel-built native warehouse, the trades rows
+  loaded by an owner and granted to a reader; every cube case live as the reader, then snapped
+  and run locally; ordered cases compared row for row, unordered ones as multisets; the 4 dynamic
+  pivots are pinned as the only live refusals (a reader's pivot waits for the static double
+  query); plus the catalog-to-model path and an ungranted table refused. Proven red by a planted
+  one-row difference in the snap.
+- In Chromium, the real page: sign in as a reader, one table offered, opened live (the warehouse,
+  ~10 ms), snapped (~2 ms, in the tab), identical cells, the badge and status saying which.
 
-**Deterministic cases (user, 2026-09-26).** Every order-sensitive row-level window in the cube
-corpus (`datacube/test/wasm-differential/cases.ts`) now orders by keys that are total over rows
-unique on `(book, year, qtr)`; the mode differential's data keeps that triple unique. Cases whose
-outer query has no `ORDER BY` stay that way — the product must not add an order it did not ask
-for (test-lane order ruling, 2026-09-20) — and are compared as multisets: `flat` (no sort asked),
-the grand-total levels (one row), and the child-group aggregates (`children-*`, joined to the tree
-by key, so their row order never reaches the grid).
-
-**Not in D1:** JSON/Variant columns (the variant branch), the static-pivot planner form (the
-untangle's area, decision 2), re-recording the native-image metadata as a Bazel target (owed from
-the native-build fix).
+**Next:** the static-pivot double query (with the untangle: a planner form); single sign-on; a
+refresh-before-expiry for the token.

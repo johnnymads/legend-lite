@@ -13,7 +13,8 @@
   "type": "module",
   "private": "true",
   "dependencies": {
-    "@duckdb/duckdb-wasm": "^1.33.1-dev57.0"
+    "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
+    "apache-arrow": "17.0.0"
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",

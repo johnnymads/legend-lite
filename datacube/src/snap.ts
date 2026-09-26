@@ -31,6 +31,24 @@
 import type { QueryEngine } from './engine.ts';
 
 /**
+ * A LIVE plane on another machine (the warehouse): where a snap's rows come
+ * from when they are not already in the tab. Counted there, then streamed as
+ * Arrow into the local store.
+ */
+export interface RemoteSource {
+  execute: QueryEngine['execute'];
+  arrowChunks(sql: string, signal?: AbortSignal): AsyncIterable<Uint8Array>;
+}
+
+/** A local store that can take Arrow chunks (DuckDbEngine). */
+interface ArrowLoader {
+  loadArrow(
+    target: { readonly schema?: string; readonly table: string },
+    chunks: AsyncIterable<Uint8Array>,
+  ): Promise<void>;
+}
+
+/**
  * Interaction ceiling, measured in DuckDB-WASM: a pivot's cost tracks
  * output cells (row groups x pivot columns) at ~200ns each, so 1M cells
  * lands at ~202-229ms and 4M at ~650ms. The 300ms budget puts the
@@ -54,6 +72,8 @@ export interface SnapInfo {
   readonly rowCount: number;
   /** Table name the snap materialised into. */
   readonly table: string;
+  /** Its schema, when the live source's table has one (a warehouse's `sales.v_orders`). */
+  readonly schema?: string;
   /**
    * What a query should read from while this snap holds.
    *
@@ -99,6 +119,10 @@ function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+function qualified(schema: string | undefined, table: string): string {
+  return schema ? `${quoteIdent(schema)}.${quoteIdent(table)}` : quoteIdent(table);
+}
+
 function quoteLiteral(v: string): string {
   return `'${v.replace(/'/g, "''")}'`;
 }
@@ -113,11 +137,14 @@ export class SnapManager {
    * than half-working -- the cache mode is what will fill this in.
    */
   readonly #engine: QueryEngine | null;
+  /** The live plane, when it is remote; absent when live is the local store. */
+  readonly #remote: RemoteSource | null;
   #state: PlaneState = { mode: 'live' };
   #counter = 0;
 
-  constructor(engine: QueryEngine | null) {
+  constructor(engine: QueryEngine | null, remote: RemoteSource | null = null) {
     this.#engine = engine;
+    this.#remote = remote;
   }
 
   /**
@@ -165,7 +192,8 @@ export class SnapManager {
    * "this is 40 million rows" instead of watching a tab die.
    */
   async preflight(sourceSql: string, epoch: number): Promise<PreflightEstimate> {
-    const engine = this.#localStore();
+    // counted where the rows are: the remote live plane when there is one
+    const engine = this.#remote ?? this.#localStore();
     const r = await engine.execute(
       `SELECT count(*) AS n FROM (${sourceSql})`,
       epoch,
@@ -205,7 +233,7 @@ export class SnapManager {
        * accessor into a model -- and with a model, the snap target
        * has to be a table that model also declares.
        */
-      readonly target?: { readonly table: string; readonly expression: string };
+      readonly target?: { readonly schema?: string; readonly table: string; readonly expression: string };
     } = {},
   ): Promise<SnapInfo> {
     const estimate = await this.preflight(sourceSql, epoch);
@@ -214,18 +242,28 @@ export class SnapManager {
     }
 
     this.#counter += 1;
-    const table = options.target?.table ?? `dc_snap_${this.#counter}`;
+    const schema = options.target?.schema;
+    const bare = options.target?.table ?? `dc_snap_${this.#counter}`;
+    const table = qualified(schema, bare);
     const engine = this.#localStore();
-    await engine.execute(
-      `CREATE OR REPLACE TABLE ${quoteIdent(table)} AS ${sourceSql}`,
-      epoch,
-    );
+    if (this.#remote) {
+      // The rows live on the server: stream its Arrow chunks into a local
+      // table of the same name, so the model -- and the planned SQL -- read
+      // it unchanged. Exactly the rows the server let this user read.
+      const loader = engine as unknown as Partial<ArrowLoader>;
+      if (typeof loader.loadArrow !== 'function') {
+        throw new SnapRefusal('the local store cannot load Arrow data, so a remote live plane cannot be snapped');
+      }
+      await loader.loadArrow({ ...(schema ? { schema } : {}), table: bare }, this.#remote.arrowChunks(sourceSql));
+    } else {
+      await engine.execute(`CREATE OR REPLACE TABLE ${table} AS ${sourceSql}`, epoch);
+    }
 
     const columnValues = new Map<string, readonly string[]>();
     for (const col of options.pivotCandidates ?? []) {
       const r = await engine.execute(
         `SELECT DISTINCT ${quoteIdent(col)} AS v ` +
-          `FROM ${quoteIdent(table)} ` +
+          `FROM ${table} ` +
           `WHERE ${quoteIdent(col)} IS NOT NULL ORDER BY v`,
         epoch,
       );
@@ -240,8 +278,9 @@ export class SnapManager {
       label: options.label ?? defaultLabel(takenAt),
       takenAt,
       rowCount: estimate.rowCount,
-      table,
-      sourceExpression: options.target?.expression ?? quoteIdent(table),
+      table: bare,
+      ...(schema ? { schema } : {}),
+      sourceExpression: options.target?.expression ?? table,
       columnValues,
     };
     this.#state = { mode: 'snapped', snap };
@@ -251,10 +290,10 @@ export class SnapManager {
   /** Drop the snap and return to live. */
   async release(): Promise<void> {
     if (this.#state.mode !== 'snapped') return;
-    const { table } = this.#state.snap;
+    const { table, schema } = this.#state.snap;
     this.#state = { mode: 'live' };
     await this.#localStore()
-      .execute(`DROP TABLE IF EXISTS ${quoteIdent(table)}`, 0);
+      .execute(`DROP TABLE IF EXISTS ${qualified(schema, table)}`, 0);
   }
 
   /**
