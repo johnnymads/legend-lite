@@ -10,7 +10,7 @@ import {
   type CubeDraft,
   type EditorTab,
 } from '../src/ui/editor.ts';
-import { DEFAULT_CONFIGURATION, columnConfig } from '../src/config.ts';
+import { DEFAULT_CONFIGURATION, applyToSnapshot, columnConfig } from '../src/config.ts';
 import { freshName } from '../src/ui/panel-dimensions.ts';
 import { groupableColumns } from '../src/ui/panel-kit.ts';
 import { AGGREGATES } from '../src/ui/panel-column.ts';
@@ -457,10 +457,31 @@ describe('the editor', () => {
         fieldWithLabel('Column Kind:').querySelector('select') as HTMLSelectElement;
       kind().value = 'measure';
       kind().dispatchEvent(new dom.window.Event('change'));
-      assert.equal(columnConfig(editor.draft.config, 'desk').excludedFromPivot, undefined);
+      // SET, not cleared: upstream's setExcludedFromPivot(kind === DIMENSION).
+      assert.equal(columnConfig(editor.draft.config, 'desk').excludedFromPivot, false);
       kind().value = 'dimension';
       kind().dispatchEvent(new dom.window.Event('change'));
       assert.equal(columnConfig(editor.draft.config, 'desk').excludedFromPivot, true);
+    });
+
+    it('measure -> dimension -> measure puts the column back in the pivot', () => {
+      // The query kept the exclusion: applyToSnapshot copies a SET
+      // exclusion and leaves a cleared one as it was, so a column that
+      // went to dimension and back stayed out of the pivot, which then
+      // spread `count` in its place.
+      choose('desk');
+      advanced();
+      const kind = (): HTMLSelectElement =>
+        fieldWithLabel('Column Kind:').querySelector('select') as HTMLSelectElement;
+      let snapshot = editor.draft.snapshot;
+      for (const to of ['measure', 'dimension', 'measure']) {
+        kind().value = to;
+        kind().dispatchEvent(new dom.window.Event('change'));
+        snapshot = applyToSnapshot(snapshot, editor.draft.config);
+      }
+      const desk = snapshot.columns.find((c) => c.name === 'desk');
+      assert.equal(desk?.kind, 'measure');
+      assert.notEqual(desk?.excludedFromPivot, true, 'still excluded from the pivot');
     });
   });
 

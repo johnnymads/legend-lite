@@ -250,12 +250,17 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
         (v) => {
           // Kind decides whether the column can be grouped and
           // whether it is aggregated, so the form below changes
-          // with it. As upstream, a new kind resets the exclusion
-          // from the horizontal pivot: a dimension is out of it.
+          // with it. As upstream, a new kind SETS the exclusion
+          // from the horizontal pivot -- a dimension is out of it, a
+          // measure in -- explicitly (DataCubeEditorColumnPropertiesPanel:
+          // setExcludedFromPivot(kind === DIMENSION)). Clearing it
+          // instead left measure -> dimension -> measure excluded: the
+          // query keeps an exclusion the configuration merely stops
+          // naming (applyToSnapshot), so the pivot spread `count`.
           if (v === undefined || v === kind) return;
           patch({
             kind: v,
-            excludedFromPivot: v === 'dimension' ? true : undefined,
+            excludedFromPivot: v === 'dimension',
           });
           ctx.refresh();
         },
