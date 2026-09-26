@@ -36,7 +36,8 @@ import { chromium } from 'playwright';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PORT = 8734;
-const ENGINE = 'http://localhost:8080';
+// legend-lite's server: ENGINE= overrides the local default, as every harness here takes it
+const ENGINE = (process.env.ENGINE ?? 'http://localhost:8080').replace(/\/$/, '');
 const ROUNDS = Number(process.env.CHAOS_ROUNDS ?? 14);
 const SEED = Number(process.env.CHAOS_SEED ?? 20260919);
 
@@ -93,7 +94,7 @@ const problems = [];
 page.on('console', (m) => {
   const text = m.text();
   const expected = /ERR_CONNECTION_REFUSED|Failed to load resource/.test(text)
-    && /8080|localhost/.test(text + (m.location()?.url ?? ''));
+    && (text + (m.location()?.url ?? '')).includes(new URL(ENGINE).host);
   if (m.type() === 'error' && !expected) problems.push(`console: ${text}`);
 });
 page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));

@@ -7,9 +7,8 @@
 <!-- Roboto first, because their font stack names it first and the
      metrics are part of the look: without it nothing lines up the
      same way, however exact the pixel values are. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<!-- Served with the site (fonts.css, vendor/fonts): no request leaves for a font CDN. -->
+<link rel="stylesheet" href="fonts.css">
 <!-- Nothing to preload: the engine compiles and runs the query. -->
 <link rel="stylesheet" href="../src/theme.css">
 <link rel="stylesheet" href="../src/grid/grid.css">
@@ -159,7 +158,7 @@
      style="position: fixed; z-index: 30; inset: 12px 12px auto;
             background: color-mix(in srgb, crimson 10%, #fff);
             border-color: color-mix(in srgb, crimson 45%, transparent);">
-    <strong>legend-engine is not answering on 127.0.0.1:6300.</strong>
+    <strong>legend-engine is not answering on <span id="enginewhere"></span>.</strong>
     This page asks the engine to RUN the query -- there is no local
     planner and no local store to fall back to. Start one (the shaded
     jar needs no JDK, Maven or Docker install) and reload, or open

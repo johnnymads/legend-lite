@@ -295,10 +295,17 @@ copy_to_directory(
     name = "vendor",
     srcs = [
         ":node_modules/@duckdb/duckdb-wasm",
+        ":node_modules/@fontsource/roboto",
         "//wasm:planner",
     ],
     out = "demo/vendor",
     include_srcs_patterns = [
+        "**/files/roboto-latin-400-normal.woff2",
+        "**/files/roboto-latin-ext-400-normal.woff2",
+        "**/files/roboto-latin-500-normal.woff2",
+        "**/files/roboto-latin-ext-500-normal.woff2",
+        "**/files/roboto-latin-700-normal.woff2",
+        "**/files/roboto-latin-ext-700-normal.woff2",
         "**/dist/duckdb-mvp.wasm",
         "**/dist/duckdb-eh.wasm",
         "**/dist/duckdb-browser-mvp.worker.js",
@@ -307,6 +314,7 @@ copy_to_directory(
         "wasm/planner/wasm-gc-module-runtime.js",
     ],
     replace_prefixes = {
+        "**/files/": "fonts/",
         "**/dist/": "",
         "wasm/planner/": "",
     },
@@ -316,7 +324,9 @@ copy_to_directory(
 filegroup(
     name = "site",
     srcs = glob([
+        "demo/*.css",
         "demo/*.html",
+        "demo/*.json",
         "demo/*.pure",
         "src/**/*.css",
     ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [":vendor"],

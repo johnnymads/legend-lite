@@ -20,6 +20,7 @@ import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { mountRemote } from '../src/remote.ts';
 import { ingestFile } from '../src/upload.ts';
 import { inferModel } from '../src/infer.ts';
+import { pageConfig } from './page-config.ts';
 import {
   listObjects,
   signIn,
@@ -39,8 +40,6 @@ import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 
 const ROWS = 200_000;
-export const LEGEND_LITE = 'http://localhost:8080';
-export const LEGEND_ENGINE = 'http://127.0.0.1:6300';
 
 /**
  * THE THREE PLANES, as data rather than as three copies of a menu.
@@ -587,6 +586,19 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const whNote = must('whnote');
       let session: WarehouseSession | undefined;
       let objects: CatalogObject[] = [];
+      // Which warehouse to offer: the deployment's (config.json, ?warehouse=),
+      // else the last one this browser signed in to. A convenience kept in this
+      // browser only; storage may be refused (private windows), so never relied on.
+      const REMEMBERED = 'datacube.warehouse.url';
+      void pageConfig().then((config) => {
+        let remembered = '';
+        try {
+          remembered = window.localStorage.getItem(REMEMBERED) ?? '';
+        } catch {
+          // storage refused: nothing remembered
+        }
+        if (!whUrl.value) whUrl.value = config.warehouse || remembered;
+      });
       const say = (text: string, bad = false): void => {
         whNote.classList.toggle('bad', bad);
         whNote.textContent = text;
@@ -597,6 +609,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           try {
             session = await signIn(whUrl.value.trim(), whUser.value.trim(), whPass.value);
             whPass.value = ''; // the token is what is kept, in memory, never the password
+            try {
+              window.localStorage.setItem(REMEMBERED, session.baseUrl);
+            } catch {
+              // storage refused: not remembered, nothing else changes
+            }
             objects = await listObjects(session);
             whTable.replaceChildren(...objects.map((o, i) => {
               const opt = document.createElement('option');

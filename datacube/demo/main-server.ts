@@ -10,7 +10,6 @@
 
 import {
   boot,
-  LEGEND_LITE,
   loadModel,
   must,
   RUNTIME,
@@ -19,6 +18,7 @@ import {
   type Engine,
 } from './boot.ts';
 import { LegendLitePlanner } from '../src/planner.ts';
+import { pageConfig } from './page-config.ts';
 
 /**
  * The planner. There is exactly one, and it is the real one.
@@ -42,10 +42,16 @@ export async function requireEngine(_status: HTMLElement): Promise<Engine> {
   // the planner compiles and what a reader opens -- one copy, in
   // demo/trades.pure.
   const model = await loadModel();
+  // where legend-lite runs: config.json, or ?legendLite= for one visit
+  const legendLite = (await pageConfig()).legendLite;
+  if (!legendLite) {
+    must('plannermissing').hidden = false;
+    throw new Error('no legend-lite server is configured: set "legendLite" in config.json, or add ?legendLite=URL');
+  }
 
   let reachable = false;
   try {
-    const health = await fetch(`${LEGEND_LITE}/health`, {
+    const health = await fetch(`${legendLite}/health`, {
       signal: AbortSignal.timeout(1500),
     });
     reachable = health.ok;
@@ -55,7 +61,7 @@ export async function requireEngine(_status: HTMLElement): Promise<Engine> {
   if (!reachable) {
     must('plannermissing').hidden = false;
     throw new Error(
-      `legend-lite is not answering on ${LEGEND_LITE}. ` +
+      `legend-lite is not answering on ${legendLite}. ` +
         'Start it with `bazel run //core:server` and reload, or open' +
         ' index.html, the default, which plans in the browser' +
         ' with no server at all.',
@@ -64,7 +70,7 @@ export async function requireEngine(_status: HTMLElement): Promise<Engine> {
 
   return {
     planner: new LegendLitePlanner({
-      baseUrl: LEGEND_LITE,
+      baseUrl: legendLite,
       model,
       runtime: RUNTIME,
     }),

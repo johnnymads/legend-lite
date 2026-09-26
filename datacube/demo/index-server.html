@@ -7,9 +7,8 @@
 <!-- Roboto first, because their font stack names it first and the
      metrics are part of the look: without it nothing lines up the
      same way, however exact the pixel values are. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<!-- Served with the site (fonts.css, vendor/fonts): no request leaves for a font CDN. -->
+<link rel="stylesheet" href="fonts.css">
 <!-- No planner module to preload: this page plans on the server. -->
 <link rel="stylesheet" href="../src/theme.css">
 <link rel="stylesheet" href="../src/grid/grid.css">
@@ -153,7 +152,7 @@
   <div id="app"></div>
 
   <!-- THE REFUSAL, and it has to be able to show itself. There is one
-       planner and it is the real one: if :8080 does not answer,
+       planner and it is the real one: if the configured legend-lite (config.json) does not answer,
        main-server.ts unhides this and boot throws, so the page must
        say why rather than going blank. It sits outside the offstage
        box for that reason -- a hidden parent hides its children

@@ -1,0 +1,5 @@
+{
+  "legendLite": "http://localhost:8080",
+  "legendEngine": "http://127.0.0.1:6300",
+  "warehouse": ""
+}

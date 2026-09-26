@@ -19,7 +19,8 @@ import { CubeRefusal } from '../src/snapshot.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MODEL = readFileSync(`${ROOT}demo/torture.pure`, 'utf8');
-const ENGINE = 'http://localhost:8080';
+// legend-lite's server: ENGINE= overrides the local default, as every harness here takes it
+const ENGINE = (process.env.ENGINE ?? 'http://localhost:8080').replace(/\/$/, '');
 
 let failed = false;
 

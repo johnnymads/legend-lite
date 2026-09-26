@@ -11,6 +11,9 @@ importers:
       '@duckdb/duckdb-wasm':
         specifier: ^1.33.1-dev57.0
         version: 1.33.1-dev57.0
+      '@fontsource/roboto':
+        specifier: 5.3.0
+        version: 5.3.0
       apache-arrow:
         specifier: 17.0.0
         version: 17.0.0
@@ -258,6 +261,9 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource/roboto@5.3.0':
+    resolution: {integrity: sha512-BapRJOWYP+LZ21zp+wBQjfpPYKRoxc4LspJ/RLuI+HSMBD5u/X4O+ESDrSvEqDSy0rAl7GwBJ+09mdc16cVQ1Q==}
 
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
@@ -820,6 +826,8 @@ snapshots:
     optional: true
 
   '@exodus/bytes@1.15.1': {}
+
+  '@fontsource/roboto@5.3.0': {}
 
   '@swc/helpers@0.5.23':
     dependencies:

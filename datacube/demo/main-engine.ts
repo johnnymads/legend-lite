@@ -21,10 +21,10 @@
 import { CubeApp } from '../src/app.ts';
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
 import { RemoteRun } from '../src/runner.ts';
+import { pageConfig } from './page-config.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import {
   DEMO_DIMENSIONS,
-  LEGEND_ENGINE,
   demoConfiguration,
   goToPlane,
   must,
@@ -58,25 +58,34 @@ const COLUMNS = [
 async function main(): Promise<void> {
   const status = must('status');
   status.textContent = 'reaching the engine…';
+  // where legend-engine runs: config.json, or ?engine= for one visit
+  const legendEngine = (await pageConfig()).legendEngine;
+  must('enginewhere').textContent = legendEngine || 'no configured address';
+  if (!legendEngine) {
+    must('enginemissing').hidden = false;
+    status.textContent = 'no legend-engine is configured: set "legendEngine" in config.json, or add ?engine=URL';
+    status.classList.add('bad');
+    return;
+  }
 
   // IS IT THERE? Asked before the cube is built, because a plane
   // whose engine is absent has nothing to show and should say which
   // engine it wanted -- not render an empty grid.
   try {
-    const health = await fetch(`${LEGEND_ENGINE}/api/server/v1/info`, {
+    const health = await fetch(`${legendEngine}/api/server/v1/info`, {
       signal: AbortSignal.timeout(2500),
     });
     if (!health.ok) throw new Error(`${health.status}`);
   } catch {
     must('enginemissing').hidden = false;
-    status.textContent = `no engine on ${LEGEND_ENGINE}`;
+    status.textContent = `no engine on ${legendEngine}`;
     status.classList.add('bad');
     return;
   }
 
   const model = await (await fetch(MODEL)).text();
   const executor = new LegendEngineExecutor({
-    baseUrl: LEGEND_ENGINE,
+    baseUrl: legendEngine,
     model,
     runtime: RUNTIME,
   });
