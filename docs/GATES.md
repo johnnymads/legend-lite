@@ -5682,6 +5682,67 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-27 — Execution plan step 3, the probe push: the counts owed before 3a, 3b and 3c, taken before any switch
+
+**What it is, plainly.** Step 3's design (revision 2 §5) and the program audit of this morning
+(`plan-audit-2026-09-26/program-audit-2026-09-27.md` §E) owe nine counts before the first switch.
+This push adds the probe rows that produce them — seven new `DecisionProbe` methods, each a one-line
+call site (`builtin/DecisionProbe`, `probe/Shadow`, `compiler/NameResolver`, `compiler/spec/Typer`),
+inert unless `LL_SHADOW` is set — corrects the tier classifier the audit found uncorrected (#7,
+`tools/untangle/bare_tiers.py`: an FQN spelled only by tiers the reference lacks is NOT-IN-REFERENCE
+whichever of ENGINE/FORM spelled it), adds `tools/untangle/probe_counts.py` to read the rows, and
+records the counts. No behaviour changes: rosters identical (DuckDB 107 / H2 361 of 2613), the
+CANDIDATES / PICK / FORM / OVERLOADS rows the step 2 receipt pinned are the same multisets
+(CANDIDATES 1,414, PICK 629, FORM 69, OVERLOADS 51 per corpus lane). `Typer.java` 3,489 → 3,499 lines
+against the 3,500 guard: the next slice that touches it splits it along the `applyCore` seam (rule
+0.6; audit #10).
+
+**Run** (`LL_SHADOW=1 --nocache_test_results` over `//spec:corpus_duckdb`, `//spec:corpus_h2`,
+`//spec:spec_tests`, `//core:core_tests`, load 4.3 at start — a probe run, NOT a timing; receipts
+`receipts/plan-audit-2026-09-26/step3/probes-pre-3a/{shadow-*.tsv,counts-pure-source.txt,
+counts-core-tests.txt,probe-run.log}`). "Pure source" = the two corpus lanes + the spec body census;
+`core_tests` is engine-input shaped and read separately. Counts are DISTINCT rows (the probe writes
+each distinct line once), not call counts.
+
+| # | count (Pure source) | reading |
+|---|---|---|
+| 1 | own-package hits, CALL position: 167, of which **10 outside a core-group package** | the 157 inside `meta::pure::functions::*`/`tds`/… the reference reaches through the core group anyway; the 10 are candidate sets wider than the reference's: `meta::pure::functions::meta::tests::addColumns` beside `functions::meta::addColumns`, `lang::tests::newInferenceAtRuntime::put` beside `collection::put`, `meta::relational::metamodel::children` (alone), `database::executeInDb` beside the wildcard's `execute::executeInDb`, and six `autoMapping::testComplexTypePassThrough*` beside `autoMapping::mapping::…`. Each is a 3b record line: the reference sees only the imported one, and the differential's compile-status rows say whether the file compiles there |
+| 1 | own-package hits, TYPE position: 52, **1 outside**: `meta::protocols::pure::vX_X_X::metamodel::m3::SourceInformation` | the reference needs the import; one type name |
+| 2 | core-group first-match with more than one core hit: CALL 0, TYPE **1** (`functionType`: `functions::meta::functionType` taken over `profiles::functionType`) | the resolver's own comment's case, and the only one; the type-position rule can go to the reference's set with one line to explain |
+| 3 | RETRY-ACCEPT (a non-first candidate accepted after the first failed a lambda): **3 shapes, all `map`** — `map(T[0..1])`/`map(T[m])` ranked first, `map(T[*])` accepted at index 1 or 2 | the silent-survival path's upper bound (FEP:258); the reference's lenient order tries `map(T[*])` where ours ranks `[0..1]`/`[m]` first — 3c's loop removes the pre-rank |
+| 4 | LIFTED with n > 1 (several lifted overloads at a qualified-property arm): **3**, all dot-spelled — `DbConfig$prop$processSortItem`, `MyClassWithTypeVariables$prop$res`, `SQLResult$prop$toSQLString`; rows by arm: `qp-var:dot` 143, `qp-zero-arg:dot` 130, `qp-arity:dot` 54, `qp-var:call` 10, `qp-owned:call` 3 | the unconditional-accept path (KR B2) has three corpus cases where source order decides today's tie error does not fire (they type today, so today's pick agrees or the arity differs) |
+| 4b | qualified properties reached from the ARROW spelling `$x->qp(…)`: **7 names** (`toString` at two arms, `orgByName`, `put`, `routerExtensions`, `synonymByType`, `synonymsByType`) | a tolerance the reference lacks (FEP:349 routes a qualified property from the dot spelling only; `$x->toString()` is the FUNCTION there) — audit #1's ruling decides whether the member case is minted from `propertyCall` alone; these seven calls change meaning or fail under the reference's rule |
+| 5 | collection literals whose bound-sum multiplicity ≠ `[n]`: **2 shapes** in Pure source (`[e]` with e `[0..1]` → `[0..1]`; with e `[*]` → `[*]`), 3 in `core_tests` (`[2]`→`[1..2]`,`[1..*]`; `[3]`→`[2..3]`) | small; 3c types them `[n]` with a roster diff |
+| 6 | `Pure.all()` minus `userResolvableFunctionFqns()`: **37 natives, one package `meta::legend::lite`** (`adjustTemporal asorDecodePkMap asorPkValue castAsDeclared convertDateFormat convertDateTimeFormat convertTimeZoneFormat divideRound greaterThan greaterThanEqual groupByComputedKeys groupByOverInstances isDistinctFrom isNumeric joinSlot legacyAssocPredicate legacyLocalProperty legacyNavigate lessThan lessThanEqual notEqualAnsi otherwise parseDateFormat route tds trustOne tuple typeAsDeclared` …) | the lite partition 3b's index applies is exactly this set; every other catalog native is user-resolvable, so `toString` (`relation::toString`, homework §5) was missed by the resolver for another reason: its universe is built from `userResolvableFunctionFqns` ∪ the prelude's functions and `relation::toString` IS in that set — the miss is the CALL tier's `addKnown` against `knownFqns`, which holds it; to be read at 3b, not assumed |
+| 7 | UNKNOWN-FN (a call that failed with no candidate at all): **21 distinct names**, 20 at the generic arm, 1 at the deferred arm; 1 dot-spelled (`relation`) | the manifest census of 2026-09-25 (`receipts/untangle-4b/manifest-census-core_relational.txt`) has 410 unknown-function failures: **407 in function bodies, 3 in mapping-synthesized bodies (`$class$`), 0 in constraints or derived properties** — so "zero → wall at the resolver" (audit #2) walls the same elements today's typing failure fails, except the three mapping bodies, which 3a's record names |
+| 8 | BARE-CALL, the calls whose node carried no resolver candidates when the typer asked, distinct (name, producer, spelling): parsed-and-qualified 962 (+3 dot) — a single match the resolver REWROTE to its FQN; **parsed-and-bare: 27 call-spelled** (`agg asString ascending byPassRouterInfo col columnValues containsAny defaultExtensions descending func functionReturnType getMappingsFromRuntime header isDigit isExecutionOptionPresent newMultiValueMap olapGroupBy orElse planSqlStatement potentiallyRouteRelationFunctionSet projectWithColumnSubset renameColumns restrict restrictDistinct routeFunction tableReference tdsRows`) **and 106 dot-spelled** (the qualified properties, properties and row getters of audit #1); **minted-and-bare: 41** (`and ascending at biTemporalClassification biTemporalProduct cast classification concatenate count descending distinct equal execute extend filter fold format groupBy if isDistinct isEmpty isNotEmpty join joinStrings letFunction map minus new not over pair project rank rename select slice tableReference times toOne toOneMany toString`), minted-and-qualified 619 | 3a's inventory: the resolver must produce a `Bound` for the 27 parsed bare call names (the form/TDS vocabulary `ascending`, `descending`, `agg`, `col`, `restrict`, `tableReference`, … that the merge point serves today, plus the unknown ones, which wall) and for the 41 minted names (the typer's mints by group; `new` owns no declaration — audit #1); the 106 dot-spelled member names are the missing `Callee` case |
+
+`core_tests` (engine input): own-package 1 call / 6 type (harness `ext::` classes), first-match 0,
+RETRY-ACCEPT 2, arrow-spelled qualified property 1 (`toString`), UNKNOWN-FN 2, parsed bare 76 call /
+8 dot, minted bare 16 — the engine-input names that keep the engine tier by design.
+
+**The `bare_tiers.py` correction**, re-run over the step 3 homework receipts (`step3/tiers/`;
+receipt `probes-pre-3a/bare-tiers-pure-source-corrected.tsv`): 48 bare names, CORE 40,
+**NOT-IN-REFERENCE 8** — the five the homework already named as engine-served (`currentUserId`,
+`flatten`, `get`, `wtd`, `ytd`) plus the three the FORM bucket hid: `graphFetchChecked` and
+`serialize` (`meta::pure::graphFetch::execution`, spelled by ENGINE and FORM) and `tableReference`
+(`meta::relational::functions::database`, FORM only). `toString` stays CORE (`relation::toString`
+is in the core group; its miss was the resolver's, homework §5). Eight names, all in the 3b record.
+
+**Owed and NOT taken here: the quiet corpus timing.** Load was 4–13 throughout (the warehouse
+session building `//datacube:*`, `//wasm:*`, `//core:server` — its status line), so no reading
+meets the rule; the last quiet DuckDB reading is still pre-step-0. Taken at the first quiet window
+before 3a's switch, announced in `IN_FLIGHT.md`.
+
+**Test — the guard caught the first version.** The first chain (receipt `probes-pre-3a/chain.log`)
+was 101/102: `IdentityGuardrailTest` CATALOG_LOOKUP_BY_NAME 10 → 11, because the core-first-match
+probe marked each competing hit "(fn)" by asking `Pure.nativeFunctionsAt(candidate)` — a catalog
+lookup keyed by a name, in a probe, in the resolver. The marker is gone (which hits are functions is
+read off the receipt: there is one case); the pin stays 10. Second chain green: 102/102 and
+`//tools/deps:all` 4/4; rosters DuckDB 107 / H2 361 (host) 354 (database) of 2613, unchanged; every
+other pin unchanged (the probe calls pass the spelling as an ARGUMENT, and the NAME_COMPARE pattern
+matches a comparison method on the accessor, not an argument).
+
 ## 2026-09-27 — The local chain scheduled by measured memory; the diagnostics battery out of the chain rule; the probe's duplicate lookup removed
 
 **What was wrong, plainly.** Three things made the local chain look slow and its per-lane

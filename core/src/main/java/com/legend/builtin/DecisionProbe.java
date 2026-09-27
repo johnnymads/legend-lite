@@ -41,6 +41,37 @@ public interface DecisionProbe {
      *  overload merge point for a name that reached the typer bare). */
     void onBareTier(String name, String fqn, String tier, String site);
 
+    /** Step 3 probe push (2026-09-27, `program-audit-2026-09-27.md` §E): one row per
+     *  resolver decision the reference's rule does not have — {@code tier} is
+     *  {@code own-package} (a hit through the element's own package) or
+     *  {@code core-first-match} (a name declared in several core-group packages,
+     *  the first taken); {@code position} is {@code call} or {@code type};
+     *  {@code detail} lists the competing FQNs or says {@code alone}. */
+    void onResolverTier(String position, String name, String fqn, String tier, String detail);
+
+    /** The typer's deferred-argument loop accepted candidate {@code accepted} at
+     *  {@code index} (> 0) after {@code failed} — the reference's silent-survival
+     *  path's upper bound (revision 2 §3.2, FEP:258). */
+    void onRetryAccept(String name, String failed, String accepted, int index);
+
+    /** A qualified property or row accessor resolved among {@code n} lifted
+     *  overloads at {@code site} — the unconditional-accept count (KR B2); the
+     *  site carries {@code :dot} or {@code :call} for the spelling that reached
+     *  it (the reference routes a qualified property from the dot spelling only). */
+    void onLifted(String site, String name, String fqn, int n);
+
+    /** A collection literal of {@code n} elements whose bound-sum multiplicity
+     *  ({@code lo..hi}, hi null = unbounded) differs from the reference's {@code [n]}. */
+    void onLiteralMult(int n, int lo, @Nullable Integer hi);
+
+    /** A call that reached the typer with no candidate at all and failed there;
+     *  {@code propertyCall} is the dot spelling; {@code site} names the throw. */
+    void onUnknownFunction(String name, boolean propertyCall, String site);
+
+    /** A call whose node carries no resolver candidates when the typer asks —
+     *  a parsed call has a span, a compiler mint has none. */
+    void onBareCall(String name, boolean hasPos, boolean propertyCall, boolean infix);
+
     /** The installed probe, or null. The binding (META-INF/services) is a TEST-LANE
      *  resource (//core:shadow_binding on the suites' libraries), never the product
      *  jar's: a planner build carries this interface and the Shadow class, never
@@ -87,6 +118,44 @@ public interface DecisionProbe {
     static void candidates(String name, String source, Stream<@Nullable Function> candidates) {
         if (INSTALLED != null) {
             INSTALLED.onCandidates(name, source, candidates);
+        }
+    }
+
+    // ---- the step 3 probe push (2026-09-27); every wrapper is a one-line call site ----
+
+    static void resolverTier(String position, String name, String fqn, String tier, String detail) {
+        if (INSTALLED != null) {
+            INSTALLED.onResolverTier(position, name, fqn, tier, detail);
+        }
+    }
+
+    static void retryAccept(String name, String failed, String accepted, int index) {
+        if (INSTALLED != null) {
+            INSTALLED.onRetryAccept(name, failed, accepted, index);
+        }
+    }
+
+    static void lifted(String site, String name, String fqn, int n) {
+        if (INSTALLED != null) {
+            INSTALLED.onLifted(site, name, fqn, n);
+        }
+    }
+
+    static void literalMult(int n, int lo, @Nullable Integer hi) {
+        if (INSTALLED != null) {
+            INSTALLED.onLiteralMult(n, lo, hi);
+        }
+    }
+
+    static void unknownFunction(String name, boolean propertyCall, String site) {
+        if (INSTALLED != null) {
+            INSTALLED.onUnknownFunction(name, propertyCall, site);
+        }
+    }
+
+    static void bareCall(String name, boolean hasPos, boolean propertyCall, boolean infix) {
+        if (INSTALLED != null) {
+            INSTALLED.onBareCall(name, hasPos, propertyCall, infix);
         }
     }
 }

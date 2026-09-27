@@ -175,6 +175,55 @@ public final class Shadow implements DecisionProbe {
         write("BARE-TIER", name, fqn, tier, site);
     }
 
+    // ---- the step 3 probe push (2026-09-27, program-audit-2026-09-27.md §E) ----
+
+    @Override
+    public void onResolverTier(String position, String name, String fqn, String tier, String detail) {
+        write("RESOLVER-TIER", position, name, fqn, tier + "\t" + detail);
+    }
+
+    @Override
+    public void onRetryAccept(String name, String failed, String accepted, int index) {
+        if (index > 0) {
+            write("RETRY-ACCEPT", name, failed, accepted, String.valueOf(index));
+        }
+    }
+
+    @Override
+    public void onLifted(String site, String name, String fqn, int n) {
+        write("LIFTED", site, name, fqn, String.valueOf(n));
+    }
+
+    @Override
+    public void onLiteralMult(int n, int lo, @com.legend.base.Nullable Integer hi) {
+        if (lo != n || hi == null || hi != n) {
+            write("LITERAL-MULT", String.valueOf(n), String.valueOf(lo), hi == null ? "*" : String.valueOf(hi), "");
+        }
+    }
+
+    @Override
+    public void onUnknownFunction(String name, boolean propertyCall, String site) {
+        write("UNKNOWN-FN", name, propertyCall ? "dot" : "call", site, "");
+    }
+
+    @Override
+    public void onBareCall(String name, boolean hasPos, boolean propertyCall, boolean infix) {
+        write("BARE-CALL", name, hasPos ? "parsed" : "minted", propertyCall ? "dot" : "call",
+                infix ? "infix" : "");
+    }
+
+    /** The catalog natives a USER may not name (the lite-internal partition,
+     *  {@code Pure.userResolvableFunctionFqns}) — the count revision 2 §2 owes
+     *  before 3b, written once per JVM so the receipt carries it. */
+    public Shadow() {
+        Set<String> user = Pure.userResolvableFunctionFqns();
+        for (var nfd : Pure.all()) {
+            if (!user.contains(nfd.qualifiedName())) {
+                write("LITE-INTERNAL", nfd.qualifiedName(), FunctionId.of(nfd).qualified(), "", "");
+            }
+        }
+    }
+
     @Override
     public void onForm(String name, String form) {
         CoreFn owner = Sink.FORM_AT.get(name);

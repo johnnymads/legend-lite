@@ -4,12 +4,14 @@ bare call in PURE SOURCE? Reads the BARE-TIER rows the shadow probe writes
 (LL_SHADOW=1 over //spec:corpus_duckdb, //spec:corpus_h2 and //core:census; shadow.tsv in each
 target's test.outputs) and classifies every bare name:
 
-  CORE       every FQN with declarations is spelled by the core import group (tier 2)
-  FORM       ... or by a form's owned declarations (tier 3), none by the engine surface alone
-  ENGINE-ONLY at least one FQN with declarations is spelled by the engine surface (tier 1) and
-             by no other tier — under the reference's rule (imports ∪ core group ∪ root) this
-             call would NOT see that declaration: a missing declaration to add to a core
-             package, or a call the reference resolves differently. Named, one line each.
+  CORE              every FQN with declarations is spelled by the core import group (tier 2)
+  NOT-IN-REFERENCE  at least one FQN with declarations is spelled ONLY by tiers the reference
+                    does not have (the engine surface, a form's owned declarations, or both) —
+                    under the reference's rule (imports ∪ core group ∪ root) this call would NOT
+                    see that declaration: a missing import in the corpus file, a missing
+                    declaration to add to a core package, or a call the reference resolves
+                    differently. Named, one line each, with the tier set that spelled it.
+                    (Corrected 2026-09-27: the first version bucketed ENGINE|FORM as FORM.)
 
 usage: bare_tiers.py <shadow.tsv>... [--out <tsv>]
 """
@@ -41,25 +43,28 @@ for p in paths:
 classes = collections.Counter()
 lines = ["name\tclass\tfqn\ttiers\tsites\twitness"]
 engine_only = []
+# Corrected 2026-09-27 (program-audit-2026-09-27.md #7, after step3-homework-audit #12): the
+# question is "which FQNs did a tier the REFERENCE does not have supply?" — the reference resolves a
+# bare name through imports ∪ the core group ∪ Root only, so an FQN spelled by ENGINE, by FORM, or by
+# both and NOT by CORE is equally invisible to it. A name is NOT-IN-REFERENCE when any of its FQNs
+# with declarations lacks the CORE tier; the tier set itself says which non-reference tier(s) spelled it.
+# (The first version bucketed ENGINE|FORM as FORM and hid `flatten`.)
 for name in sorted(tiers):
-    cls = "CORE"
     per = tiers[name]
-    if any(t == {"ENGINE"} for t in per.values()):
-        cls = "ENGINE-ONLY"
-    elif not any("CORE" in t for t in per.values()):
-        cls = "FORM"
+    outside = {fqn: t for fqn, t in per.items() if "CORE" not in t}
+    cls = "CORE" if not outside else "NOT-IN-REFERENCE"
     classes[cls] += 1
     for fqn in sorted(per):
         lines.append("\t".join([name, cls, fqn, "|".join(sorted(per[fqn])),
                                 "|".join(sorted(sites[name][fqn])), witness[(name, fqn)]]))
-        if per[fqn] == {"ENGINE"}:
-            engine_only.append((name, fqn, witness[(name, fqn)]))
+        if fqn in outside:
+            engine_only.append((name, fqn, witness[(name, fqn)], "|".join(sorted(per[fqn]))))
 
 print(f"rows={rows} files={len(paths)} bare names={len(tiers)} "
       + " ".join(f"{k}={v}" for k, v in sorted(classes.items())))
-print("ENGINE-ONLY (name, fqn, first witness):")
-for name, fqn, w in engine_only:
-    print(f"  {name}\t{fqn}\t{w}")
+print("NOT-IN-REFERENCE (name, fqn, tiers, first witness):")
+for name, fqn, w, t in engine_only:
+    print(f"  {name}\t{fqn}\t{t}\t{w}")
 if out:
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

@@ -85,6 +85,14 @@ h2-fail-roster.txt`.
   `ErrorShapeGuardrailTest` that call them), which are rewritten against `/api/pure/v1`.
   studio-lite, their other caller, is being retired by the user. Building `//core:server`,
   `//datacube:*` and `//wasm:*` off and on.
+- 2026-09-27 14:00 untangle: **probe push (this commit; GATES.md "step 3, the probe push")** — nine
+  counts before 3a/3b/3c as probe rows only, no behaviour change, rosters identical; the tier
+  classifier corrected. Core files: `builtin/DecisionProbe`, `probe/Shadow`, `compiler/NameResolver`,
+  `compiler/spec/Typer` (3,499 of 3,500 lines — the next slice splits it along its stage seam),
+  `tools/untangle/`. **Still owed: the quiet corpus timing** — your line says building, so not
+  taken; I will take it in the first window where your line says NOT building and load is under 3,
+  announced here first. **3a waits on the user's ruling** (audit #1: the callee's member case). NOT
+  building after the push.
 - 2026-09-27 warehouse: **DataCube leg C (typed values) started** (design
   `DATACUBE_TYPED_VALUES_DESIGN_2026_09_27.md`). Cross-area edits coming (rule 7), no logic change to
   the compiler: `wasm/src/main/java/planner/Wasm.java` gains `planTyped`/`relationType` exports

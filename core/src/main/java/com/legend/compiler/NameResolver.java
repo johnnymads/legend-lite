@@ -362,19 +362,30 @@ public final class NameResolver {
     private static List<String> resolveCallCandidates(String name, Scope scope) {
         if (name == null || name.isEmpty() || scope.knownFqns().contains(name)
                 || scope.typeParams().contains(name)) {
-            return resolveNameMulti(name, scope);
+            return resolveNameMulti(name, scope, "call");
         }
         List<String> out = new ArrayList<>(2);
         for (String pkg : scope.imports().wildcards()) {
             addKnown(out, pkg + "::" + name, scope);
         }
+        int afterWildcards = out.size();
         if (scope.ownPackage() != null) {
             addKnown(out, scope.ownPackage() + "::" + name, scope);
         }
+        int afterOwn = out.size();
         for (String pkg : CORE_IMPORTS) {
             addKnown(out, pkg + "::" + name, scope);
         }
-        return out.isEmpty() ? resolveNameMulti(name, scope) : out;
+        if (afterOwn > afterWildcards && com.legend.builtin.DecisionProbe.INSTALLED != null) {
+            // step 3 probe (2026-09-27): a call candidate the element's OWN package
+            // supplied — the reference has no such tier (FEM:167-168); "alone" when
+            // neither the wildcards nor the core group named anything
+            com.legend.builtin.DecisionProbe.resolverTier("call", name, out.get(afterWildcards),
+                    "own-package", out.size() == 1 ? "alone"
+                            : "with:" + String.join(",", out.subList(0, afterWildcards))
+                                    + "|" + String.join(",", out.subList(afterOwn, out.size())));
+        }
+        return out.isEmpty() ? resolveNameMulti(name, scope, "call") : out;
     }
 
     private static void addKnown(List<String> out, String candidate, Scope scope) {
@@ -609,7 +620,7 @@ public final class NameResolver {
 
     /** Core lookup. Private; callers go through {@link #resolveType} etc. */
     private static String resolveName(String name, Scope scope) {
-        List<String> matches = resolveNameMulti(name, scope);
+        List<String> matches = resolveNameMulti(name, scope, "type");
         if (matches.size() > 1) {
             throw new com.legend.error.ResolutionException(
                     "ambiguous reference '" + name + "' \u2014 matches via imports: "
@@ -632,7 +643,7 @@ public final class NameResolver {
             "Number", "Integer", "Float", "Decimal", "String", "Boolean",
             "Byte", "Date", "StrictDate", "DateTime", "LatestDate", "StrictTime");
 
-    private static List<String> resolveNameMulti(String name, Scope scope) {
+    private static List<String> resolveNameMulti(String name, Scope scope, String position) {
         if (name == null || name.isEmpty()) return java.util.Collections.singletonList(name);
         // Type-parameter shadowing: a NameRef matching an in-scope type
         // parameter (e.g. T inside Class Foo<T>) is a parameter
@@ -681,6 +692,9 @@ public final class NameResolver {
         if (scope.ownPackage() != null) {
             String candidate = scope.ownPackage() + "::" + name;
             if (scope.knownFqns().contains(candidate)) {
+                // step 3 probe (2026-09-27): served by the own-package tier alone
+                // (the wildcards found nothing above) — no such tier in the reference
+                com.legend.builtin.DecisionProbe.resolverTier(position, name, candidate, "own-package", "alone");
                 return List.of(candidate);
             }
         }
@@ -694,11 +708,31 @@ public final class NameResolver {
         // kind-blind, and real pure's kinds keep a function and a profile
         // of the same bare name apart (functionType — functions::meta vs
         // profiles); the group's order is the spec's.
+        String coreFirst = null;
+        List<String> coreHits = List.of();
         for (String pkg : CORE_IMPORTS) {
             String candidate = pkg + "::" + name;
             if (scope.knownFqns().contains(candidate)) {
-                return List.of(candidate);
+                if (coreFirst == null) {
+                    coreFirst = candidate;
+                    if (com.legend.builtin.DecisionProbe.INSTALLED == null) {
+                        return List.of(candidate);
+                    }
+                    coreHits = new ArrayList<>(2);
+                }
+                // step 3 probe (2026-09-27): every core-group package that declares
+                // the name; the reference errors on more than one ELEMENT hit
+                // ("found more than one time in the imports", IS:230-233) — which
+                // hits are functions is read off the receipt, never looked up by name
+                coreHits.add(candidate);
             }
+        }
+        if (coreFirst != null) {
+            if (coreHits.size() > 1) {
+                com.legend.builtin.DecisionProbe.resolverTier(position, name, coreFirst,
+                        "core-first-match", String.join(",", coreHits));
+            }
+            return List.of(coreFirst);
         }
         // NO FALLBACK TIER (USER RULING 2026-09-08, PRELUDE_MODULE_HOMEWORK
         // §9.12 / §6a item 2: "bare names must fail like pure/engine"): a

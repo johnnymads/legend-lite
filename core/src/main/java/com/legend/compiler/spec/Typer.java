@@ -554,6 +554,7 @@ final class Typer {
                     qargs.set(0, new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
                             List.of(qargs.get(0))));
                 }
+                com.legend.builtin.DecisionProbe.lifted(af.propertyCall() ? "qp-var:dot" : "qp-var:call", simple, d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
                 return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(), qargs), env);
             }
         }
@@ -638,6 +639,7 @@ final class Typer {
                     qargs.set(0, new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
                             List.of(qargs.get(0))));
                 }
+                com.legend.builtin.DecisionProbe.lifted(af.propertyCall() ? "qp-arity:dot" : "qp-arity:call", qname, d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
                 return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(),
                         qargs), env);
             }
@@ -1541,6 +1543,7 @@ final class Typer {
             qargs.set(0, new AppliedFunction(com.legend.builtin.Pure.Lite.TRUST_ONE,
                     List.of(qargs.get(0))));
         }
+        com.legend.builtin.DecisionProbe.lifted(af.propertyCall() ? "qp-owned:dot" : "qp-owned:call", simple, d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
         return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(), qargs), env);
     }
 
@@ -1835,6 +1838,7 @@ final class Typer {
         List<ExprType> argTypes = args.stream().map(TypedSpec::info).toList();
         List<TypedFunction> candidates = functionCandidates(af);
         if (candidates.isEmpty()) {
+            com.legend.builtin.DecisionProbe.unknownFunction(af.function(), af.propertyCall(), "generic");
             // C0.5a: zero candidates = the name is NOT IN THE CATALOG (an
             // unported platform function, usually) — say so plainly
             throw new TypeInferenceException("unknown function '"
@@ -1896,6 +1900,7 @@ final class Typer {
                 .filter(c -> DeferredArgs.shapesMatch(this, c, raw))
                 .toList();
         if (arity.isEmpty()) {
+            com.legend.builtin.DecisionProbe.unknownFunction(af.function(), af.propertyCall(), candidates.isEmpty() ? "deferred-none" : "deferred-arity");
             throw new TypeInferenceException("no overload of '" + af.function()
                     + "' matches " + raw.size() + " argument(s) of these shapes"
                     + (candidates.isEmpty() ? " (no candidates at all)"
@@ -1923,7 +1928,9 @@ final class Typer {
         TypeInferenceException firstFailure = null;
         for (TypedFunction cand : ranked) {
             try {
-                return bindDeferredAndBuild(cand, raw, typed.clone(), env, af.infix());
+                Application built = bindDeferredAndBuild(cand, raw, typed.clone(), env, af.infix());
+                com.legend.builtin.DecisionProbe.retryAccept(af.function(), ranked.get(0).id().qualified(), cand.id().qualified(), ranked.indexOf(cand));
+                return built;
             } catch (SchemaInvariantException invariant) {
                 throw invariant;   // the program's defect, never a
                                    // candidate mismatch — no retry
@@ -2535,6 +2542,7 @@ final class Typer {
 
     private List<TypedFunction> candidatesOf(AppliedFunction af) {
         if (af.candidateFqns().isEmpty()) {
+            com.legend.builtin.DecisionProbe.bareCall(af.function(), af.pos() != null, af.propertyCall(), af.infix());
             return functionCandidates(af.function());
         }
         List<TypedFunction> union = new ArrayList<>();
@@ -2759,6 +2767,7 @@ final class Typer {
             }
         }
         Multiplicity mult = new Multiplicity.Bounded(lo, hi);
+        com.legend.builtin.DecisionProbe.literalMult(elements.size(), lo, hi);
         return new TypedCollection(elements, new ExprType(elementType, mult));
     }
 
@@ -3038,6 +3047,7 @@ final class Typer {
             // SPELLED: the receiver wraps in toOne at this synth site
             // (SQL null-propagates through the inlined body, which IS
             // the engine's no-guard behavior).
+            com.legend.builtin.DecisionProbe.lifted("qp-zero-arg:dot", ap.property(), d.bodyFunctionFqn(), ctx.findFunction(d.bodyFunctionFqn()).size());
             return applyGeneric(new AppliedFunction(d.bodyFunctionFqn(),
                     List.of(exactlyOne
                             ? ap.receiver()
