@@ -9,7 +9,19 @@
 // Kept pure so the arithmetic can be tested without a DOM, and so the
 // grid renders a selection rather than owning one.
 
+import type { LeafColumn } from './grid/columns.ts';
 import type { ResultTable, Scalar } from './result.ts';
+
+/**
+ * The columns a selection's positions name: the grid's VISIBLE leaves, in
+ * display order. A selection is in grid coordinates, and the result's
+ * own column order is something else -- hidden columns, the configured
+ * order, a pivot and the tree all come between them. Every reader of a
+ * selection goes through this, never through `table.columns[position]`
+ * (which copied a hidden column's values while another was highlighted,
+ * P2-36).
+ */
+export type SelectionColumns = readonly Pick<LeafColumn, 'index' | 'name' | 'label'>[];
 
 export interface CellRef {
   readonly row: number;
@@ -98,6 +110,7 @@ export interface SelectionStats {
  */
 export function selectionStats(
   table: ResultTable,
+  leaves: SelectionColumns,
   range: CellRange,
 ): SelectionStats {
   const b = bounds(range);
@@ -109,7 +122,8 @@ export function selectionStats(
   let max = Number.NEGATIVE_INFINITY;
 
   for (let c = b.left; c <= b.right; c++) {
-    const column = table.columns[c];
+    const leaf = leaves[c];
+    const column = leaf === undefined ? undefined : table.columns[leaf.index];
     for (let r = b.top; r <= b.bottom; r++) {
       cells += 1;
       const v: Scalar = column?.values[r] ?? null;
@@ -146,12 +160,22 @@ export function selectionStats(
  */
 export function selectionTable(
   table: ResultTable,
+  leaves: SelectionColumns,
   range: CellRange,
 ): ResultTable {
   const b = bounds(range);
-  const columns = table.columns
+  const columns = leaves
     .slice(b.left, b.right + 1)
-    .map((c) => ({ ...c, values: c.values.slice(b.top, b.bottom + 1) }));
+    .flatMap((leaf) => {
+      const c = table.columns[leaf.index];
+      // Headed as the screen heads it: a renamed column copies under its
+      // label, not its internal name (P2-41).
+      return c === undefined ? [] : [{
+        ...c,
+        name: leaf.label ?? c.name,
+        values: c.values.slice(b.top, b.bottom + 1),
+      }];
+    });
   return {
     columns,
     rowCount: Math.max(0, b.bottom - b.top + 1),

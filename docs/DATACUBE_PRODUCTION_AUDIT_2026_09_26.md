@@ -179,6 +179,11 @@ Pass 2 absorbs pass 1:
   - P2-16, P2-20, P2-81, P2-82, P2-91, P2-99;
   - P2-128, P2-134, P2-211, P2-216, P2-217;
   - P2-386, P2-397, P2-399, P2-415.
+- **P2-36 (CRITICAL, selection and copy read the wrong column): LANDED 2026-09-27.** A
+  selection is in grid positions. Stats, copy and the CSV of a selection now read the visible
+  leaf at each position (`leaf.index`), never `table.columns[position]`. A copy is headed by the
+  on-screen label (P2-41). The red test copied the HIDDEN column's values while `price` was
+  highlighted.
 
 ## CRITICAL and HIGH
 

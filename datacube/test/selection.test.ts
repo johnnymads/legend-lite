@@ -24,6 +24,9 @@ const TABLE: ResultTable = {
   elapsedMs: 0,
 };
 
+/** Every column on screen, in result order: positions and indexes agree. */
+const ALL = TABLE.columns.map((c, index) => ({ index, name: c.name }));
+
 describe('ranges', () => {
   it('normalises bounds however the drag went', () => {
     // Dragging up-and-left is as ordinary as down-and-right.
@@ -60,7 +63,7 @@ describe('selectionStats', () => {
   it('excludes blanks from the arithmetic but counts them', () => {
     // An average that treated an empty pivot combination as zero
     // would be wrong in the direction of looking plausible.
-    const s = selectionStats(TABLE, {
+    const s = selectionStats(TABLE, ALL, {
       anchor: { row: 0, col: 1 },
       focus: { row: 2, col: 1 },
     });
@@ -74,7 +77,7 @@ describe('selectionStats', () => {
   it('ignores non-numeric cells rather than coercing them', () => {
     // Selecting a label column alongside a measure must not make the
     // sum NaN.
-    const s = selectionStats(TABLE, {
+    const s = selectionStats(TABLE, ALL, {
       anchor: { row: 0, col: 0 },
       focus: { row: 2, col: 2 },
     });
@@ -84,7 +87,7 @@ describe('selectionStats', () => {
   });
 
   it('counts a real zero as a value, not a blank', () => {
-    const s = selectionStats(TABLE, {
+    const s = selectionStats(TABLE, ALL, {
       anchor: { row: 1, col: 2 },
       focus: { row: 1, col: 2 },
     });
@@ -94,7 +97,7 @@ describe('selectionStats', () => {
   });
 
   it('reports min and max across the rectangle', () => {
-    const s = selectionStats(TABLE, {
+    const s = selectionStats(TABLE, ALL, {
       anchor: { row: 0, col: 1 },
       focus: { row: 2, col: 2 },
     });
@@ -103,7 +106,7 @@ describe('selectionStats', () => {
   });
 
   it('returns zeros rather than infinities for an empty selection', () => {
-    const s = selectionStats(TABLE, {
+    const s = selectionStats(TABLE, ALL, {
       anchor: { row: 0, col: 0 },
       focus: { row: 2, col: 0 },
     });
@@ -116,7 +119,7 @@ describe('selectionStats', () => {
 
 describe('selectionTable', () => {
   it('cuts out the rectangle, columns and rows', () => {
-    const t = selectionTable(TABLE, {
+    const t = selectionTable(TABLE, ALL, {
       anchor: { row: 1, col: 1 },
       focus: { row: 2, col: 2 },
     });
@@ -128,10 +131,26 @@ describe('selectionTable', () => {
   it('feeds the existing exporter, so escaping cannot drift', () => {
     // A clipboard payload and a CSV file differ in their delimiter,
     // not in how they escape.
-    const t = selectionTable(TABLE, {
+    const t = selectionTable(TABLE, ALL, {
       anchor: { row: 0, col: 0 },
       focus: { row: 1, col: 1 },
     });
     assert.equal(toClipboard(t), 'region\tq1\nEMEA\t10\nAMER\t-5\n');
   });
 });
+
+describe('a selection reads the columns ON SCREEN (P2-36)', () => {
+  // q2 shown first, q1 second, region hidden: position 0 is q2.
+  const SHOWN = [{ index: 2, name: 'q2' }, { index: 1, name: 'q1', label: 'First quarter' }];
+
+  it('stats read the column at each on-screen position', () => {
+    const s = selectionStats(TABLE, SHOWN, { anchor: { row: 0, col: 0 }, focus: { row: 2, col: 0 } });
+    assert.equal(s.sum, 50, 'q2 (20 + 0 + 30), not region and not q1');
+  });
+
+  it('a copy is those columns, headed by their labels', () => {
+    const t = selectionTable(TABLE, SHOWN, { anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
+    assert.equal(toClipboard(t), 'q2\tFirst quarter\n20\t10\n');
+  });
+});
+

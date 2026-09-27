@@ -223,6 +223,11 @@ export class DataGrid {
   #vars: string[] = [];
 
   #model: ColumnModel | null = null;
+
+  /** The column model on screen: what a selection's positions name. */
+  get columns(): ColumnModel | null {
+    return this.#model;
+  }
   #table: ResultTable | null = null;
   /** Absolute index of the first row present in `#table`. */
   #blockOffset = 0;
@@ -1424,8 +1429,9 @@ export class DataGrid {
   copySelection(): string | null {
     const table = this.#table;
     const range = this.#selection;
-    if (!table || !range) return null;
-    const text = toClipboard(selectionTable(table, range));
+    const model = this.#model;
+    if (!table || !range || !model) return null;
+    const text = toClipboard(selectionTable(table, model.leaves, range));
     void this.#options.writeClipboard?.(text);
     return text;
   }

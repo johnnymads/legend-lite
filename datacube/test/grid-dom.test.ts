@@ -251,6 +251,35 @@ describe('DataGrid selection', () => {
     assert.equal(seen.length, 1);
   });
 
+  it('copies the column ON SCREEN when columns are hidden or reordered (P2-36)', () => {
+    // A selection is in grid positions -- the visible leaves, in display
+    // order -- and the result's own column order is something else.
+    // Reading `table.columns[position]` copied qty when price was
+    // highlighted, and trade_id's blanks when a hidden column sat first.
+    const written: string[] = [];
+    const table: ResultTable = {
+      columns: [
+        { name: 'trade_id', type: 'Integer', values: [1, 2] },
+        { name: 'qty', type: 'Integer', values: [10, 20] },
+        { name: 'price', type: 'Float', values: [1000.5, 2000.5] },
+      ],
+      rowCount: 2,
+      epoch: 1,
+      elapsedMs: 0,
+    };
+    grid = new DataGrid(container, new FormatterCache(), {
+      rowHeight: ROW_HEIGHT,
+      writeClipboard: (text) => { written.push(text); },
+    });
+    stubLayout(container.querySelector('.dc-scroller')!, VIEW_HEIGHT);
+    grid.setColumns(buildColumnModel(table, [], [], { hidden: ['trade_id'], order: ['price', 'qty'] }));
+    grid.setRows(table, 0, 2);
+    grid.select({ anchor: { row: 0, col: 0 }, focus: { row: 1, col: 0 } });
+    assert.equal(grid.copySelection(), 'price\n1000.5\n2000.5\n');
+    grid.select({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
+    assert.equal(grid.copySelection(), 'price\tqty\n1000.5\t10\n');
+  });
+
   it('copies the selection as TSV through the injected writer', () => {
     // Clipboard access is permission-gated, so the writer is injected
     // rather than reached for on the navigator.

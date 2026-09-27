@@ -1766,7 +1766,7 @@ export class CubeApp {
       slot.textContent = '';
       return;
     }
-    const s = selectionStats(table, range);
+    const s = selectionStats(table, this.#grid.columns?.leaves ?? [], range);
     // Blanks are reported rather than folded into the count, because
     // an average over a pivot region that treated empty combinations
     // as zero would be wrong in the direction of looking plausible.
@@ -1781,7 +1781,7 @@ export class CubeApp {
   #selectionCsv(): string {
     const table = this.#view?.rows;
     if (!table || !this.#selection) return '';
-    return toCsv(selectionTable(table, this.#selection));
+    return toCsv(selectionTable(table, this.#grid.columns?.leaves ?? [], this.#selection));
   }
 
   #columnCsv(column: string): string {
