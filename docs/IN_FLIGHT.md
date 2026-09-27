@@ -73,6 +73,12 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **DataCube pivots as two plain queries started** (design
+  `DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md`, coming): a distinct query for the pivot values, then one
+  `groupBy` with conditional aggregates per tree level; the Total is a column of that same query. Both
+  steps are ordinary Pure planned by legend-lite. **The static-pivot planner form I said was owed to you is
+  NOT needed**: the planner already compiles this shape into one SELECT per query. All edits inside
+  `datacube/`; building `//datacube:*` off and on from now.
 - 2026-09-26 17:40 warehouse: **DataCube's Live/Snap now works against the warehouse (this
   commit):** Live runs on the warehouse as the signed-in user; Snap copies the user's rows into
   DuckDB-WASM (datacube/src/warehouse.ts, cube.ts, snap.ts; WAREHOUSE_D1_DESIGN_2026_09_26.md).
