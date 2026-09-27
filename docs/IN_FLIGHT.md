@@ -60,8 +60,13 @@ h2-fail-roster.txt`.
 5. **Timing runs are announced here first.** The corpus lanes' seconds are a gate for the untangle;
    a run under another Bazel's load is discarded. Before a timed run: `uptime` load under 2, and
    the other session's line below says it is not building. Never kill the other account's processes.
-6. **The gate chain is the same for both:** `bazel test //... //parser-equivalence:diagnostics` then
-   `bazel test //tools/deps:all`, green before a push to main. A push that turns another lane red
+6. **The gate chain is the same for both:** `bazel test //...` then `bazel test //tools/deps:all`,
+   green before a push to main. `//parser-equivalence:diagnostics` is NOT in it (manual; the
+   2026-08-26 ruling in GATES.md: the measurement battery runs on its three triggers — an
+   upstream pin bump, a parser/lexer/protocol change, a corpus manifest change — never per chain;
+   CI's `diagnostics.yml` has the same path filter). Run it locally only when your change touches
+   those paths. (The handshake of 2026-09-26 morning listed it in the chain by mistake; corrected
+   2026-09-27.) A push that turns another lane red
    is reverted by whoever notices, with a line here. **Exception:** a commit that changes only this
    file (a status line) needs no chain; push it as it is.
 7. **Cross-area edits are one-line entries here before they land**, naming the file and why.
@@ -86,6 +91,12 @@ h2-fail-roster.txt`.
   (group E), `tools/deps` (plugin label; new `warehouse_closure_test`: the warehouse reaches no
   `//core` target, proven red), `spec/BUILD.bazel` (`claims_generator_lib` declares `//base`).
   NullAway proven live in base, json, warehouse and core. Chain 99/99 + deps 4/4. NOT building.
+- 2026-09-27 11:20 untangle: **rule 6 corrected** — the chain is `bazel test //...` + `//tools/deps:all`;
+  `//parser-equivalence:diagnostics` is manual and runs on its triggers only (my handshake text
+  of yesterday added it to every chain by mistake; it was the critical path of every local run,
+  222s alone). Measuring the heavy lanes' real heap peaks for a memory-aware local config
+  (`resources:memory:` tags + `--local_resources`, Bazel 9.2); nothing pushed from that yet.
+  NOT building beyond single lanes run alone.
 - 2026-09-26 15:15 untangle: **step 3 homework landed** (this commit; GATES.md "Execution plan
   step 3 homework"): the kernel reading, a resolver fix (the normalizer built the resolution
   universe per statement; now once — `NameResolver.resolveQuery(query, imports, modelFqns)` is
