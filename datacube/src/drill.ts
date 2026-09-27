@@ -17,7 +17,7 @@
 // moved on underneath it. That is why a snap captures source rows at
 // drillable grain instead of storing aggregated results.
 
-import { NULL_GROUP, derivedExtend, filterExpression } from './serialize.ts';
+import { derivedExtend, effectivePivotOn, filterExpression, memberConditions } from './serialize.ts';
 import type { CubeSnapshot, FilterNode } from './snapshot.ts';
 import type { RowPath } from './tree.ts';
 
@@ -47,22 +47,14 @@ export function drillConditions(
 ): FilterNode[] {
   const out: FilterNode[] = [];
   if (snapshot.filter) out.push(snapshot.filter);
-
-  const pin = (column: string, value: string): FilterNode =>
-    value === NULL_GROUP
-      ? { kind: 'condition', column, operator: 'isEmpty' }
-      : { kind: 'condition', column, operator: 'equal', value };
-
-  request.path.forEach((value, i) => {
-    const column = snapshot.rows[i];
-    if (column !== undefined) out.push(pin(column, value));
-  });
-
-  (request.pivotPath ?? []).forEach((value, i) => {
-    const column = snapshot.pivotOn[i];
-    if (column !== undefined) out.push(pin(column, value));
-  });
-
+  // TYPED, by the rule a tree level and a pivot cell use (`keyValue`): a
+  // year is `== 2021`, not `== '2021'`, and a NULL key is `isEmpty`. So
+  // the drill pins exactly the rows its cell aggregated.
+  out.push(...memberConditions(snapshot, snapshot.rows.slice(0, request.path.length), request.path));
+  const pivot = request.pivotPath ?? [];
+  if (pivot.length > 0) {
+    out.push(...memberConditions(snapshot, effectivePivotOn(snapshot).slice(0, pivot.length), pivot));
+  }
   return out;
 }
 

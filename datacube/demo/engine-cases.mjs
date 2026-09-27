@@ -89,21 +89,22 @@ export function casesFor(SOURCE) {
       snapshot: cube({ rows: ['region', 'desk'], measures: [SUM] }),
       scope: { level: 2, parent: ['EMEA'] },
     },
+    // A pivot's values come from their own query (src/plan.ts); a
+    // harness that only compiles uses these, and one that runs queries
+    // finds them itself (serializeWithValues).
     {
       name: 'column pivot',
       snapshot: cube({ pivotOn: ['year'], measures: [SUM] }),
+      pivot: { tuples: [['2021'], ['2022']] },
     },
     {
-      name: 'pivot AND group by, through the cast',
+      name: 'pivot AND group by, in one groupBy',
       snapshot: cube({
         rows: ['region'],
         pivotOn: ['year'],
         measures: [SUM],
-        pivotCast: [
-          { name: '2021__|__notional', measure: 'notional' },
-          { name: '2022__|__notional', measure: 'notional' },
-        ],
       }),
+      pivot: { tuples: [['2021'], ['2022']] },
     },
     {
       name: 'a derived column',

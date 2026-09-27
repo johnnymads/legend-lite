@@ -12,8 +12,26 @@ import {
   ident,
   detailSnapshot,
   literal,
-  serialize,
+  effectivePivotOn,
+  pinnedPivotFacts,
+  pivotTotalColumn,
+  pivotValuesQuery,
+  serialize as serializeWith,
+  type LevelScope,
+  type PivotFacts,
 } from '../src/serialize.ts';
+
+/** Step 1's answer for a cube pivoted on year: two years. */
+const YEARS: PivotFacts = { tuples: [['2023'], ['2024']] };
+
+/**
+ * `serialize`, with the default cube's pivot values when a test about
+ * something else does not give its own (the default cube pivots on
+ * year). The one test of the refusal calls `serializeWith` itself.
+ */
+function serialize(s: CubeSnapshot, scope?: LevelScope, facts?: PivotFacts): string {
+  return serializeWith(s, scope, facts ?? (effectivePivotOn(s).length > 0 ? YEARS : undefined));
+}
 
 /** A minimal trades cube, overridable per test. */
 function snap(over: Partial<CubeSnapshot> = {}): CubeSnapshot {
@@ -37,13 +55,37 @@ function snap(over: Partial<CubeSnapshot> = {}): CubeSnapshot {
 }
 
 describe('serialize', () => {
-  it('emits a pivot cube with implicit grouping', () => {
+  it('writes a pivot as ONE groupBy, a conditional aggregate per value', () => {
+    // Each cell is its measure over exactly the rows of its value, and
+    // the other columns are carried on their own aggregate in the same
+    // groupBy (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md).
     assert.equal(
-      serialize(snap()),
-      '$trades->select(~[region, country, year, notional])' +
-        '->pivot(~[year], ~[total:x|$x.notional:y|$y->sum()])' +
+      serialize(snap(), undefined, YEARS),
+      '$trades->select(~[region, country, year, notional, qty])' +
+        "->groupBy(~[region, country], ~['2023__|__total':x|if($x.year == 2023, |$x.notional, |[]):y|$y->sum()," +
+        " '2024__|__total':x|if($x.year == 2024, |$x.notional, |[]):y|$y->sum()," +
+        ' qty:x|$x.qty:y|$y->sum()])' +
         '->sort([~region->ascending(), ~country->ascending()])',
     );
+  });
+
+  it('asks for the values first, over the filter but not the group keys', () => {
+    const q = pivotValuesQuery(snap({
+      filter: { kind: 'condition', column: 'region', operator: 'equal', value: 'EMEA' },
+      pivotSort: { year: 'desc' },
+    }));
+    assert.equal(q, "$trades->filter(x|$x.region == 'EMEA')->select(~[year])->distinct()"
+      + '->sort([~year->descending()])->limit(501)');
+    assert.equal(pivotValuesQuery(snap({ pivotOn: [] })), null);
+  });
+
+  it('refuses to be written without its values', () => {
+    assert.throws(() => serializeWith(snap()), /pivot values/);
+  });
+
+  it('a NULL value has its own column, pinned by isEmpty', () => {
+    const s = serialize(snap(), { level: 1, parent: [] }, { tuples: [['2023'], [NULL_GROUP]] });
+    assert.match(s, /'\(empty\)__\|__total':x\|if\(\$x\.year->isEmpty\(\), \|\$x\.notional, \|\[\]\)/);
   });
 
   it('uses groupBy when there is no column dimension', () => {
@@ -111,13 +153,12 @@ describe('serialize', () => {
     // MEASURE columns and `_fixEmptyAggCols` substitutes a filler
     // count if there are none. The same cube already grouped happily,
     // because the groupBy path has always synthesised its aggregates.
-    const s = serialize(snap({ measures: [] }));
-    assert.match(s, /pivot\(~\[year\], ~\[/, 'it pivots at all');
+    const s = serialize(snap({ measures: [] }), undefined, YEARS);
     // `notional` is a Float, so it is a measure and it sums.
-    assert.match(s, /notional:x\|\$x\.notional:y\|\$y->sum\(\)/);
-    // And the DIMENSIONS are not aggregated: upstream excludes them
-    // from a pivot deliberately, unlike a groupBy.
-    assert.equal(/country:x\|/.test(s), false,
+    assert.match(s, /'2023__\|__notional':x\|if\(\$x\.year == 2023, \|\$x\.notional, \|\[\]\):y\|\$y->sum\(\)/);
+    // And the DIMENSIONS are not spread: upstream excludes them from a
+    // pivot deliberately, unlike a groupBy.
+    assert.equal(/__\|__country/.test(s), false,
       'a dimension must not become a pivot aggregate');
   });
 
@@ -148,26 +189,21 @@ describe('serialize', () => {
       measures: [],
       sorts: [],
       epoch: 1,
-    }, { level: 1, parent: [] });
+    }, { level: 1, parent: [] }, YEARS);
 
-    // Level 1 groups by `region` alone, so THAT is what may be
-    // selected beside the pivot key and the measures.
-    const projected = /select\(~\[([^\]]*)\]/.exec(s)?.[1]
-      ?.split(',').map((n) => n.trim()) ?? [];
-    assert.deepEqual(projected, ['region', 'year', 'notional', 'pnl']);
-    // The tell-tale of the fault: a detail column in the projection.
-    assert.equal(projected.includes('desk'), false,
-      'a deeper row dimension in the projection regroups the cube by it');
-    assert.match(s, /pivot\(~\[year\]/);
-    assert.match(s, /notional:x\|\$x\.notional:y\|\$y->sum\(\)/);
+    // The groupBy names its keys, so a deeper row dimension in the
+    // projection can no longer regroup the cube: it is carried, on
+    // its unique value.
+    assert.match(s, /->groupBy\(~\[region\], ~\[/);
+    assert.match(s, /desk:x\|\$x\.desk:y\|\$y->uniqueValueOnly\(\)/);
+    assert.match(s, /'2023__\|__notional':x\|if\(\$x\.year == 2023, \|\$x\.notional, \|\[\]\):y\|\$y->sum\(\)/);
   });
 
-  describe('grouped AND pivoted: the two-stage query', () => {
-    // Measures spread across the pivot values; every other column
-    // takes its unique value; one row per row dimension. Which needs
-    // BOTH stages, in this order -- pivot, cast, groupBy -- because
-    // the groupBy is the only thing that fixes the final row shape.
-    // DataCubeQueryBuilder builds exactly that sequence.
+  describe('grouped AND pivoted: one groupBy', () => {
+    // Measures spread across the pivot values, every other column on
+    // its own aggregate, one row per row dimension -- in ONE groupBy.
+    // It was pivot -> cast -> groupBy, which re-aggregated the pivot's
+    // finer partial results: an average of averages (P2-4).
     const CUBE = {
       source: { expression: 't' },
       columns: [
@@ -186,99 +222,56 @@ describe('serialize', () => {
       sorts: [],
       epoch: 1,
     };
-    const CAST = [
-      { name: '2021__|__notional', measure: 'notional' },
-      { name: '2021__|__pnl', measure: 'pnl' },
-      { name: '2022__|__notional', measure: 'notional' },
-      { name: '2022__|__pnl', measure: 'pnl' },
-    ];
+    const VALUES: PivotFacts = { tuples: [['2021'], ['2022']] };
 
-    it('CASTS between the stages, or the groupBy is illegal', () => {
-      // A pivot's output columns exist in its data, not in the
-      // relation's type, so naming one later is rejected outright:
-      // "relation has no column '2021__|__notional'". That is what
-      // the engine said when this shipped without a cast.
-      const out = serialize({ ...CUBE, pivotCast: CAST },
-        { level: 1, parent: [] });
-      const cast = /cast\(@Relation<\(([^)]*)\)>\)/.exec(out)?.[1];
-      assert.ok(cast, `no relation cast in ${out.slice(-200)}`);
-      assert.ok(out.indexOf('pivot(') < out.indexOf('cast('));
-      assert.ok(out.indexOf('cast(') < out.indexOf('groupBy('));
-      // It declares the WHOLE post-pivot relation: a cast states the
-      // type of the value it is applied to, not a difference from it.
-      for (const name of ['2021__|__notional', '2022__|__pnl']) {
-        assert.ok(cast.includes(`'${name}':Float`),
-          `${name} must be declared, with its measure's type`);
-      }
-      assert.match(cast, /region:String/);
-      assert.match(cast, /trade_id:Integer/, 'a carried column too');
-      // And NOT what the pivot consumed.
-      assert.equal(/\byear:/.test(cast), false,
-        'the pivot key is gone from the relation it produced');
-      assert.equal(/\bnotional:/.test(cast), false,
-        'the measure survives only as its pivoted columns');
+    it('has no pivot, no cast and no second stage', () => {
+      const out = serialize(CUBE, { level: 1, parent: [] }, VALUES);
+      assert.equal(/pivot\(|cast\(/.test(out), false, out);
+      assert.equal(out.split('groupBy(').length, 2, 'exactly one groupBy');
     });
 
-    it('emits the pivot AND an outer groupBy', () => {
-      const out = serialize({ ...CUBE, pivotCast: CAST },
-        { level: 1, parent: [] });
-      assert.match(out, /->pivot\(~\[year\]/);
-      assert.match(out, /->groupBy\(~\[region\]/,
-        'the outer groupBy is what collapses the intermediate');
-      assert.ok(out.indexOf('pivot(') < out.indexOf('groupBy('),
-        'the groupBy must come LAST: it fixes the final row shape');
+    it('an AVERAGE cell is the average of its value\'s rows, not of partial averages', () => {
+      const out = serialize({ ...CUBE, measures: [{ name: 'avg_n', column: 'notional', fn: 'average' }] },
+        { level: 1, parent: [] }, VALUES);
+      assert.match(out, /'2021__\|__avg_n':x\|if\(\$x\.year == 2021, \|\$x\.notional, \|\[\]\):y\|\$y->average\(\)/);
     });
 
-    it('carries every non-measure through as its unique value', () => {
-      const out = serialize({ ...CUBE, pivotCast: CAST },
-        { level: 1, parent: [] });
-      // Projected, so the pivot passes them through...
-      assert.match(out, /select\(~\[[^\]]*trade_id/);
-      assert.match(out, /select\(~\[[^\]]*quarter/);
-      // ...and aggregated by the OUTER groupBy, not by the pivot.
-      const outer = out.slice(out.indexOf('groupBy('));
-      assert.match(outer, /trade_id:x\|\$x\.trade_id:y\|\$y->uniqueValueOnly/);
-      assert.match(outer, /quarter:x\|\$x\.quarter:y\|\$y->uniqueValueOnly/);
-      // The PIVOT CALL alone, not everything before the groupBy: the
-      // cast sits between them and names every post-pivot column,
-      // `trade_id` included, which is its whole job.
-      const inner = out.slice(out.indexOf('pivot('), out.indexOf('cast('));
-      assert.equal(/trade_id/.test(inner), false,
-        'a pivot aggregate on a dimension spreads it per value, which'
-        + ' upstream calls "not helpful"');
-    });
-
-    it('keeps the pivot result columns, with the measure aggregate', () => {
-      const out = serialize({ ...CUBE, pivotCast: CAST },
-        { level: 1, parent: [] });
-      const outer = out.slice(out.indexOf('groupBy('));
-      for (const c of CAST) {
-        assert.ok(outer.includes(`'${c.name}'`),
-          `${c.name} must survive the outer groupBy`);
-      }
-      assert.match(outer, /->sum\(\)/);
+    it('carries every other column on its own aggregate', () => {
+      const out = serialize(CUBE, { level: 1, parent: [] }, VALUES);
+      assert.match(out, /trade_id:x\|\$x\.trade_id:y\|\$y->uniqueValueOnly/);
+      assert.match(out, /quarter:x\|\$x\.quarter:y\|\$y->uniqueValueOnly/);
+      // A dimension is carried, never spread: "not helpful", upstream.
+      assert.equal(/__\|__trade_id/.test(out), false);
     });
 
     it('groups by the LEVEL, not by every row dimension', () => {
-      // Level 2 drills into a region, so desk becomes the key and
-      // region is pinned by the parent filter.
-      const out = serialize({ ...CUBE, pivotCast: CAST },
-        { level: 2, parent: ['AMER'] });
+      const out = serialize(CUBE, { level: 2, parent: ['AMER'] }, VALUES);
       assert.match(out, /->groupBy\(~\[region, desk\]/);
       assert.match(out, /filter\(x\|\$x\.region == 'AMER'\)/);
     });
 
-    it('falls back to the single stage until the cast is known', () => {
-      // The pivot's column names come from a result, so the first
-      // query cannot name them. Losing the carried columns for one
-      // render beats breaking the grouping, which is what the wide
-      // projection alone does.
-      const out = serialize(CUBE, { level: 1, parent: [] });
-      assert.match(out, /->pivot\(~\[year\]/);
-      assert.equal(/->groupBy\(/.test(out), false);
-      const projected = /select\(~\[([^\]]*)\]/.exec(out)?.[1] ?? '';
-      assert.equal(projected.includes('trade_id'), false,
-        'projecting it without an outer groupBy regroups the cube by it');
+    it('a weighted average wraps both halves of its pair', () => {
+      const out = serialize({ ...CUBE,
+        measures: [{ name: 'w', column: 'notional', fn: 'wavg', weight: 'pnl' }] },
+      { level: 1, parent: [] }, VALUES);
+      assert.match(out, /if\(\$x\.year == 2021, \|\$x\.notional, \|\[\]\)->wavgRowMapper\(if\(\$x\.year == 2021, \|\$x\.pnl, \|\[\]\)\)/);
+    });
+
+    it('the Total is a column of the same query, on the configured aggregate', () => {
+      const out = serialize({ ...CUBE,
+        measures: [{ name: 'avg_n', column: 'notional', fn: 'average' }],
+        pivotTotal: { placement: 'right', functions: { notional: 'max' } } },
+      { level: 1, parent: [] }, VALUES);
+      assert.ok(out.includes(`${ident(pivotTotalColumn('avg_n'))}:x|$x.notional:y|$y->max()`), out);
+    });
+
+    it('drops a sort on a pivot column the values no longer make', () => {
+      const out = serialize({ ...CUBE,
+        sorts: [{ column: '2019__|__notional', direction: 'desc' },
+          { column: '2021__|__notional', direction: 'asc' }] },
+      { level: 1, parent: [] }, VALUES);
+      assert.equal(out.includes('2019'), false, out);
+      assert.match(out, /sort\(\[~'2021__\|__notional'->ascending\(\)/);
     });
   });
 
@@ -294,15 +287,17 @@ describe('serialize', () => {
         { name: 'country', type: 'String' },
         { name: 'year', type: 'Integer', kind: 'dimension' },
       ],
-    }));
-    assert.match(s, /~\[count:x\|/, 'the filler count is there');
+    }), undefined, YEARS);
+    assert.match(s, /'2023__\|__count':x\|if\(\$x\.year == 2023, \|1, \|\[\]\):y\|\$y->count\(\)/,
+      'the filler count is there');
   });
 
   it('maps count to the constant 1, not to a column', () => {
     const s = serialize(
       snap({ measures: [{ name: 'n', column: 'notional', fn: 'count' }] }),
     );
-    assert.match(s, /~\[n:x\|1:y\|\$y->count\(\)\]/);
+    // In a pivot cell, 1 on the value's rows and nothing elsewhere.
+    assert.match(s, /'2023__\|__n':x\|if\(\$x\.year == 2023, \|1, \|\[\]\):y\|\$y->count\(\)/);
     // 'notional' is not needed by count, so it must not be selected.
     assert.equal(s.includes('notional'), false);
   });
@@ -324,7 +319,7 @@ describe('serialize', () => {
     );
     assert.match(
       s,
-      /w:x\|\$x\.notional->wavgRowMapper\(\$x\.qty\):y\|\$y->wavg\(\)/,
+      /'2023__\|__w':x\|if\(\$x\.year == 2023, \|\$x\.notional, \|\[\]\)->wavgRowMapper\(if\(\$x\.year == 2023, \|\$x\.qty, \|\[\]\)\):y\|\$y->wavg\(\)/,
     );
     assert.match(s, /select\(~\[region, country, year, notional, qty\]\)/);
   });
@@ -340,7 +335,9 @@ describe('serialize', () => {
   });
 
   it('appends row dimensions to make the sort a total order', () => {
-    const s = snap({ sorts: [{ column: 'notional', direction: 'desc' }] });
+    // Unpivoted: a pivot consumes `notional`, and a sort on a column the
+    // query does not make is dropped (P2-6), not sent.
+    const s = snap({ pivotOn: [], sorts: [{ column: 'notional', direction: 'desc' }] });
     assert.deepEqual(totalOrderSorts(s), [
       { column: 'notional', direction: 'desc' },
       { column: 'region', direction: 'asc' },
@@ -385,11 +382,15 @@ describe('serialize', () => {
     );
   });
 
-  it('pins pivot values when deliberately narrowed', () => {
-    assert.match(
-      serialize(snap({ pivotValues: [2023, 2024] })),
-      /->pivot\(~\[year\], \[2023, 2024\], ~\[total:/,
-    );
+  it('pins pivot values when deliberately narrowed, WITHOUT filtering the source', () => {
+    const pinned = snap({ pivotValues: [2023, 2024] });
+    assert.equal(pivotValuesQuery(pinned), null, 'no values query: they are given');
+    const facts = pinnedPivotFacts(pinned);
+    assert.deepEqual(facts, YEARS);
+    const s = serialize(pinned, undefined, facts ?? undefined);
+    assert.match(s, /'2024__\|__total':x\|if\(\$x\.year == 2024,/);
+    // A group whose rows all fall outside the list keeps its Total.
+    assert.equal(/filter\(/.test(s), false, s);
   });
 });
 
@@ -397,11 +398,14 @@ describe('serialize with a level scope', () => {
   it('groups the grand total by nothing at all', () => {
     // level 0: every grouping column dropped, which is exactly what
     // makes the grand total the same expression as the detail.
-    const out = serialize(snap(), { level: 0, parent: [] });
+    const out = serialize(snap(), { level: 0, parent: [] }, YEARS);
     assert.equal(
       out,
-      '$trades->select(~[year, notional])' +
-        '->pivot(~[year], ~[total:x|$x.notional:y|$y->sum()])',
+      "$trades->select(~[year, notional, region, country, qty])->extend(~[__root__: x|'[ROOT]'])" +
+        "->groupBy(~[__root__], ~['2023__|__total':x|if($x.year == 2023, |$x.notional, |[]):y|$y->sum()," +
+        " '2024__|__total':x|if($x.year == 2024, |$x.notional, |[]):y|$y->sum()," +
+        ' region:x|$x.region:y|$y->uniqueValueOnly(), country:x|$x.country:y|$y->uniqueValueOnly(),' +
+        ' qty:x|$x.qty:y|$y->sum()])',
     );
     // A single row needs no ordering or slicing.
     assert.equal(out.includes('sort('), false);
@@ -409,18 +413,15 @@ describe('serialize with a level scope', () => {
   });
 
   it('groups the top level by the first dimension only', () => {
-    assert.equal(
-      serialize(snap(), { level: 1, parent: [] }),
-      '$trades->select(~[region, year, notional])' +
-        '->pivot(~[year], ~[total:x|$x.notional:y|$y->sum()])' +
-        '->sort([~region->ascending()])',
-    );
+    const out = serialize(snap(), { level: 1, parent: [] }, YEARS);
+    assert.match(out, /->groupBy\(~\[region\], ~\['2023__\|__total'/);
+    assert.match(out, /->sort\(\[~region->ascending\(\)\]\)$/);
   });
 
   it('pins the parent branch when expanding', () => {
-    const out = serialize(snap(), { level: 2, parent: ['EMEA'] });
+    const out = serialize(snap(), { level: 2, parent: ['EMEA'] }, YEARS);
     assert.match(out, /filter\(x\|\$x\.region == 'EMEA'\)/);
-    assert.match(out, /select\(~\[region, country, year, notional\]\)/);
+    assert.match(out, /->groupBy\(~\[region, country\]/);
   });
 
   it('ands the parent branch onto the user filter', () => {
@@ -451,11 +452,13 @@ describe('serialize with a level scope', () => {
     // 'country' does not exist in a level-1 result; naming it in the
     // ORDER BY would be a compile error at the engine.
     const out = serialize(snap(), { level: 1, parent: [] });
-    assert.equal(out.includes('country'), false);
+    // Carried beside the cells it may be; ordered by, never.
+    assert.equal(/sort\(\[[^\]]*country/.test(out), false, out);
   });
 
   it('keeps a measure sort while dropping a deeper dimension sort', () => {
     const s = snap({
+      pivotOn: [],
       sorts: [
         { column: 'total', direction: 'desc' },
         { column: 'country', direction: 'desc' },
@@ -483,18 +486,17 @@ describe('serialize with a level scope', () => {
     assert.equal(serialize(snap()), serialize(snap(), undefined));
   });
 
-  it('subtotal and detail differ only by a grouping column', () => {
-    // The property the whole design rests on: strip the level-2
-    // query of its second dimension and it IS the level-1 query.
+  it('a subtotal is the SAME cells over fewer keys', () => {
+    // The property the design rests on: a level's figures are the same
+    // aggregates as the level below, grouped by one key fewer -- never a
+    // second pass over the level below's results.
     const detail = serialize(snap(), { level: 2, parent: [] });
     const subtotal = serialize(snap(), { level: 1, parent: [] });
-    assert.equal(
-      detail
-        .replace('~[region, country, year, notional]', '~[region, year, notional]')
-        .replace('sort([~region->ascending(), ~country->ascending()])',
-                 'sort([~region->ascending()])'),
-      subtotal,
-    );
+    const cells = (q: string): string[] => q.match(/'20\d\d__\|__total':[^,]*,[^,]*,[^)]*\):y\|\$y->sum\(\)/g) ?? [];
+    assert.deepEqual(cells(detail), cells(subtotal));
+    assert.equal(cells(detail).length, 2);
+    assert.match(detail, /->groupBy\(~\[region, country\], /);
+    assert.match(subtotal, /->groupBy\(~\[region\], /);
   });
 });
 
@@ -1034,8 +1036,8 @@ describe('C3: a column pivot carries CALCULATED measures', () => {
     const q = serialize(snap({
       rows: [], measures: [],
       derived: [{ name: 'uplift', expression: '$x.notional * 1.1', kind: 'measure' }],
-    }));
-    assert.match(q, /pivot\(~\[year\], ~\[[^\]]*uplift:x\|\$x\.uplift:y\|\$y->sum\(\)/);
+    }), undefined, YEARS);
+    assert.match(q, /'2023__\|__uplift':x\|if\(\$x\.year == 2023, \|\$x\.uplift, \|\[\]\):y\|\$y->sum\(\)/);
   });
 });
 
@@ -1062,9 +1064,9 @@ describe('a Variant column', () => {
         expression: "$x.payload->get('sku')->to(@String)" }],
       rows: ['region'],
       pivotOn: ['sku'],
-    }));
+    }), undefined, { tuples: [['A1']] });
     assert.match(s, /extend\(~\[sku: x\|\$x\.payload->get\('sku'\)->to\(@String\)/);
-    assert.match(s, /pivot\(~\[sku\]/);
+    assert.match(s, /if\(\$x\.sku == 'A1'/);
   });
 
   it('can be filtered on its presence', () => {
@@ -1115,7 +1117,7 @@ describe('drilling into a JSON group', () => {
 
   it('opens the detail rows under a pivot with the same key', () => {
     const pivoted = { ...ORDERS, pivotOn: ['region'] };
-    const out = serialize(detailSnapshot(pivoted, [doc]));
+    const out = serialize(detailSnapshot(pivoted, [doc]), undefined, { tuples: [['EMEA']] });
     assert.ok(out.includes(`fromJson('${doc}')`), out);
   });
 

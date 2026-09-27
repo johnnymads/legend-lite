@@ -3,6 +3,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { JSDOM } from 'jsdom';
 
 import { CubeApp } from '../src/app.ts';
+import { pivotTotalColumn } from '../src/serialize.ts';
 import type { Planner } from '../src/cube.ts';
 import type { QueryEngine } from '../src/engine.ts';
 import type { ResultTable } from '../src/result.ts';
@@ -74,6 +75,13 @@ class CountingEngine implements QueryEngine {
   async close(): Promise<void> {}
 }
 
+/** A planner that hands the Pure on as the "SQL", for engines that read it. */
+class EchoPlanner implements Planner {
+  async plan(pureGrammar: string): Promise<string> {
+    return pureGrammar;
+  }
+}
+
 class StubPlanner implements Planner {
   readonly pure: string[] = [];
   async plan(pureGrammar: string): Promise<string> {
@@ -91,11 +99,24 @@ const PIVOTED: CubeSnapshot = {
 };
 
 /** An engine that answers in the shape a pivot produces. */
+/**
+ * A pivot's two steps, answered: the values query (with `EchoPlanner`
+ * the "SQL" is the Pure, so it can be told apart) gets the desks, and
+ * every level gets its cells.
+ */
 class PivotEngine implements QueryEngine {
   readonly name = 'pivot';
   readonly sql: string[] = [];
   async execute(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
+    if (sql.includes('distinct()')) {
+      return {
+        columns: [{ name: 'desk', type: 'String', values: ['A', 'B'] }],
+        rowCount: 2,
+        epoch,
+        elapsedMs: 1,
+      };
+    }
     return {
       columns: [
         { name: 'region', type: 'String', values: ['EMEA', 'AMER'] },
@@ -840,16 +861,9 @@ describe('the app', () => {
     dom.window.document.body.append(host);
     const pivoted = new CubeApp(host, PIVOTED, {
       engine: new PivotEngine(),
-      planner: new StubPlanner(),
+      planner: new EchoPlanner(),
     });
     await pivoted.open();
-    // The cast is only known once a result has come back, and
-    // learning it starts a SECOND query -- `#syncPivotCast` does not
-    // await it, so the first `open()` resolves before the pivot's
-    // own column names exist.
-    for (let i = 0; i < 5; i += 1) {
-      await new Promise((done) => setTimeout(done, 0));
-    }
     const rows = [...host.querySelectorAll('.dc-tool-panel-row')]
       .map((r) => ({
         column: (r as HTMLElement).dataset['column'],
@@ -859,9 +873,11 @@ describe('the app', () => {
           ?.disabled,
       }));
     const children = rows.filter((r) => r.child);
+    // The plan's columns: each value, then the measure's Total (the
+    // default configuration shows it; it is a column of the same query).
     assert.deepEqual(
       children.map((c) => [c.column, c.label]),
-      [['A__|__total', 'A'], ['B__|__total', 'B']],
+      [['A__|__total', 'A'], ['B__|__total', 'B'], [pivotTotalColumn('total'), 'Total']],
     );
     // And the pivot KEY is not in this list at all: its values ARE
     // the column headers, so it cannot also be a column. It is in
@@ -875,26 +891,25 @@ describe('the app', () => {
   });
 
   it('hiding a pivoted column does not take it out of the QUERY', async () => {
-    // Unticking `A__|__total` narrowed the next query's `cast(...)`,
-    // because the cast was read off the leaves the grid was SHOWING
-    // -- so the column left the data as well as the screen, and
-    // nothing could bring it back: the panel lists the cast.
+    // Unticking `A__|__total` once narrowed the next query (the cast was
+    // read off the leaves the grid was SHOWING), so the column left the
+    // data as well as the screen. The columns come from the values
+    // query now, whatever is hidden.
     const host = dom.window.document.createElement('div');
     dom.window.document.body.append(host);
+    const engine = new PivotEngine();
     const pivoted = new CubeApp(host, PIVOTED, {
-      engine: new PivotEngine(),
-      planner: new StubPlanner(),
+      engine,
+      planner: new EchoPlanner(),
       configuration: {
         ...DEFAULT_CONFIGURATION,
         columns: { 'A__|__total': { hidden: true } },
       },
     });
     await pivoted.open();
-    assert.deepEqual(
-      (pivoted.snapshot.pivotCast ?? []).map((c) => c.name),
-      ['A__|__total', 'B__|__total'],
-      'the hidden column fell out of the cast',
-    );
+    const level = engine.sql.find((s) => s.includes('groupBy(')) ?? '';
+    assert.match(level, /'A__\|__total'/, 'the hidden column is still asked for');
+    assert.match(level, /'B__\|__total'/);
     // Hidden on screen, all the same.
     const shown = [...host.querySelectorAll('.dc-th[data-column]')]
       .map((e) => (e as HTMLElement).dataset['column']);

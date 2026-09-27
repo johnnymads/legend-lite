@@ -73,6 +73,10 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **DataCube pivots as two plain queries LANDED (this commit)**, all inside
+  `datacube/` (design `DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md`): a warehouse reader's pivot now
+  runs live (`live_snap_test`'s refused list is empty). New test in `//...`:
+  `//datacube:pivot_rows_test` (~5 s). NOT building after the push.
 - 2026-09-27 warehouse: **DataCube pivots as two plain queries started** (design
   `DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md`, coming): a distinct query for the pivot values, then one
   `groupBy` with conditional aggregates per tree level; the Total is a column of that same query. Both

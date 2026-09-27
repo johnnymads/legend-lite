@@ -81,6 +81,7 @@ test_suite(
     name = "tests",
     tests = [t[len("test/"):-len(".test.ts")].replace("-", "_") + "_test" for t in _TESTS] + [
         ":typecheck_test",
+        ":pivot_rows_test",
         ":wasm_differential_test",
     ],
 )
@@ -209,6 +210,34 @@ js_test(
         "//wasm:planner",
     ],
     entry_point = "test/wasm-differential/compare.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--experimental-wasm-exnref",
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=./test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+)
+
+# PIVOTS JUDGED BY ROWS (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md): the real
+# app over the real WASM planner and DuckDB-WASM, every pivot cell compared with
+# a GROUP BY that does not pivot.
+js_test(
+    name = "pivot_rows_test",
+    size = "medium",
+    chdir = package_name(),
+    data = [
+        "test/pivot-rows/pivot-rows.ts",
+        "test/strict-reporter.mjs",
+        "test/wasm-differential/cases.ts",
+        ":node_modules/@duckdb/duckdb-wasm",
+        ":node_modules/jsdom",
+        ":src",
+        "//wasm:planner",
+    ],
+    entry_point = "test/pivot-rows/pivot-rows.ts",
     node_options = [
         "--experimental-strip-types",
         "--experimental-wasm-exnref",

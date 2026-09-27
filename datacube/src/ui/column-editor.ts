@@ -26,7 +26,7 @@ import {
 } from '../calc.ts';
 import type { Extraction } from '../json-shape.ts';
 import { buildJsonFields, freeName } from './json-fields.ts';
-import { ident } from '../serialize.ts';
+import { ident, type PivotColumn } from '../serialize.ts';
 import { docHint } from './docs.ts';
 import {
   WINDOW_FUNCTIONS,
@@ -69,6 +69,8 @@ export interface CompileOutcome {
 export interface ColumnEditorOptions {
   /** The cube as it is NOW: other windows change it under this one. */
   readonly snapshot: () => CubeSnapshot;
+  /** The pivot's columns as the current view's plan made them. */
+  readonly pivotColumns?: () => readonly PivotColumn[];
   readonly start: ColumnEditorStart;
   /** Compile without running; undefined where the plane cannot. */
   readonly compile: (
@@ -283,10 +285,13 @@ export class ColumnEditor {
     };
   }
 
+  #pivot(): readonly PivotColumn[] {
+    return this.#options.pivotColumns?.() ?? [];
+  }
+
   #nameProblem(): string | null {
     const s = this.#options.snapshot();
-    return nameProblem(s, this.#stage(), this.#draft.name,
-      ...(this.#original === undefined ? [] : [this.#original]) as [string?]);
+    return nameProblem(s, this.#stage(), this.#draft.name, this.#original, this.#pivot());
   }
 
   // -- the live compile ----------------------------------------------------
@@ -613,7 +618,7 @@ export class ColumnEditor {
     // The group level's figures: measures (or, with none, the columns
     // the groupBy aggregates) -- not the group keys, not other
     // calculated columns, which the child query does not compute.
-    const measures = columnsInScope(s, 'group', this.#original).map((x) => x.label)
+    const measures = columnsInScope(s, 'group', this.#original, this.#pivot()).map((x) => x.label)
       .filter((n) => !s.rows.includes(n) && !derivedNames.has(n));
     const pick = (label: string, cls: string, options: readonly (readonly [string, string])[],
       value: string, set: (v: string) => void): void => {
@@ -648,7 +653,8 @@ export class ColumnEditor {
     box.replaceChildren();
     const w = this.#draft.window;
     const stage = this.#stage();
-    const columns = columnsInScope(this.#options.snapshot(), stage, this.#original).map((c) => c.label);
+    const columns = columnsInScope(this.#options.snapshot(), stage, this.#original, this.#pivot())
+      .map((c) => c.label);
     const meta = WINDOW_FUNCTIONS.find((f) => f.fn === w.fn) ?? WINDOW_FUNCTIONS[0]!;
     const changed = (repaint = false): void => {
       if (repaint) this.#paintWindow(box);
@@ -812,7 +818,7 @@ export class ColumnEditor {
     picker.replaceChildren();
     // Scope is the cube WITHOUT this column: a column cannot see itself.
     const s = this.#options.snapshot();
-    const offered = completionsFor(s, this.#stage(), this.#original);
+    const offered = completionsFor(s, this.#stage(), this.#original, this.#pivot());
     const search = el(doc, 'input', 'dc-calc-search', picker) as HTMLInputElement;
     search.type = 'search';
     search.placeholder = `Insert — ${offered.length} in scope`;

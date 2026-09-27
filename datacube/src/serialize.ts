@@ -11,18 +11,20 @@
 //   select      select(~[NAME, deptName])
 //   extend      extend(~[deptName: __r|$__r.n1.NAME])
 //   groupBy     groupBy(~[grp], ~[total:x|$x.id:y|$y->count()])
-//   pivot       pivot(~[year], ~[total:x|$x.treePlanted:y|$y->plus()])
+//   distinct    select(~[year])->distinct()
+//   if          if($x.year == 2021, |$x.notional, |[])
 //   concatenate concatenate($b)
 //
-// The pivot's group-by columns are IMPLICIT: legend-lite documents them
-// as "source - pivot - aggregate-value columns", so selecting exactly
-// the columns we want is what sets the grouping. There is no separate
-// group-by argument to get wrong.
+// A PIVOT IS WRITTEN AS A GROUPBY (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md):
+// one conditional aggregate per value and measure -- the measure over
+// exactly the rows of that value -- beside the Total and every carried
+// column, in ONE groupBy over the level's keys. The values come first,
+// from their own query (`pivotValuesQuery`, run by plan.ts).
 
 import {
   CubeRefusal,
   LEAF_COUNT_COLUMN,
-  columnType,
+  PIVOT_TOTAL_KEY,
   isNumericType,
   isJsonValue,
   isVariantType,
@@ -43,6 +45,7 @@ import {
 } from './snapshot.ts';
 import type { RowPath } from './tree.ts';
 import { ROOT_COLUMN } from './grid/columns.ts';
+import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
 
 /** What the grand total's synthetic key holds. Upstream's value. */
 const ROOT_VALUE = '[ROOT]';
@@ -128,11 +131,19 @@ export function literal(v: FilterValue): string {
  * numeric column at all. `wavg` needs a weight column and is rejected
  * without one, rather than silently degrading to a plain average --
  * a wrong weighted average is worse than an error.
+ *
+ * `when`, for a PIVOT CELL: the map yields its value only on the rows
+ * of the cell's pivot value and nothing (`[]`) elsewhere, so the reduce
+ * sees exactly that value's rows -- `AVG(CASE WHEN year = 2021 THEN
+ * notional END)`. Every aggregate ignores the empties, so every one is
+ * right, the average and the median included.
  */
-function aggregateLambdas(m: Measure): { map: string; reduce: string } {
+function aggregateLambdas(m: Measure, when?: string): { map: string; reduce: string } {
+  const only = (value: string): string =>
+    when === undefined ? value : `if(${when}, |${value}, |[])`;
   switch (m.fn) {
     case 'count':
-      return { map: 'x|1', reduce: 'y|$y->count()' };
+      return { map: `x|${only('1')}`, reduce: 'y|$y->count()' };
     case 'wavg': {
       if (!m.weight) {
         throw new CubeRefusal(
@@ -149,34 +160,37 @@ function aggregateLambdas(m: Measure): { map: string; reduce: string } {
       // than a stub.
       //
       // wavgRowMapper pairs each value with its weight as the map
-      // result, so the reduce is a plain wavg() over the pairs.
+      // result, so the reduce is a plain wavg() over the pairs. In a
+      // pivot cell BOTH halves are conditional: the pair is (value,
+      // weight) on the cell's rows and (empty, empty) elsewhere, which
+      // both sums of the weighted average skip.
       return {
-        map: `x|${colRef('x', m.column)}->wavgRowMapper(${colRef('x', m.weight)})`,
+        map: `x|${only(colRef('x', m.column))}->wavgRowMapper(${only(colRef('x', m.weight))})`,
         reduce: `y|$y->wavg()`,
       };
     }
     case 'joinStrings':
       return {
-        map: `x|${colRef('x', m.column)}`,
+        map: `x|${only(colRef('x', m.column))}`,
         reduce: `y|$y->joinStrings(', ')`,
       };
     case 'unique':
       return {
-        map: `x|${colRef('x', m.column)}`,
+        map: `x|${only(colRef('x', m.column))}`,
         reduce: `y|$y->uniqueValueOnly()`,
       };
     default: {
       const fn: AggregateFn = m.fn;
       return {
-        map: `x|${colRef('x', m.column)}`,
+        map: `x|${only(colRef('x', m.column))}`,
         reduce: `y|$y->${fn}()`,
       };
     }
   }
 }
 
-function aggregateSpec(m: Measure): string {
-  const { map, reduce } = aggregateLambdas(m);
+function aggregateSpec(m: Measure, when?: string): string {
+  const { map, reduce } = aggregateLambdas(m, when);
   return `${ident(m.name)}:${map}:${reduce}`;
 }
 
@@ -521,6 +535,15 @@ function keyValue(type: string | undefined, value: string): FilterValue {
   // printed it -- so it matches as a document (DuckDB compares JSON as
   // text, and this is that text).
   if (isVariantType(type)) return { json: value };
+  // A NUMBER or a BOOLEAN key compares as one. As text it was
+  // `$x.year == '2021'`, which one engine casts and another refuses.
+  // Only when the text round-trips exactly: an integer past 2^53 stays
+  // text rather than becoming a neighbouring number.
+  if (isNumericType(type)) {
+    const n = Number(value);
+    return value.trim() !== '' && Number.isFinite(n) && String(n) === value ? n : value;
+  }
+  if (type === 'Boolean' && (value === 'true' || value === 'false')) return value === 'true';
   if (type === undefined || !TEMPORAL.has(type)) return value;
   const at = new Date(value);
   return Number.isNaN(at.getTime()) ? value : at;
@@ -580,7 +603,7 @@ export function detailSnapshot(s: CubeSnapshot, parent: RowPath): CubeSnapshot {
   const all = [...(s.filter ? [s.filter] : []), ...keys];
   const filter: FilterNode | undefined = all.length === 0 ? undefined
     : all.length === 1 ? all[0] : { kind: 'and', children: all };
-  const { filter: _old, pivotCast, ...rest } = s;
+  const { filter: _old, ...rest } = s;
   void _old;
   const visible = new Set([
     ...detailColumns(s),
@@ -597,13 +620,238 @@ export function detailSnapshot(s: CubeSnapshot, parent: RowPath): CubeSnapshot {
   const dims = rowColumns(s)
     .filter((c) => c.kind === 'dimension' && !isOn.has(c.name))
     .map((c) => c.name);
-  // WITHOUT the parent's cast. The pivot already groups by every
-  // dimension here, so the cast and outer groupBy added nothing -- and
-  // the cast named the WHOLE cube's pivot columns, so a group with no
-  // EMEA rows was cast to an `EMEA__|__total` its pivot never made:
-  // a binder error on opening it.
-  void pivotCast;
+  // The same pivot columns as every level above it: the cube's values,
+  // not the group's, so a group with no EMEA rows shows an empty EMEA
+  // column rather than a missing one.
   return { ...base, rows: dims };
+}
+
+// ---------------------------------------------------------------------------
+// THE PIVOT, as two plain queries (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md).
+//
+// Step 1 finds the values (`pivotValuesQuery`); step 2 is one groupBy per
+// level with a conditional aggregate per value and measure (`serialize`).
+// Both are ordinary Pure, planned by legend-lite with static types, so a
+// warehouse reader may run them and every engine answers the same SQL.
+// ---------------------------------------------------------------------------
+
+/** More value combinations than this is refused, not cut off. */
+export const MAX_PIVOT_VALUES = 500;
+
+/** The header text of a NULL pivot value's column. */
+export const EMPTY_PIVOT_LABEL = '(empty)';
+
+/**
+ * Step 1's answer: the value combinations present, in header order.
+ *
+ * Each value is a group-key text -- what a tree path holds, NULL_GROUP
+ * for a missing value -- so a pivot value and a group key become a
+ * literal by one rule (`keyValue`).
+ */
+export interface PivotFacts {
+  readonly tuples: readonly (readonly string[])[];
+}
+
+/**
+ * A column the pivot makes: a CELL (one value combination crossed with
+ * one measure) or a TOTAL (`tuple` null: the measure over every value).
+ *
+ * What a pivot column IS comes from here, never from parsing its name.
+ */
+export interface PivotColumn {
+  readonly name: string;
+  readonly measure: Measure;
+  readonly tuple: readonly string[] | null;
+}
+
+/** The name of one measure's pivot total column. */
+export function pivotTotalColumn(measure: string): string {
+  return `${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}${measure}`;
+}
+
+/** Whether a column is a pivot total (see `PivotTotal`). */
+export function isPivotTotalColumn(name: string): boolean {
+  return name.startsWith(`${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}`);
+}
+
+/** A pivot value as its column's header shows it. */
+export function pivotLabel(key: string): string {
+  return key === NULL_GROUP ? EMPTY_PIVOT_LABEL : key;
+}
+
+/** The pivot keys that pivot: those not excluded from the pivot. */
+export function effectivePivotOn(s: CubeSnapshot): string[] {
+  const excluded = excludedFromPivot(s);
+  return s.pivotOn.filter((c) => !excluded.has(c));
+}
+
+function excludedFromPivot(s: CubeSnapshot): Set<string> {
+  return new Set(rowColumns(s).filter((c) => c.excludedFromPivot).map((c) => c.name));
+}
+
+/**
+ * The measures a pivot spreads across its values.
+ *
+ * The configured ones, minus any whose column is excluded from the
+ * pivot (that setting did nothing on a cube with configured measures,
+ * P2-16). None configured: every measure-kind column that is neither a
+ * pivot key nor excluded, on its own aggregate -- upstream's
+ * `_pivotAggCols`. Nothing at all: a filler count, as upstream's
+ * `_fixEmptyAggCols`, because a pivot has to show something.
+ */
+export function spreadMeasures(s: CubeSnapshot): Measure[] {
+  const excluded = excludedFromPivot(s);
+  const on = effectivePivotOn(s);
+  if (s.measures.length > 0) {
+    const kept = s.measures.filter((m) => !excluded.has(m.column));
+    if (kept.length > 0) return kept;
+  } else {
+    const isOn = new Set(on);
+    const specOf = columnSpecs(s);
+    const synthesised = rowColumns(s)
+      .filter((c) => !isOn.has(c.name) && !excluded.has(c.name) && c.kind === 'measure')
+      .map((c) => defaultMeasure(c.name, specOf.get(c.name), 'sum'));
+    if (synthesised.length > 0) return synthesised;
+  }
+  return [{ name: 'count', column: on[0] ?? '', fn: 'count' }];
+}
+
+/**
+ * The columns a pivoted cube's queries make, in header order: each value
+ * combination's cells, measure by measure, then the Totals when the cube
+ * shows them. A deterministic function of the cube and step 1's answer,
+ * so the query and every reader of its result agree on it.
+ *
+ * A cell is named `value__|__measure` (upstream's spelling). A name that
+ * is already taken -- by a source column, or by a real value that reads
+ * like a NULL's "(empty)" -- gets a `~2` suffix: names are identifiers
+ * here, and nothing reads meaning out of them.
+ */
+export function pivotColumns(s: CubeSnapshot, facts: PivotFacts): PivotColumn[] {
+  const spread = spreadMeasures(s);
+  const taken = new Set([
+    ...detailColumns(s),
+    ...(s.groupDerived ?? []).map((d) => d.name),
+  ]);
+  const out: PivotColumn[] = [];
+  for (const tuple of facts.tuples) {
+    for (const measure of spread) {
+      const base = [...tuple.map(pivotLabel), measure.name].join(PIVOT_SEPARATOR);
+      let name = base;
+      for (let n = 2; taken.has(name); n++) name = `${base}~${n}`;
+      taken.add(name);
+      out.push({ name, measure, tuple });
+    }
+  }
+  const total = s.pivotTotal;
+  if (total) {
+    for (const measure of spread) {
+      const fn = total.functions?.[measure.column] ?? measure.fn;
+      const { weight: _w, ...rest } = measure;
+      const retargeted: Measure = fn === 'wavg' && measure.weight !== undefined
+        ? { ...rest, fn, weight: measure.weight }
+        : { ...rest, fn };
+      out.push({ name: pivotTotalColumn(measure.name), measure: retargeted, tuple: null });
+    }
+  }
+  return out;
+}
+
+/**
+ * STEP 1: the pivot's value combinations, as a query of their own.
+ *
+ * Over the cube's filter and its row-stage calculated columns, so the
+ * columns are the values present in what the cube shows -- but never a
+ * group's own keys, so every tree level has the same columns. Ordered
+ * by the database, each key in its configured direction, so a number
+ * sorts as a number. NULLs are values: a missing key gets a column.
+ * One more than the cap is asked for, so "too many" costs no count.
+ *
+ * Null when the cube does not pivot, or pins its values.
+ */
+export function pivotValuesQuery(s: CubeSnapshot): string | null {
+  const on = effectivePivotOn(s);
+  if (on.length === 0 || (s.pivotValues !== undefined && s.pivotValues.length > 0)) return null;
+  refuseUnpivotable(s);
+  const parts: string[] = [s.source.expression];
+  for (const d of s.derived) parts.push(derivedExtend(d));
+  if (s.filter) parts.push(`filter(x|${filterExpression(s.filter)})`);
+  parts.push(`select(~[${on.map(ident).join(', ')}])`);
+  parts.push('distinct()');
+  parts.push(sortClause(on.map((column) => ({
+    column, direction: s.pivotSort?.[column] === 'desc' ? 'desc' as const : 'asc' as const,
+  }))));
+  parts.push(`limit(${MAX_PIVOT_VALUES + 1})`);
+  return parts.join('->');
+}
+
+/**
+ * A pivot names a column after each distinct value, and a Variant's value
+ * is a whole JSON document: every column would be called
+ * `{"items": [...]}__|__qty`. The question is always about a value INSIDE
+ * the document, so say how to get it -- before either step runs.
+ */
+function refuseUnpivotable(s: CubeSnapshot): void {
+  const specOf = columnSpecs(s);
+  for (const name of effectivePivotOn(s)) {
+    if (isVariantType(specOf.get(name)?.type)) {
+      throw new CubeRefusal(
+        `cannot pivot on '${name}': it holds JSON. Pivot on a value `
+        + `extracted from it instead -- a calculated column such as `
+        + `${colRef('x', name)}->get('key')->to(@String)`,
+      );
+    }
+  }
+}
+
+/** Pinned values as step 1's answer (`pivotValues`, one key). */
+export function pinnedPivotFacts(s: CubeSnapshot): PivotFacts | null {
+  if (s.pivotValues === undefined || s.pivotValues.length === 0) return null;
+  const p = (n: number): string => String(n).padStart(2, '0');
+  // A date as `groupValue` writes a tree key: local components.
+  const key = (v: FilterValue): string => (v instanceof Date
+    ? `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`
+      + `T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
+    : isJsonValue(v) ? v.json
+      : isRelativeDate(v) ? v.relative : String(v));
+  return { tuples: s.pivotValues.map((v) => [key(v)]) };
+}
+
+/** The condition a pivot cell's rows meet: each key equal to its value. */
+function tupleCondition(s: CubeSnapshot, tuple: readonly string[]): string {
+  const conditions = memberConditions(s, effectivePivotOn(s), tuple);
+  return filterExpression(conditions.length === 1
+    ? conditions[0]!
+    : { kind: 'and', children: conditions });
+}
+
+/**
+ * The columns a grouped pivot carries BESIDE its cells, each on its own
+ * aggregate in the same groupBy (upstream's `pivotGroupByColumns`): the
+ * other dimensions take their unique value, the other measures their
+ * own aggregate. A configured measure excluded from the pivot is one of
+ * them, under its own name. Before, these came from a second query
+ * joined in by key; now they are columns of the level's own.
+ */
+function carriedMeasures(s: CubeSnapshot, groupCols: readonly string[]): Measure[] {
+  const excluded = excludedFromPivot(s);
+  const isKey = new Set([...groupCols, ...effectivePivotOn(s)]);
+  const spread = spreadMeasures(s);
+  const excludedConfigured = s.measures.filter((m) => excluded.has(m.column));
+  const handled = new Set([
+    ...spread.map((m) => m.column),
+    ...excludedConfigured.map((m) => m.column),
+  ]);
+  const specOf = columnSpecs(s);
+  const out: Measure[] = [...excludedConfigured];
+  for (const name of detailColumns(s)) {
+    if (isKey.has(name) || handled.has(name)) continue;
+    const spec = specOf.get(name);
+    const measure = spec?.kind === 'measure'
+      || (isNumericType(spec?.type) && spec?.kind === undefined);
+    out.push(defaultMeasure(name, spec, measure ? 'sum' : 'unique'));
+  }
+  return out;
 }
 
 /**
@@ -717,6 +965,8 @@ function isSingleRow(
 export function serialize(
   snapshot: CubeSnapshot,
   scope?: LevelScope,
+  /** Step 1's answer; required when the cube pivots (see plan.ts). */
+  pivot?: PivotFacts,
 ): string {
   const parts: string[] = [snapshot.source.expression];
   // Grouping columns for this level. With no scope the cube is flat
@@ -746,145 +996,20 @@ export function serialize(
     );
   }
 
-  // Selecting exactly the needed columns is what sets the pivot's
-  // implicit grouping, so this stage is load-bearing, not tidying.
-  // Dropping a row dimension here is precisely what turns the detail
-  // query into its subtotal.
-  // With row groups but NO measures, `referencedColumns` narrows to
-  // the keys alone -- and grouping then drops every other column,
-  // which is what made them vanish from the grid. DataCube keeps
-  // them: `_groupByAggCols` aggregates every SELECTED column that is
-  // not a group key. So the projection has to carry them.
+  // WHAT TO SELECT, which for a plain groupBy decides what it
+  // aggregates: `_groupByAggCols` aggregates every SELECTED column that
+  // is not a group key, so with row groups and no measures the
+  // projection keeps every column -- narrowing it to the keys made them
+  // vanish from the grid.
   // KEYS OR NONE. The grand total is a groupBy with no keys, and it
   // has to aggregate the same columns the levels below it do -- or
   // the total row sits blank under a column where every row beneath
   // it carries a figure, which reads as "no total for this" rather
   // than as a projection that dropped it.
-  const grouping = snapshot.pivotOn.length === 0
+  const on = effectivePivotOn(snapshot);
+  const pivoting = on.length > 0;
+  const grouping = !pivoting
     && (groupCols.length > 0 || snapshot.measures.length > 0 || grandTotal);
-  const pivoting = snapshot.pivotOn.length > 0;
-
-  /**
-   * The columns a measureless pivot will aggregate.
-   *
-   * Measure-kind only, which is what `_pivotAggCols` selects, and
-   * never a pivot key.
-   */
-  const measureLike = (): string[] => {
-    const isOn = new Set(snapshot.pivotOn);
-    // Row-stage calculated measures included: reading the source
-    // columns alone dropped them from every column pivot, silently.
-    return rowColumns(snapshot)
-      .filter((c) => !isOn.has(c.name) && !c.excludedFromPivot
-        && c.kind === 'measure')
-      .map((c) => c.name);
-  };
-
-  /**
-   * What to SELECT, which decides what a pivot groups by.
-   *
-   * A PIVOT TAKES ITS GROUPING FROM WHATEVER ELSE IS SELECTED. That
-   * makes this stage load-bearing rather than tidying, and it is
-   * where I broke a cube badly: to let a measureless pivot
-   * synthesise its aggregates I widened the projection to every
-   * column, which silently regrouped the cube BY every column.
-   *
-   * Grouped by region, desk and book, then pivoting year across the
-   * top, the query came out as `pivot(~[year], ~[notional:sum,
-   * pnl:sum])` over a projection of all twelve columns -- so the
-   * implicit grouping was one row per trade. The measures split
-   * across the years correctly and the row groups dissolved into a
-   * thousand detail rows, while the row zone still showed region,
-   * desk and book. The snapshot was right; the projection threw them
-   * away.
-   *
-   * So a measureless pivot projects the row dimensions, the pivot
-   * keys, and the synthesised measures -- and nothing else. A
-   * measureless GROUP BY still projects everything, because there
-   * `_groupByAggCols` aggregates every selected column and keeping
-   * them is the point.
-   */
-  /**
-   * Whether the outer groupBy can be written.
-   *
-   * Only with the pivot's own column names in hand, which arrive
-   * from a result rather than from the snapshot the user built.
-   */
-  // A cast learned for a DIFFERENT set of measures is stale: it names
-  // columns this pivot no longer makes (a measure since excluded) or
-  // lacks ones it does (one since included), and a cast naming a
-  // column the pivot did not produce is a binder error. So it is used
-  // only when its measures are exactly the ones being spread;
-  // otherwise the first stage runs alone and the app learns it again.
-  const castFits = (): boolean => {
-    const spread = new Set(snapshot.measures.length > 0
-      ? snapshot.measures.map((m) => m.name)
-      : measureLike());
-    const named = new Set((snapshot.pivotCast ?? []).map((c) => c.measure));
-    return spread.size === named.size && [...spread].every((m) => named.has(m));
-  };
-  const cast = pivoting && groupCols.length > 0 && castFits()
-    ? (snapshot.pivotCast ?? [])
-    : [];
-
-  /**
-   * Columns a pivoted cube carries THROUGH to the outer groupBy.
-   *
-   * DIMENSIONS only. A measure the pivot does not spread -- excluded
-   * from it, or simply not a configured measure -- cannot be carried:
-   * the pivot groups by everything it selects, so summing it
-   * afterwards adds up the DISTINCT (row, value) pairs rather than the
-   * rows. Its figure comes from the unpivoted query instead, joined by
-   * key beside the pivot total (`pivotTotalQuery`).
-   */
-  const carried = (): string[] => {
-    const isKey = new Set([...groupCols, ...snapshot.pivotOn]);
-    const isMeasure = new Set(snapshot.measures.length > 0
-      ? snapshot.measures.map((m) => m.column)
-      : measureLike());
-    const measureKind = new Set(rowColumns(snapshot)
-      .filter((c) => c.kind === 'measure').map((c) => c.name));
-    return detailColumns(snapshot)
-      .filter((n) => !isKey.has(n) && !isMeasure.has(n) && !measureKind.has(n));
-  };
-
-  const needed = cast.length > 0
-    // BOTH STAGES. The pivot spreads the measures and takes its
-    // grouping from everything else selected -- a fine-grained
-    // intermediate -- and the outer groupBy then collapses that to
-    // the row dimensions, giving every carried column its unique
-    // value. Grouping by a numeric is confined to that intermediate
-    // and never reaches the answer.
-    ? (() => {
-        const out = referencedColumns(snapshot, groupCols);
-        for (const name of [...(snapshot.measures.length === 0
-          ? measureLike() : []), ...carried()]) {
-          if (!out.includes(name)) out.push(name);
-        }
-        return out;
-      })()
-    : snapshot.measures.length === 0 && pivoting
-    ? (() => {
-        const out = referencedColumns(snapshot, groupCols);
-        for (const name of measureLike()) {
-          if (!out.includes(name)) out.push(name);
-        }
-        return out;
-      })()
-    : grouping
-      ? detailColumns(snapshot)
-      : referencedColumns(snapshot, groupCols);
-  if (needed.length > 0) {
-    parts.push(`select(~[${needed.map(ident).join(', ')}])`);
-  } else if (isDetail(snapshot)) {
-    // A DETAIL cube -- no grouping, no pivot, no measures -- is the
-    // plainest thing this product can show, and it referenced no
-    // columns at all, so nothing was projected and the bare relation
-    // came back. Naming them makes the query say what the CUBE
-    // declares rather than whatever the source happens to hold.
-    const all = detailColumns(snapshot);
-    if (all.length > 0) parts.push(`select(~[${all.map(ident).join(', ')}])`);
-  }
 
   /**
    * Every column that is not a group key, aggregated.
@@ -935,203 +1060,100 @@ export function serialize(
       : `count:x|${colRef('x', keys[0] ?? '')}:y|$y->count()`;
   }
 
-  const excludedFromPivot = new Set(
-    snapshot.columns.filter((c) => c.excludedFromPivot).map((c) => c.name),
-  );
-  const pivotOn = snapshot.pivotOn.filter((c) => !excludedFromPivot.has(c));
-
-  // A pivot names a column after each distinct value, and a Variant's
-  // value is a whole JSON document: the engine runs it, and every
-  // column comes back called `{"items": [...]}__|__qty`. The question
-  // is always about a value INSIDE the document, so say how to get it.
-  const specOfPivot = columnSpecs(snapshot);
-  for (const name of pivotOn) {
-    if (isVariantType(specOfPivot.get(name)?.type)) {
-      throw new CubeRefusal(
-        `cannot pivot on '${name}': it holds JSON. Pivot on a value `
-        + `extracted from it instead -- a calculated column such as `
-        + `${colRef('x', name)}->get('key')->to(@String)`,
-      );
-    }
-  }
-
-  /**
-   * What a PIVOT aggregates: the measures, and only the measures.
-   *
-   * `_pivotAggCols` takes every selected column whose kind is
-   * MEASURE, minus the pivot columns themselves and anything
-   * excluded from the pivot -- and its comment says why dimensions
-   * are left out where `groupBy` includes them: "pivot aggregation on
-   * dimension columns (e.g. unique values aggregator) are not
-   * helpful". It then passes the list through `_fixEmptyAggCols`, so
-   * a cube with no measures gets the filler count rather than a
-   * refusal.
-   *
-   * This replaced a refusal of mine. Pivoting a cube with no
-   * configured measure threw `CubeRefusal`, which was thrown from
-   * inside a floating refresh -- so the click produced an uncaught
-   * error, the grid kept the old view with no explanation, and
-   * `pivotOn` stayed set, so every later query threw the same thing.
-   * One click wedged the cube until a reload. Meanwhile the same
-   * cube grouped happily, because `groupedAggs` has always
-   * synthesised its aggregates. The inconsistency was mine, not
-   * DataCube's.
-   */
-  function pivotAggs(on: readonly string[], projected: readonly string[]):
-  string {
-    // A CONFIGURED measure is the explicit ask and always aggregates,
-    // whatever the projection holds. It has to come first and it has
-    // to come from `measures` rather than from the projected columns:
-    // a `count` does not need its source column, so that column is
-    // deliberately not selected, and reading the projection instead
-    // dropped the measure and substituted the filler -- which is
-    // exactly what the count test caught.
-    if (snapshot.measures.length > 0) {
-      return snapshot.measures.map(aggregateSpec).join(', ');
-    }
-    // None configured: synthesise, which is the part that was
-    // missing. Measures only -- `_pivotAggCols` excludes dimensions
-    // where `groupBy` includes them, because "pivot aggregation on
-    // dimension columns (e.g. unique values aggregator) are not
-    // helpful".
-    const isOn = new Set(on);
-    const specOf = columnSpecs(snapshot);
-    const specs: string[] = [];
-    for (const name of projected) {
-      if (isOn.has(name) || excludedFromPivot.has(name)) continue;
-      const spec = specOf.get(name);
-      // The same measure test the groupBy path uses: an explicit
-      // kind wins, and a bare number defaults to a measure.
-      const isMeasure = spec?.kind === 'measure'
-        || (isNumericType(spec?.type) && spec?.kind === undefined);
-      if (!isMeasure) continue;
-      specs.push(aggregateSpec(defaultMeasure(name, spec, 'sum')));
-    }
-    return specs.length > 0
-      ? specs.join(', ')
-      // `_fixEmptyAggCols`: a pivot must aggregate something.
-      : `count:x|${colRef('x', on[0] ?? '')}:y|$y->count()`;
-  }
-
-  if (pivotOn.length > 0) {
-    const aggs = pivotAggs(pivotOn, needed);
-    const on = pivotOn.map(ident).join(', ');
-    if (snapshot.pivotValues && snapshot.pivotValues.length > 0) {
-      // Pinning values also PRE-FILTERS the source, dropping groups
-      // whose keys all sit outside the list. Only ever for a cube the
-      // user deliberately narrowed -- never a scroll position.
-      const vs = snapshot.pivotValues.map(literal).join(', ');
-      parts.push(`pivot(~[${on}], [${vs}], ~[${aggs}])`);
-    } else {
-      parts.push(`pivot(~[${on}], ~[${aggs}])`);
-    }
-
-    // THE SECOND STAGE, when the pivot's columns are known.
-    //
-    // Without it a pivoted cube could only show the measures: every
-    // other column had to stay out of the projection, because
-    // anything projected becomes part of the pivot's own grouping and
-    // one row per trade is not a grouped cube. With it, the carried
-    // columns come back and take their unique value, which is what
-    // `_groupByAggCols` does for `pivotGroupByColumns` -- "these are
-    // the columns which are available for groupBy but not selected
-    // for groupBy operation, they would be aggregated as well".
-    if (cast.length > 0) {
-      const byMeasure = new Map(snapshot.measures.map((m) => [m.column, m]));
-
-      // THE CAST, which is what makes the groupBy below legal.
-      //
-      // A pivot's output columns do not exist in the relation's
-      // TYPE, only in its data, so naming one in a later stage is
-      // rejected outright: "relation has no column
-      // '2021__|__notional'". DataCubeQueryBuilder emits
-      // `cast(_castCols(pivot.castColumns))` between the two stages
-      // for exactly this reason, and the shape legend-lite parses is
-      // the structural relation annotation `@Relation<(col:Type,
-      // ...)>` (SpecParser: "Type annotations (C.7)").
-      //
-      // It declares the WHOLE post-pivot relation -- what the pivot
-      // preserved as well as what it produced -- because a cast
-      // states the type of the value it is applied to, not a
-      // difference from it. Upstream's `castColumns` likewise holds
-      // both, which is why `_groupByAggCols` can split them apart
-      // into pivot results and `pivotGroupByColumns`.
-      const aggregated = new Set([
-        ...snapshot.pivotOn,
-        ...(snapshot.measures.length > 0
-          ? snapshot.measures.map((m) => m.column)
-          : measureLike()),
-      ]);
-      const typeOf = (name: string): string =>
-        columnType(snapshot, name) ?? 'String';
-      const decls = [
-        ...needed.filter((n) => !aggregated.has(n))
-          .map((n) => `${ident(n)}:${typeOf(n)}`),
-        // A pivot result carries the type of the measure it
-        // aggregates, except a count, which is a number of rows.
-        ...cast.map((c) => `${ident(c.name)}:${
-          byMeasure.get(c.measure)?.fn === 'count'
-            ? 'Integer'
-            : typeOf(c.measure)}`),
-      ];
-      parts.push(`cast(@Relation<(${decls.join(', ')})>)`);
-
-      const outer: string[] = [];
-      const specOfMeasure = columnSpecs(snapshot);
-      for (const c of cast) {
-        const base = byMeasure.get(c.measure)
-          // A pivot result re-applies its measure's OWN aggregate, as
-          // upstream's `_groupByAggCols` does -- configured in Column
-          // Properties when there is no explicit measure.
-          ?? defaultMeasure(c.measure, specOfMeasure.get(c.measure), 'sum');
-        outer.push(aggregateSpec({
-          name: c.name,
-          column: c.name,
-          fn: base.fn,
-          ...(base.weight ? { weight: base.weight } : {}),
-        }));
-      }
-      // A carried dimension takes its OWN configured aggregate, as
-      // upstream's `_groupByAggCols` does; unique when none is set.
-      for (const name of carried()) {
-        outer.push(aggregateSpec(
-          defaultMeasure(name, specOfMeasure.get(name), 'unique')));
-      }
-      const by = groupCols.map(ident).join(', ');
-      parts.push(`groupBy(~[${by}], ~[${outer.join(', ')}])`);
-    }
-  } else if (snapshot.measures.length > 0 || groupCols.length > 0
-    || grandTotal) {
-    // No column dimension: an ordinary aggregation over the row
-    // dimensions. Needs an explicit groupBy, since there is no pivot
-    // to infer the grouping from.
-    //
-    // GROUP COLUMNS ALONE ARE ENOUGH. This used to require a measure,
-    // so dragging a column into the row zone on a cube with no
-    // measures emitted a plain select: the grid then showed one row
-    // per SOURCE row -- "AMER" repeated down the screen -- and the
-    // generated SQL had no GROUP BY in it at all. Grouping is what
-    // the user asked for; an empty aggregate list is a detail of what
-    // to show beside it, and `groupBy(~[region], ~[])` lowers to
-    // exactly `GROUP BY t0.region`.
-    // THE GRAND TOTAL IS A GROUP, NOT AN ABSENCE OF ONE.
-    //
-    // `groupBy(~[], ~[...])` is the obvious way to write "one group
-    // over everything" and the real engine crashes on it -- a
-    // NullPointerException out of the plan builder, not a refusal.
-    // Upstream never writes it either: `_extendRootAggregation`
-    // extends a constant column and groups by that, which is one
-    // group by construction. The column is machinery and the grid
-    // never shows it (`ROOT_COLUMN`).
+  /** One groupBy over this level's keys, or over the root constant. */
+  const groupByLevel = (aggs: string): void => {
     if (groupCols.length === 0) {
+      // THE GRAND TOTAL IS A GROUP, NOT AN ABSENCE OF ONE.
+      //
+      // `groupBy(~[], ~[...])` is the obvious way to write "one group
+      // over everything" and the real engine crashes on it -- a
+      // NullPointerException out of the plan builder, not a refusal.
+      // Upstream never writes it either: `_extendRootAggregation`
+      // extends a constant column and groups by that, which is one
+      // group by construction. The column is machinery and the grid
+      // never shows it (`ROOT_COLUMN`).
       parts.push(`extend(~[${ident(ROOT_COLUMN)}: x|${literal(ROOT_VALUE)}])`);
-      parts.push(
-        `groupBy(~[${ident(ROOT_COLUMN)}], ~[${
-          groupedAggs(groupCols, needed)}])`,
-      );
+      parts.push(`groupBy(~[${ident(ROOT_COLUMN)}], ~[${aggs}])`);
     } else {
-      const by = groupCols.map(ident).join(', ');
-      parts.push(`groupBy(~[${by}], ~[${groupedAggs(groupCols, needed)}])`);
+      parts.push(`groupBy(~[${groupCols.map(ident).join(', ')}], ~[${aggs}])`);
+    }
+  };
+
+  // What this level's query produces, for the sorts: a sort naming a
+  // column the level does not make (a pivot value the data no longer
+  // has) is dropped from the query rather than refused by the planner.
+  let produced: Set<string> | null = null;
+
+  if (pivoting) {
+    refuseUnpivotable(snapshot);
+    if (!pivot) {
+      throw new Error('a pivoted cube is written with its pivot values: '
+        + 'run pivotValuesQuery first (plan.ts)');
+    }
+    // THE PIVOT IS ONE GROUPBY. Each cell is its measure over exactly
+    // the rows of its value -- `AVG(CASE WHEN year = 2021 THEN notional
+    // END)` -- so every aggregate is right; the Total is the measure
+    // over all of the group's rows, a column of the same query; and the
+    // carried columns take their own aggregate beside them. Before
+    // 2026-09-27 this was pivot -> cast -> groupBy, which re-aggregated
+    // the pivot's finer partial results: an average of averages.
+    const columns = pivotColumns(snapshot, pivot);
+    const carried = snapshot.rows.length > 0 ? carriedMeasures(snapshot, groupCols) : [];
+    const reads: string[] = [];
+    const read = (name: string | undefined): void => {
+      if (name !== undefined && name !== '' && !reads.includes(name)) reads.push(name);
+    };
+    groupCols.forEach(read);
+    on.forEach(read);
+    for (const m of [...columns.map((c) => c.measure), ...carried]) {
+      if (m.fn !== 'count') read(m.column);
+      read(m.weight);
+    }
+    parts.push(`select(~[${reads.map(ident).join(', ')}])`);
+    const aggs = [
+      ...columns.map((c) => aggregateSpec({ ...c.measure, name: c.name },
+        c.tuple === null ? undefined : tupleCondition(snapshot, c.tuple))),
+      ...carried.map((m) => aggregateSpec(m)),
+      ...(snapshot.leafCount === true && groupCols.length > 0
+        ? [`${ident(LEAF_COUNT_COLUMN)}:x|1:y|$y->count()`] : []),
+    ];
+    groupByLevel(aggs.join(', '));
+    produced = new Set([
+      ...groupCols,
+      ...(groupCols.length === 0 ? [ROOT_COLUMN] : []),
+      ...columns.map((c) => c.name),
+      ...carried.map((m) => m.name),
+      ...(snapshot.groupDerived ?? []).map((d) => d.name),
+      LEAF_COUNT_COLUMN,
+    ]);
+  } else {
+    const needed = grouping
+      ? detailColumns(snapshot)
+      : referencedColumns(snapshot, groupCols);
+    if (needed.length > 0) {
+      parts.push(`select(~[${needed.map(ident).join(', ')}])`);
+    } else if (isDetail(snapshot)) {
+      // A DETAIL cube -- no grouping, no pivot, no measures -- is the
+      // plainest thing this product can show, and it referenced no
+      // columns at all, so nothing was projected and the bare relation
+      // came back. Naming them makes the query say what the CUBE
+      // declares rather than whatever the source happens to hold.
+      const all = detailColumns(snapshot);
+      if (all.length > 0) parts.push(`select(~[${all.map(ident).join(', ')}])`);
+    }
+    if (snapshot.measures.length > 0 || groupCols.length > 0 || grandTotal) {
+      // No column dimension: an ordinary aggregation over the row
+      // dimensions.
+      //
+      // GROUP COLUMNS ALONE ARE ENOUGH. This used to require a measure,
+      // so dragging a column into the row zone on a cube with no
+      // measures emitted a plain select: the grid then showed one row
+      // per SOURCE row -- "AMER" repeated down the screen -- and the
+      // generated SQL had no GROUP BY in it at all. Grouping is what
+      // the user asked for; an empty aggregate list is a detail of what
+      // to show beside it, and `groupBy(~[region], ~[])` lowers to
+      // exactly `GROUP BY t0.region`.
+      groupByLevel(groupedAggs(groupCols, needed));
     }
   }
 
@@ -1143,12 +1165,13 @@ export function serialize(
   // With no display order the level's keys order it; the grand total,
   // one row grouped by the root constant, orders by that.
   const shown = totalOrderSorts(snapshot, groupCols);
+  const rooted = (grouping || pivoting) && groupCols.length === 0;
   const keys: SortSpec[] = groupCols.length > 0
     ? groupCols.map((column) => ({ column, direction: 'asc' as const }))
-    : grouping ? [{ column: ROOT_COLUMN, direction: 'asc' as const }] : [];
+    : rooted ? [{ column: ROOT_COLUMN, direction: 'asc' as const }] : [];
   const levelWindow = {
     rows: snapshot.rows,
-    present: grouping && groupCols.length === 0 ? [ROOT_COLUMN] : groupCols,
+    present: rooted ? [ROOT_COLUMN] : groupCols,
     order: shown.length > 0 ? shown : keys,
   };
   // A child-group aggregate is not extended here: its figures come
@@ -1164,7 +1187,8 @@ export function serialize(
   // this guard silently dropped its sort AND its row cap. The
   // plainest possible grid was the one that honoured neither.
   if (!isSingleRow(snapshot, groupCols, grandTotal)) {
-    const sorts = totalOrderSorts(snapshot, groupCols);
+    const sorts = totalOrderSorts(snapshot, groupCols)
+      .filter((x) => produced === null || produced.has(x.column));
     if (sorts.length > 0) parts.push(sortClause(sorts));
 
     if (scope?.limit !== undefined) {
@@ -1181,30 +1205,6 @@ export function serialize(
   return parts.join('->');
 }
 
-/**
- * The PIVOT TOTAL for one level: the level's own query with the pivot
- * key dropped.
- *
- * A row's total is its measure over the row's whole slice -- every
- * value of the pivot at once -- which is exactly what the unpivoted
- * query for the same level computes. So it comes from the database and
- * is right for every aggregate: an average of the slice, not a sum of
- * the pivot's averages; a count of rows, not of cells.
- *
- * Each measure takes its own aggregate unless its column configures a
- * different one for the total (upstream's
- * `pivotStatisticColumnFunction`).
- *
- * The rows it must cover are the pivot query's rows, and the two
- * queries may order differently (a sort on a pivot column exists only
- * in one of them), so it is never capped: `keys`, when given, names
- * the groups to fetch instead -- the pivot level's own, for a level
- * that was truncated. Group-stage calculated columns and sorts are
- * dropped: they may name pivot columns this query does not produce,
- * and the result is joined by key, not by position.
- *
- * Returns null when the cube has no pivot or no total.
- */
 /**
  * The query for a level's CHILD-GROUP aggregates: each group's children
  * (one level deeper) with their figure, aggregated per group -- the
@@ -1232,9 +1232,9 @@ export function childAggregateQuery(
     return defaultMeasure(of, spec, numeric ? 'sum' : 'unique');
   };
   const {
-    pivotCast: _c, pivotValues: _v, pivotTotal: _t, window: _w, ...rest
+    pivotValues: _v, pivotTotal: _t, window: _w, ...rest
   } = snapshot;
-  void _c; void _v; void _t; void _w;
+  void _v; void _t; void _w;
   // ONLY what the figures need: the group keys and the columns the
   // measures read. The select decides what a groupBy aggregates, and
   // every other column would be aggregated for nothing.
@@ -1290,117 +1290,3 @@ export function childAggregateQuery(
   return { pure: `${children}->${regroup}`, columns: wanted.map((d) => d.name) };
 }
 
-export function pivotTotalQuery(
-  snapshot: CubeSnapshot,
-  scope: LevelScope | undefined,
-  keys?: readonly string[],
-): {
-  readonly pure: string;
-  /** Measures whose pivot TOTAL this query computes. */
-  readonly measures: readonly string[];
-  /** Measure columns the pivot does not spread, on their own aggregate. */
-  readonly carried: readonly string[];
-} | null {
-  const total = snapshot.pivotTotal;
-  if (snapshot.pivotOn.length === 0) return null;
-  const excluded = new Set(
-    snapshot.columns.filter((c) => c.excludedFromPivot).map((c) => c.name),
-  );
-  if (snapshot.pivotOn.every((c) => excluded.has(c))) return null;
-
-  const functions = total?.functions ?? {};
-  const retarget = (m: Measure): Measure => {
-    const fn = functions[m.column] ?? m.fn;
-    const { weight: _w, ...rest } = m;
-    return fn === 'wavg' && m.weight !== undefined
-      ? { ...rest, fn, weight: m.weight }
-      : { ...rest, fn };
-  };
-  // The same measures the pivot spreads: the configured ones, or the
-  // measure-kind columns the pivot synthesises when none are.
-  const isOn = new Set(snapshot.pivotOn);
-  const specOf = columnSpecs(snapshot);
-  const pivoted: Measure[] = snapshot.measures.length > 0
-    ? [...snapshot.measures]
-    : rowColumns(snapshot)
-      .filter((c) => !isOn.has(c.name) && !excluded.has(c.name)
-        && c.kind === 'measure')
-      .map((c) => defaultMeasure(c.name, specOf.get(c.name), 'sum'));
-  // Measure columns the pivot leaves alone: `carried` in `serialize`
-  // keeps them out of the pivot, and they are answered here.
-  const spread = new Set(pivoted.map((m) => m.column));
-  const carriedMeasures: Measure[] = rowColumns(snapshot)
-    .filter((c) => c.kind === 'measure' && !isOn.has(c.name)
-      && !spread.has(c.name) && !snapshot.rows.includes(c.name))
-    .map((c) => defaultMeasure(c.name, specOf.get(c.name), 'sum'));
-  const totals = total === undefined ? [] : pivoted;
-  if (totals.length === 0 && carriedMeasures.length === 0) return null;
-
-  const conditions: FilterNode[] = [];
-  if (snapshot.filter) conditions.push(snapshot.filter);
-  // Pinned pivot values pre-filter the pivot's source; the total must
-  // add up the same rows.
-  const on = snapshot.pivotOn[0];
-  if (snapshot.pivotValues && snapshot.pivotValues.length > 0
-    && snapshot.pivotOn.length === 1 && on !== undefined) {
-    conditions.push({
-      kind: 'or',
-      children: snapshot.pivotValues.map((value) => ({
-        kind: 'condition' as const, column: on, operator: 'equal' as const, value,
-      })),
-    });
-  }
-  const level = scope?.level ?? 0;
-  const groupColumn = level > 0 ? snapshot.rows[level - 1] : undefined;
-  if (keys !== undefined && groupColumn !== undefined) {
-    const typeOf = new Map(rowColumns(snapshot).map((c) => [c.name, c.type]));
-    conditions.push({
-      kind: 'or',
-      children: keys.map((key): FilterNode => (key === NULL_GROUP
-        ? { kind: 'condition', column: groupColumn, operator: 'isEmpty' }
-        : {
-            kind: 'condition',
-            column: groupColumn,
-            operator: 'equal',
-            value: keyValue(typeOf.get(groupColumn), key),
-          })),
-    });
-  }
-
-  const {
-    pivotValues: _v, pivotCast: _c, pivotTotal: _t, window: _win,
-    filter: _f, ...rest
-  } = snapshot;
-  // Only the group keys and what the measures read: every other source
-  // column would be aggregated for nothing (the grouped path keeps them
-  // because the grid shows them; the total shows only its measures).
-  // Filters and row-stage calculations run before the projection, so
-  // they still see every column.
-  const asked = [...totals.map(retarget), ...carriedMeasures];
-  const keep = new Set([
-    ...snapshot.rows,
-    ...asked.flatMap((m) => [m.column, ...(m.weight ? [m.weight] : [])]),
-  ]);
-  const unpivoted: CubeSnapshot = {
-    ...rest,
-    columns: snapshot.columns.filter((c) => keep.has(c.name)),
-    pivotOn: [],
-    measures: asked,
-    groupDerived: [],
-    sorts: [],
-    leafCount: false,
-    ...(conditions.length === 1
-      ? { filter: conditions[0]! }
-      : conditions.length > 1
-        ? { filter: { kind: 'and', children: conditions } }
-        : {}),
-  };
-  const levelScope = scope === undefined
-    ? undefined
-    : { level: scope.level, parent: scope.parent };
-  return {
-    pure: serialize(unpivoted, levelScope),
-    measures: totals.map((m) => m.name),
-    carried: carriedMeasures.map((m) => m.name),
-  };
-}

@@ -309,8 +309,8 @@ describe('Column Properties > Aggregation reaches the query', () => {
 
   it('in a column pivot', () => {
     const q = serialize(applyToSnapshot({ ...FLAT, rows: [], pivotOn: ['year'] },
-      withAgg('notional', 'max')));
-    assert.match(q, /pivot\(~\[year\], ~\[[^\]]*notional:x\|\$x\.notional:y\|\$y->max\(\)/);
+      withAgg('notional', 'max')), undefined, { tuples: [['2023']] });
+    assert.match(q, /'2023__\|__notional':x\|if\(\$x\.year == 2023, \|\$x\.notional, \|\[\]\):y\|\$y->max\(\)/);
   });
 
   it('a weighted average carries its weight column', () => {
@@ -363,7 +363,7 @@ describe('renaming a calculated column that is in use', () => {
       { kind: 'condition', column: 'big', operator: 'equal', value: true },
       { kind: 'condition', column: 'region', operator: 'equalColumn', rightColumn: 'big' },
     ] } },
-    pivotCast: [{ name: 'true__|__n', measure: 'big' }],
+    pivotSort: { big: 'desc' },
     epoch: 1,
   };
 
@@ -376,8 +376,8 @@ describe('renaming a calculated column that is in use', () => {
     assert.match(JSON.stringify(r.filter), /"column":"large"/);
     assert.match(JSON.stringify(r.filter), /"rightColumn":"large"/);
     assert.doesNotMatch(JSON.stringify(r.filter), /"big"/);
-    // A cast built on the old name is forgotten, to be learned again.
-    assert.equal(r.pivotCast, undefined);
+    // The pivot key's direction follows its column.
+    assert.deepEqual(r.pivotSort, { large: 'desc' });
   });
 
   it("moves the column's settings and its place in the order", () => {

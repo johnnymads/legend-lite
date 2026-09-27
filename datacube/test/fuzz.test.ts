@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { serialize } from '../src/serialize.ts';
+import { NULL_GROUP, effectivePivotOn, ident, pivotColumns, serialize, type PivotFacts } from '../src/serialize.ts';
 import { buildColumnModel, PIVOT_SEPARATOR } from '../src/grid/columns.ts';
 import {
   CubeRefusal,
@@ -162,13 +162,24 @@ const CASES = 400;
  * the invariant worth fuzzing: a random cube must never produce an
  * error the caller cannot classify.
  */
+/**
+ * A pivot's values come from its own query; the fuzz only writes text, so
+ * each key gets a value and a NULL -- both forms a cell's condition takes.
+ */
+function factsFor(s: CubeSnapshot): PivotFacts | undefined {
+  const on = effectivePivotOn(s);
+  return on.length === 0 ? undefined : { tuples: [on.map(() => 'v'), on.map(() => NULL_GROUP)] };
+}
+
 function trySerialize(
   s: CubeSnapshot,
   scope?: Parameters<typeof serialize>[1],
   seed?: number,
 ): string | null {
   try {
-    return serialize(s, scope);
+    // A pivot's values come from its own query; the fuzz only writes
+    // text, so each key gets a value and a NULL -- both condition forms.
+    return serialize(s, scope, factsFor(s));
   } catch (e) {
     if (e instanceof CubeRefusal) return null;
     assert.fail(
@@ -386,8 +397,12 @@ describe('fuzzing the model layer', () => {
       if (s.columns.some((c) => c.name.includes(PIVOT_SEPARATOR))) continue;
       const pure = trySerialize(s, undefined, seed);
       if (pure === null) continue;
+      // Only the pivot's OWN columns carry it, as the plan names them.
+      const facts = factsFor(s);
+      let rest = pure;
+      for (const c of facts ? pivotColumns(s, facts) : []) rest = rest.split(ident(c.name)).join('');
       assert.equal(
-        pure.includes(PIVOT_SEPARATOR),
+        rest.includes(PIVOT_SEPARATOR),
         false,
         `seed ${seed}: separator leaked into ${pure}`,
       );

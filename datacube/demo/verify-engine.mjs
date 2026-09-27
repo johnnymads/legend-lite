@@ -18,7 +18,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
-import { serialize } from '../src/serialize.ts';
+import { pivotValuesQuery, serialize } from '../src/serialize.ts';
 
 const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
   .replace(/\/$/, '');
@@ -83,13 +83,19 @@ try {
   process.exit(2);
 }
 
-for (const { name, snapshot, scope } of CASES) {
+const COMPILED = CASES.flatMap((c) => {
+  // A pivoted case is two queries: its values query compiles too.
+  const values = pivotValuesQuery(c.snapshot);
+  return values === null ? [c] : [{ ...c, name: `${c.name} (its values)`, values }, c];
+});
+
+for (const { name, snapshot, scope, pivot, values } of COMPILED) {
   if (ONLY && !name.toLowerCase().includes(ONLY.toLowerCase())) continue;
   let pure;
   try {
     // THE RUNTIME NAMED IN THE QUERY. Our planners take it
     // out-of-band; a relation query sent to the engine carries it.
-    pure = `${serialize(snapshot, scope)}->from(${RUNTIME})`;
+    pure = `${values ?? serialize(snapshot, scope, pivot)}->from(${RUNTIME})`;
   } catch (e) {
     results.push({ name, ok: false, where: 'our serialiser',
       detail: String(e.message ?? e).slice(0, 200) });

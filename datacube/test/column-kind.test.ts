@@ -65,10 +65,11 @@ describe('excludedFromPivot', () => {
         c.name === 'year' ? { ...c, excludedFromPivot: true } : c,
       ),
     };
+    // No values are needed: nothing pivots.
     const out = serialize(s);
-    assert.equal(out.includes('pivot('), false, 'no pivot stage remains');
+    assert.equal(out.includes('__|__'), false, 'no pivot cell remains');
     assert.match(out, /groupBy\(~\[region\]/, 'it falls back to a plain group');
-    assert.equal(out.includes('year'), false, 'and year is not selected');
+    assert.equal(/\$x\.year ==/.test(out), false, 'and nothing is split by year');
   });
 
   it('leaves other pivot dimensions alone', () => {
@@ -80,9 +81,9 @@ describe('excludedFromPivot', () => {
       ],
       pivotOn: ['year', 'qtr'],
     };
-    const out = serialize(s);
-    assert.match(out, /pivot\(~\[year\]/);
-    assert.equal(out.includes('qtr'), false);
+    const out = serialize(s, undefined, { tuples: [['2023']] });
+    assert.match(out, /if\(\$x\.year == 2023, /);
+    assert.equal(/\$x\.qtr ==/.test(out), false, 'qtr splits nothing');
   });
 });
 
@@ -94,7 +95,7 @@ describe('treeColumnSort', () => {
     assert.deepEqual(totalOrderSorts(s, ['region']), [
       { column: 'region', direction: 'desc' },
     ]);
-    assert.match(serialize(s), /sort\(\[~region->descending\(\)\]\)/);
+    assert.match(serialize(s, undefined, { tuples: [['2023']] }), /sort\(\[~region->descending\(\)\]\)/);
   });
 
   it('defaults to ascending', () => {

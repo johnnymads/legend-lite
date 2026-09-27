@@ -597,8 +597,14 @@ export function applyToSnapshot(
     ...withoutAggregate(d),
     ...aggregateOf(columnConfig(config, d.name)),
   }));
-  const { maxRows: _previousLimit, pivotTotal: _previousTotal, ...unlimited }
-    = snapshot;
+  const {
+    maxRows: _previousLimit, pivotTotal: _previousTotal, pivotSort: _previousSort, ...unlimited
+  } = snapshot;
+  // Horizontal Pivots > each key's direction: the order of its VALUES
+  // across the header, which the values query asks the database for.
+  const descending = Object.entries(config.columns)
+    .filter(([, c]) => c.pivotSortDirection === 'desc')
+    .map(([name]) => [name, 'desc' as const] as const);
   return {
     ...unlimited,
     ...(config.maxRows !== undefined ? { maxRows: config.maxRows } : {}),
@@ -610,6 +616,7 @@ export function applyToSnapshot(
     leafCount: config.showLeafCount && config.leafCountMode === 'leaves',
     childCount: config.showLeafCount && config.leafCountMode !== 'leaves',
     ...pivotTotalOf(config),
+    ...(descending.length > 0 ? { pivotSort: Object.fromEntries(descending) } : {}),
     columns,
     derived,
     treeColumnSort: config.treeColumnSort,
@@ -644,6 +651,9 @@ export function fromSnapshot(
     for (const [name, fn] of Object.entries(total.functions ?? {})) {
       config = withColumn(config, name, { pivotStatisticColumnFunction: fn });
     }
+  }
+  for (const [name, direction] of Object.entries(snapshot.pivotSort ?? {})) {
+    config = withColumn(config, name, { pivotSortDirection: direction });
   }
   for (const spec of snapshot.columns) {
     const patch: ColumnConfiguration = {

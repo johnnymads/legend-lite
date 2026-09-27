@@ -17,15 +17,13 @@ import {
   NULL_GROUP,
   childAggregateQuery,
   detailSnapshot,
-  pivotTotalQuery,
   serialize,
   type LevelScope,
+  type PivotFacts,
 } from './serialize.ts';
-import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
 import {
   LEAF_COUNT_COLUMN,
-  PIVOT_TOTAL_KEY,
   type CubeSnapshot,
 } from './snapshot.ts';
 import {
@@ -165,6 +163,8 @@ export async function fetchTree(
     readonly epoch: number;
     readonly assemble?: AssembleOptions;
     readonly maxRows?: number;
+    /** A pivoted cube's values (plan.ts): every level's pivot columns. */
+    readonly pivot?: PivotFacts;
     /**
      * Abort for work a newer interaction replaced. Levels are fetched
      * in SEQUENCE, so a burst that is already obsolete stops at the
@@ -196,15 +196,11 @@ export async function fetchTree(
       // data, which is cheaper than a second counting query.
       // Below the deepest group: its detail rows, from their own query.
       const detail = request.level > depth;
-      const target = detail
-        ? detailSnapshot(snapshot, request.parent)
-        : request.parent.length > 0
-          ? await withChildPivotCast(snapshot, request, deps)
-          : snapshot;
+      const target = detail ? detailSnapshot(snapshot, request.parent) : snapshot;
       const scoped = detail
         ? { level: target.rows.length, parent: [], limit: maxRows + 1 }
         : { ...request, limit: maxRows + 1 };
-      const grammar = serialize(target, scoped);
+      const grammar = serialize(target, scoped, deps.pivot);
       const { rows: full, sql } = await deps.runner.run(
         grammar, { ...target, epoch: deps.epoch }, scoped, deps.signal,
       );
@@ -212,9 +208,7 @@ export async function fetchTree(
       const capped = truncated ? takeRows(full, maxRows) : full;
       const levelDeps = { ...deps, snapshot: { ...snapshot, epoch: deps.epoch } };
       const table = detail ? capped : await withChildAggregates(
-        snapshot, request, await withPivotTotals(
-          snapshot, request, capped, pathsOf(request, capped, depth), truncated, levelDeps,
-        ), pathsOf(request, capped, depth), levelDeps,
+        snapshot, request, capped, pathsOf(request, capped, depth), levelDeps,
       );
       levels.set(requestKey(request), {
         request,
@@ -246,109 +240,6 @@ export async function fetchTree(
       .filter((d) => d.truncated)
       .map((d) => d.request),
   };
-}
-
-/**
- * The pivot columns ONE group's query actually produces.
- *
- * `pivotCast` is learnt from the top level, so it names every value
- * the pivot found across the whole cube. A group below it holds only
- * some of them -- a customer who never ordered in EMEA has no
- * `EMEA__|__total` -- and casting its pivot to a column it did not make
- * is a binder error, so the group could not be opened. The pivot stage
- * alone, filtered to the group and limited to no rows, says which
- * columns it makes; the cast keeps those. What the group lacks it
- * shows blank, as the grid does for any column a level does not carry.
- */
-async function withChildPivotCast(
-  snapshot: CubeSnapshot,
-  request: LevelRequest,
-  deps: { readonly runner: QueryRunner; readonly epoch: number;
-    readonly signal?: AbortSignal },
-): Promise<CubeSnapshot> {
-  const { pivotCast, ...bare } = snapshot;
-  if (snapshot.pivotOn.length === 0 || !pivotCast || pivotCast.length === 0) {
-    return snapshot;
-  }
-  const scope = { ...request, limit: 0 };
-  const { rows } = await deps.runner.run(serialize(bare, scope),
-    { ...bare, epoch: deps.epoch }, scope, deps.signal);
-  const made = new Set(rows.columns.map((c) => c.name));
-  return { ...snapshot, pivotCast: pivotCast.filter((c) => made.has(c.name)) };
-}
-
-/** The name of one measure's pivot total column. */
-export function pivotTotalColumn(measure: string): string {
-  return `${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}${measure}`;
-}
-
-/** Whether a column is a pivot total (see `PivotTotal`). */
-export function isPivotTotalColumn(name: string): boolean {
-  return name.startsWith(`${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}`);
-}
-
-/**
- * Add the PIVOT TOTAL columns to one level's result.
- *
- * A second query -- the level with the pivot key dropped, see
- * `pivotTotalQuery` -- joined back by GROUP KEY rather than by
- * position, since the two queries need not order alike. A row the
- * totals did not return gets null, never a neighbour's figure.
- *
- * `request` undefined is a flat cube: one pivoted row, one total row.
- */
-export async function withPivotTotals(
-  snapshot: CubeSnapshot,
-  request: LevelRequest | undefined,
-  table: ResultTable,
-  paths: readonly RowPath[],
-  truncated: boolean,
-  deps: {
-    readonly runner: QueryRunner;
-    readonly snapshot: CubeSnapshot;
-    readonly signal?: AbortSignal;
-  },
-): Promise<ResultTable> {
-  const level = request?.level ?? 0;
-  const keys = truncated && level > 0
-    ? paths.map((p) => p[p.length - 1] ?? NULL_GROUP)
-    : undefined;
-  const scope: LevelScope | undefined = request === undefined
-    ? undefined
-    : { level: request.level, parent: request.parent };
-  const query = pivotTotalQuery(snapshot, scope, keys);
-  if (query === null || table.rowCount === 0) return table;
-  const { rows: totals } = await deps.runner.run(
-    query.pure, deps.snapshot, scope, deps.signal,
-  );
-
-  // Where each of the level's rows finds its total.
-  const at: number[] = [];
-  if (level === 0) {
-    for (let i = 0; i < table.rowCount; i++) at.push(0);
-  } else {
-    const keyColumn = totals.columns[level - 1];
-    const byKey = new Map<string, number>();
-    keyColumn?.values.forEach((v, i) => {
-      byKey.set(pathKey([...(request?.parent ?? []), groupValue(v)]), i);
-    });
-    for (const p of paths) at.push(byKey.get(pathKey(p)) ?? -1);
-  }
-
-  const added: ResultColumn[] = [];
-  const join = (from: string, as: string): void => {
-    const source = totals.columns.find((c) => c.name === from);
-    if (!source) return;
-    added.push({
-      name: as,
-      type: source.type,
-      values: at.map((i) => (i < 0 ? null : (source.values[i] ?? null))),
-    });
-  };
-  for (const measure of query.measures) join(measure, pivotTotalColumn(measure));
-  // The measures the pivot does not spread, under their own names.
-  for (const measure of query.carried) join(measure, measure);
-  return { ...table, columns: [...table.columns, ...added] };
 }
 
 /**

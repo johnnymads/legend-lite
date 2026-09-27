@@ -298,6 +298,15 @@ export function buildColumnModel(
    * names, which the data can distort.
    */
   pivotArity?: number,
+  /**
+   * The pivot's own columns as header paths (values, then the measure),
+   * from the plan that made them (cube.ts `pivotHeaderPaths`). Given --
+   * even empty -- nothing is read out of a column's NAME: a pivot cell
+   * is exactly what the plan says, every other column is flat, and the
+   * values keep the database's order rather than a text sort of their
+   * labels. A source column that merely contains `__|__` stays flat.
+   */
+  pivotPaths?: ReadonlyMap<string, readonly string[]>,
 ): ColumnModel {
   // The tree column's header is deliberately blank: it holds a
   // different dimension at every level, so no single name is
@@ -334,7 +343,9 @@ export function buildColumnModel(
         ? [layout.pivotTotal?.label ?? 'Total', c.name.slice(totalPrefix.length)]
         : dimensions.includes(c.name)
           ? [c.name]
-          : splitPath(c.name, measures, pivotArity);
+          : pivotPaths !== undefined
+            ? (pivotPaths.get(c.name) ?? [c.name])
+            : splitPath(c.name, measures, pivotArity);
     return {
       index,
       name: c.name,
@@ -349,6 +360,24 @@ export function buildColumnModel(
   // The tree column is never hidden: without it a grouped cube has no
   // row labels at all.
   const hidden = new Set(layout.hidden ?? []);
+  // A PIVOT CELL IS ITS MEASURE'S. A setting made on `notional` --
+  // hidden, blurred, a width, a link -- holds for every `2021__|__notional`
+  // the pivot makes, unless the cell has its own; before, pivoting
+  // dropped them all, and blurred figures showed in the clear (P2-211).
+  const measureOf = (name: string): string | undefined => {
+    const path = pivotPaths?.get(name);
+    return path === undefined ? undefined : path[path.length - 1];
+  };
+  function own<T>(settings: Readonly<Record<string, T>>, name: string): T | undefined {
+    const direct = settings[name];
+    if (direct !== undefined) return direct;
+    const measure = measureOf(name);
+    return measure === undefined ? undefined : settings[measure];
+  }
+  const inSet = (set: ReadonlySet<string>, name: string): boolean => {
+    const measure = measureOf(name);
+    return set.has(name) || (measure !== undefined && set.has(measure));
+  };
   // A ROW DIMENSION IS SHOWN IN THE TREE, NOT TWICE.
   //
   // The query aggregates every column that is not the group key of
@@ -372,7 +401,7 @@ export function buildColumnModel(
     (l) => l.name === TREE_COLUMN
       // The grand total's synthetic key is machinery, not a column.
       || (l.name !== ROOT_COLUMN
-        && !hidden.has(l.name)
+        && !inSet(hidden, l.name)
         && !inTree.has(l.name)),
   );
 
@@ -473,7 +502,10 @@ export function buildColumnModel(
   // Only the pivoted leaves move, and only among the seats they already
   // hold, so each value block stays whole and the plain columns stay
   // where the order above put them.
-  const directions = layout.pivotDirections ?? [];
+  // With the plan's paths the values are ALREADY in order: the database
+  // sorted them, each key in its direction, as numbers where they are
+  // numbers (a month pivot read 1, 10, 11, 12, 2 under a text sort).
+  const directions = pivotPaths !== undefined ? [] : layout.pivotDirections ?? [];
   if (directions.length > 0) {
     const values = (l: LeafColumn): string[] => l.path.slice(0, -1);
     const seats = ordered.flatMap((l, i) => (pivoted(l) ? [i] : []));
@@ -542,9 +574,9 @@ export function buildColumnModel(
     // A width is clamped by its own bounds rather than applied raw,
     // so a saved width from a wider screen cannot squeeze a column
     // past the minimum that made it readable.
-    const raw = widths[l.name];
-    const lo = minWidths[l.name];
-    const hi = maxWidths[l.name];
+    const raw = own(widths, l.name);
+    const lo = own(minWidths, l.name);
+    const hi = own(maxWidths, l.name);
     let width = raw ?? lo ?? hi;
     if (width !== undefined) {
       if (lo !== undefined) width = Math.max(width, lo);
@@ -552,18 +584,17 @@ export function buildColumnModel(
     }
     const label = displayNames[l.name];
     const pin = pinned[l.name];
+    const link = own(links, l.name);
     return {
       ...l,
       ...(width !== undefined ? { width } : {}),
       ...(lo !== undefined ? { minWidth: lo } : {}),
       ...(hi !== undefined ? { maxWidth: hi } : {}),
-      ...(fixed.has(l.name) ? { fixed: true } : {}),
+      ...(inSet(fixed, l.name) ? { fixed: true } : {}),
       ...(pin ? { pinned: pin } : {}),
       ...(label !== undefined ? { label } : {}),
-      ...(blurred.has(l.name) ? { blurred: true } : {}),
-      ...(links[l.name] !== undefined
-        ? { linkLabelParameter: links[l.name] }
-        : {}),
+      ...(inSet(blurred, l.name) ? { blurred: true } : {}),
+      ...(link !== undefined ? { linkLabelParameter: link } : {}),
     };
   });
 

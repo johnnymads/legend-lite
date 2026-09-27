@@ -636,11 +636,9 @@ describe('opening a group under a column pivot', () => {
     measures: [],
     sorts: [],
     epoch: 1,
-    pivotCast: [
-      { name: 'AMER__|__total', measure: 'total' },
-      { name: 'EMEA__|__total', measure: 'total' },
-    ],
   };
+  /** The values query's answer for this cube: both regions. */
+  const VALUES = { tuples: [['AMER'], ['EMEA']] };
 
   /**
    * One group, Acme in segment S, who only ever ordered in AMER --
@@ -661,30 +659,30 @@ describe('opening a group under a column pivot', () => {
     };
   }
 
-  it('opens the detail rows without the parent\'s cast', async () => {
+  it('opens the detail rows with the cube\'s pivot columns, in one groupBy', async () => {
     const sent: string[] = [];
     await fetchTree(PIVOTED, TreeState.empty().expand(['Acme']), {
-      runner: runner(sent), guard: new EpochGuard(), epoch: 0,
+      runner: runner(sent), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
     });
     const detail = sent.find((q) => q.includes("$x.customer == 'Acme'"));
     assert.ok(detail, sent.join(' | '));
-    assert.doesNotMatch(detail!, /cast\(/, detail);
-    assert.doesNotMatch(detail!, /EMEA/, detail);
+    assert.doesNotMatch(detail!, /cast\(|pivot\(/, detail);
+    // A group with no EMEA rows still has the EMEA column: empty, not
+    // missing, so the columns do not shift between groups.
+    assert.match(detail!, /'EMEA__\|__total'/, detail);
   });
 
-  it('casts a child level to the pivot columns that group makes', async () => {
+  it('a child level asks for the SAME pivot columns as its parent, with no probe', async () => {
     const sent: string[] = [];
     const twoLevels = { ...PIVOTED, rows: ['segment', 'customer'] };
     await fetchTree(twoLevels, TreeState.empty().expand(['S']), {
-      runner: runner(sent), guard: new EpochGuard(), epoch: 0,
+      runner: runner(sent), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
     });
     const child = sent.filter((q) => q.includes("$x.segment == 'S'"));
-    // First the probe -- the pivot alone, no rows -- then the level.
-    assert.ok(child.some((q) => /limit\(0\)/.test(q) && !/cast\(/.test(q)),
-      child.join(' | '));
-    const level = child.find((q) => /cast\(/.test(q));
-    assert.ok(level, child.join(' | '));
-    assert.match(level!, /'AMER__\|__total'/);
-    assert.doesNotMatch(level!, /EMEA/, level);
+    assert.equal(child.some((q) => /limit\(0\)/.test(q)), false, child.join(' | '));
+    assert.equal(child.length, 1, child.join(' | '));
+    assert.match(child[0]!, /'AMER__\|__total'/);
+    assert.match(child[0]!, /'EMEA__\|__total'/);
+    assert.match(child[0]!, /if\(\$x\.region == 'AMER'/);
   });
 });

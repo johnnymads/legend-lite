@@ -555,32 +555,21 @@ export interface CubeSnapshot {
   /** Column dimensions. Empty means a flat (non-pivoted) result. */
   readonly pivotOn: readonly string[];
   /**
-   * Escape hatch, normally absent. Supplying values pins the pivot's
-   * output columns -- but legend-lite then PRE-FILTERS the source to
-   * those values for engine parity, which drops row groups whose keys
-   * all fall outside the list. Measured: four groups became one across
-   * adjacent windows. So this must never be driven from a scroll
-   * position; it is only for a deliberately narrowed cube.
-   * See bench/model/windowinvariant.py.
+   * Escape hatch, normally absent: the pivot's values, pinned. They
+   * replace the query that finds them (plan.ts), so the columns stay
+   * put whatever the data holds; a pinned value the data lacks is an
+   * empty column. They do NOT filter the source: a group whose rows
+   * all fall outside the list keeps its Total (before 2026-09-27 they
+   * pre-filtered, and four groups became one across adjacent windows).
    */
   readonly pivotValues?: readonly FilterValue[];
   /**
-   * The columns a pivot PRODUCED, learnt from a result.
-   *
-   * A pivot spreads each measure across the values it finds, and
-   * those column names (`2021__|__notional`) do not exist until it
-   * has run. An outer `groupBy` has to name every aggregate it
-   * keeps, so a cube that is both grouped and pivoted cannot be
-   * written in one pass: the first query supplies the names and the
-   * second uses them. This is the same device as DataCube's
-   * `pivot.castColumns`.
-   *
-   * Each entry carries the MEASURE it came from, so the aggregate
-   * can be the one that measure is configured with -- and so nothing
-   * here has to know how a pivot name is spelled.
+   * Pivot keys whose VALUES run descending across the header (upstream's
+   * `pivotSortDirection`). Absent or missing a key: ascending. The
+   * database orders them, in the query that finds them, so a number
+   * sorts as a number and text by the engine's own collation.
    */
-  readonly pivotCast?: readonly { readonly name: string;
-    readonly measure: string }[];
+  readonly pivotSort?: Readonly<Record<string, 'asc' | 'desc'>>;
   /** The pivot total column; absent means none. See `PivotTotal`. */
   readonly pivotTotal?: PivotTotal;
   /**
@@ -795,14 +784,11 @@ export function renameColumnReferences(
         return { ...node, child: inFilter(node.child) };
     }
   };
-  const { pivotCast, ...rest } = s;
-  // A cast built on the old name describes a relation that no longer
-  // exists; dropping it makes the pivot learn its columns again.
-  const keepCast = pivotCast !== undefined
-    && !pivotCast.some((c) => c.measure === from);
   return {
-    ...rest,
-    ...(keepCast ? { pivotCast } : {}),
+    ...s,
+    ...(s.pivotSort !== undefined
+      ? { pivotSort: Object.fromEntries(Object.entries(s.pivotSort).map(([k, v]) => [one(k), v])) }
+      : {}),
     rows: s.rows.map(one),
     pivotOn: s.pivotOn.map(one),
     sorts: s.sorts.map((x) => ({ ...x, column: one(x.column) })),

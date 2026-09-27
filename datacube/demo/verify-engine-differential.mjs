@@ -47,7 +47,7 @@ import { readFile } from 'node:fs/promises';
 
 import { DuckDbEngine } from '../src/duckdb.ts';
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
-import { serialize } from '../src/serialize.ts';
+import { serializeWithValues } from '../src/plan.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
 import { casesFor } from './engine-cases.mjs';
 
@@ -269,7 +269,8 @@ for (let i = 0; i < localCases.length; i += 1) {
 
   let localRows;
   try {
-    const sql = await local.planner.plan(serialize(ls, scope), ls, scope);
+    const run = async (pure) => local.engine.execute(await local.planner.plan(pure, ls), ls.epoch);
+    const sql = await local.planner.plan(await serializeWithValues(ls, scope, run), ls, scope);
     localRows = normalise(await local.engine.execute(sql, ls.epoch));
   } catch (e) {
     skipped.push({ name, where: 'the local plane',
@@ -279,7 +280,9 @@ for (let i = 0; i < localCases.length; i += 1) {
 
   let engineRows;
   try {
-    const out = await executor.execute(serialize(es, scope), es, scope);
+    const pure = await serializeWithValues(es, scope,
+      async (values) => (await executor.execute(values, es)).rows);
+    const out = await executor.execute(pure, es, scope);
     engineRows = normalise(out.rows);
   } catch (e) {
     differed.push({ name, detail: `the engine REFUSED it: `

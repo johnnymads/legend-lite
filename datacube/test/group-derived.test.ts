@@ -120,13 +120,14 @@ describe('serialize places each stage correctly', () => {
     assert.ok(groupAt < extendAt, 'group extend follows the grouping');
   });
 
-  it('places it after a PIVOT too, not just a groupBy', () => {
+  it('places it after a PIVOT too (the pivot is a groupBy now)', () => {
     const out = serialize({
       ...BASE,
       pivotOn: ['region'],
       groupDerived: [{ name: 'margin', expression: '$x.profit' }],
-    });
-    assert.ok(out.indexOf('pivot(') < out.indexOf('extend(~[margin'));
+    }, undefined, { tuples: [['EMEA']] });
+    assert.ok(out.indexOf("if($x.region == 'EMEA'") >= 0, out);
+    assert.ok(out.indexOf('groupBy(') < out.indexOf('extend(~[margin'));
   });
 
   it('emits both stages in one pipeline, in order', () => {

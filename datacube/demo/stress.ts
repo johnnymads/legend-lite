@@ -20,7 +20,8 @@
 import * as duckdb from '@duckdb/duckdb-wasm';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
-import { serialize, type LevelScope } from '../src/serialize.ts';
+import { serializeWithValues } from '../src/plan.ts';
+import type { LevelScope } from '../src/serialize.ts';
 import type {
   AggregateFn, CubeSnapshot, FilterNode, FilterOperator,
 } from '../src/snapshot.ts';
@@ -96,7 +97,10 @@ async function attempt(
   let pure = '';
   let sql = '';
   try {
-    pure = serialize(snapshot, scope);
+    // A pivot is two queries: its values first (src/plan.ts), on the
+    // same planner and engine as the level.
+    pure = await serializeWithValues(snapshot, scope, async (values) =>
+      deps.engine.execute(await deps.planner.plan(values, snapshot), snapshot.epoch));
   } catch (e) {
     // The serialiser refusing is still a refusal, not a crash: it
     // declines shapes the cube cannot express.

@@ -13,7 +13,24 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { serialize } from '../src/serialize.ts';
+import { NULL_GROUP, pivotValuesQuery, serialize } from '../src/serialize.ts';
+
+/**
+ * A pivoted shape's values, for a harness that only PLANS: one typed
+ * value per key and a NULL, which is every form a cell's condition takes
+ * (an equality of the key's type, and isEmpty). The values query itself
+ * is planned too (`planned` below).
+ */
+const SAMPLE = {
+  String: 'a', Integer: '1', Float: '1.5', Decimal: '1.5', Number: '1',
+  Boolean: 'true', StrictDate: '2021-01-02T00:00:00', Date: '2021-01-02T00:00:00',
+  DateTime: '2021-01-02T03:04:05',
+};
+function sampled(snap) {
+  if ((snap.pivotOn ?? []).length === 0) return undefined;
+  const types = new Map([...snap.columns, ...(snap.derived ?? [])].map((c) => [c.name, c.type]));
+  return { tuples: [snap.pivotOn.map((k) => SAMPLE[types.get(k)] ?? 'a'), snap.pivotOn.map(() => NULL_GROUP)] };
+}
 import { buildColumnModel } from '../src/grid/columns.ts';
 import { CubeRefusal } from '../src/snapshot.ts';
 
@@ -227,13 +244,18 @@ console.log('--- shapes ---');
 for (const [name, snap] of cases) {
   let pure;
   try {
-    pure = serialize(snap, { level: Math.max(1, snap.rows.length), parent: [], limit: 50 });
+    pure = serialize(snap, { level: Math.max(1, snap.rows.length), parent: [], limit: 50 }, sampled(snap));
   } catch (e) {
     check(name, e instanceof CubeRefusal, `refused: ${e.message}`);
     continue;
   }
   const { sql, error } = await plan(pure);
   check(name, Boolean(sql), error ?? pure.slice(0, 110));
+  const values = pivotValuesQuery(snap);
+  if (values !== null) {
+    const found = await plan(values);
+    check(`${name}: its values query`, Boolean(found.sql), found.error ?? values.slice(0, 110));
+  }
 }
 
 // -- every LEVEL of a deep cube, which is what the tree actually asks
@@ -246,7 +268,7 @@ const deep = {
 };
 for (let level = 0; level <= deep.rows.length; level++) {
   const parent = ['a', 'b', 'c', 'd'].slice(0, Math.max(0, level - 1));
-  const pure = serialize(deep, { level, parent, limit: 50 });
+  const pure = serialize(deep, { level, parent, limit: 50 }, sampled(deep));
   const { sql, error } = await plan(pure);
   check(`level ${level} of ${deep.rows.length}`, Boolean(sql), error ?? '');
 }
@@ -256,7 +278,7 @@ console.log('\n--- wide ---');
 for (const n of [1, 10, 40]) {
   const measures = Array.from({ length: n }, (_, i) => sum(`m${i}`, 'n_float'));
   const wide = { ...base, rows: ['plain'], pivotOn: ['flag'], measures };
-  const pure = serialize(wide, { level: 1, parent: [], limit: 50 });
+  const pure = serialize(wide, { level: 1, parent: [], limit: 50 }, sampled(wide));
   const { sql, error } = await plan(pure);
   check(`${n} measures under a pivot`, Boolean(sql), error ?? `${sql?.length} chars of SQL`);
 }
@@ -310,7 +332,7 @@ console.log('\n--- scale ---');
         level: Math.max(1, snap.rows.length),
         parent: [],
         limit: 50,
-      });
+      }, sampled(snap));
     } catch (e) {
       check(name, e instanceof CubeRefusal, `refused: ${e.message}`);
       continue;

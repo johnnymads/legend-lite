@@ -13,9 +13,9 @@
 //   - the rows are unique on (book, year, qtr), the key every order-sensitive
 //     window in the corpus orders through, so no answer depends on how an
 //     engine orders ties;
-//   - the pivots are REFUSED live (a reader's SQL must be one SELECT; a dynamic
-//     PIVOT is not) and answer when snapped. They are named below, so a new
-//     refusal fails this test rather than passing unnoticed.
+//   - the pivots answer live too: each is two single SELECTs (its values, then
+//     one groupBy), which a reader may run. None is refused; a new refusal
+//     fails this test rather than passing unnoticed.
 //
 // Plus the source path a person takes: the catalog lists what the reader may
 // read, inferModel turns it into a model, and a query over it agrees on both
@@ -44,8 +44,8 @@ const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
 const SOURCE = '#>{trades::DB.TRADES}#';
 const COLUMNS = ['region', 'desk', 'book', 'year', 'qtr', 'notional', 'pnl', 'qty'];
 
-/** The cases a READER cannot run live: dynamic pivots (the static form is owed). */
-const REFUSED_LIVE = ['pivot', 'pivot-two-measures', 'tree-detail-pivot', 'window-row-under-pivot'];
+/** The cases a READER cannot run live: none (they were the dynamic pivots). */
+const REFUSED_LIVE: string[] = [];
 
 // Unique on (book, year, qtr); NULLs in the measures and in a dimension.
 const ROWS = `

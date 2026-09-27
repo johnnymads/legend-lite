@@ -1,7 +1,9 @@
 // The pivot total column: upstream stores its settings and draws
-// nothing, which the user ruled a bug (2026-09-25). These pin the three
-// halves that make it real -- the query that computes it, the join that
-// puts it beside the pivot, and where its header sits.
+// nothing, which the user ruled a bug (2026-09-25). It is a column of the
+// level's own query now -- the measure over all of the group's rows, in
+// the same groupBy as the cells (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md)
+// -- so these pin that query, where its header sits, and its settings.
+// The figures themselves are judged by rows in //datacube:pivot_rows_test.
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -15,14 +17,14 @@ import {
 } from '../src/config.ts';
 import { buildColumnModel } from '../src/grid/columns.ts';
 import type { ResultTable } from '../src/result.ts';
-import type { QueryRunner } from '../src/runner.ts';
-import { NULL_GROUP, pivotTotalQuery } from '../src/serialize.ts';
-import type { CubeSnapshot } from '../src/snapshot.ts';
 import {
   isPivotTotalColumn,
+  pivotColumns,
   pivotTotalColumn,
-  withPivotTotals,
-} from '../src/treeview.ts';
+  serialize,
+  type PivotFacts,
+} from '../src/serialize.ts';
+import type { CubeSnapshot } from '../src/snapshot.ts';
 
 const CUBE: CubeSnapshot = {
   source: { expression: '#>{db.trades}#' },
@@ -40,6 +42,7 @@ const CUBE: CubeSnapshot = {
   pivotTotal: { placement: 'right' },
   epoch: 1,
 };
+const YEARS: PivotFacts = { tuples: [['2021'], ['2022']] };
 
 function table(columns: { name: string; values: (string | number | null)[] }[]):
 ResultTable {
@@ -51,110 +54,39 @@ ResultTable {
   };
 }
 
-describe('the pivot total query', () => {
-  it('is the level with the pivot key dropped, each measure on its own aggregate', () => {
-    const q = pivotTotalQuery(CUBE, { level: 1, parent: [] });
-    assert.ok(q);
-    assert.deepEqual(q.measures, ['notional', 'price']);
-    assert.doesNotMatch(q.pure, /pivot\(/);
-    assert.match(q.pure, /groupBy\(~\[region\]/);
-    assert.match(q.pure, /notional:x\|\$x\.notional:y\|\$y->sum\(\)/);
+describe('the pivot total, a column of the level\'s own query', () => {
+  it('is each measure over ALL of the group\'s rows, on its own aggregate', () => {
+    const q = serialize(CUBE, { level: 1, parent: [] }, YEARS);
+    // No condition: every value's rows, the NULL year's included.
+    assert.ok(q.includes(`'${pivotTotalColumn('notional')}':x|$x.notional:y|$y->sum()`), q);
     // An average's total is the average of the slice, from the database.
-    assert.match(q.pure, /price:x\|\$x\.price:y\|\$y->average\(\)/);
-    // A sort on a pivot column names a column this query does not have.
-    assert.doesNotMatch(q.pure, /2021__\|__notional/);
-    // Only the keys and the measures: the pivot key is not aggregated.
-    assert.doesNotMatch(q.pure, /year:x/);
+    assert.ok(q.includes(`'${pivotTotalColumn('price')}':x|$x.price:y|$y->average()`), q);
+    // One query: no second groupBy, no join in JavaScript.
+    assert.equal(q.split('groupBy(').length, 2);
   });
 
   it('takes the configured total function over the measure\'s own', () => {
-    const q = pivotTotalQuery(
+    const q = serialize(
       { ...CUBE, pivotTotal: { placement: 'right', functions: { price: 'max' } } },
-      { level: 1, parent: [] },
+      { level: 1, parent: [] }, YEARS,
     );
-    assert.match(q?.pure ?? '', /price:x\|\$x\.price:y\|\$y->max\(\)/);
+    assert.ok(q.includes(`'${pivotTotalColumn('price')}':x|$x.price:y|$y->max()`), q);
   });
 
-  it('is a single-row grand total on a flat pivot', () => {
-    const q = pivotTotalQuery({ ...CUBE, rows: [] }, undefined);
-    assert.match(q?.pure ?? '', /groupBy\(~\[__root\]|groupBy\(~\['?__/);
+  it('is on the grand total too', () => {
+    const q = serialize({ ...CUBE, rows: [] }, undefined, YEARS);
+    assert.match(q, /groupBy\(~\[__root__\]/);
+    assert.ok(q.includes(pivotTotalColumn('notional')), q);
   });
 
-  it('names the groups to fetch when the pivot level was cut short', () => {
-    const q = pivotTotalQuery(CUBE, { level: 1, parent: [] }, ['EMEA', NULL_GROUP]);
-    assert.match(q?.pure ?? '', /\$x\.region == 'EMEA'/);
-    assert.match(q?.pure ?? '', /isEmpty\(\)/);
-  });
-
-  it('is nothing without a pivot or without a total', () => {
-    assert.equal(pivotTotalQuery({ ...CUBE, pivotOn: [] }, undefined), null);
+  it('is absent without a total, and listed last among the planned columns', () => {
     const { pivotTotal: _t, ...none } = CUBE;
-    assert.equal(pivotTotalQuery(none, undefined), null);
-  });
-});
-
-describe('joining the totals', () => {
-  const runner = (totals: ResultTable): QueryRunner & { asked: string[] } => {
-    const asked: string[] = [];
-    return {
-      name: 'fake',
-      asked,
-      run: async (pure) => {
-        asked.push(pure);
-        return { rows: totals, sql: '' };
-      },
-    };
-  };
-
-  it('joins by GROUP KEY, not position, and leaves a missing group blank', async () => {
-    const pivot = table([
-      { name: 'region', values: ['EMEA', 'AMER', 'APAC'] },
-      { name: '2021__|__notional', values: [1, 2, 3] },
+    assert.doesNotMatch(serialize(none, { level: 1, parent: [] }, YEARS), /__pivot_total__/);
+    const planned = pivotColumns(CUBE, YEARS).map((c) => c.name);
+    assert.deepEqual(planned, [
+      '2021__|__notional', '2021__|__price', '2022__|__notional', '2022__|__price',
+      pivotTotalColumn('notional'), pivotTotalColumn('price'),
     ]);
-    // The totals come back in another order, and without APAC.
-    const totals = table([
-      { name: 'region', values: ['AMER', 'EMEA'] },
-      { name: 'notional', values: [20, 10] },
-      { name: 'price', values: [2, 1] },
-    ]);
-    const r = runner(totals);
-    const out = await withPivotTotals(
-      CUBE, { level: 1, parent: [] }, pivot,
-      [['EMEA'], ['AMER'], ['APAC']], false,
-      { runner: r, snapshot: CUBE },
-    );
-    const col = out.columns.find((c) => c.name === pivotTotalColumn('notional'));
-    assert.deepEqual(col?.values, [10, 20, null]);
-    assert.equal(r.asked.length, 1);
-  });
-
-  it('puts the grand total beside a level-0 row', async () => {
-    const pivot = table([{ name: '2021__|__notional', values: [5] }]);
-    const totals = table([
-      { name: '__root', values: ['[ROOT]'] },
-      { name: 'notional', values: [99] },
-      { name: 'price', values: [3] },
-    ]);
-    const out = await withPivotTotals(
-      CUBE, { level: 0, parent: [] }, pivot, [[]], false,
-      { runner: runner(totals), snapshot: CUBE },
-    );
-    assert.deepEqual(
-      out.columns.find((c) => c.name === pivotTotalColumn('notional'))?.values,
-      [99],
-    );
-  });
-
-  it('asks nothing when there is no total to show', async () => {
-    const r = runner(table([]));
-    const { pivotTotal: _t, ...none } = CUBE;
-    const pivot = table([{ name: 'region', values: ['EMEA'] }]);
-    const out = await withPivotTotals(
-      none, { level: 1, parent: [] }, pivot, [['EMEA']], false,
-      { runner: r, snapshot: none },
-    );
-    assert.equal(out, pivot);
-    assert.equal(r.asked.length, 0);
   });
 });
 
@@ -216,53 +148,28 @@ describe('the pivot total settings', () => {
 });
 
 describe('measures a pivot does not spread', () => {
-  // `price` kept OUT of the pivot. A pivot groups by everything else it
-  // selects, so carrying `price` through it and summing afterwards adds
-  // up the DISTINCT (region, price) pairs, not the rows. Its figure is
-  // the unpivoted query's, joined by key like the total.
+  // `price` kept OUT of the pivot: a column of the level's query on its
+  // own aggregate, beside the cells -- never spread, never summed over a
+  // finer intermediate.
   const EXCLUDED: CubeSnapshot = {
     ...CUBE,
     columns: CUBE.columns.map((c) => (c.name === 'price'
       ? { ...c, excludedFromPivot: true } : c)),
-    pivotCast: [{ name: '2021__|__notional', measure: 'notional' }],
   };
 
-  it('are not carried through the pivot', async () => {
-    const { serialize } = await import('../src/serialize.ts');
-    const pure = serialize(EXCLUDED, { level: 1, parent: [] });
-    const pivoted = pure.slice(pure.indexOf('->pivot('));
-    assert.doesNotMatch(pivoted, /price/);
-    assert.doesNotMatch(pure.slice(0, pure.indexOf('->pivot(')), /select\(~\[[^\]]*price/);
+  it('are carried on their own aggregate, in the same groupBy', () => {
+    const pure = serialize(EXCLUDED, { level: 1, parent: [] }, YEARS);
+    assert.doesNotMatch(pure, /__\|__price/);
+    assert.match(pure, /[~ ,]price:x\|\$x\.price:y\|\$y->average\(\)/);
   });
 
-  it('come from the unpivoted query, on their own aggregate', () => {
-    const q = pivotTotalQuery(EXCLUDED, { level: 1, parent: [] });
-    assert.deepEqual(q?.carried, ['price']);
-    assert.match(q?.pure ?? '', /price:x\|\$x\.price:y\|\$y->average\(\)/);
-  });
-
-  it('come even with no pivot total configured', () => {
-    const { pivotTotal: _t, ...noTotal } = EXCLUDED;
-    const q = pivotTotalQuery(noTotal, { level: 1, parent: [] });
-    assert.deepEqual(q?.measures, []);
-    assert.deepEqual(q?.carried, ['price']);
-  });
-
-  it('are joined in as plain columns', async () => {
-    const pivot = table([
-      { name: 'region', values: ['EMEA', 'AMER'] },
-      { name: '2021__|__notional', values: [1, 2] },
-    ]);
-    const totals = table([
-      { name: 'region', values: ['AMER', 'EMEA'] },
-      { name: 'notional', values: [20, 10] },
-      { name: 'price', values: [4, 3] },
-    ]);
-    const out = await withPivotTotals(
-      EXCLUDED, { level: 1, parent: [] }, pivot, [['EMEA'], ['AMER']], false,
-      { runner: { name: 'f', run: async () => ({ rows: totals, sql: '' }) },
-        snapshot: EXCLUDED },
-    );
-    assert.deepEqual(out.columns.find((c) => c.name === 'price')?.values, [3, 4]);
+  it('a configured measure excluded from the pivot is carried under its own name', () => {
+    const pure = serialize({ ...EXCLUDED,
+      measures: [{ name: 'n', column: 'notional', fn: 'sum' },
+        { name: 'p', column: 'price', fn: 'max' }] },
+    { level: 1, parent: [] }, YEARS);
+    assert.match(pure, /'2021__\|__n'/);
+    assert.doesNotMatch(pure, /__\|__p'/);
+    assert.match(pure, /[~ ,]p:x\|\$x\.price:y\|\$y->max\(\)/);
   });
 });

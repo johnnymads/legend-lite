@@ -49,18 +49,7 @@ interface ArrowLoader {
 }
 
 /**
- * Interaction ceiling, measured in DuckDB-WASM: a pivot's cost tracks
- * output cells (row groups x pivot columns) at ~200ns each, so 1M cells
- * lands at ~202-229ms and 4M at ~650ms. The 300ms budget puts the
- * usable limit near 1.5M; 1M is the round number below it.
- *
- * This is NOT a row limit. Pivot time rose only 1.6x while rows rose
- * 10x, because the cell count was what stayed constant.
- */
-export const MAX_PIVOT_CELLS = 1_000_000;
-
-/**
- * Memory ceiling, a separate constraint that also applies. A ~500MB tab
+ * Memory ceiling. A ~500MB tab
  * budget holds about 10M rows across every data shape measured --
  * 9.3M for a UUID-bearing worst case, 33.8M for realistic shapes.
  */
@@ -85,13 +74,6 @@ export interface SnapInfo {
    * exactly what the first end-to-end run against legend-lite hit.
    */
   readonly sourceExpression: string;
-  /**
-   * The ordered distinct values of each pivot-capable column, captured
-   * once. While snapped this cannot change, so discovery runs once per
-   * SNAP rather than once per query -- one of the concrete wins of an
-   * explicit freeze over an implicit cache.
-   */
-  readonly columnValues: ReadonlyMap<string, readonly string[]>;
 }
 
 export type PlaneState =
@@ -121,10 +103,6 @@ function quoteIdent(name: string): string {
 
 function qualified(schema: string | undefined, table: string): string {
   return schema ? `${quoteIdent(schema)}.${quoteIdent(table)}` : quoteIdent(table);
-}
-
-function quoteLiteral(v: string): string {
-  return `'${v.replace(/'/g, "''")}'`;
 }
 
 export class SnapManager {
@@ -215,17 +193,15 @@ export class SnapManager {
   }
 
   /**
-   * Freeze `sourceSql` into a local table and switch to snapped.
-   *
-   * `pivotCandidates` are the columns whose distinct values are
-   * captured now, so later queries need no discovery pass.
+   * Freeze `sourceSql` into a local table and switch to snapped. A
+   * pivot's values are found by the cube's own query (plan.ts) on every
+   * refresh, snapped or not, so nothing about them is captured here.
    */
   async snap(
     sourceSql: string,
     epoch: number,
     options: {
       readonly label?: string;
-      readonly pivotCandidates?: readonly string[];
       /**
        * Where to materialise, and what to call it in a query
        * afterwards. Supplied by the caller because only the caller
@@ -259,20 +235,6 @@ export class SnapManager {
       await engine.execute(`CREATE OR REPLACE TABLE ${table} AS ${sourceSql}`, epoch);
     }
 
-    const columnValues = new Map<string, readonly string[]>();
-    for (const col of options.pivotCandidates ?? []) {
-      const r = await engine.execute(
-        `SELECT DISTINCT ${quoteIdent(col)} AS v ` +
-          `FROM ${table} ` +
-          `WHERE ${quoteIdent(col)} IS NOT NULL ORDER BY v`,
-        epoch,
-      );
-      columnValues.set(
-        col,
-        (r.columns[0]?.values ?? []).map((v) => String(v)),
-      );
-    }
-
     const takenAt = new Date();
     const snap: SnapInfo = {
       label: options.label ?? defaultLabel(takenAt),
@@ -281,7 +243,6 @@ export class SnapManager {
       table: bare,
       ...(schema ? { schema } : {}),
       sourceExpression: options.target?.expression ?? table,
-      columnValues,
     };
     this.#state = { mode: 'snapped', snap };
     return snap;
@@ -294,59 +255,6 @@ export class SnapManager {
     this.#state = { mode: 'live' };
     await this.#localStore()
       .execute(`DROP TABLE IF EXISTS ${qualified(schema, table)}`, 0);
-  }
-
-  /**
-   * Guard an interaction against what the frozen snap can answer.
-   *
-   * Refuses rather than escalating. The caller is expected to surface
-   * the reason and offer to go live -- an explicit choice by the user,
-   * not a silent one by us.
-   */
-  checkExpressible(requiredColumns: readonly string[]): void {
-    if (this.#state.mode !== 'snapped') return;
-    const known = this.#state.snap.columnValues;
-    if (known.size === 0) return;
-    const missing = requiredColumns.filter(
-      (c) => !known.has(c) && !known.has(c.toLowerCase()),
-    );
-    // Only columns we explicitly captured are known to exist; anything
-    // else is merely unverified, so this stays silent rather than
-    // guessing. Present for the cell-budget check below to build on.
-    void missing;
-  }
-
-  /**
-   * Refuse a pivot that would exceed the measured interaction budget,
-   * before running it.
-   *
-   * Both numbers are known in advance -- the column count from the
-   * captured distinct values, the group count from a cheap count -- so
-   * this is a pre-flight check rather than a timeout.
-   */
-  checkCellBudget(groupCount: number, pivotColumnCount: number): void {
-    const cells = groupCount * Math.max(1, pivotColumnCount);
-    if (cells > MAX_PIVOT_CELLS) {
-      throw new SnapRefusal(
-        `This pivot would produce ${cells.toLocaleString()} cells ` +
-          `(${groupCount.toLocaleString()} groups x ` +
-          `${pivotColumnCount.toLocaleString()} columns), past the ` +
-          `${MAX_PIVOT_CELLS.toLocaleString()} cell budget. ` +
-          `Remove a dimension, or filter further.`,
-      );
-    }
-  }
-
-  /** Distinct values captured for a column at snap time. */
-  valuesFor(column: string): readonly string[] | undefined {
-    return this.#state.mode === 'snapped'
-      ? this.#state.snap.columnValues.get(column)
-      : undefined;
-  }
-
-  /** Values as SQL literals, for pinning a pivot's IN list. */
-  literalsFor(column: string): string[] {
-    return (this.valuesFor(column) ?? []).map(quoteLiteral);
   }
 }
 

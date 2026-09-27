@@ -72,12 +72,12 @@ describe('sorting by a pivoted column', () => {
     ]);
   });
 
-  it('emits the sort AFTER the pivot, where the column exists', () => {
+  it('emits the sort AFTER the pivot\'s groupBy, where the column exists', () => {
     const out = serialize({
       ...CUBE,
       sorts: [{ column: '2023__|__total', direction: 'desc' }],
-    });
-    assert.ok(out.indexOf('pivot(') < out.indexOf('sort('));
+    }, undefined, { tuples: [['2023'], ['2024']] });
+    assert.ok(out.indexOf('groupBy(') < out.indexOf('sort('));
     assert.match(out, /sort\(\[~'2023__\|__total'->descending\(\)/);
   });
 
@@ -108,7 +108,7 @@ describe('sorting by a pivoted column', () => {
     const out = serialize({
       ...CUBE,
       sorts: [{ column: '2024__|__total', direction: 'desc' }],
-    });
+    }, undefined, { tuples: [['2023'], ['2024']] });
     assert.match(out, /~region->ascending\(\)\]\)/);
   });
 });

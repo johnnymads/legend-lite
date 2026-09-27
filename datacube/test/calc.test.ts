@@ -18,6 +18,7 @@ import {
   nameProblem,
 } from '../src/calc.ts';
 import { PIVOT_SEPARATOR } from '../src/generated/lite-facts.ts';
+import { pivotColumns } from '../src/serialize.ts';
 import { pureTypeOfArrow } from '../src/result.ts';
 import { isNumericType } from '../src/snapshot.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
@@ -72,20 +73,16 @@ describe('what a calculated column can see', () => {
       ['region', 'desk', 'total', 'trades']);
   });
 
-  it('offers the PIVOT columns at the group stage, from the cast', () => {
-    // From the snapshot's own cast rather than a rendered grid: the
-    // snapshot is the source of truth and is available before
-    // anything has been drawn.
+  it('offers the PIVOT columns at the group stage, from the plan', () => {
+    // From the view's plan (the columns the values query made), not a
+    // rendered grid and not a name parsed apart.
     const s = snap({
       rows: ['region'],
       pivotOn: ['year'],
       measures: [{ name: 'total', column: 'notional', fn: 'sum' }],
-      pivotCast: [
-        { name: `2023${PIVOT_SEPARATOR}total`, measure: 'total' },
-        { name: `2024${PIVOT_SEPARATOR}total`, measure: 'total' },
-      ],
     });
-    const got = columnsInScope(s, 'group');
+    const got = columnsInScope(s, 'group', undefined,
+      pivotColumns(s, { tuples: [['2023'], ['2024']] }));
     // NOT the measure's own name: the pivot spreads it into its
     // generated columns, and the planner refuses it at this stage
     // ("relation has no column 'notional'", the product's compile on
@@ -102,11 +99,9 @@ describe('what a calculated column can see', () => {
 
   it('never offers a pivot column at the ROW stage', () => {
     // A pivot's columns do not exist until after the pivot runs.
-    const s = snap({
-      pivotOn: ['year'],
-      pivotCast: [{ name: `2023${PIVOT_SEPARATOR}total`, measure: 'total' }],
-    });
-    const got = labels(columnsInScope(s, 'row'));
+    const s = snap({ pivotOn: ['year'], measures: [{ name: 'total', column: 'notional', fn: 'sum' }] });
+    const got = labels(columnsInScope(s, 'row', undefined,
+      pivotColumns(s, { tuples: [['2023']] })));
     assert.ok(!got.some((l) => l.includes(PIVOT_SEPARATOR)),
       `offered a pivot column too early: ${got}`);
   });

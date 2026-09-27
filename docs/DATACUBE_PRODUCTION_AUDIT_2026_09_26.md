@@ -169,6 +169,17 @@ Pass 2 absorbs pass 1:
 | M3 (security policy) | leg 2 |
 | L1, L2 | legs 8 and 16 |
 
+## Status of the legs
+
+- **Leg 1 (re-aggregation) and the pivot parts of legs 3, 7, 11, 12, 14: LANDED 2026-09-27**
+  (`DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md`). A pivot is two plain queries: its values, then
+  one `groupBy` with a conditional aggregate per value; the Total is a column of the same
+  query. Entries closed, each proven by a row check or the named test:
+  - P2-0, P2-1, P2-2, P2-3, P2-4 (CRITICAL), P2-5, P2-6, P2-7, P2-8;
+  - P2-16, P2-20, P2-81, P2-82, P2-91, P2-99;
+  - P2-128, P2-134, P2-211, P2-216, P2-217;
+  - P2-386, P2-397, P2-399, P2-415.
+
 ## CRITICAL and HIGH
 
 | entry | severity | reproduced | defect |

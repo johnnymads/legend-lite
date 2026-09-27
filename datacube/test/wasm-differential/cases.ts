@@ -7,7 +7,9 @@
 // DataCube emits that the hand-written corpus (wasm/corpus) never
 // thought to.
 
-import { childAggregateQuery, detailSnapshot, serialize } from '../../src/serialize.ts';
+import {
+  NULL_GROUP, childAggregateQuery, detailSnapshot, pivotValuesQuery, serialize, type PivotFacts,
+} from '../../src/serialize.ts';
 import { planQueries, type AdHocCube } from '../../src/adhoc/query.ts';
 import { initialGrid, setPov, zoomIn } from '../../src/adhoc/state.ts';
 import type { LevelScope } from '../../src/serialize.ts';
@@ -80,7 +82,18 @@ const SUM_NOTIONAL: CubeSnapshot['measures'] = [
  * real snapshot types, which is the only reason this file catches a
  * shape DataCube would reject.
  */
-export const CASES: { name: string; snapshot: CubeSnapshot; scope?: LevelScope; pure?: string }[] = [
+/**
+ * A pivot's values, as its values query would find them in the corpus's
+ * data: every year the rows hold, and a NULL (its own column).
+ */
+const YEARS: PivotFacts = { tuples: [['2022'], ['2023'], ['2024'], [NULL_GROUP]] };
+const YEAR_QTRS: PivotFacts = {
+  tuples: [['2022', 'Q1'], ['2023', 'Q3'], ['2024', 'Q2'], [NULL_GROUP, NULL_GROUP]],
+};
+
+export const CASES: {
+  name: string; snapshot: CubeSnapshot; scope?: LevelScope; pure?: string; pivot?: PivotFacts;
+}[] = [
   { name: 'flat', snapshot: snap({}) },
   { name: 'measures-only', snapshot: snap({ measures: SUM_NOTIONAL }) },
   {
@@ -101,6 +114,7 @@ export const CASES: { name: string; snapshot: CubeSnapshot; scope?: LevelScope; 
       pivotOn: ['year'],
       measures: SUM_NOTIONAL,
     }),
+    pivot: YEARS,
   },
   {
     name: 'pivot-two-measures',
@@ -112,6 +126,7 @@ export const CASES: { name: string; snapshot: CubeSnapshot; scope?: LevelScope; 
         { name: 'qty', column: 'qty', fn: 'count' },
       ],
     }),
+    pivot: YEAR_QTRS,
   },
   {
     name: 'filtered',
@@ -223,11 +238,11 @@ export const CASES: { name: string; snapshot: CubeSnapshot; scope?: LevelScope; 
   }), ['EMEA', 'Rates']),
   // ...and a PIVOTED cube's, which keep the pivot, grouped by every
   // dimension.
-  detailCase('tree-detail-pivot', snap({
+  { ...detailCase('tree-detail-pivot', snap({
     rows: ['region', 'desk'],
     pivotOn: ['year'],
     measures: SUM_NOTIONAL,
-  }), ['EMEA', 'Rates']),
+  }), ['EMEA', 'Rates']), pivot: YEARS },
 ];
 
 // AD HOC ANALYSIS mode's queries, exactly as the mode plans them: a Time
@@ -313,7 +328,7 @@ const AD_HOC: AdHocCube = {
       scope: { level, parent: level === 2 ? ['EMEA'] : [] } });
   }
   CASES.push({ name: 'window-row-under-pivot', snapshot: { ...WIN_ROW, pivotOn: ['year'] },
-    scope: { level: 1, parent: [] } });
+    scope: { level: 1, parent: [] }, pivot: YEARS });
 }
 
 // CHILD-GROUP AGGREGATES: each level's own query for them, as
@@ -352,7 +367,14 @@ function detailCase(
   return { name, snapshot, scope: { level: snapshot.rows.length, parent: [], limit: 501 } };
 }
 
+// Every pivot's FIRST step, its values query, is a case of its own: both
+// of a pivot's queries are planned on both sides.
+for (const c of [...CASES]) {
+  const values = c.pivot ? pivotValuesQuery(c.snapshot) : null;
+  if (values !== null) CASES.push({ name: `${c.name}-values`, snapshot: c.snapshot, pure: values });
+}
+
 /** Each case's Pure, as DataCube emits it. */
 export function grammars(): { name: string; grammar: string }[] {
-  return CASES.map((c) => ({ name: c.name, grammar: c.pure ?? serialize(c.snapshot, c.scope) }));
+  return CASES.map((c) => ({ name: c.name, grammar: c.pure ?? serialize(c.snapshot, c.scope, c.pivot) }));
 }

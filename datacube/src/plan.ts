@@ -1,0 +1,99 @@
+// THE CUBE PLAN: the queries a view needs, in the order they have to run
+// (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md).
+//
+// Its first piece is the pivot. A pivot's columns depend on the data --
+// which years are present -- so a compiler cannot type a pivoted query in
+// one pass without learning types from a result. It is two steps instead,
+// each an ordinary Pure query with a static type: find the values
+// (`pivotValuesQuery`), then write every level's groupBy with them
+// (`serialize`). This module runs the first and hands its answer on.
+
+import type { ResultTable } from './result.ts';
+import type { QueryRunner } from './runner.ts';
+import {
+  MAX_PIVOT_VALUES,
+  effectivePivotOn,
+  pinnedPivotFacts,
+  pivotColumns,
+  pivotValuesQuery,
+  serialize,
+  type LevelScope,
+  type PivotColumn,
+  type PivotFacts,
+} from './serialize.ts';
+import { CubeRefusal, type CubeSnapshot } from './snapshot.ts';
+import { groupValue } from './treeview.ts';
+
+/** A pivoted cube's first step, answered: its values and its columns. */
+export interface PivotPlan {
+  readonly facts: PivotFacts;
+  /** Every column the pivot makes, cells then Totals, with what each IS. */
+  readonly columns: readonly PivotColumn[];
+  /** The values query and its SQL; null when the values were pinned. */
+  readonly pure: string | null;
+  readonly sql: string | null;
+}
+
+/**
+ * Step 1 of a pivoted cube, run through the cube's own runner -- the same
+ * planner and the same engine as every other query, so the values come
+ * from exactly the data the cells will. Undefined when the cube does not
+ * pivot. Run once per refresh: a filter that removes a value removes its
+ * column, and new data brings new columns, with nothing learned to go
+ * stale in between.
+ */
+export async function planPivot(
+  snapshot: CubeSnapshot,
+  runner: QueryRunner,
+  signal?: AbortSignal,
+): Promise<PivotPlan | undefined> {
+  if (effectivePivotOn(snapshot).length === 0) return undefined;
+  const pinned = pinnedPivotFacts(snapshot);
+  if (pinned) {
+    return { facts: pinned, columns: pivotColumns(snapshot, pinned), pure: null, sql: null };
+  }
+  const pure = pivotValuesQuery(snapshot);
+  if (pure === null) throw new Error('a pivoted cube has no values query');
+  const { rows, sql } = await runner.run(pure, snapshot, undefined, signal);
+  const facts = pivotFacts(rows, snapshot);
+  return { facts, columns: pivotColumns(snapshot, facts), pure, sql };
+}
+
+/**
+ * Step 1's rows as the pivot's value combinations, in the database's
+ * order. Past the cap it is REFUSED, naming the key: a grid of thousands
+ * of columns freezes the tab, and silently keeping the first few hundred
+ * would show a table with values missing and nothing saying so.
+ */
+export function pivotFacts(rows: ResultTable, snapshot: CubeSnapshot): PivotFacts {
+  const on = effectivePivotOn(snapshot);
+  if (rows.rowCount > MAX_PIVOT_VALUES) {
+    throw new CubeRefusal(
+      `pivoting on ${on.join(', ')} finds more than ${MAX_PIVOT_VALUES} values, `
+      + 'which would make a column for each: filter the cube first, or pivot '
+      + 'on a column with fewer values',
+    );
+  }
+  const tuples: string[][] = [];
+  for (let i = 0; i < rows.rowCount; i++) {
+    tuples.push(on.map((_, k) => groupValue(rows.columns[k]?.values[i] ?? null)));
+  }
+  return { tuples };
+}
+
+/**
+ * One level's query for a caller that runs queries itself (the demo's
+ * verification harnesses): step 1 through `runValues` when the cube
+ * pivots, then the level written with its answer.
+ */
+export async function serializeWithValues(
+  snapshot: CubeSnapshot,
+  scope: LevelScope | undefined,
+  runValues: (pure: string) => Promise<ResultTable>,
+): Promise<string> {
+  if (effectivePivotOn(snapshot).length === 0) return serialize(snapshot, scope);
+  const pinned = pinnedPivotFacts(snapshot);
+  const values = pivotValuesQuery(snapshot);
+  const facts = pinned ?? (values === null ? { tuples: [] } : pivotFacts(await runValues(values), snapshot));
+  return serialize(snapshot, scope, facts);
+}

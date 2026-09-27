@@ -14,7 +14,19 @@ import {
 } from './grid/columns.ts';
 import type { CubeSnapshot } from './snapshot.ts';
 import { CubeRefusal } from './snapshot.ts';
-import { childAggregateQuery, ident, serialize, type LevelScope } from './serialize.ts';
+import {
+  childAggregateQuery,
+  effectivePivotOn,
+  ident,
+  pinnedPivotFacts,
+  pivotLabel,
+  pivotValuesQuery,
+  serialize,
+  type LevelScope,
+  type PivotColumn,
+  type PivotFacts,
+} from './serialize.ts';
+import { planPivot, type PivotPlan } from './plan.ts';
 import type { ResultTable } from './result.ts';
 import { SnapManager, type RemoteSource } from './snap.ts';
 import {
@@ -29,7 +41,7 @@ import {
   type RowPath,
   type TreeRow,
 } from './tree.ts';
-import { DEFAULT_MAX_ROWS, fetchTree, takeRows, withPivotTotals } from './treeview.ts';
+import { DEFAULT_MAX_ROWS, fetchTree, takeRows } from './treeview.ts';
 import { History, type CubeState } from './history.ts';
 
 /**
@@ -84,6 +96,24 @@ export interface CubeView {
    */
   readonly pure: string;
   readonly sql: string;
+  /**
+   * A pivoted cube's first step, answered: the values it found and
+   * every column the pivot makes, with what each one IS. The column
+   * model, the tool panel, calculated columns, formats and
+   * drill-through read it rather than parsing `2021__|__notional`.
+   */
+  readonly pivot?: PivotPlan;
+}
+
+/** A pivot's columns as header paths: values, then the measure. */
+export function pivotHeaderPaths(
+  columns: readonly PivotColumn[] | undefined,
+): ReadonlyMap<string, readonly string[]> {
+  const out = new Map<string, readonly string[]>();
+  for (const c of columns ?? []) {
+    if (c.tuple !== null) out.set(c.name, [...c.tuple.map(pivotLabel), c.measure.name]);
+  }
+  return out;
 }
 
 export interface CubeControllerOptions {
@@ -248,12 +278,29 @@ export class CubeController {
     } else {
       scopes.push(s.maxRows === undefined ? undefined : { level: 1, parent: [], limit: s.maxRows + 1 });
     }
+    // A PIVOTED draft is two steps, like its run: the values query, then
+    // each level written with values. Compiling does not execute, so the
+    // values are the current view's when the draft pivots on the same
+    // keys (their literals have the types the draft's will), and none
+    // otherwise -- the level still compiles its Totals and carried
+    // columns, and the cell form is the same for every value.
+    const valuesQuery = pivotValuesQuery(s);
+    const shown = this.#view;
+    const facts: PivotFacts | undefined = effectivePivotOn(s).length === 0
+      ? undefined
+      : pinnedPivotFacts(s)
+        ?? (shown?.pivot && effectivePivotOn(shown.snapshot).join('\u0000')
+          === effectivePivotOn(s).join('\u0000') ? shown.pivot.facts : { tuples: [] });
     // Each level's own query, then its child-group aggregates' -- a
     // column whose own query the planner refuses must not pass.
-    const queries = scopes.flatMap((scope) => {
-      const child = scope ? childAggregateQuery(s, scope) : null;
-      return child ? [serialize(s, scope), child.pure] : [serialize(s, scope)];
-    });
+    const queries = [
+      ...(valuesQuery !== null ? [valuesQuery] : []),
+      ...scopes.flatMap((scope) => {
+        const child = scope ? childAggregateQuery(s, scope) : null;
+        const level = serialize(s, scope, facts);
+        return child ? [level, child.pure] : [level];
+      }),
+    ];
     for (const pure of queries) {
       try {
         await runner.compile(pure, s, signal);
@@ -371,6 +418,12 @@ export class CubeController {
           source: { ...snapshot.source, expression: source },
         };
         const measureNames = withEpoch.measures.map((m) => m.name);
+        // STEP 1 of a pivoted cube: its values, from their own query,
+        // on this refresh's data (plan.ts). Every level is then one
+        // groupBy written with them.
+        const pivot = await planPivot(withEpoch, this.#runner, signal);
+        const pivotPaths = pivotHeaderPaths(pivot?.columns);
+        const withPivot = pivot ? { pivot } : {};
 
         // A cube with row dimensions is a tree: the grand total and
         // each open branch are separate queries, stitched in order.
@@ -380,6 +433,7 @@ export class CubeController {
             guard: this.#guard,
             epoch,
             signal,
+            ...(pivot ? { pivot: pivot.facts } : {}),
           });
           return {
             snapshot: withEpoch,
@@ -389,16 +443,18 @@ export class CubeController {
               measureNames,
               this.#options.layout ?? {},
               withEpoch.pivotOn.length,
+              pivotPaths,
             ),
             rows: view.table,
             treeRows: view.rows,
             truncated: view.truncated,
-            pure: serialize(withEpoch, { level: 1, parent: [] }),
+            pure: serialize(withEpoch, { level: 1, parent: [] }, pivot?.facts),
             // The level-1 plan is the representative one: it is the
             // query behind the rows a user is looking at.
             sql:
               view.levels.get(requestKey({ level: 1, parent: [] }))?.sql ??
               '',
+            ...withPivot,
           } satisfies CubeView;
         }
 
@@ -413,7 +469,7 @@ export class CubeController {
         const scope = maxRows === undefined
           ? undefined
           : ({ level: 1, parent: [], limit: maxRows + 1 } as const);
-        const grammar = serialize(withEpoch, scope);
+        const grammar = serialize(withEpoch, scope, pivot?.facts);
         const { rows: full, sql } = await this.#runner.run(
           grammar,
           withEpoch,
@@ -421,18 +477,14 @@ export class CubeController {
           signal,
         );
         const cut = maxRows !== undefined && full.rowCount > maxRows;
-        // A flat pivot is one row across the pivot's values; its total
-        // is the grand total, from the unpivoted query.
-        const rows = await withPivotTotals(
-          withEpoch, undefined, cut ? takeRows(full, maxRows) : full, [[]],
-          false, { runner: this.#runner, snapshot: withEpoch, signal },
-        );
+        const rows = cut ? takeRows(full, maxRows) : full;
         const columns = buildColumnModel(
           rows,
           withEpoch.rows,
           measureNames,
           this.#options.layout ?? {},
           withEpoch.pivotOn.length,
+          pivotPaths,
         );
         return {
           snapshot: withEpoch,
@@ -442,6 +494,7 @@ export class CubeController {
           truncated: cut ? [{ level: 1, parent: [] }] : [],
           pure: grammar,
           sql,
+          ...withPivot,
         } satisfies CubeView;
       });
 
@@ -497,7 +550,6 @@ export class CubeController {
 
     await this.#snaps.snap(sourceSql, this.#guard.current, {
       ...(label !== undefined ? { label } : {}),
-      pivotCandidates: snapshot.pivotOn,
       ...(this.#options.snapTarget
         ? { target: this.#options.snapTarget }
         : {}),

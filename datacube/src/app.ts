@@ -18,6 +18,7 @@
 import { isQueryFailure, type QueryRunner } from './runner.ts';
 import {
   CubeController,
+  pivotHeaderPaths,
   type CubeControllerOptions,
   type CubeView,
   type Planner,
@@ -58,22 +59,19 @@ import {
   buildExecutionErrorAlert,
   type AlertOptions,
 } from './ui/alert.ts';
-import { serialize } from './serialize.ts';
+import { isPivotTotalColumn, pivotLabel, serialize, type PivotColumn } from './serialize.ts';
 import { toHtml, toSpreadsheetML } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
 import { toBarChart, toTreemap } from './chart.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
-  PIVOT_SEPARATOR,
   TREE_COLUMN,
   buildColumnModel,
   type ColumnLayout,
-  type ColumnModel,
   type LeafColumn,
 } from './grid/columns.ts';
 import { load, save, toJson, treeOf } from './persist.ts';
-import { isPivotTotalColumn, pivotTotalColumn } from './treeview.ts';
 import { selectionStats, selectionTable, type CellRange } from './selection.ts';
 import type { Scalar } from './result.ts';
 import {
@@ -247,26 +245,6 @@ const VIEW_KEY = 'datacube.savedView';
 
 /** DataCube's --ag-row-height. Kept beside the CSS token in theme.css. */
 const DATACUBE_ROW_HEIGHT = 20;
-
-/**
- * Drop a pivot cast that belongs to a different pivot.
- *
- * The cast names columns a particular pivot produced, so changing
- * what the cube pivots on invalidates it -- and naming columns the
- * next pivot will not produce is a query the engine refuses. Keyed on
- * the pivot columns rather than cleared everywhere, so a change that
- * leaves the pivot alone (a filter, a sort, a new row dimension)
- * keeps the cast and does not cost an extra round trip.
- */
-function forgetStaleCast(
-  from: CubeSnapshot,
-  next: CubeSnapshot,
-): CubeSnapshot {
-  if (next === from || next.pivotCast === undefined) return next;
-  if (next.pivotOn.join('\u0000') === from.pivotOn.join('\u0000')) return next;
-  const { pivotCast: _drop, ...rest } = next;
-  return rest;
-}
 
 /** Room for the cell's own padding and its border. */
 const AUTO_SIZE_PAD = 8;
@@ -541,8 +519,8 @@ export class CubeApp {
         void this.#controller.toggle(parsePathKey(key));
       },
       onSelectionChange: (range) => this.#onSelectionChange(range),
-      onActivateCell: (row) => {
-        void this.#drillThrough(row);
+      onActivateCell: (row, column) => {
+        void this.#drillThrough(row, column);
       },
       onHeaderSort: (column) => this.#sortByHeader(column),
       // A dragged edge is a width like Auto-size's -- resizable again,
@@ -729,56 +707,6 @@ export class CubeApp {
     });
   }
 
-  /**
-   * Learn the pivot's own column names, and re-run once with them.
-   *
-   * A cube that is both grouped and pivoted needs two stages --
-   * pivot, then a groupBy naming the pivot's output columns -- and
-   * those names (`2021__|__notional`) do not exist until the pivot
-   * has run. So the first query goes without the outer groupBy and
-   * its RESULT supplies the names; this then re-runs once with them,
-   * and the carried columns appear. DataCube does the same thing
-   * through `pivot.castColumns`.
-   *
-   * The names come from the column MODEL rather than from the raw
-   * result, because the model has already worked out which leaves
-   * are pivoted and which measure each came from -- including for
-   * the engine's own `2021_notional` spelling, where splitting on
-   * the separator would find nothing.
-   *
-   * It cannot loop: the second query's pivot stage is identical, so
-   * it produces the same names and the comparison below stops.
-   */
-  #syncPivotCast(model: ColumnModel): void {
-    const snapshot = this.#snapshot;
-    if (snapshot.pivotOn.length === 0 || snapshot.rows.length === 0) return;
-    // EVERY leaf the result carried, not the visible ones: the cast
-    // describes the shape of the ANSWER, and reading it off the grid
-    // made hiding a pivot column narrow the next query -- which took
-    // the column out of the data, where nothing could get it back.
-    // Not the pivot TOTAL: it is joined in from a second query, and the
-    // pivot does not produce it -- a cast naming it is refused.
-    const cast = model.all
-      .filter((l) => !l.isDimension && l.path.length > 1
-        && !isPivotTotalColumn(l.name))
-      .map((l) => ({
-        name: l.name,
-        measure: l.path[l.path.length - 1] ?? l.name,
-      }));
-    if (cast.length === 0) return;
-    const key = (c: readonly { name: string; measure: string }[]): string =>
-      c.map((x) => `${x.name}\u0000${x.measure}`).join('|');
-    if (key(cast) === key(snapshot.pivotCast ?? [])) return;
-
-    // The PREVIOUS snapshot is handed to the refresh so that a query
-    // the engine rejects takes the cast back out with it. Otherwise a
-    // cast that does not match the data -- the pivot column changed,
-    // say -- would be retried on every refresh and the cube would be
-    // stuck reporting the same failure.
-    this.#snapshot = { ...snapshot, pivotCast: cast };
-    this.#refreshOr(snapshot);
-  }
-
   /** Re-fill the format map in place. See `#formats`. */
   #refreshFormats(): void {
     for (const key of Object.keys(this.#formats)) delete this.#formats[key];
@@ -849,65 +777,37 @@ export class CubeApp {
     //
     // A pivoted measure is not one column in the grid: it is one per
     // value of the pivot key, and the panel said "notional" once
-    // while the grid showed five of it. `pivotCast` is the list, and
-    // each entry already carries its measure, so nothing here has to
-    // know how a pivot name is spelled.
-    const cast = this.#snapshot.pivotCast ?? [];
-    // THE MEASURE'S SOURCE COLUMN, not the measure's name. A measure
-    // is `{ name: 'total', column: 'notional' }` as often as it is
-    // `notional` twice over, and the cast carries the NAME -- so
-    // matching the panel's source columns against it found nothing
-    // whenever a cube named its measures.
-    const sourceOf = (measure: string): string =>
-      this.#snapshot.measures.find((m) => m.name === measure)?.column
-        ?? measure;
+    // while the grid showed five of it. The view's PLAN is the list:
+    // each column carries its measure and its values, so nothing here
+    // reads a pivot name back apart.
+    const planned: readonly PivotColumn[] = this.#view?.pivot?.columns ?? [];
+    // THE MEASURE'S SOURCE COLUMN, not the measure's name: a measure is
+    // `{ name: 'total', column: 'notional' }` as often as it is
+    // `notional` twice over.
     // Several measures can come off one column -- a sum and an
     // average of notional -- and then the values alone name two
     // children the same. Their measure tells them apart.
     const perColumn = new Map<string, number>();
-    for (const m of new Set(cast.map((c) => c.measure))) {
-      const column = sourceOf(m);
+    for (const m of new Set(planned.map((c) => c.measure.name))) {
+      const column = planned.find((c) => c.measure.name === m)?.measure.column ?? m;
       perColumn.set(column, (perColumn.get(column) ?? 0) + 1);
     }
+    const totalLabel = this.#config.pivotStatisticColumnName ?? 'Total';
     // Each measure's pivot TOTAL is one more of its columns on screen,
     // listed last so it can be hidden like any other.
-    const totalsShown = new Set((this.#view?.columns.all ?? [])
-      .filter((l) => isPivotTotalColumn(l.name))
-      .map((l) => l.name));
-    const totalLabel = this.#config.pivotStatisticColumnName ?? 'Total';
     const childrenOf = (column: string): ColumnsPanelChild[] => [
-      ...cast
-        .filter((c) => sourceOf(c.measure) === column)
-        .map((c) => {
-          const suffix = `${PIVOT_SEPARATOR}${c.measure}`;
-          const values = c.name.endsWith(suffix)
-            ? c.name
-              .slice(0, -suffix.length)
-              .split(PIVOT_SEPARATOR)
-              .join(' \u203a ')
-            : c.name;
-          return {
-            name: c.name,
-            // The values alone where the measure is the row above,
-            // and the measure too where the row above covers more
-            // than one.
-            label: (perColumn.get(column) ?? 1) > 1
-              ? `${values} \u00b7 ${c.measure}`
-              : values,
-            visible: columnConfig(this.#config, c.name).hidden !== true,
-          };
-        }),
-      ...[...new Set(cast.map((c) => c.measure))]
-        .filter((m) => sourceOf(m) === column
-          && totalsShown.has(pivotTotalColumn(m)))
-        .map((m) => ({
-          name: pivotTotalColumn(m),
-          label: (perColumn.get(column) ?? 1) > 1
-            ? `${totalLabel} \u00b7 ${m}`
-            : totalLabel,
-          visible: columnConfig(this.#config, pivotTotalColumn(m)).hidden !== true,
-        })),
-    ];
+      ...planned.filter((c) => c.tuple !== null && c.measure.column === column),
+      ...planned.filter((c) => c.tuple === null && c.measure.column === column),
+    ].map((c) => {
+      const values = c.tuple === null ? totalLabel : c.tuple.map(pivotLabel).join(' \u203a ');
+      return {
+        name: c.name,
+        // The values alone where the measure is the row above, and the
+        // measure too where the row above covers more than one.
+        label: (perColumn.get(column) ?? 1) > 1 ? `${values} \u00b7 ${c.measure.name}` : values,
+        visible: columnConfig(this.#config, c.name).hidden !== true,
+      };
+    });
 
     // THE COLUMNS SECTION IS THE GRID'S COLUMNS, and the axes have
     // sections of their own now.
@@ -981,6 +881,7 @@ export class CubeApp {
           columnConfig(this.#config, name).pivotSortDirection ?? 'asc'),
       },
       view.snapshot.pivotOn.length,
+      pivotHeaderPaths(view.pivot?.columns),
     );
     // Refreshed AFTER the view lands, because the pivot's leaf names
     // are only known once the engine has answered.
@@ -990,7 +891,6 @@ export class CubeApp {
     this.#grid.setSorts(view.snapshot.sorts);
     this.#grid.setRows(view.rows, 0, view.rows.rowCount);
 
-    this.#syncPivotCast(model);
     // The panel is refreshed from the view, not only from a
     // configuration change: a pivot's own column names are only
     // known once a result has come back, and the panel lists them.
@@ -1353,20 +1253,28 @@ export class CubeApp {
   #heatmapFor(leafName: string): HeatmapSpec | undefined {
     const own = columnConfig(this.#config, leafName).heatmap;
     if (own) return own;
-    const measure = leafName.split(PIVOT_SEPARATOR).pop();
-    return measure !== undefined && measure !== leafName
+    const measure = this.#pivotMeasureOf(leafName);
+    return measure !== undefined
       ? columnConfig(this.#config, measure).heatmap
       : undefined;
+  }
+
+  /**
+   * The measure a pivot column spreads (or totals), from the view's
+   * plan -- never read out of the column's name. Undefined for any
+   * other column.
+   */
+  #pivotMeasureOf(leafName: string): string | undefined {
+    return this.#view?.pivot?.columns.find((c) => c.name === leafName)?.measure.name;
   }
 
   // -- the drag zones -------------------------------------------------
 
   #onZoneChange(zone: Zone, columns: readonly string[]): void {
     const previous = this.#snapshot;
-    this.#snapshot = forgetStaleCast(this.#snapshot,
-      zone === 'rows'
-        ? { ...this.#snapshot, rows: [...columns] }
-        : { ...this.#snapshot, pivotOn: [...columns] });
+    this.#snapshot = zone === 'rows'
+      ? { ...this.#snapshot, rows: [...columns] }
+      : { ...this.#snapshot, pivotOn: [...columns] };
     this.#refreshOr(previous);
   }
 
@@ -1467,8 +1375,12 @@ export class CubeApp {
               : (this.#view.rows.columns[leaf.index]?.values[abs] ?? null);
           value = raw as FilterValue | null;
         }
-        // A pivot TOTAL is not a column any query can filter on.
-        if (column !== undefined && isPivotTotalColumn(column)) {
+        // A PIVOT'S OWN COLUMN -- a cell or a Total -- exists only after
+        // the pivot, and every filter runs before it: a value filter on
+        // one could only be refused (P2-134). Its row keys and its pivot
+        // values are what drill-through pins instead.
+        if (column !== undefined
+          && (isPivotTotalColumn(column) || this.#pivotMeasureOf(column) !== undefined)) {
           value = undefined;
         }
         if (column !== undefined) {
@@ -1537,8 +1449,7 @@ export class CubeApp {
     // The query actions go through applyMenuAction, which returns the
     // SAME snapshot when nothing changed; the rest are layout,
     // clipboard and export, which never touch the query.
-    const next = forgetStaleCast(this.#snapshot, applyMenuAction(
-      this.#snapshot, item));
+    const next = applyMenuAction(this.#snapshot, item);
     if (next !== this.#snapshot) {
       const previous = this.#snapshot;
       this.#snapshot = next;
@@ -1732,7 +1643,7 @@ export class CubeApp {
    * one pivoted leaf and not its siblings is worse than none.
    */
   #setHeatmap(leafName: string, on: boolean): void {
-    const measure = leafName.split(PIVOT_SEPARATOR).pop() ?? leafName;
+    const measure = this.#pivotMeasureOf(leafName) ?? leafName;
     this.#patchColumn(measure, {
       heatmap: on ? { from: '#ffffff', to: '#ff8a65' } : undefined,
     });
@@ -2003,11 +1914,22 @@ export class CubeApp {
    * rendered labels, because a formatted cell says "$1.2m" and the
    * engine needs the key.
    */
-  async #drillThrough(row: number): Promise<void> {
+  async #drillThrough(row: number, column?: number): Promise<void> {
     const view = this.#view;
     const meta = this.#treeRows[row];
     if (!view || !meta) return;
-    const pure = drillQuery(view.snapshot, { path: meta.path });
+    // A PIVOT CELL drills to its own value as well as its row: the 2021
+    // notional of EMEA is EMEA's 2021 trades, not all of EMEA's. The
+    // cell's values come from the plan that made the column (P2-128).
+    const leaf = column === undefined ? undefined : view.columns.leaves[column];
+    const planned = leaf === undefined
+      ? undefined
+      : view.pivot?.columns.find((c) => c.name === leaf.name);
+    const pivotPath = planned?.tuple ?? undefined;
+    const pure = drillQuery(view.snapshot, {
+      path: meta.path,
+      ...(pivotPath ? { pivotPath } : {}),
+    });
     // THROUGH THE CONTROLLER'S RUNNER, not a planner and an engine of
     // its own: on the plane where a remote engine executes there is
     // no local engine here to call, and a drill-through that works on
@@ -2393,6 +2315,7 @@ export class CubeApp {
     this.#showOverlay(editing !== undefined ? 'Edit Column' : 'Add New Column', (host, close) => {
       this.#columnEditors.set(key, new ColumnEditor(host, {
         snapshot: () => this.#snapshot,
+        pivotColumns: () => this.#view?.pivot?.columns ?? [],
         start,
         compile: (candidate, signal) => this.#controller.compile(candidate, signal),
         apply: (row, group, rename) => this.#setCalc(row, group, rename),
@@ -2640,15 +2563,14 @@ export class CubeApp {
    * expression: `$x.a * 2` is a Float and `$x.a->toUpper()` a String,
    * and deciding which by reading the text would be writing the type
    * checker the planner already is. The result carries it, so it is
-   * copied onto the snapshot here -- the same way the snapshot
-   * already learns the pivot's generated column names.
+   * copied onto the snapshot here.
    *
    * It no longer decides whether the column SUMS -- the editor asks
    * for that (`DerivedColumn.kind`), as upstream does, so the
    * aggregate is right on the first query instead of one query late.
-   * What still needs the type is the pivot's
-   * `cast(@Relation<(...)>)`, which has to declare one, and the
-   * type-based fallback for a column with no declared kind.
+   * What still needs the type is the type-based fallback for a column
+   * with no declared kind, which a pivot also reads to decide what it
+   * spreads.
    */
   #learnCalcTypes(snapshot: CubeSnapshot, view: CubeView): CubeSnapshot {
     const seen = new Map(view.rows.columns.map((c) => [c.name, c.type]));
@@ -2676,8 +2598,7 @@ export class CubeApp {
    * rather than an error, and would fix itself only on the user's
    * next interaction.
    *
-   * So this does what `#syncPivotCast` does for the pivot's generated
-   * names: takes the fact out of the result, puts it in the snapshot,
+   * So this takes the fact out of the result, puts it in the snapshot,
    * and runs once more. It cannot loop, because the second result
    * reports the same types and nothing changes.
    *
@@ -2697,6 +2618,8 @@ export class CubeApp {
     // in its cast, and a column with no declared kind still falls
     // back to the type-based default. Anything else would be a second
     // round trip that buys nothing.
+    // A pivot decides from the type which columns it spreads and which
+    // it carries (a numeric calculated column is a measure).
     const castsATypes = previous.pivotOn.length > 0;
     const undeclared = [...previous.derived,
       ...(previous.groupDerived ?? [])].some((d) => d.kind === undefined);

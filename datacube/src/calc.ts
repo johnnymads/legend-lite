@@ -27,6 +27,7 @@
 // "all columns" -- the completion has to be as honest as the query.
 
 import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
+import { pivotLabel, type PivotColumn } from './serialize.ts';
 import { rowColumns, type CubeSnapshot } from './snapshot.ts';
 
 /** Which extend stage an expression belongs to. */
@@ -173,6 +174,8 @@ export function columnsInScope(
   snapshot: CubeSnapshot,
   stage: CalcStage,
   before?: string,
+  /** The pivot's own columns, from the view's plan (cube.ts `pivot`). */
+  pivot: readonly PivotColumn[] = [],
 ): Completion[] {
   const out: Completion[] = [];
   const upTo = (list: readonly { name: string }[]) => {
@@ -217,15 +220,16 @@ export function columnsInScope(
         detail: `aggregated column, ${c.type}`, kind: 'column' });
     }
   }
-  // The pivot's generated columns, from the CAST the snapshot asked
-  // for rather than from a rendered grid: the snapshot is the source of
-  // truth and is available before anything has been drawn.
-  for (const p of snapshot.pivotCast ?? []) {
+  // The pivot's own columns, from the PLAN that made them: what each
+  // one is comes with it (its measure, its values), never read back out
+  // of the name.
+  for (const p of pivot) {
     out.push({
       insert: columnRef(p.name),
       label: p.name,
-      detail: `pivot column of ${p.measure}`
-        + ` (${p.name.split(PIVOT_SEPARATOR).slice(0, -1).join(' / ')})`,
+      detail: p.tuple === null
+        ? `pivot total of ${p.measure.name}`
+        : `pivot column of ${p.measure.name} (${p.tuple.map(pivotLabel).join(' / ')})`,
       kind: 'column',
     });
   }
@@ -241,9 +245,10 @@ export function completionsFor(
   snapshot: CubeSnapshot,
   stage: CalcStage,
   before?: string,
+  pivot: readonly PivotColumn[] = [],
 ): Completion[] {
   return [
-    ...columnsInScope(snapshot, stage, before),
+    ...columnsInScope(snapshot, stage, before, pivot),
     ...CALC_FUNCTIONS.map((f) => ({
       insert: `->${f.name}(`,
       label: f.name,
@@ -267,6 +272,7 @@ export function nameProblem(
   stage: CalcStage,
   name: string,
   replacing?: string,
+  pivot: readonly PivotColumn[] = [],
 ): string | null {
   const trimmed = name.trim();
   if (trimmed.length === 0) return 'a calculated column needs a name';
@@ -279,7 +285,7 @@ export function nameProblem(
     ...snapshot.derived.map((d) => d.name),
     ...snapshot.measures.map((m) => m.name),
     ...(snapshot.groupDerived ?? []).map((d) => d.name),
-    ...(snapshot.pivotCast ?? []).map((p) => p.name),
+    ...pivot.map((p) => p.name),
   ].filter((n) => n !== replacing);
   if (taken.includes(trimmed)) {
     return `'${trimmed}' is already a column`;

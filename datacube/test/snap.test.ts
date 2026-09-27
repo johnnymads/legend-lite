@@ -8,7 +8,6 @@ import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import {
-  MAX_PIVOT_CELLS,
   SnapManager,
   SnapRefusal,
 } from '../src/snap.ts';
@@ -60,9 +59,7 @@ describe('SnapManager', () => {
   it('freezes rows and reports what was taken, and when', async () => {
     const s = new SnapManager(engine);
     const before = Date.now();
-    const info = await s.snap('SELECT * FROM trades', 1, {
-      pivotCandidates: ['year'],
-    });
+    const info = await s.snap('SELECT * FROM trades', 1);
 
     assert.equal(info.rowCount, 1000);
     assert.ok(info.takenAt.getTime() >= before);
@@ -70,18 +67,6 @@ describe('SnapManager', () => {
     assert.equal(s.isSnapped, true);
     // Queries now read the frozen table, not the live source.
     assert.notEqual(s.sourceFor('trades'), 'trades');
-  });
-
-  it('captures pivot values once, so no discovery pass per query', async () => {
-    const s = new SnapManager(engine);
-    await s.snap('SELECT * FROM trades', 1, { pivotCandidates: ['year'] });
-    assert.deepEqual(s.valuesFor('year'), ['2020', '2021', '2022', '2023']);
-    assert.deepEqual(s.literalsFor('year'), [
-      "'2020'",
-      "'2021'",
-      "'2022'",
-      "'2023'",
-    ]);
   });
 
   it('is genuinely frozen: live changes do not reach the snap', async () => {
@@ -136,24 +121,6 @@ describe('SnapManager', () => {
     );
     // Refused means nothing was created and we are still live.
     assert.equal(s.isSnapped, false);
-  });
-
-  it('refuses a pivot past the measured cell budget, before running it', () => {
-    const s = new SnapManager(engine);
-    // Both numbers are known in advance, so this is a pre-flight check
-    // rather than a timeout after the user has already waited.
-    assert.throws(
-      () => s.checkCellBudget(4000, 1000),
-      (e: unknown) => {
-        assert.ok(e instanceof SnapRefusal);
-        assert.match((e as Error).message, /4,000,000 cells/);
-        assert.match((e as Error).message, /Remove a dimension/);
-        return true;
-      },
-    );
-    // Just inside the budget is allowed.
-    assert.doesNotThrow(() => s.checkCellBudget(2000, 500));
-    assert.equal(2000 * 500, MAX_PIVOT_CELLS);
   });
 
   it('gives each snap its own table so two can coexist', async () => {
