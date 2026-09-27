@@ -316,6 +316,7 @@ java_library(
 # package.
 junit_test(
     name = "core_tests",
+    tags = ["resources:memory:1536"],
     size = "enormous",
     data = _CORE_READS,
     select = ["--select-package=com.legend"],
@@ -394,6 +395,7 @@ _SCALE = [
 # lane: the stress group is what gate 1 leaves out.
 junit_test(
     name = "stress_suites",
+    tags = ["resources:memory:2048"],
     size = "enormous",
     data = _STRESS_READS,
     select = ["--select-class=com.legend.integration.StressServiceSuitesTest"],

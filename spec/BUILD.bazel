@@ -67,6 +67,7 @@ _INPUTS = [
 # Maven gate 3: every spec test except the heavy corpus sweep.
 junit_test(
     name = "spec_tests",
+    tags = ["resources:memory:1536"],
     data = _INPUTS,
     exclude_tags = ["heavy"],
     runtime_deps = [":spec_tests_lib"],
@@ -84,6 +85,7 @@ junit_test(
 # chain ran the host pass twice.
 junit_test(
     name = "corpus_duckdb",
+    tags = ["resources:memory:1536"],
     data = _INPUTS,
     jvm_flags = [
         "-Dlegend.prerun=legend.judge.mode=host,legend.judge.ledger=$${TEST_UNDECLARED_OUTPUTS_DIR}/judge-host.tsv",
@@ -116,7 +118,7 @@ junit_test(
         "//warehouse:client",
     ],
     select = ["--select-class=com.legend.rcorpus.MinimalCorpusTest"],
-    tags = ["manual"],
+    tags = ["resources:memory:1536", "manual"],
     upstream = True,
 )
 
@@ -126,6 +128,7 @@ junit_test(
 # which ran the H2 database judge but never the join.
 junit_test(
     name = "corpus_h2",
+    tags = ["resources:memory:5120"],
     data = _INPUTS,
     jvm_flags = [
         "-Drcorpus.backend=h2",

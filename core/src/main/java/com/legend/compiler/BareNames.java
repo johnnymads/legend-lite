@@ -95,8 +95,17 @@ public final class BareNames {
      *  supplied each native (execution plan step 3 homework, 2026-09-26). */
     public static List<Map.Entry<TierFqn, List<NativeFunctionDefinition>>> catalogTiered(String name) {
         List<Map.Entry<TierFqn, List<NativeFunctionDefinition>>> out = new ArrayList<>();
+        // ONE lookup per distinct FQN: a name spelled by two tiers (most core
+        // names are also engine handler names) is looked up once and the second
+        // tier's row reuses the answer — the probe still sees every tier
+        Map<String, List<NativeFunctionDefinition>> at = new java.util.HashMap<>();
         for (TierFqn t : tiered(name)) {
-            out.add(Map.entry(t, Pure.nativeFunctionsAt(t.fqn())));
+            List<NativeFunctionDefinition> natives = at.get(t.fqn());
+            if (natives == null) {
+                natives = Pure.nativeFunctionsAt(t.fqn());
+                at.put(t.fqn(), natives);
+            }
+            out.add(Map.entry(t, natives));
         }
         return out;
     }

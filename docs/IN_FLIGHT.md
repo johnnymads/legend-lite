@@ -91,6 +91,12 @@ h2-fail-roster.txt`.
   (group E), `tools/deps` (plugin label; new `warehouse_closure_test`: the warehouse reaches no
   `//core` target, proven red), `spec/BUILD.bazel` (`claims_generator_lib` declares `//base`).
   NullAway proven live in base, json, warehouse and core. Chain 99/99 + deps 4/4. NOT building.
+- 2026-09-27 11:35 untangle: **local chain scheduled by memory (this commit; GATES.md 2026-09-27):**
+  the heavy lanes carry `resources:memory:<MB>` tags from measured peaks, `.bazelrc` gives
+  `--local_resources=memory=HOST_RAM*.6` and a disk cache (`~/.cache/bazel-disk`). Cold chain
+  10m37s → 7m11s here. **What changes for you:** nothing in CI; locally, `bazel test //...` packs
+  tests by memory. Files touched: `.bazelrc`, `core/BUILD.bazel`, `spec/BUILD.bazel`,
+  `pct/BUILD.bazel`, `parser-equivalence/BUILD.bazel` (tags only). NOT building.
 - 2026-09-27 11:20 untangle: **rule 6 corrected** — the chain is `bazel test //...` + `//tools/deps:all`;
   `//parser-equivalence:diagnostics` is manual and runs on its triggers only (my handshake text
   of yesterday added it to every chain by mistake; it was the critical path of every local run,

@@ -39,12 +39,19 @@ final class FunctionCompiler {
             // exactly like a qualified call, natives and model alike, under
             // the same platform-owned gate. No bare index, no courtesy list.
             List<Function> all = new ArrayList<>();
+            // one merge per distinct FQN (a name two tiers spell is looked up
+            // once; the probe still names each tier that spells it)
+            java.util.Map<String, List<Function>> at = new java.util.HashMap<>();
             for (var tier : com.legend.compiler.BareNames.tiered(fqn)) {
-                List<Function> at = functionsAt(tier.fqn());
-                if (!at.isEmpty() && com.legend.builtin.DecisionProbe.INSTALLED != null) {
+                List<Function> found = at.get(tier.fqn());
+                if (found == null) {
+                    found = functionsAt(tier.fqn());
+                    at.put(tier.fqn(), found);
+                }
+                if (!found.isEmpty() && com.legend.builtin.DecisionProbe.INSTALLED != null) {
                     com.legend.builtin.DecisionProbe.bareTier(fqn, tier.fqn(), tier.tier(), "merge");
                 }
-                for (Function f : at) {
+                for (Function f : found) {
                     if (!all.contains(f)) {
                         all.add(f);
                     }

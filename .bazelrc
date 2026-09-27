@@ -35,6 +35,19 @@ build:ci --host_jvmopt=-Xmx3g
 # own JVM, 4 GB each. Given after --config=ci: the JVM takes the LAST -Xmx.
 build:ci-small --jvmopt=-Xmx4g
 
+# LOCAL SCHEDULING (2026-09-27, measured on the 10-core / 32 GB desk — GATES.md entry of
+# that date): Bazel's own estimate of a test's memory comes from `size` (an `enormous`
+# test is assumed to need 800 MB) while our JVM lanes peak at 0.7-8.2 GB, so with one
+# test per core it ran ten fat JVMs at once and every lane's time was 3-7x its own.
+# The heavy lanes declare their MEASURED peak plus headroom (`resources:memory:<MB>`
+# tags on the targets) and the machine declares its budget: 60% of RAM for tests
+# leaves the Bazel server, the OS and whatever else runs on the desk the rest. Bazel
+# then packs tests by memory. CI keeps its own caps (--config=ci / ci-small).
+test --local_resources=memory=HOST_RAM*.6
+# A local disk cache: a fresh worktree or a `bazel clean` costs seconds, not core's
+# compile; CI passes the same path explicitly (gates-run.yml).
+build --disk_cache=~/.cache/bazel-disk
+
 # rules_js depends on aspect_tools_telemetry, which reports ruleset usage from
 # every build unless told not to. This repository's builds send nothing.
 common --repo_env=ASPECT_TOOLS_TELEMETRY=-all

@@ -5682,6 +5682,72 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-27 — The local chain scheduled by measured memory; the diagnostics battery out of the chain rule; the probe's duplicate lookup removed
+
+**What was wrong, plainly.** Three things made the local chain look slow and its per-lane
+numbers meaningless. (1) Bazel estimates a test's memory from its `size` — an `enormous` test
+is assumed to need 800 MB — while our JVM lanes peak between 0.7 and 8.2 GB; with one test per
+core it ran up to ten fat JVMs at once on the 10-core / 32 GB desk, and a lane inside a chain
+took 3–7x its own time (core tests 233s in the cold chain against 31s alone; guardrails 43s
+against 10s; the DuckDB corpus 396s against 77s). Those inflated figures were then read as
+regressions, twice, by me. (2) The handshake's chain rule of 2026-09-26 listed
+`//parser-equivalence:diagnostics` — the measurement battery, manual, "never per chain" since
+the 2026-08-26 ruling, CI-triggered only by a pin bump or a parser/lexer/protocol change — so
+every local chain carried a 200–500s lane on its critical path. (3) The step 3 tier probe looked
+a bare name up once per TIER that spells its FQN instead of once per FQN, and most core names
+are spelled by two tiers.
+
+**Measured, alone, one lane at a time, load 3.7 (Sunday morning, receipts
+`receipts/plan-audit-2026-09-26/step3/heap-peaks.log`, `solo-lanes-*.log`):**
+
+| lane | alone | peak heap (MB, before GC) | live after GC | JVMs |
+|---|---|---|---|---|
+| `pct:pct_duckdb` | 59.5s | 8,191 (at the default 8 GB cap) | 7,892 | 1 |
+| `spec:corpus_duckdb` | 76.9s | 651 | 243 | 2 |
+| `spec:corpus_h2` | 81.9s | 4,285 | 3,913 | 2 |
+| `parser-equivalence:diagnostics` (manual) | 196.5s | 2,488 | 1,293 | 1 |
+| `parser-equivalence:parser_parity` | 52.8s | 2,581 | 1,997 | 1 |
+| `core:core_tests` | 30.7s | 775 | 320 | 1 |
+| `core:stress_suites` | 23.5s | 1,218 | 360 | 1 |
+| `pct:pct_h2` | 17.1s | 3,888 | 2,796 | 1 |
+| `pct:pct_channel_b` | 12.9s | 266 | 87 | 1 |
+| `spec:spec_tests` | 11.1s | 723 | 319 | 1 |
+
+Serial, the whole chain is about 9 minutes; the heavy Java lanes above are 6 of them.
+`pct_duckdb` holds five Pure graphs in one JVM and sits at its cap with 7.9 GB live after a
+full collection — it is the one lane that must never share memory with another big one.
+
+**What changed.**
+- Each heavy target declares its measured peak plus headroom as a Bazel resource tag
+  (`resources:memory:<MB>`: pct_duckdb 9216, corpus_h2 5120, diagnostics 5120, pct_h2 4608,
+  the five split PCT targets 4096, parser_parity 3072, stress_suites 2048, core_tests /
+  corpus_duckdb / spec_tests / corpus_warehouse 1536, channel_b 1024), and `.bazelrc` gives
+  the machine's budget: `test --local_resources=memory=HOST_RAM*.6` (60% of RAM for tests;
+  the Bazel server, the OS and whatever else runs on the desk keep the rest). Bazel packs
+  tests by memory; the cheap tests (69 JavaScript, 10 diff tests, the guards) fill the cores
+  around the big JVMs. Bazel-native (`--local_resources` and the `resources:` tag are the
+  documented mechanism, Bazel 9.2), not a global job cap. CI keeps its own caps.
+- `.bazelrc` gains a local disk cache (`~/.cache/bazel-disk`, the path CI already passes), so
+  a fresh worktree or a `bazel clean` costs seconds, not core's compile.
+- `docs/IN_FLIGHT.md` rule 6: the chain is `bazel test //...` then `//tools/deps:all`;
+  diagnostics runs on its triggers only (pushed as f0cb01572).
+- `BareNames.catalogTiered` and the merge point's bare branch look each distinct FQN up once;
+  the probe still names every tier that spells it.
+
+**Test — cold, from `bazel clean`, everything under `//...`, same desk, same morning.** Before (with
+diagnostics in the chain): 10m37s wall, critical path 563s, 99 tests. After: **7m11s wall, critical
+path 285s, 101 of 101 pass** (`//tools/deps:all` 4/4; two DataCube tests landed on main in between).
+Per lane, cold-before → cold-after → alone: DuckDB corpus 396 → 227 → 77s; H2 corpus 393 → 117 →
+82s; PCT DuckDB 269 → 205 → 60s; parser parity 328 → 173 → 53s; core tests 233 → 96 → 31s. The
+lanes still run 2–3x their solo time inside the chain — the 69 Node tests, the build actions and
+three or four JVMs still share ten cores — but the chain no longer thrashes, and the wall is a third
+shorter. Lowering the budget below 60% trades wall for per-lane fidelity; not done. Receipts
+`step3/cold-chain-before-scheduling.log`, `cold-chain-after-scheduling.log`.
+
+**How to read a lane's time from now on.** A number from inside a chain is a scheduling
+artefact, never a timing. A timed claim is the lane run ALONE with `--nocache_test_results`,
+load under 3 at the start, or it is labelled contended. The corpus curve keeps its own rule.
+
 ## 2026-09-26 — Execution plan step 3 homework: the kernel reading, the resolver's per-statement set build, the bare-name tier probe
 
 **What it is, plainly.** Step 3 (the binder's candidate set and the reference's overload rule) is
