@@ -27,7 +27,7 @@ import java.util.List;
  * </ul>
  *
  * <p>{@code info} stays CLASS-typed (the fetched class collection):
- * {@link com.legend.exec.ResultShape} classifies the root GRAPH, and the
+ * {@link com.legend.plan.ResultShape} classifies the root GRAPH, and the
  * executor reads the single {@code result} column as the JSON payload.
  *
  * @param source    the resolved relation pipeline supplying the rows

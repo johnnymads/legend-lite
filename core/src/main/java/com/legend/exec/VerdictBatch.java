@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 package com.legend.exec;
+import com.legend.plan.ResultShape;
 
 import com.legend.compiler.element.type.ExprType;
 import com.legend.sql.SqlQuery;

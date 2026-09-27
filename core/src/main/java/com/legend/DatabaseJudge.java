@@ -293,7 +293,7 @@ final class DatabaseJudge {
         if (needCanon && rider.declined() != null) {
             return new SideRows(w, rider, "side: " + rider.declined());
         }
-        if (needCanon && w.shape() == com.legend.exec.ResultShape.GRAPH) {
+        if (needCanon && w.shape() == com.legend.plan.ResultShape.GRAPH) {
             return new SideRows(w, rider, "graph AssertVerdicts.side (leg 3.2)");
         }
         return new SideRows(w, rider, null);
@@ -327,7 +327,7 @@ final class DatabaseJudge {
         boolean envelope = java.util.Objects.requireNonNull(coll.rider()).tdsWrapped()
                 && AssertVerdicts.envelopeValuesRead(args.get(0), letPrefix);
         var cw = java.util.Objects.requireNonNull(coll.side());
-        com.legend.sql.SqlQuery vq = cw.shape() == com.legend.exec.ResultShape.GRAPH
+        com.legend.sql.SqlQuery vq = cw.shape() == com.legend.plan.ResultShape.GRAPH
                 ? com.legend.lowering.VerdictSql.sizeOfGraph(cw.plan(), n.scalarRow(false))
                 : com.legend.lowering.VerdictSql.size(coll.countRows(), n.scalarRow(false), envelope);
         return runVerdict(name, true, vq, coll.on(env));
@@ -341,7 +341,7 @@ final class DatabaseJudge {
             return unjudged(name, side.why());
         }
         var sw = java.util.Objects.requireNonNull(side.side());
-        com.legend.sql.SqlQuery vq = sw.shape() == com.legend.exec.ResultShape.GRAPH
+        com.legend.sql.SqlQuery vq = sw.shape() == com.legend.plan.ResultShape.GRAPH
                 ? com.legend.lowering.VerdictSql.emptyOfGraph(sw.plan(), wantEmpty)
                 : com.legend.lowering.VerdictSql.empty(side.countRows(), wantEmpty);
         return runVerdict(name, true, vq, side.on(env));
@@ -482,11 +482,11 @@ final class DatabaseJudge {
         if (w.declineReason() != null) {
             rider.decline(w.declineReason());
             return new StatementExecutor.WrappedSide(plan, spec.info(),
-                    com.legend.exec.ResultShape.COLLECTION, on.connection(), true);
+                    com.legend.plan.ResultShape.COLLECTION, on.connection(), true);
         }
         rider.wrap(w.kinds(), w.many(), w.literalIndex());
         return new StatementExecutor.WrappedSide(w.plan(), spec.info(),
-                com.legend.exec.ResultShape.COLLECTION, on.connection(), true);
+                com.legend.plan.ResultShape.COLLECTION, on.connection(), true);
     }
 
     static String describe(@com.legend.base.Nullable ExecutionResult r) {

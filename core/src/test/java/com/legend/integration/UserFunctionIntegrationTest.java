@@ -2,7 +2,7 @@ package com.legend.integration;
 
 import com.legend.error.LegendCompileException;
 import com.legend.exec.ExecutionResult;
-import com.legend.exec.QueryPlan;
+import com.legend.plan.QueryPlan;
 import com.legend.server.QueryService;
 import org.junit.jupiter.api.*;
 

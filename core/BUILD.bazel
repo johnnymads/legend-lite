@@ -148,7 +148,7 @@ java_library(
 java_library(
     name = "exec",
     srcs = glob(["src/main/java/com/legend/exec/*.java"]),
-    deps = ["//base", ":compiler", ":compiler_element_type", ":error", ":lowering", ":model", ":platform", ":sql", ":sql_dialect", ":values"],
+    deps = ["//base", ":compiler", ":compiler_element_type", ":error", ":lowering", ":model", ":plan", ":platform", ":sql", ":sql_dialect", ":values"],
     javacopts = NULLAWAY_OPTS,
     plugins = [NULLAWAY_PLUGIN],
     visibility = _PRIVATE,
@@ -195,7 +195,7 @@ java_library(
 java_library(
     name = "server_lib",
     srcs = glob(["src/main/java/com/legend/server/**/*.java"]),
-    deps = ["//base", "//json", ":cache", ":compiler_element_type", ":driver", ":error", ":exec", ":lowering", ":model", ":protocol", ":sql_dialect"],
+    deps = ["//base", "//json", ":cache", ":compiler_element_type", ":driver", ":error", ":exec", ":lowering", ":model", ":plan", ":protocol", ":sql_dialect"],
     javacopts = NULLAWAY_OPTS,
     plugins = [NULLAWAY_PLUGIN],
     visibility = _PRIVATE,

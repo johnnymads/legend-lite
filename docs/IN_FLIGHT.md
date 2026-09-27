@@ -73,6 +73,19 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **move group F (this commit, by `move_classes.py --group F`, user-approved):**
+  `com.legend.exec.QueryPlan` and `ResultShape` -> `com.legend.plan` (plan facts on compiler types
+  only; in `exec` they made every plan-only client -- the browser planner, the coming `pure/v1`
+  endpoints -- reference the execution package). `core/BUILD.bazel`: `exec` and `server_lib` gain
+  `:plan` (exec consumes a plan; plan never depends on exec). Any core code importing
+  `com.legend.exec.QueryPlan`/`ResultShape` now imports `com.legend.plan.*`; after a rebase re-run
+  `python3 tools/untangle/move_classes.py --group F`. The upstream serializers (RelationType, the
+  ExecutionPlan JSON of `PlanNode`) will live in `plan` beside `PreciseTypes`/`PlanConn`.
+  **Recorded for the untangle:** lite's typer has no precise primitives, so every column past a
+  bare `#>{db.T}#` is `String`/`Integer`/`Decimal`/`DateTime`/`Boolean` where legend-engine says
+  `Varchar(n)`/`Int`/`Numeric(p,s)`/`Timestamp`/`TinyInt` (BIT), and `sum` of a decimal is
+  `Decimal` here, `Number` there. Proposed after your step 3 (it is the binder's overload rules);
+  BIT-as-number is a user decision.
 - 2026-09-27 warehouse: **the user ruled: legend-lite serves ONLY upstream's `pure/v1` APIs**
   (design `UPSTREAM_ENDPOINTS_DESIGN_2026_09_27.md`). Coming, cross-area (rule 7):
   - a lambda protocol-JSON READER in `core/.../protocol/` (the emitter's mirror);

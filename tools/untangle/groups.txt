@@ -24,3 +24,9 @@ D: com.legend.model <- com.legend.platform.FunctionId
 # core's server shell and protocol emitter and by the warehouse, which needs nothing else of
 # core; in com.legend.server it tied the warehouse to all 29 core targets.
 E: com.legend.json <- com.legend.server.Json
+# 2026-09-27 (the warehouse session; user-approved; IN_FLIGHT): the plan-only result of
+# Compiler.plan leaves the execution layer for the plan layer. QueryPlan (sql, root ExprType,
+# ResultShape) and ResultShape depend on compiler types only; in exec they made every plan-only
+# client -- the browser planner module, the upstream pure/v1 endpoints -- reference the
+# execution package. exec now depends on plan (the executor consumes a plan), never the reverse.
+F: com.legend.plan <- com.legend.exec.QueryPlan com.legend.exec.ResultShape

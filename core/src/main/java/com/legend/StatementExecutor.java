@@ -2644,7 +2644,7 @@ final class StatementExecutor {
      * composes into its verdict statement without executing it. */
     record WrappedSide(com.legend.sql.SqlQuery plan,
             com.legend.compiler.element.type.ExprType shapeInfo,
-            com.legend.exec.ResultShape shape,
+            com.legend.plan.ResultShape shape,
             java.sql.Connection connection,
             boolean storeFree) {
         /** A side reading no store (a literal, a pure expression) runs on
@@ -2752,7 +2752,7 @@ final class StatementExecutor {
             var batch = penv.verdictBatch();
             plan = com.legend.exec.WireTypes.reconcile(plan,
                     collectionDeclared ? java.util.Objects.requireNonNull(p.declaredInfo())
-                            : com.legend.exec.ResultShape.valueInfo(root.info()),
+                            : com.legend.plan.ResultShape.valueInfo(root.info()),
                     penv.dialect(), penv.connection(), wireMemo(penv.connection()),
                     batch == null ? java.util.Map.of() : batch.frames());
         }
@@ -2767,11 +2767,11 @@ final class StatementExecutor {
             com.legend.exec.@com.legend.base.Nullable CanonRider rider, ExecEnv env) {
         com.legend.compiler.element.type.ExprType shapeInfo =
                 declaredInfo != null ? declaredInfo
-                        : com.legend.exec.ResultShape.valueInfo(root.info());
-        com.legend.exec.ResultShape shape = declaredInfo != null
-                ? com.legend.exec.ResultShape.COLLECTION
-                : com.legend.exec.ResultShape.of(root);
-        if (rider != null && shape == com.legend.exec.ResultShape.TABULAR) {
+                        : com.legend.plan.ResultShape.valueInfo(root.info());
+        com.legend.plan.ResultShape shape = declaredInfo != null
+                ? com.legend.plan.ResultShape.COLLECTION
+                : com.legend.plan.ResultShape.of(root);
+        if (rider != null && shape == com.legend.plan.ResultShape.TABULAR) {
             // V7 §8 leg 1 — a TABULAR side rides the GRID canon: one
             // per-ROW canonical text as the appended last column (the
             // fusion-spike F2 shape); the tabular decode strips it into
@@ -2821,7 +2821,7 @@ final class StatementExecutor {
         WrappedSide ws = wrapSide(plan, root, declaredInfo, rider, env);
         plan = ws.plan();
         com.legend.compiler.element.type.ExprType shapeInfo = ws.shapeInfo();
-        com.legend.exec.ResultShape shape = ws.shape();
+        com.legend.plan.ResultShape shape = ws.shape();
         com.legend.sql.dialect.SqlDialect dialect = env.dialect();
         if (rider == null) {
             return Executor.execute(renderFor(env, plan), plan, shapeInfo,
@@ -2921,7 +2921,7 @@ final class StatementExecutor {
                 com.legend.compiler.element.type.ExprType.one(
                         com.legend.compiler.element.type.Type.Primitive
                                 .STRING),
-                com.legend.exec.ResultShape.SCALAR, connection, dialect, null);   // PCT wire render: no activity reads its trace
+                com.legend.plan.ResultShape.SCALAR, connection, dialect, null);   // PCT wire render: no activity reads its trace
         return new ExecutionResult.TdsText(
                 String.valueOf(((ExecutionResult.Scalar) text).value()),
                 com.legend.compiler.element.type.Type.Primitive.STRING);

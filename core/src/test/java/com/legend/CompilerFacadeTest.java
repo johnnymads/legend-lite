@@ -88,10 +88,10 @@ class CompilerFacadeTest {
                 ###Runtime
                 Runtime test::RT { mappings: [test::M]; }
                 """;
-        com.legend.exec.QueryPlan plan = Compiler.plan(planModel,
+        com.legend.plan.QueryPlan plan = Compiler.plan(planModel,
                 "test::Person.all()->project(~[name: p|$p.name])", "test::RT");
         assertEquals("SELECT t0.NAME AS name\nFROM T_PERSON AS t0", plan.sql());
-        assertEquals(com.legend.exec.ResultShape.TABULAR, plan.shape(),
+        assertEquals(com.legend.plan.ResultShape.TABULAR, plan.shape(),
                 "the plan carries the REAL shape — bridges re-wrap, never invent");
         assertEquals(plan.sql(), Compiler.compile(planModel,
                 "test::Person.all()->project(~[name: p|$p.name])", "test::RT"));

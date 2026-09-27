@@ -229,7 +229,7 @@ public class LegendHttpServer {
                     sendResponse(exchange, 400, "{\"error\":\"Need a Runtime and a query expression after it\"}");
                     return;
                 }
-                com.legend.exec.QueryPlan plan = com.legend.Compiler.plan(parts[0], parts[1], runtimeName);
+                com.legend.plan.QueryPlan plan = com.legend.Compiler.plan(parts[0], parts[1], runtimeName);
                 response.put("success", true);
                 response.put("sql", plan.sql());
                 response.put("shape", String.valueOf(plan.shape()));

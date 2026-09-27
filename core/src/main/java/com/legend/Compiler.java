@@ -476,7 +476,7 @@ public final class Compiler {
     /**
      * {@link #compile} with the full plan contract: rendered SQL plus the
      * root's {@link com.legend.compiler.element.type.ExprType} and
-     * {@link com.legend.exec.ResultShape} &mdash; exactly what
+     * {@link com.legend.plan.ResultShape} &mdash; exactly what
      * {@link com.legend.exec.Executor} would consume, minus execution.
      * Bridges re-wrap these fields verbatim (no invented metadata).
      */
@@ -484,21 +484,21 @@ public final class Compiler {
      *  ({@code Lowerer#withStreamingGraphRoot}): one json_object per JDBC
      *  row so a streaming executor stays O(one row) — the core home of the
      *  capability the legacy engine-lite Mode.STREAMING provided. */
-    public static com.legend.exec.QueryPlan planStreaming(String model,
+    public static com.legend.plan.QueryPlan planStreaming(String model,
             String query, String runtime) {
         return plan(model, query, runtime, true);
     }
 
-    public static com.legend.exec.QueryPlan plan(String model, String query, String runtime) {
+    public static com.legend.plan.QueryPlan plan(String model, String query, String runtime) {
         return plan(model, query, runtime, false);
     }
 
-    private static com.legend.exec.QueryPlan plan(String model, String query,
+    private static com.legend.plan.QueryPlan plan(String model, String query,
             String runtime, boolean streaming) {
         Lowered l = lowerQuery(model, query, runtime, streaming);
         String sql = dialectOf(l.ctx(), runtime).render(l.plan());
-        return new com.legend.exec.QueryPlan(sql, l.root().info(),
-                com.legend.exec.ResultShape.of(l.root()));
+        return new com.legend.plan.QueryPlan(sql, l.root().info(),
+                com.legend.plan.ResultShape.of(l.root()));
     }
 
     /** The lowered plan plus what result shaping needs — shared by the plan
@@ -546,7 +546,7 @@ public final class Compiler {
         Lowered l = lowerQuery(model, query, runtimeFqn, true);
         com.legend.sql.dialect.SqlDialect dialect =
                 dialectOf(l.ctx(), runtimeFqn, connection);
-        switch (com.legend.exec.ResultShape.of(l.root())) {
+        switch (com.legend.plan.ResultShape.of(l.root())) {
             // E5: the JSON rows are PLAN-RENDERED (WireRender) — the
             // executor writes bytes and array punctuation only
             case GRAPH -> com.legend.exec.Executor.streamGraph(
@@ -581,9 +581,9 @@ public final class Compiler {
         Lowered l = lowerQuery(model, query, runtimeFqn, false);
         com.legend.sql.dialect.SqlDialect dialect =
                 dialectOf(l.ctx(), runtimeFqn, connection);
-        com.legend.exec.ResultShape shape =
-                com.legend.exec.ResultShape.of(l.root());
-        if (shape == com.legend.exec.ResultShape.GRAPH) {
+        com.legend.plan.ResultShape shape =
+                com.legend.plan.ResultShape.of(l.root());
+        if (shape == com.legend.plan.ResultShape.GRAPH) {
             if (format != com.legend.lowering.WireRender.Format.JSON) {
                 throw new com.legend.error.NotImplementedException(
                         "graph results have no CSV wire");
@@ -791,7 +791,7 @@ public final class Compiler {
     /**
      * The core QUERY SERVICE: frontend + Phase G + lowering + rendering +
      * EXECUTION over the caller's connection, shaped per the result-type
-     * classification ({@link com.legend.exec.ResultShape}). The corpus
+     * classification ({@link com.legend.plan.ResultShape}). The corpus
      * bridge's target (PHASE_K_EXECUTION.md). Class queries need an
      * execution context in the query itself ({@code ->from(...)}) on this
      * overload; the 4-arg overload supplies a driver runtime.

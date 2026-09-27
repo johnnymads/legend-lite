@@ -1,4 +1,5 @@
 package com.legend.exec;
+import com.legend.plan.ResultShape;
 
 import com.legend.Compiler;
 import com.legend.compiler.element.type.Multiplicity;

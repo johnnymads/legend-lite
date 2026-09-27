@@ -1,4 +1,5 @@
 package com.legend.exec;
+import com.legend.plan.ResultShape;
 
 import com.legend.sql.Json;
 

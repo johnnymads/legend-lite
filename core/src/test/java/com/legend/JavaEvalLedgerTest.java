@@ -1071,7 +1071,9 @@ class JavaEvalLedgerTest {
                     "ExecutionTrace.java",
                     // (TestResources.java: the per-run resource resolver — DELETED
                     // in batch 138, it rides ExecuteOptions.resources now)
-                    "QueryPlan.java",
+                    // (QueryPlan.java and ResultShape.java: LEFT exec for com.legend.plan
+                    // 2026-09-27, move group F — plan facts on compiler types only, never
+                    // an execution class; rows deleted, the register shrinks)
                     // Phase 1c: the LIMIT-0 schema probe — the
                     // DynamicPivot.staticize model (a FIRST query pins a
                     // late-bound raw grid's columns; schema read only,
@@ -1082,7 +1084,7 @@ class JavaEvalLedgerTest {
                     // StatementOrigin (2026-09-20): the statement-origin CENSUS — a thread-scoped
                     // mark + counters; sends nothing, reads no value; printed by the corpus lanes
                     "StatementOrigin.java",
-                    "ResultShape.java", "Row.java",
+                    "Row.java",
                     // R1 (CANONICAL_FORM_SPEC §0): the byte-channel
                     // REFERENCE render + its divergence census. Pure
                     // MEASUREMENT beside the comparison layer — probes

@@ -880,8 +880,8 @@ final class AssertVerdicts {
     /** Whether a side is STATICALLY table-shaped (its declared result
      * shape — the same fact the executor's canon routing reads). */
     static boolean tabularShaped(TypedSpec s) {
-        return com.legend.exec.ResultShape.of(s)
-                == com.legend.exec.ResultShape.TABULAR;
+        return com.legend.plan.ResultShape.of(s)
+                == com.legend.plan.ResultShape.TABULAR;
     }
 
     /** A bare {@code .rows} view stamp (row collection — bare struct,
