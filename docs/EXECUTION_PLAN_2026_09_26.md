@@ -191,13 +191,14 @@ numbers with the reason: an overload with no rule becomes Unimplemented, which i
 > candidate rule and one index), 3c (the reference's matcher and loop), 3d (the merge point by
 > table, #43), 3e (TDS erasure out of the typer, its own inventory).
 >
-> **One decision in revision 2 is PROPOSED, not ruled** — it contradicts this section's text
-> below: the call node carries its declaration identities (`AppliedFunction.referents:
-> List<FunctionId>`, with `FunctionId`'s record moved from `model` to `protocol` and its factories
-> to `model.FunctionIds`), because the audit counted ~180 post-resolution rebuild sites, three of
-> which rebuild whole subtrees with no way to pair old and new nodes, so a side table cannot be the
-> carrier. "NEVER put `FunctionId` on the protocol node" below was about the seven-package cycle,
-> which the move dissolves. The user has not yet said yes or no; no code is written until they do.
+> **RULED 2026-09-27 (the user):** the call node carries its resolution as a sealed two-case
+> `Callee` — `Spelled(name)` before the resolver, `Bound(spelled, declarations)` after it, never
+> empty; `FunctionId`'s record moves from `model` to `protocol` (its factories to
+> `model.FunctionIds`), which dissolves the cycle this section's "NEVER put `FunctionId` on the
+> protocol node" was about. Every reader switches on both cases; a `Spelled` callee at the typer is
+> a compiler bug, not a user error; the compiler's own desugars can only construct `Bound` from an
+> overload group. Revision 2 §1 has the type, the reasoning and who constructs and reads what.
+> 3a may start.
 > The text below is the 2026-09-26 morning version and is right about WHAT changes (the candidate
 > rule, the kernel, the merge point) and superseded by revision 2 on HOW the resolver's answer
 > travels and on TDS erasure's place (3e, after 3d, with its own inventory of the 45 readers).

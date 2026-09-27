@@ -97,6 +97,15 @@ h2-fail-roster.txt`.
   (group E), `tools/deps` (plugin label; new `warehouse_closure_test`: the warehouse reaches no
   `//core` target, proven red), `spec/BUILD.bazel` (`claims_generator_lib` declares `//base`).
   NullAway proven live in base, json, warehouse and core. Chain 99/99 + deps 4/4. NOT building.
+- 2026-09-27 12:05 untangle: **HANDOFF — this session ends; a fresh session takes step 3a.** The
+  callee shape is RULED (sealed `Callee`: `Spelled` | `Bound`, `FunctionId` record to `protocol`;
+  `EXECUTION_PLAN` step 3 header, `step3-design-2026-09-26.md` §1). The fresh session reads, in
+  order: `EXECUTION_PLAN_2026_09_26.md` §0 and step 3's "Read in this order" block, then this file.
+  Its first push is the three probe counts (v1 §2.5, revision 2 §5), then 3a. Files it will touch:
+  `protocol/spec/AppliedFunction.java` (+ new `Callee.java`), `protocol/FunctionId.java` (moved),
+  `model/FunctionIds.java` (new), `compiler/NameResolver.java`, `compiler/spec/*` (the ~69 mints
+  and the 33 name-test readers), `builtin/Pure.java` (regenerated), `tools/untangle/groups.txt`
+  (group F). NOT building now.
 - 2026-09-27 11:35 untangle: **local chain scheduled by memory (this commit; GATES.md 2026-09-27):**
   the heavy lanes carry `resources:memory:<MB>` tags from measured peaks, `.bazelrc` gives
   `--local_resources=memory=HOST_RAM*.6` and a disk cache (`~/.cache/bazel-disk`). Cold chain

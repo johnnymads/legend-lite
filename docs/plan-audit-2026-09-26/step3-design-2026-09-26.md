@@ -1,4 +1,4 @@
-# Step 3 design, revision 2 (2026-09-26, after the audit)
+# Step 3 design, revision 2 (2026-09-26, after the audit; the callee shape RULED 2026-09-27)
 
 Supersedes §1, §2.3(1), §3.4, §5 and §8 of `step3-design.md` (v1); everything else in v1 stands
 where this file does not say otherwise. Every audit finding (`step3-homework-audit-2026-09-26.md`,
@@ -32,22 +32,73 @@ its factories do (`of(Function)` → `SignatureMangle`, model). So:
   says model reaches "only the parse vocabulary (protocol)"; nothing reaches below protocol but
   base) — a JDK-only record satisfies it. `cycles.md` §4's edge count is re-run before the push.
 
-**Constructors say what a call is.** The seven `AppliedFunction` constructors collapse to two
-named factories plus the canonical record constructor:
+**RULED 2026-09-27 (the user, after the plain-language walk-through): the callee is a sealed
+two-case type in the node's one slot that changes meaning at resolution.** Not a nullable field,
+not an empty-list convention, not a second node hierarchy.
 
 ```java
-AppliedFunction.unresolved(String spelled, List<ValueSpecification> args, @Nullable SourceInfo pos, …flags)
-    // a call from TEXT (parser) or a synthesized Pure program the resolver will read (normalizer, E.6): referents = List.of()
-AppliedFunction.bound(List<FunctionId> referents, List<ValueSpecification> args, @Nullable SourceInfo pos, …flags)
-    // a call the compiler MINTS at typing time (the ~69 desugars in compiler/spec, validation, StatementInline): referents = the group(s) it means, e.g. Pure.AT_COLLECTION_MAP + Pure.AT_RELATION_MAP; the spelling is display only, derived from the first referent
+package com.legend.protocol.spec;
+/** What a call refers to. Exactly two cases; every reader switches on both. */
+public sealed interface Callee permits Callee.Spelled, Callee.Bound {
+    /** The call as written. The resolver has not run. A Spelled callee reaching
+     *  the typer is a COMPILER BUG (a parsed node skipped resolution) and fails
+     *  loudly with that message — never a user-facing "unknown function". */
+    record Spelled(String name) implements Callee {
+        public String spelled() { return name; }
+    }
+    /** The declarations the resolver decided the call may mean — never empty
+     *  (zero candidates is a WALL with a reason at the call's span, and the
+     *  tree does not continue). {@code spelled} is display for diagnostics
+     *  only; nothing identifies a function by it. */
+    record Bound(String spelled, List<FunctionId> declarations) implements Callee {
+        public Bound {
+            Objects.requireNonNull(spelled); declarations = List.copyOf(declarations);
+            if (declarations.isEmpty()) throw new IllegalArgumentException("a bound callee names at least one declaration: " + spelled);
+        }
+    }
+    String spelled();
+}
 ```
 
-`unresolved` after resolution with an empty list is the wall (3d); `bound` with an empty list is an
-`IllegalArgumentException` at the mint. No mint can forget its referents: there is no constructor
-that takes a bare name and nothing else. `MINT_BY_NAME` (143) becomes the count of `unresolved(`
-sites outside `parser/` and `normalizer/` — pinned at zero after 3a.
+`AppliedFunction(Callee callee, List<ValueSpecification> parameters, @Nullable SourceInfo pos, …flags)`
+replaces `function` + `candidateFqns`. `withParameters` copies the callee like every other field.
+`FunctionId` (`record FunctionId(String qualified)`, today `com.legend.model.FunctionId`) moves to
+`com.legend.protocol` — the record depends on nothing; its factories (`of(Function)`, `ofAll`) move
+to `com.legend.model.FunctionIds` (37 + 12 call sites, 488 generated in `Pure.java`, mechanical).
 
-**Spelling after resolution (audit #5).** The resolver today rewrites a single match to its FQN and
+Why this shape (the reasoning the ruling rests on):
+- **Records** are immutable values; the resolver builds a NEW node with a `Bound` callee and
+  returns the new tree, as it does today when it rewrites a name. Nothing is mutated after
+  construction (GHC's renamed tree, not javac's filled-in symbol slot).
+- **Sealed with two permits** makes every `switch` over a callee exhaustive: a reader cannot
+  forget the `Spelled` case, so "a parsed node reached the typer" is caught by the compiler at
+  every site, and there is no third meaning for an empty list (today's text list means three
+  things when empty — audit #5).
+- **The compact constructor** puts "never empty" at the one place a `Bound` can be made.
+- **The spelled name in both cases** keeps diagnostics saying `map` after resolution while
+  making it impossible to use as an identity by accident: reading it is a visible `spelled()`
+  call the guardrail counts.
+- **One slot, not a second tree**: about thirty node kinds make the tree and exactly one field
+  of one kind changes meaning at resolution; a phase-indexed slot is the standard answer when
+  the rest of the tree is identical across phases (Trees That Grow), and it costs one type
+  instead of thirty types plus every pass over them. Step 10 may grow a resolved tree of its
+  own if it ever earns it.
+
+**Who constructs what.**
+- The parser and the normalizer's synthesized programs: `Spelled(name)` — text the resolver reads.
+- The resolver: `Bound(spelled, ids)` — the candidate set under the rule of §2; zero → wall.
+- The typer's own desugars (the ~69 typing-time mints, §9 of v1): `Bound(spelled, group…)`
+  naming the overload group(s) they mean (`Pure.AT_COLLECTION_MAP`, …); there is no way to mint
+  by name alone, so `MINT_BY_NAME` outside `parser/` and `normalizer/` goes to zero.
+- Minted calls to a KNOWN single declaration: `Bound(spelled, List.of(id))`.
+
+**Who reads what.** The typer's candidate collection: `switch (af.callee()) { case Bound b ->
+ids…; case Spelled s -> throw compiler bug }`. Every one of the 33 `ResolvedNames` name-test sites,
+the 21 `CoreFn.of(spelling)` form dispatches and the `contains("::")` readers become a switch and
+must say which they wanted — the declarations (almost all of them) or the display name (diagnostics
+and the differential's positional join only). That is the 3a migration and the point of it.
+
+**Spelling after resolution (audit #5), under the ruled shape.** The resolver today rewrites a single match to its FQN and
 leaves candidates empty (`NameResolver:1744-1745`), and readers key on `af.function().contains("::")`
 (`ResolvedNames:25`, `StatementInline:202`, `PkInference:97`, `DeferredArgs.isOverCall:52`, the 33
 `FAMILY_LOOKUP_BY_NAME` sites). Decision: the rewrite goes; `function()` keeps what the source
