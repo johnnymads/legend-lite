@@ -80,6 +80,18 @@ public record AppliedFunction(
                 List.of(), null, false, false, true);
     }
 
+    /** The {@code #>{db.rest}#} island's record, {@code tableReference(db[, 'rest'])}:
+     *  the database as an element pointer, the rest of the path (schema and table) as a
+     *  position-free string, the island's own span. Built HERE, once, for the parser and
+     *  the protocol reader alike; {@code rest} is null for a store-only reference. */
+    public static AppliedFunction tableReference(String db,
+            @com.legend.base.Nullable String rest,
+            @com.legend.base.Nullable com.legend.protocol.SourceInfo span) {
+        PackageableElementPtr store = new PackageableElementPtr(db);
+        return new AppliedFunction("tableReference", rest == null ? List.of(store)
+                : List.of(store, new CString(rest)), List.of(), span);
+    }
+
     public AppliedFunction {
         Objects.requireNonNull(function, "function");
         Objects.requireNonNull(parameters, "parameters");

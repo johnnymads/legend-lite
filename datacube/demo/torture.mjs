@@ -13,6 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { PlanError, UpstreamPlanner } from '../src/planner.ts';
 import { NULL_GROUP, pivotValuesQuery, serialize } from '../src/serialize.ts';
 
 /**
@@ -77,14 +78,16 @@ const check = (name, ok, detail = '') => {
   if (!ok) failed = true;
 };
 
+// legend-engine's own API, the same client the product ships
+const PLANNER = new UpstreamPlanner({ baseUrl: ENGINE, model: MODEL, runtime: 'torture::RT', cache: false });
+
 async function plan(pure) {
-  const r = await fetch(`${ENGINE}/engine/plan`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: `${MODEL}\n\n${pure}`, runtime: 'torture::RT' }),
-  });
-  const body = await r.json().catch(() => ({}));
-  return { sql: body.sql, error: body.error };
+  try {
+    return { sql: await PLANNER.plan(pure, undefined), error: undefined };
+  } catch (e) {
+    if (e instanceof PlanError) return { sql: undefined, error: e.message };
+    throw e;
+  }
 }
 
 /** Every column the torture table has, with its declared type. */

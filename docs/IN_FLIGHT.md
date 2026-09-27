@@ -86,6 +86,19 @@ h2-fail-roster.txt`.
   `Varchar(n)`/`Int`/`Numeric(p,s)`/`Timestamp`/`TinyInt` (BIT), and `sum` of a decimal is
   `Decimal` here, `Number` there. Proposed after your step 3 (it is the binder's overload rules);
   BIT-as-number is a user decision.
+- 2026-09-27 warehouse: **U3a pushing: E1/E2/E5/E9 served under `/api/pure/v1/`, `/engine/plan`
+  DELETED** (`PlanEndpointTest` with it; `/engine/execute` stays until E8). Cross-area, announced
+  (rule 7): `core/BUILD.bazel` `server_lib` gains `":parser"` (one dep, E1/E2 parse there);
+  `Compiler.java` gains the parsed-lambda entries (`plan`/`resultType`/`compileQuery`, same
+  phases) and `target` (the runtime and store read off the typed tree by node type);
+  `SpecParser.parseLambda` (E1's wrap, engine level) and `AppliedFunction.tableReference` (the
+  `#>{}#` record's ONE factory, parser and reader). **Your guardrails, each with a dated reason:**
+  `ErrorShapeGuardrailTest` `LegendHttpServer.java` 6 -> 5, `PureV1Api.java` 1 added,
+  `CATCH_RETURNS_VALUE` 19 -> 21 (the API's error answers); `IdentityGuardrailTest`
+  `MINT_BY_NAME` 143 -> 142 (ratchet down); `JavaEvalLedgerTest` server register + `PureV1Api`;
+  `JdbcSurfaceCensusTest` test register + `PureV1ApiTest` (rows judged on H2).
+  `ProtocolEmitter.java` is 3,497 of 3,500 lines: its next addition needs the split. DataCube's
+  two server pages share one `pure/v1` client (`datacube/src/pure-v1.ts`).
 - 2026-09-27 warehouse: **the user ruled: legend-lite serves ONLY upstream's `pure/v1` APIs**
   (design `UPSTREAM_ENDPOINTS_DESIGN_2026_09_27.md`). Coming, cross-area (rule 7):
   - a lambda protocol-JSON READER in `core/.../protocol/` (the emitter's mirror);

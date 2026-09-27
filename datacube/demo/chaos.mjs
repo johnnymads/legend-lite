@@ -55,10 +55,10 @@ const TYPES = {
 // behaves when answers arrive late and out of order, which is the
 // entire subject of this file.
 try {
-  const r = await fetch(`${ENGINE}/engine/plan`, {
+  const r = await fetch(`${ENGINE}/api/pure/v1/grammar/grammarToJson/lambda`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: '1+1' }),
+    headers: { 'Content-Type': 'text/plain' },
+    body: '1+1',
     signal: AbortSignal.timeout(2000),
   });
   if (!r.ok && r.status !== 400) throw new Error(`status ${r.status}`);

@@ -509,11 +509,86 @@ public final class Compiler {
 
     private static Lowered lowerQuery(String model, String query,
             @com.legend.base.Nullable String runtime, boolean streaming) {
+        return lowerParsed(model, SpecParser.parse(query,
+                com.legend.parser.Dialect.LEGEND_LITE), runtime, streaming);
+    }
+
+    /**
+     * {@link #plan} for a query that arrives ALREADY PARSED &mdash; an upstream
+     * {@code pure/v1} request's lambda, read by {@link com.legend.protocol.ProtocolReader}
+     * (docs/UPSTREAM_ENDPOINTS_DESIGN_2026_09_27.md, U2). The same phase sequence as
+     * the text path from name resolution on; nothing is re-spelled as text.
+     */
+    public static com.legend.plan.QueryPlan plan(String model,
+            com.legend.protocol.spec.ValueSpecification query,
+            @com.legend.base.Nullable String runtime) {
+        Lowered l = lowerParsed(model, query, runtime, false);
+        String sql = dialectOf(l.ctx(), runtime).render(l.plan());
+        return new com.legend.plan.QueryPlan(sql, l.root().info(),
+                com.legend.plan.ResultShape.of(l.root()));
+    }
+
+    /**
+     * The TYPE of a query's result, compile-only &mdash; upstream
+     * {@code pure/v1/compilation/lambdaRelationType}'s fact (U2): the query's
+     * statements typed as a query body, the last one's type. No runtime, no store
+     * resolution, no lowering.
+     */
+    public static com.legend.compiler.element.type.ExprType resultType(String model,
+            com.legend.protocol.spec.ValueSpecification query) {
+        ModelContext ctx = compileModel(model);
+        java.util.List<TypedSpec> body = new SpecCompiler(ctx).typeQueryBody(
+                NameResolver.resolveQuery(query));
+        return body.get(body.size() - 1).info();
+    }
+
+    /**
+     * The execution target a query names, as the COMPILER reads it (U3, the plan's
+     * connection): the runtime its {@code ->from(runtime)} binds, and the database its
+     * {@code #>{db...}#} accessor reads -- null for a class query, whose store its mapping
+     * chooses. Read off the typed tree by node type, never by a call's name.
+     */
+    public record Target(@com.legend.base.Nullable String runtime,
+            @com.legend.base.Nullable String store) {
+    }
+
+    /** {@link Target} for an already-parsed query: typed, not lowered. */
+    public static Target target(String model,
+            com.legend.protocol.spec.ValueSpecification query) {
+        ModelContext ctx = compileModel(model);
+        String runtime = null;
+        String store = null;
+        java.util.ArrayDeque<TypedSpec> work = new java.util.ArrayDeque<>(
+                new SpecCompiler(ctx).typeQueryBody(NameResolver.resolveQuery(query)));
+        while (!work.isEmpty()) {
+            TypedSpec n = work.poll();
+            if (runtime == null && n instanceof com.legend.compiler.spec.typed.TypedFrom f
+                    && f.runtime().isPresent()) {
+                runtime = f.runtime().get().fullPath();
+            }
+            if (store == null
+                    && n instanceof com.legend.compiler.spec.typed.TypedTableReference r) {
+                store = r.store();
+            }
+            work.addAll(n.children());
+        }
+        return new Target(runtime, store);
+    }
+
+    /** {@link #compileQuery(String, String)} for an already-parsed query (U2). */
+    public static TypedSpec compileQuery(String model,
+            com.legend.protocol.spec.ValueSpecification query) {
+        ModelContext ctx = compileModel(model);
+        return new SpecCompiler(ctx).typeExpression(NameResolver.resolveQuery(query));
+    }
+
+    private static Lowered lowerParsed(String model,
+            com.legend.protocol.spec.ValueSpecification parsed,
+            @com.legend.base.Nullable String runtime, boolean streaming) {
         ModelContext ctx = compileModel(model);
         SpecCompiler specs = new SpecCompiler(ctx);
         java.util.List<TypedSpec> body = specs.typeQueryBody(
-                NameResolver.resolveQuery(SpecParser.parse(query,
-                        com.legend.parser.Dialect.LEGEND_LITE)));
+                NameResolver.resolveQuery(parsed));
         body = new com.legend.compiler.spec.UserCallInliner(specs).inlineBody(body);   // Phase G½
         boolean temporalRoot = com.legend.compiler.element.Temporal
                 .anyTemporalGetAll(body, ctx);

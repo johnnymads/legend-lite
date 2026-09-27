@@ -2262,6 +2262,13 @@ public final class ProtocolEmitter {
         }
     }
 
+    /** A lambda as upstream {@code grammarToJson/lambda} writes it; {@link ProtocolReader#lambda} reads it. */
+    public static String emitLambda(com.legend.protocol.spec.LambdaFunction lam) {
+        StringBuilder b = new StringBuilder();
+        lambda(b, lam);
+        return b.toString();
+    }
+
     /**
      * An inline lambda literal. The lambda node itself carries no span. Parameters
      * (ProbeWireShapes cLambda/cLambda2): an UNTYPED parameter is the bare

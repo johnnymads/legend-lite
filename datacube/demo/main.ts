@@ -12,7 +12,7 @@
 // visible in the build, and unreachable from the other bundle.
 //
 // `WasmPlanner` is not a second planner. It calls the same
-// `Compiler.plan` that POST /engine/plan calls, compiled to
+// `Compiler.plan` that `pure/v1/execution/generatePlan` calls, compiled to
 // WebAssembly; `bazel test //datacube:wasm_differential_test` checks 16 cube shapes -- this
 // demo's own serialised grammar -- against the JVM and expects every
 // answer, refusals included, to be identical.

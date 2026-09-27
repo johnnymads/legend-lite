@@ -17,7 +17,7 @@ import { describe, it } from 'node:test';
 import { CubeController, type Planner } from '../src/cube.ts';
 import type { QueryEngine } from '../src/engine.ts';
 import { EpochGuard, isStale, isSuperseded, Superseded } from '../src/epoch.ts';
-import { LegendLitePlanner } from '../src/planner.ts';
+import { UpstreamPlanner } from '../src/planner.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { fetchTree } from '../src/treeview.ts';
@@ -150,16 +150,15 @@ describe('a tree fetch that is already obsolete', () => {
 describe('the planner client', () => {
   it('passes the signal to fetch', async () => {
     let sawSignal: AbortSignal | undefined;
-    const planner = new LegendLitePlanner({
+    const planner = new UpstreamPlanner({
       baseUrl: 'http://example',
       model: 'model',
       runtime: 'rt',
       cache: false,
       fetch: (async (_url: string, init?: RequestInit) => {
         sawSignal = init?.signal ?? undefined;
-        return new Response(JSON.stringify({ sql: 'SELECT 1' }), {
-          status: 200,
-        });
+        const plan = { rootExecutionNode: { _type: 'sql', sqlQuery: 'SELECT 1' } };
+        return new Response(JSON.stringify(plan), { status: 200 });
       }) as unknown as typeof fetch,
     });
     await planner.plan('grammar', GROUPED);
@@ -175,7 +174,7 @@ describe('the planner client', () => {
     // constantly, and reporting each one as "could not reach the
     // planner" turns normal behaviour into a fake outage.
     const ac = new AbortController();
-    const planner = new LegendLitePlanner({
+    const planner = new UpstreamPlanner({
       baseUrl: 'http://example',
       model: 'model',
       runtime: 'rt',

@@ -1246,7 +1246,12 @@ class JavaEvalLedgerTest {
                     java.util.Set.of("ConnectionResolver.java",
                             "DiagramService.java",
                             "LegendHttpServer.java", "OutputFormat.java",
-                            "PureLspServer.java", "QueryService.java"),
+                            "PureLspServer.java",
+                            // 2026-09-27, legend-engine's pure/v1 calls: parse, emit,
+                            // compile and PLAN only -- no connection, no JDBC, no value
+                            // computed; the plan's SQL is the database's to run
+                            "PureV1Api.java",
+                            "QueryService.java"),
                     "core/src/main/java/com/legend/testdatagen",
                     // TestDataGenerationNatives (TDG lane S1): the ORCHESTRATION-time fold
                     // of the checker's census CARRIER — computes the census

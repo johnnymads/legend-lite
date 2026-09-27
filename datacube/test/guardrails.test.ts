@@ -97,8 +97,8 @@ describe('there is exactly one planner, and no way to fall back to another', () 
   // The rule bans a second IMPLEMENTATION -- a thing that must AGREE
   // with legend-lite about null ordering, coercion and aggregates,
   // and will therefore eventually disagree. It does not ban a second
-  // TRANSPORT to the same implementation. `LegendLitePlanner` POSTs
-  // to /engine/plan, whose handler calls Compiler.plan;
+  // TRANSPORT to the same implementation. `UpstreamPlanner` POSTs
+  // to legend-lite's pure/v1 generatePlan, whose handler calls Compiler.plan;
   // `WasmPlanner` calls that same Compiler.plan compiled to
   // WebAssembly. There is one planner and two ways to reach it.
   //

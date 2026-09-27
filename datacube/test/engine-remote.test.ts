@@ -133,62 +133,34 @@ describe('the engine executor', () => {
       fetch: fetchStub ?? stub(answers).fetchStub,
     });
 
-  it('names the runtime in the query, and asks the three endpoints', async () => {
-    const { calls, fetchStub } = stub([{ parsed: true }, { parsed: true },
-      ANSWER]);
+  it('names the runtime in the query, sends the model as text, and asks the two endpoints', async () => {
+    const { calls, fetchStub } = stub([{ parsed: true }, ANSWER]);
     const out = await executor([], fetchStub)
       .execute('$t->select(~[region])', SNAPSHOT);
 
     assert.deepEqual(calls.map((c) => new URL(c.url).pathname), [
-      '/api/pure/v1/grammar/grammarToJson/model',
       '/api/pure/v1/grammar/grammarToJson/lambda',
       '/api/pure/v1/execution/execute',
     ]);
     // The query carries its runtime: our own planners take it
     // out-of-band, the engine does not.
-    assert.match(calls[1]?.body ?? '', /->from\(trades::h2::RT\)$/);
-    assert.equal(calls[1]?.type, 'text/plain');
+    assert.match(calls[0]?.body ?? '', /->from\(trades::h2::RT\)$/);
+    assert.equal(calls[0]?.type, 'text/plain');
+    // The model travels as text, which every server accepts on every
+    // call: nothing to parse first, nothing to cache.
+    const sent = JSON.parse(calls[1]?.body ?? '{}');
+    assert.deepEqual(sent.model, {
+      _type: 'text',
+      code: '###Relational\nDatabase trades::h2::DB()',
+    });
+    assert.deepEqual(sent.function, { parsed: true });
     // And the execute call carries the context the engine requires.
-    const sent = JSON.parse(calls[2]?.body ?? '{}');
     assert.equal(sent.context._type, 'BaseExecutionContext');
     assert.equal(sent.clientVersion, 'vX_X_X');
 
     assert.equal(out.rows.rowCount, 2);
     // The SQL is REPORTED, not run: it comes back as an activity.
     assert.match(out.sql, /^select "trades_0"\.region/);
-  });
-
-  it('parses the model ONCE across queries', async () => {
-    const { calls, fetchStub } = stub([{ parsed: true }, { parsed: true },
-      ANSWER]);
-    const e = executor([], fetchStub);
-    await e.execute('$t->select(~[region])', SNAPSHOT);
-    await e.execute('$t->select(~[notional])', SNAPSHOT);
-    const models = calls.filter((c) => c.url.endsWith('/model'));
-    assert.equal(models.length, 1,
-      'the model is the biggest part of the payload and does not change');
-  });
-
-  it('retries the model after a failed parse', async () => {
-    // Caching a REJECTION would leave the cube permanently broken by
-    // one bad moment: every later query would be refused without an
-    // attempt.
-    let first = true;
-    const fetchStub = (async () => {
-      if (first) {
-        first = false;
-        return new Response('{"message":"parse failed"}', { status: 500 });
-      }
-      return new Response(JSON.stringify(ANSWER), { status: 200 });
-    }) as unknown as typeof fetch;
-    const e = executor([], fetchStub);
-    await assert.rejects(
-      () => e.execute('$t->select(~[region])', SNAPSHOT),
-      (err: Error) => err instanceof RemoteExecutionError
-        && /parse failed/.test(err.message),
-    );
-    const out = await e.execute('$t->select(~[region])', SNAPSHOT);
-    assert.equal(out.rows.rowCount, 2);
   });
 
   it('reports the engine’s own words, not its stack', async () => {
@@ -223,7 +195,7 @@ describe('the engine executor', () => {
     await assert.rejects(
       () => executor([], fetchStub).execute('$t->select(~[x])', SNAPSHOT),
       (err: Error) => err instanceof RemoteExecutionError
-        && /could not reach the engine at http:\/\/engine:6300/.test(
+        && /could not reach the server at http:\/\/engine:6300/.test(
           err.message),
     );
   });

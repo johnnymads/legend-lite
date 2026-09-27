@@ -1,7 +1,7 @@
 // The planner, in the browser: Pure grammar out, SQL back, no server.
 //
-// This is the SAME planner as `LegendLitePlanner`, not a second one.
-// That client POSTs to /engine/plan, whose handler calls
+// This is the SAME planner as `UpstreamPlanner`, not a second one.
+// That client POSTs to legend-lite's `pure/v1/execution/generatePlan`, whose handler calls
 // `Compiler.plan(model, query, runtime)`; this one calls that exact
 // method inside a WebAssembly build of legend-lite. Only the transport
 // differs, which is the whole point -- a TypeScript reimplementation

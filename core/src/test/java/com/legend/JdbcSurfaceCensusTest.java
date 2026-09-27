@@ -164,6 +164,11 @@ class JdbcSurfaceCensusTest {
             // and a store-owned one never is. No statements, no queries: the
             // database executes nothing here, which is exactly tenet #1.
             "core/src/test/java/com/legend/server/ConnectionLeaseTest.java",
+            // 2026-09-27, upstream pure/v1 parity: legend-engine's plan SQL and lite's
+            // are two spellings, so ROWS are the verdict -- both run on H2 over the
+            // model's own setup data and must answer the same rows. The database
+            // executes both; nothing is evaluated in Java (tenet #1; the referee rule)
+            "core/src/test/java/com/legend/server/PureV1ApiTest.java",
             // batch 58: reads the referee H2 jar's VERSION constant (no
             // connection, no statement) to pin the raw-SQL boundary's H2
             // dialect level to the jar it translates for

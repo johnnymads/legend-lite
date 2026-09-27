@@ -1,0 +1,1 @@
+|#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#->groupBy(~[region], ~[total:x|$x.notional:y|$y->sum()])->sort([~region->ascending()])->from(trades::h2::RT)

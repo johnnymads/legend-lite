@@ -19,8 +19,9 @@ package planner;
  * <p>The first version of this class hand-assembled the pipeline —
  * parse, type, inline, resolve, lower, {@code new DuckDb().render} —
  * which was fine for asking "does a planner survive the compile" but
- * is exactly wrong for shipping. {@code POST /engine/plan} calls
- * {@link com.legend.Compiler#plan(String, String, String)}, so
+ * is exactly wrong for shipping. The server's upstream
+ * {@code pure/v1/execution/generatePlan} calls {@code Compiler.plan} (on the request's
+ * already-parsed lambda: the same phases from name resolution on), so
  * anything else here would be a SECOND planner that has to agree with
  * the first about dialect selection, null ordering and aggregate
  * semantics — the divergence class this project exists to avoid.
@@ -85,8 +86,8 @@ public final class Wasm {
             + "->sort([~region->ascending()])->limit(10)";
 
     /**
-     * The planner, end to end — the SAME call {@code POST /engine/plan}
-     * makes, so the browser plane and the server plane cannot drift.
+     * The planner, end to end — the SAME {@code Compiler.plan} the server's
+     * {@code pure/v1/execution/generatePlan} calls, so the browser plane and the server plane cannot drift.
      */
     @org.teavm.jso.JSExport
     public static String plan(String model, String query, String runtime) {

@@ -68,10 +68,11 @@ Errors follow upstream's error JSON. A model that is not `PureModelContextText` 
 upstream's error shape, naming the missing reader.
 
 **U4. Clients move; the made-up API dies:**
-- DataCube's legend-lite server page and its engine page use ONE client (`engine-remote.ts`):
+- DataCube's legend-lite server page and its engine page use ONE client (`pure-v1.ts`, landed
+  2026-09-27: `UpstreamPlanner` and `LegendEngineExecutor` both call through it):
   - E9 when the tab runs the SQL (upstream's cached path);
   - E8 when the server does.
-- The model travels as text.
+- The model travels as text (the engine page's separate `grammarToJson/model` call went with it).
 - Deleted: `/engine/plan`, `/engine/execute`, `LegendLitePlanner`, and the core tests of the two
   endpoints (rewritten against `/api/pure/v1`).
 - The demo harnesses that planned through `/engine/plan` move too.

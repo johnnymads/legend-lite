@@ -17,6 +17,7 @@
 import type { CubeSnapshot } from './snapshot.ts';
 import type { LevelScope } from './serialize.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
+import { PureV1Client, type PureV1Options } from './pure-v1.ts';
 
 /** What a remote engine answers with. */
 export interface RemoteResult {
@@ -49,16 +50,7 @@ export class RemoteExecutionError extends Error {
   }
 }
 
-export interface LegendEngineOptions {
-  /** e.g. `http://127.0.0.1:6300`. */
-  readonly baseUrl: string;
-  /** The model, as Pure grammar. Parsed once, then reused. */
-  readonly model: string;
-  /** The runtime the query reads through, e.g. `trades::h2::RT`. */
-  readonly runtime: string;
-  /** Defaults to the global fetch; injectable for tests. */
-  readonly fetch?: typeof fetch;
-}
+export type LegendEngineOptions = PureV1Options;
 
 /** The protocol shapes this client touches, and only those. */
 interface TdsResponse {
@@ -147,26 +139,18 @@ export function toResultTable(
 }
 
 /**
- * Pure in, rows out, through a running legend-engine.
- *
- * Three calls the first time and two after: the MODEL is parsed once
- * (`grammarToJson/model`) and kept, because it does not change while
- * a cube is open and it is the biggest part of the payload; the query
- * is parsed each time (`grammarToJson/lambda`), because it changes
- * with every interaction; then `execution/execute`.
+ * Pure in, rows out, through a running server's `pure/v1` API: the query
+ * parsed (`grammarToJson/lambda`), then `execution/execute`.
  */
 export class LegendEngineExecutor implements RemoteExecutor {
-  readonly #options: LegendEngineOptions;
-  readonly #fetch: typeof fetch;
-  #model: Promise<unknown> | null = null;
+  readonly #client: PureV1Client;
 
   constructor(options: LegendEngineOptions) {
-    this.#options = options;
-    this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.#client = new PureV1Client(options, (m, p) => new RemoteExecutionError(m, p));
   }
 
   get baseUrl(): string {
-    return this.#options.baseUrl.replace(/\/$/, '');
+    return this.#client.baseUrl;
   }
 
   async execute(
@@ -175,109 +159,13 @@ export class LegendEngineExecutor implements RemoteExecutor {
     _scope?: LevelScope,
     signal?: AbortSignal,
   ): Promise<RemoteResult> {
-    // THE RUNTIME IS NAMED IN THE QUERY. Our own planners take it
-    // out-of-band; a relation query handed to the engine carries it,
-    // which is how `from` reads in every example upstream has.
-    const pure = `${pureGrammar}->from(${this.#options.runtime})`;
+    const pure = this.#client.query(pureGrammar);
     const started = Date.now();
-    const model = await this.#modelContext(pure, signal);
-    const lambda = await this.#post(
-      '/grammar/grammarToJson/lambda', pure, pure, signal, true,
-    );
-    const body = (await this.#post('/execution/execute', {
-      // vX_X_X carries the protocol models production versions lack
-      // -- DuckDB's among them, which is upstream's reason too.
-      clientVersion: 'vX_X_X',
-      function: lambda,
-      model,
-      // REQUIRED. Without it the engine answers 500 with a
-      // NullPointerException out of `processExecutionContext` rather
-      // than naming the field it wanted.
-      context: {
-        _type: 'BaseExecutionContext',
-        queryTimeOutInSeconds: 60,
-        enableConstraints: true,
-      },
-    }, pure, signal)) as TdsResponse;
-
+    const lambda = await this.#client.lambda(pure, signal);
+    const body = (await this.#client.execute(lambda, pure, signal)) as TdsResponse;
     return {
       rows: toResultTable(body, snapshot.epoch, Date.now() - started),
       sql: body.activities?.at(-1)?.sql ?? '',
     };
-  }
-
-  /** The parsed model, once per executor. */
-  #modelContext(pure: string, signal?: AbortSignal): Promise<unknown> {
-    this.#model ??= this.#post(
-      '/grammar/grammarToJson/model', this.#options.model, pure, signal, true,
-    ).catch((cause: unknown) => {
-      // A failed parse must not be cached: the next query would get
-      // the same rejection with no attempt made.
-      this.#model = null;
-      throw cause;
-    });
-    return this.#model;
-  }
-
-  async #post(
-    path: string,
-    body: unknown,
-    pure: string,
-    signal: AbortSignal | undefined,
-    text = false,
-  ): Promise<unknown> {
-    const url = `${this.baseUrl}/api/pure/v1${path}`;
-    let response: Response;
-    try {
-      response = await this.#fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': text ? 'text/plain' : 'application/json',
-        },
-        body: text ? (body as string) : JSON.stringify(body),
-        ...(signal ? { signal } : {}),
-      });
-    } catch (cause) {
-      // An ABORT is this client hanging up, not the engine failing.
-      if (signal?.aborted) throw signal.reason ?? cause;
-      throw new RemoteExecutionError(
-        `could not reach the engine at ${url}: ${String(cause)}`,
-        pure,
-      );
-    }
-    const raw = await response.text();
-    if (!response.ok) {
-      throw new RemoteExecutionError(
-        `${engineMessage(raw) ?? `engine returned ${response.status}`}`,
-        pure,
-      );
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      throw new RemoteExecutionError(
-        `the engine's answer was not JSON: ${raw.slice(0, 200)}`,
-        pure,
-      );
-    }
-  }
-}
-
-/**
- * The engine's own words for what went wrong.
- *
- * Its errors arrive as `{code, message, status, trace}` and the trace
- * is a Java stack hundreds of lines long. The message is the part a
- * person can act on -- "Can't find a match for function
- * 'toLower(Varchar(32)[0..1])'" told us exactly what to change.
- */
-function engineMessage(raw: string): string | null {
-  try {
-    const body = JSON.parse(raw) as { message?: unknown };
-    return typeof body.message === 'string'
-      ? body.message.replace(/\s+/g, ' ').slice(0, 400)
-      : null;
-  } catch {
-    return raw ? raw.replace(/\s+/g, ' ').slice(0, 200) : null;
   }
 }

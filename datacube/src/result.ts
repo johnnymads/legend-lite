@@ -84,8 +84,9 @@ export function columnIndex(table: ResultTable, name: string): number {
  *
  * legend-lite computes them -- `QueryPlan(sql, rootType, shape)`,
  * where rootType is the relation's typed columns -- and both
- * boundaries drop them: the wasm export returns `.sql()` and
- * `/engine/plan` returns `{sql, shape}`. So each driver re-derives
+ * clients drop them: the wasm export returns `.sql()`, and the
+ * server client takes only the SQL node's text out of the
+ * generatePlan answer (whose `resultType` does carry them). So each driver re-derives
  * from whatever metadata its own backend happens to report, in that
  * backend's own vocabulary, and every backend needs its own
  * converter. Real legend-engine publishes the same fact properly:

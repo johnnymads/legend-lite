@@ -23,15 +23,15 @@ legend-engine is `http://host:port/api`.
 
 | # | Endpoint | Request | Response | DataCube uses it for | legend-engine 4.145.0 | legend-lite today |
 |---|---|---|---|---|---|---|
-| E1 | `POST pure/v1/grammar/grammarToJson/lambda` (query params `sourceId`, `lineOffset`, `columnOffset`, `returnSourceInformation`) | Pure text | lambda protocol JSON | parsing the cube's query and calculated-column code | `GrammarToJson.java` | ❌ no endpoint; the parser + `ProtocolEmitter` already produce these bytes for function bodies (PMCD parity) |
-| E2 | `POST pure/v1/grammar/grammarToJson/model` | Pure text | `PureModelContextData` JSON | a source's model text (freeform, local file) | `GrammarToJson.java` | ❌ no endpoint; **byte-exact PMCD emission exists** (`ProtocolEmitter`, 5,259-source parity) |
+| E1 | `POST pure/v1/grammar/grammarToJson/lambda` (query params `sourceId`, `lineOffset`, `columnOffset`, `returnSourceInformation`) | Pure text | lambda protocol JSON | parsing the cube's query and calculated-column code | `GrammarToJson.java` | ✅ served (2026-09-27), byte-exact against the engine's own answer (`PureV1ApiTest`) |
+| E2 | `POST pure/v1/grammar/grammarToJson/model` | Pure text | `PureModelContextData` JSON | a source's model text (freeform, local file) | `GrammarToJson.java` | ✅ served (2026-09-27) through `PmcdParser` (5,259-source byte parity) |
 | E3 | `POST pure/v1/grammar/grammarToJson/valueSpecification` | Pure text | value-spec JSON | filter values, parameter values | `GrammarToJson.java` | ❌ |
 | E4 | `POST pure/v1/grammar/jsonToGrammar/lambda` (`renderStyle`), `…/lambda/batch`, `…/valueSpecification` | protocol JSON | Pure text | showing the cube's query, the calculated-column editor, View Source | `JsonToGrammar.java` | ❌ no protocol-JSON **reader**, no grammar **composer** |
-| E5 | `POST pure/v1/compilation/lambdaRelationType` (and `/batch`) | `LambdaReturnTypeInput {model, lambda}` | `RelationType {columns:[{name, genericType}]}` | the column set and types of a query, **including validating a calculated column before it is applied** | `Compile.java` | ❌ no endpoint; the compiler computes relation types |
+| E5 | `POST pure/v1/compilation/lambdaRelationType` (and `/batch`) | `LambdaReturnTypeInput {model, lambda}` | `RelationType {columns:[{name, genericType}]}` | the column set and types of a query, **including validating a calculated column before it is applied** | `Compile.java` | ✅ served (2026-09-27); recorded difference: lite's type names (no precise primitives yet) |
 | E6 | `POST pure/v1/compilation/lambdaReturnType` | `LambdaReturnTypeInput` | `{returnType}` | the type of an expression | `Compile.java` | ❌ |
 | E7 | `POST pure/v1/compilation/autofix/transformTdsToRelation/lambda` | lambda + model | lambda JSON | opening a legacy TDS query in DataCube | `Autofix.java` | ❌ |
 | E8 | `POST pure/v1/execution/execute` (`serializationFormat`) | `ExecuteInput {clientVersion, function, mapping, runtime, context, model, parameterValues}` | the engine's result JSON (relation: `builder` + `activities` with the SQL + `result.columns/rows`) | running the cube on the server | `Execute.java` | ⚠️ `/engine/execute` exists with a legend-lite shape — not the contract |
-| E9 | `POST pure/v1/execution/generatePlan` | `ExecuteInput` | `ExecutionPlan` JSON | upstream's CACHED path: take the SQL out of the plan, run it in DuckDB-wasm | `Execute.java` | ⚠️ `/engine/plan` exists with a legend-lite shape; no `ExecutionPlan` JSON |
+| E9 | `POST pure/v1/execution/generatePlan` | `ExecuteInput` | `ExecutionPlan` JSON | upstream's CACHED path: take the SQL out of the plan, run it in DuckDB-wasm | `Execute.java` | ✅ served (2026-09-27), the engine's plan JSON; `/engine/plan` deleted; recorded differences: type names, `resultColumns` carry no physical type |
 | E10 | `POST pure/v1/codeCompletion/completeCode` | `CompleteCodeInput` | `CodeCompletionResult` | typeahead in the code editors | **absent from 4.145.0** — the client has called it since 2024-10 and gets no answer from open-source engine | ❌ — to match 4.145.0 exactly, also absent; see §4 |
 | Q1 | `GET pure/v1/query/{id}`, `POST pure/v1/query/search`, `GET pure/v1/query/batch` | — / `QuerySearchSpecification` | `Query` / light queries | the **Legend Query source**: load a saved query's lambda, mapping, runtime, parameters | `ApplicationQuery.java` | ❌ no store |
 | Q2 | `POST pure/v1/query/dataCube/search`, `GET …/batch`, `GET …/{id}`, `POST …/dataCube`, `PUT …/{id}`, `DELETE …/{id}` | `DataCubeQuery {id, name, description, content, owner, createdAt, lastUpdatedAt, lastOpenAt}`, `QuerySearchSpecification` | the same | **save / load / delete DataCubes**; `content` is a `DataCubeSpecification` | `ApplicationQuery.java` (Mongo-backed upstream) | ❌ no store |
@@ -63,7 +63,8 @@ variants matter:
 And on the DataCube side:
 - **C1 One client.** Every server call goes through an engine-API client
   matching `V1_EngineServerClient`'s requests. `/engine/plan` and
-  `/engine/execute` stop being called.
+  `/engine/execute` stop being called. (2026-09-27: planning moved to
+  E1 + E9 in `UpstreamPlanner`; `/engine/plan` deleted.)
 - **C2 The in-tab planner speaks the same JSON.** The WebAssembly planner
   takes `ExecuteInput` and returns `ExecutionPlan`, exactly as E9 does, so
   running in the tab is the same code talking to a different transport.

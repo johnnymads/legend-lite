@@ -33,8 +33,8 @@ JVM. The differential compares two builds of one source. Two hand-kept
 copies would drift apart silently, and a differential that drifts proves
 nothing.
 
-**`plan` is `Compiler.plan` and nothing else.** `POST /engine/plan` calls
-the same method, so the browser plane and the server plane cannot disagree
+**`plan` is `Compiler.plan` and nothing else.** The server's upstream
+`pure/v1/execution/generatePlan` calls the same method, so the browser plane and the server plane cannot disagree
 about dialect, null ordering or aggregates.
 
 **Failure is a return value, not a throw.** `planOrError` returns

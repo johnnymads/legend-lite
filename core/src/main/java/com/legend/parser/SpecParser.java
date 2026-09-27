@@ -299,11 +299,24 @@ public final class SpecParser implements TokenStreamCursor {
      */
     public static ValueSpecification parse(TokenStream tokens,
             Dialect dialect) {
-        SpecParser parser = new SpecParser(tokens, "", dialect);
-        ValueSpecification result = parser.parseProgramLine();
-        if (!parser.atEnd()) {
-            throw parser.error("trailing tokens after expression: "
-                    + parser.peek() + " ('" + parser.safeText() + "')");
+        return new SpecParser(tokens, "", dialect).wholeLine();
+    }
+
+    /** A lambda's text as upstream {@code grammarToJson/lambda} reads it -- legend-engine's
+     *  grammar, so its level: text that is not a lambda becomes a parameterless one spanning
+     *  all its tokens, as legend-engine wraps it. */
+    public static LambdaFunction parseLambda(String source) {
+        SpecParser parser = new SpecParser(Lexer.tokenize(Objects.requireNonNull(source, "source")),
+                "", Dialect.LEGEND_ENGINE);
+        ValueSpecification v = parser.wholeLine();
+        return v instanceof LambdaFunction lf ? lf
+                : new LambdaFunction(List.of(), List.of(v), parser.spanOf(0, parser.pos - 1));
+    }
+
+    private ValueSpecification wholeLine() {
+        ValueSpecification result = parseProgramLine();
+        if (!atEnd()) {
+            throw error("trailing tokens after expression: " + peek() + " ('" + safeText() + "')");
         }
         return result;
     }
@@ -3192,15 +3205,10 @@ public final class SpecParser implements TokenStreamCursor {
         if (dot < 0) {
             // a STORE-ONLY reference (#>{my::Store}#) is legal — one path element on
             // the wire (probe "pf named new and store tref" b)
-            return new AppliedFunction("tableReference",
-                    List.of(new PackageableElementPtr(content)),
-                    List.of(), span);
+            return AppliedFunction.tableReference(content, null, span);
         }
-        String db = content.substring(0, dot);
-        String tableName = content.substring(dot + 1);
-        return new AppliedFunction("tableReference",
-                List.of(new PackageableElementPtr(db), new CString(tableName)),
-                List.of(), span);
+        return AppliedFunction.tableReference(content.substring(0, dot),
+                content.substring(dot + 1), span);
     }
 
     /**

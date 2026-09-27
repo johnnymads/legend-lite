@@ -49,7 +49,9 @@ public class LegendHttpServer {
 
         // Engine - query and SQL execution
         server.createContext("/engine/execute", new ExecuteHandler());
-        server.createContext("/engine/plan", new PlanHandler());
+        // legend-engine's own pure/v1 API, exactly (PureV1Api; the user's ruling of
+        // 2026-09-27: lite serves upstream's APIs and nothing of its own)
+        server.createContext("/api/pure/v1/", new PureV1Handler());
         server.createContext("/engine/sql", new ExecuteSqlHandler());
         server.createContext("/engine/diagram", new DiagramHandler());
 
@@ -183,23 +185,10 @@ public class LegendHttpServer {
     }
 
     /**
-     * Compile Pure to SQL WITHOUT executing it: parse, compile, lower, render,
-     * return &mdash; {@link com.legend.Compiler#plan} needs no connection. The
-     * seam a client-side executor needs (DataCube's browser plane runs the SQL
-     * against an embedded DuckDB): the SQL is still produced HERE, so there is
-     * ONE planner, and the same Pure lowers to the same SQL wherever it runs
-     * (ported from datacube/dual-plane 36c78809f, af4c9e1ff).
-     *
-     * <p>Request: {@code {"code": "<model + query>", "runtime": "<fqn>"}}, the
-     * runtime optional (found in the source when absent). Response:
-     * {@code {"success": true, "sql": "...", "shape": "..."}}; a query that does
-     * not compile, a construct not implemented, or a dialect that cannot express
-     * it answers {@code {"success": false, "error": "..."}}; anything else is a
-     * bug, logged with its stack and answered {@code "internal": true} &mdash;
-     * letting it escape dropped the connection, and the client saw a socket
-     * error with no message.
+     * {@code /api/pure/v1/...}: legend-engine's API, answered by {@link PureV1Api}. The body
+     * is read RAW -- a grammar text's line endings are part of its source positions.
      */
-    private class PlanHandler implements HttpHandler {
+    private static final class PureV1Handler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             addCorsHeaders(exchange);
@@ -212,54 +201,30 @@ public class LegendHttpServer {
                 sendResponse(exchange, 405, "{\"error\":\"Method not allowed\"}");
                 return;
             }
-            Map<String, Object> response = new LinkedHashMap<>();
-            try {
-                Json.Obj request = Json.parseObject(readBody(exchange));
-                String fullSource = request.getStringOr("code", null);
-                if (fullSource == null || fullSource.isBlank()) {
-                    sendResponse(exchange, 400, "{\"error\":\"Missing 'code' field\"}");
-                    return;
-                }
-                String runtimeName = request.getStringOr("runtime", null);
-                if (runtimeName == null || runtimeName.isBlank()) {
-                    runtimeName = extractRuntimeName(fullSource);
-                }
-                String[] parts = separateModelAndQuery(fullSource);
-                if (runtimeName == null || parts[1] == null || parts[1].isBlank()) {
-                    sendResponse(exchange, 400, "{\"error\":\"Need a Runtime and a query expression after it\"}");
-                    return;
-                }
-                com.legend.plan.QueryPlan plan = com.legend.Compiler.plan(parts[0], parts[1], runtimeName);
-                response.put("success", true);
-                response.put("sql", plan.sql());
-                response.put("shape", String.valueOf(plan.shape()));
-            } catch (com.legend.error.LegendCompileException
-                    | com.legend.error.NotImplementedException
-                    | com.legend.sql.dialect.DialectCapability e) {
-                // the honest outcomes of a plan-only call
-                response.put("success", false);
-                response.put("error", String.valueOf(e.getMessage()));
-            } catch (RuntimeException | StackOverflowError e) {
-                // a BUG: logged whole, answered loudly — never a dropped connection
-                e.printStackTrace();
-                response.put("success", false);
-                response.put("internal", true);
-                response.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
+            String body;
+            try (InputStream in = exchange.getRequestBody()) {
+                body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             }
-            sendResponse(exchange, 200, Json.toCompact(response));
+            String query = exchange.getRequestURI().getRawQuery();
+            boolean sourceInformation = query == null
+                    || !query.contains("returnSourceInformation=false");
+            PureV1Api.Answer answer = switch (exchange.getRequestURI().getPath()) {
+                case "/api/pure/v1/grammar/grammarToJson/lambda" ->
+                        PureV1Api.grammarToJsonLambda(body, sourceInformation);
+                case "/api/pure/v1/grammar/grammarToJson/model" ->
+                        PureV1Api.grammarToJsonModel(body, sourceInformation);
+                case "/api/pure/v1/compilation/lambdaRelationType" ->
+                        PureV1Api.lambdaRelationType(body);
+                case "/api/pure/v1/execution/generatePlan" ->
+                        PureV1Api.generatePlan(body);
+                default -> new PureV1Api.Answer(404,
+                        "{\"code\":-1,\"message\":\"no such legend-engine API in legend-lite: "
+                                + exchange.getRequestURI().getPath() + "\",\"status\":\"error\"}");
+            };
+            sendResponse(exchange, answer.status(), answer.json());
         }
     }
 
-    /**
-     * Execute raw SQL against the Connection from the user's Runtime.
-     * 
-     * Request format:
-     * {
-     * "code": "full Pure model with Runtime definition",
-     * "sql": "CREATE TABLE T_PERSON (...) or INSERT INTO ... or SELECT ...",
-     * "runtime": "test::TestRuntime"
-     * }
-     */
     private class ExecuteSqlHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {

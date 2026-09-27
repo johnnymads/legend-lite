@@ -146,7 +146,7 @@ class IdentityGuardrailTest {
             Map.entry("CATALOG_LOOKUP_BY_NAME", 10),   // 170 -> 10 (2026-09-26, execution plan step 2: every rule table registers the catalog's generated overload groups and is keyed by FunctionId; nativeKeysAt/nativeNamed/registeredAt and the bare index are deleted; the 10 left are QUALIFIED lookups, nativeFunctionsAt(fqn), which step 3 turns into declaration-table reads)
             Map.entry("FAMILY_LOOKUP_BY_NAME", 33),   // 87 -> 33 (2026-09-26, execution plan step 2: every implementer family is asked by the callee's FunctionId — 54 sites — and the by-name lookups those sites used are deleted from NativeFn; the 33 left are CoreFn.of(spelling) and RowGetter.of(spelling) in the typer, step 3/5)
             Map.entry("FUNCTION_CATEGORY_CHECK", 14),   // 13 -> 14 (2026-09-26, step 2): not a new site — StatementInline's statement-only check was spelled as a method reference the pattern missed; the pattern now sees both spellings and the count is the true 14
-            Map.entry("MINT_BY_NAME", 143),
+            Map.entry("MINT_BY_NAME", 142),   // 143 -> 142 (2026-09-27: the #>{}# island's record is built by ONE factory, AppliedFunction.tableReference, for the parser and the protocol reader; the parser's two mints went into it)
             Map.entry("FORM_DISPATCH_BY_NAME", 21),
             Map.entry("LOCAL_NAME_COMPARE", 87),   // 90 -> 87 (2026-09-26, step 2: three local-name compares in the rule tables left with the bare names)
             Map.entry("CASE_NAME_LABEL", 4),

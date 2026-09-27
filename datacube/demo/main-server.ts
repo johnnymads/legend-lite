@@ -17,7 +17,7 @@ import {
   SOURCE,
   type Engine,
 } from './boot.ts';
-import { LegendLitePlanner } from '../src/planner.ts';
+import { UpstreamPlanner } from '../src/planner.ts';
 import { pageConfig } from './page-config.ts';
 
 /**
@@ -69,7 +69,7 @@ export async function requireEngine(_status: HTMLElement): Promise<Engine> {
   }
 
   return {
-    planner: new LegendLitePlanner({
+    planner: new UpstreamPlanner({
       baseUrl: legendLite,
       model,
       runtime: RUNTIME,
