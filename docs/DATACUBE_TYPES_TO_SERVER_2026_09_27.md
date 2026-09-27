@@ -155,8 +155,12 @@ into it, with its three shortcuts removed.
 `to_json`; TIMESTAMPTZ its UTC TIMESTAMP; UBIGINT/HUGEINT DECIMAL(20,0)/(38,0); UTINYINT..UINTEGER
 the next signed width; TIME/UUID/INTERVAL/ENUM/BIT/VARINT text; BLOB and anything unknown refused
 by column). `CatalogModel` writes the Database, the accessor and the conversions, and refuses two
-columns a case apart and a schema/table name the accessor cannot carry (upstream splits
-`#>{db.s.t}#` on dots, unquoted). The tab's module exports it (`databaseFromCatalogOrError`,
+columns a case apart. An awkward schema/table name is quoted in the accessor
+(`#>{db."my s"."my t"}#`, as upstream reads it: it splits on dots and keeps the quotes); only a
+`.` or a character the accessor's grammar refuses is refused. That needed a core fix: the model
+kept a table's name bare but a schema's quoted, and the accessor compared its parts as written, so
+a quoted table never resolved; names are now bare throughout, the accessor's parts read as
+relational identifiers. The tab's module exports it (`databaseFromCatalogOrError`,
 `WasmPlanner.databaseFromCatalog`); `inferModel` only wraps its Database in a connection and
 runtime. An upload applies the conversions at ingest; a warehouse table is read-only, so a column
 that needs one is left out and named in the status. Deleted: `sqlTypeOf`, `isNestedType`,

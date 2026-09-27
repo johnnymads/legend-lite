@@ -1171,8 +1171,7 @@ public class AnsiSqlRenderer implements SqlDialect {
         if (dot <= 0) {
             return ident(name);
         }
-        char q = quoteChar();
-        return q + name.substring(0, dot) + q + "." + q + name.substring(dot + 1) + q;
+        return delimited(name.substring(0, dot)) + "." + delimited(name.substring(dot + 1));
     }
 
     /** COLUMN-NAME spelling at a reference — DIALECT-owned. The base

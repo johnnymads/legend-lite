@@ -20,6 +20,34 @@ public final class RelationalIdentifier {
         return raw.length() >= 2 && raw.charAt(0) == '"' && raw.charAt(raw.length() - 1) == '"';
     }
 
+    /**
+     * A dotted spelling's parts, as written: split on each {@code .} OUTSIDE a quoted identifier
+     * ({@code "my s"."a.b"} is {@code "my s"} and {@code "a.b"}), the lexer's backslash escape
+     * honoured inside one. Each part is then {@link #bare}d by its reader.
+     */
+    public static java.util.List<String> parts(String dotted) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        StringBuilder part = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < dotted.length(); i++) {
+            char c = dotted.charAt(i);
+            if (quoted && c == '\\' && i + 1 < dotted.length()) {
+                part.append(c).append(dotted.charAt(++i));
+                continue;
+            }
+            if (c == '"') {
+                quoted = !quoted;
+            } else if (c == '.' && !quoted) {
+                out.add(part.toString());
+                part.setLength(0);
+                continue;
+            }
+            part.append(c);
+        }
+        out.add(part.toString());
+        return out;
+    }
+
     /** The name {@code raw} denotes: quotes off, the lexer's backslash escape
      *  decoded ({@code "a\"b"} names {@code a"b}); an unquoted identifier is
      *  itself. */

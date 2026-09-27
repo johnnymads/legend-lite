@@ -69,9 +69,13 @@ describe('inferModel', () => {
     assert.match(m.model, /\bselect VARCHAR/);
   });
 
-  it('refuses a table name the accessor cannot carry (upstream splits it on dots)', async () => {
+  it('quotes an awkward table name, and refuses a dotted one (upstream splits the accessor on dots)', async () => {
+    const m = await inferModel(build, [{ name: 'a', type: 'VARCHAR' }],
+      { table: 'my table', convertible: true });
+    assert.match(m.model, /Table "my table"/);
+    assert.equal(m.source, '#>{local::DB."my table"}#');
     await assert.rejects(inferModel(build, [{ name: 'a', type: 'VARCHAR' }],
-      { table: 'my table', convertible: true }), /plain identifier/);
+      { table: 'a.b', convertible: true }), /cannot be carried/);
   });
 
   it('refuses an empty schema and duplicate column names', async () => {

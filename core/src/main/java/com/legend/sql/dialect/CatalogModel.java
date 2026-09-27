@@ -86,19 +86,21 @@ public final class CatalogModel {
         String body = schema == null ? "    " + tableBlock
                 : "    Schema " + ident(schema) + "\n    (\n        "
                         + tableBlock.replace("\n", "\n    ") + "\n    )";
-        String accessor = "#>{" + path + "." + (schema == null ? "" : schema + ".") + table + "}#";
+        String accessor = "#>{" + path + "." + (schema == null ? "" : ident(schema) + ".") + ident(table) + "}#";
         return new Database("###Relational\nDatabase " + path + "\n(\n" + body + "\n)\n", accessor,
                 List.copyOf(conversions), List.copyOf(excluded));
     }
 
     /**
-     * A schema or table name the accessor can carry. Upstream reads {@code #>{db.schema.table}#}
-     * by splitting on {@code .} with no quoting, so only a plain identifier survives it.
+     * A schema or table name the accessor can carry, quoted when it is not a plain identifier.
+     * Upstream reads {@code #>{db.schema.table}#} by splitting on {@code .}, and the accessor's
+     * grammar refuses {@code ( ) { } | ; =} and a line break: a name with any of those is refused.
      */
     private static void accessorName(String what, @com.legend.base.Nullable String name) {
-        if (name != null && !name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+        if (name != null && name.chars().anyMatch(ch -> ".(){}|;=\n".indexOf(ch) >= 0)) {
             throw new IllegalArgumentException("the " + what + " name '" + name
-                    + "' cannot be read through #>{db." + what + "}#: only a plain identifier can");
+                    + "' cannot be read through #>{db." + what + "}#: a '.', '(', ')', '{', '}', '|', ';',"
+                    + " '=' or line break cannot be carried there");
         }
     }
 

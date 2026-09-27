@@ -107,16 +107,25 @@ class CatalogModelTest {
     }
 
     @Test
-    void anAwkwardColumnNameReadsThroughTheAccessor_anAwkwardTableNameIsRefused() {
-        CatalogModel.Database db = CatalogModel.database("t::DB", "s", "T",
-                List.of(new CatalogModel.Column("total \"pnl\"", "INTEGER")), new DuckDb(), true);
+    void awkwardNamesReadThroughTheAccessor_andRenderAsTheDatabaseSpellsThem() {
+        CatalogModel.Database db = CatalogModel.database("t::DB", "my schema", "total \"pnl\" 2024",
+                List.of(new CatalogModel.Column("a b", "INTEGER")), new DuckDb(), true);
+        assertEquals("#>{t::DB.\"my schema\".\"total \\\"pnl\\\" 2024\"}#", db.accessor());
         ExprType root = com.legend.Compiler.resultType(db.text() + WRAPPER, db.accessor());
-        assertEquals(List.of("total \"pnl\""),
-                UpstreamRelationType.columns(root).stream().map(c -> c.name()).toList());
-        // upstream splits the accessor on '.', unquoted: only a plain identifier survives it
+        assertEquals(List.of("a b"), UpstreamRelationType.columns(root).stream().map(c -> c.name()).toList());
+        String sql = com.legend.Compiler.plan(db.text() + WRAPPER, db.accessor() + "->select(~['a b'])", "t::RT").sql();
+        assertTrue(sql.contains("FROM \"my schema\".\"total \"\"pnl\"\" 2024\""), sql);
+        for (String name : List.of("select", "a-b", "2024")) {
+            CatalogModel.Database k = CatalogModel.database("t::DB", null, name,
+                    List.of(new CatalogModel.Column("a", "INTEGER")), new DuckDb(), true);
+            assertEquals(List.of("a"), UpstreamRelationType.columns(
+                    com.legend.Compiler.resultType(k.text() + WRAPPER, k.accessor())).stream().map(c -> c.name()).toList(),
+                    name);
+        }
+        // upstream splits the accessor on '.': a dotted name cannot be carried
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> CatalogModel.database(
-                "t::DB", null, "my table", List.of(new CatalogModel.Column("a", "INTEGER")), new DuckDb(), true));
-        assertTrue(e.getMessage().contains("my table"), e.getMessage());
+                "t::DB", null, "a.b", List.of(new CatalogModel.Column("a", "INTEGER")), new DuckDb(), true));
+        assertTrue(e.getMessage().contains("a.b"), e.getMessage());
     }
 
     @Test

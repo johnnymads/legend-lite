@@ -179,8 +179,10 @@ public final class FromProtocol {
             // synthetic "default" schema, exactly as the engine does; the
             // legacy model records a SchemaDefinition only when the source
             // WROTE one. The protocol cannot tell the two apart.
+            // a schema's name is BARE like its tables' and columns' (the quotes are a
+            // spelling): the one identity every lookup -- an accessor, a join -- spells
             if (!"default".equals(s.name())) {
-                schemas.add(new DatabaseDefinition.SchemaDefinition(s.name(), st, sv, sf));
+                schemas.add(new DatabaseDefinition.SchemaDefinition(RelationalIdentifier.bare(s.name()), st, sv, sf));
             }
         }
         List<DatabaseDefinition.JoinDefinition> joins = new java.util.ArrayList<>();

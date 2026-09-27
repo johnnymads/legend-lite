@@ -73,6 +73,11 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **quoted schema/table names through `#>{db."s"."t"}#` (user-asked), pushing**. Cross-area, core: `model/FromProtocol` keeps a schema's name BARE (as tables and columns
+  already are; joins already looked up bare); `compiler/spec/TableReferenceChecker` reads the
+  accessor's parts as relational identifiers (`model/RelationalIdentifier.parts`);
+  `sql/dialect/AnsiSqlRenderer.tableName` escapes a quote inside a dotted part. Corpus footprint
+  measured first: zero quoted accessors anywhere; one quoted schema (stress 66, parse-only).
 - 2026-09-27 warehouse: **types to the compiler, T2 (model from the catalog), pushing** (parser_parity re-pinned 2569 -> 2571: CatalogModelTest's wrapper joined the own corpus).
   Cross-area: `core/src/main/java/com/legend/sql/dialect/` gains `CatalogType`, `CatalogModel`
   and `SqlDialect.catalogType` (default refuses; `DuckDb` reads DuckDB's catalog type names into

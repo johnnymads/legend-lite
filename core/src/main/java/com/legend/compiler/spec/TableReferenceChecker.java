@@ -47,10 +47,17 @@ final class TableReferenceChecker {
                     "tableReference expects (database, ['SCHEMA',] 'TABLE'); got "
                     + af.parameters());
         }
-        String name = tableName.value();
+        // The names as the MODEL keeps them: bare, the quotes a spelling. The #>{db."my s"."my t"}#
+        // desugar carries its parts as written (upstream keeps them quoted and compares the text);
+        // they are read here as relational identifiers, as the Database declared them.
+        String tableBare = n == 3 ? com.legend.model.RelationalIdentifier.bare(tableName.value())
+                : String.join(".", com.legend.model.RelationalIdentifier.parts(tableName.value()).stream()
+                        .map(com.legend.model.RelationalIdentifier::bare).toList());
+        String name = tableBare;
         boolean strictDefault = false;
         if (n == 3) {
-            String schemaName = ((CString) af.parameters().get(1)).value();
+            String schemaName = com.legend.model.RelationalIdentifier.bare(
+                    ((CString) af.parameters().get(1)).value());
             if (schemaName.isEmpty() || "default".equals(schemaName)) {
                 // ENGINE: schema('default') = TOP-LEVEL tables only
                 // (audit 22b F4 — the bare-name lookup fell back to ANY
@@ -85,7 +92,7 @@ final class TableReferenceChecker {
             // user-call splice) — every user call inlines, a view's too.
             // Reached through the include closure like a table (the lifted
             // function is named by the OWNING database).
-            String viewName = strictDefault ? tableName.value() : resolvedName;
+            String viewName = strictDefault ? tableBare : resolvedName;
             java.util.Optional<com.legend.compiler.element.TypedFunction> lifted =
                     t.model().findViewFunction(dbRef.fullPath(), viewName);
             if (lifted.isPresent()) {
@@ -103,7 +110,7 @@ final class TableReferenceChecker {
                     "unknown table '" + resolvedName + "' in database '" + dbRef.fullPath() + "'");
         }
         Type.RelationType schema = table.get();
-        String carried = strictDefault ? tableName.value() : resolvedName;
+        String carried = strictDefault ? tableBare : resolvedName;
         // the columns the DDL declared quoted: a spelling the SQL keeps
         var def = t.model().findTableDefinition(dbRef.fullPath(), resolvedName);
         java.util.Set<String> quoted = def
