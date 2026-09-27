@@ -78,15 +78,13 @@ describe('sampleCsv', () => {
       { name: 'notional', type: 'DOUBLE' },
       { name: 'settled', type: 'BOOLEAN' },
     ];
+    // the model declares each column's SQL type; the COMPILER types it (typed-values.ts)
     const m = inferModel(described, { table: 'sample_trades' });
-    const by = (n: string) => m.columns.find((c) => c.name === n);
-    assert.equal(by('trade_date')?.type, 'StrictDate');
-    assert.equal(by('booked_at')?.type, 'DateTime');
-    assert.equal(by('settled')?.type, 'Boolean');
-    assert.equal(by('notional')?.kind, 'measure');
-    // every numeric column is a measure unless declared otherwise (D3)
-    assert.equal(by('trade_id')?.kind, 'measure');
-    assert.equal(by('year')?.kind, 'measure');
+    assert.match(m.model, /trade_date DATE/);
+    assert.match(m.model, /booked_at TIMESTAMP/);
+    assert.match(m.model, /settled BIT/);
+    assert.match(m.model, /notional DOUBLE/);
+    assert.match(m.model, /trade_id BIGINT/);
   });
 
   it('scales to a size worth playing with', () => {

@@ -7,7 +7,9 @@
 // so with a `portable: <why>` comment on that line.
 //
 // Scanned: everything a build or a person runs from this package --
-// src, test, demo, bench, tools.
+// src, test, demo, bench. (tools/ holds the Java program that generates
+// lite-facts.ts; it has no Node script to scan since the regex generator went,
+// 2026-09-27.)
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -18,7 +20,7 @@ import { describe, it } from 'node:test';
 
 import { servedPath } from '../demo/static-files.ts';
 
-const ROOTS = ['src', 'test', 'demo', 'bench', 'tools'];
+const ROOTS = ['src', 'test', 'demo', 'bench'];
 const SELF = join('test', 'portability.test.ts');
 
 function sources(dir: string, out: string[] = []): string[] {

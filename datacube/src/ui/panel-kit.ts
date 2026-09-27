@@ -76,9 +76,9 @@ export function panelShell(
 export function allColumns(draft: CubeDraft): SelectorColumn[] {
   const s = draft.snapshot;
   return [
-    ...s.columns.map((c) => ({ name: c.name, type: c.type })),
-    ...s.derived.map((d) => ({ name: d.name, type: 'Derived' })),
-    ...(s.groupDerived ?? []).map((d) => ({ name: d.name, type: 'Derived' })),
+    ...s.columns.map((c) => ({ name: c.name })),
+    ...s.derived.map((d) => ({ name: d.name })),
+    ...(s.groupDerived ?? []).map((d) => ({ name: d.name })),
   ];
 }
 
@@ -100,7 +100,7 @@ export function groupableColumns(draft: CubeDraft): SelectorColumn[] {
       ? c.kind
       : columnConfig(draft.config, c.name).kind ?? c.kind;
     if (kind === 'dimension') {
-      out.push({ name: c.name, type: c.type ?? 'Derived' });
+      out.push({ name: c.name });
     }
   }
   return out;

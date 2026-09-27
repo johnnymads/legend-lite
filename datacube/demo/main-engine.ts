@@ -30,6 +30,7 @@ import {
   must,
   planeMenu,
 } from './boot.ts';
+import { sourceColumns } from '../src/source-columns.ts';
 
 /** The H2-backed model: its connection seeds its own table. */
 const MODEL = './trades-h2.pure';
@@ -37,23 +38,11 @@ const RUNTIME = 'trades::h2::RT';
 const SOURCE = '#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#';
 
 /**
- * The columns the engine's table has.
- *
- * Declared rather than discovered: the data is not ours, so there is
- * no local schema to read. It matches `trades-h2.pure`, and if the
- * two ever disagree the engine says so at the first query rather
- * than showing something plausible.
+ * What this page knows about the engine's table that the compiler does not: `year` is
+ * an identifier, a dimension. Every column and its type come from the engine's own
+ * `lambdaRelationType` of the source (`sourceColumns`), never from this page.
  */
-const COLUMNS = [
-  { name: 'region', type: 'String' },
-  { name: 'desk', type: 'String' },
-  { name: 'book', type: 'String' },
-  { name: 'year', type: 'Integer', kind: 'dimension' as const },
-  { name: 'qtr', type: 'String' },
-  { name: 'notional', type: 'Float' },
-  { name: 'pnl', type: 'Float' },
-  { name: 'qty', type: 'Integer' },
-];
+const DECLARED = [{ name: 'year', kind: 'dimension' as const }];
 
 async function main(): Promise<void> {
   const status = must('status');
@@ -92,7 +81,7 @@ async function main(): Promise<void> {
 
   const snapshot: CubeSnapshot = {
     source: { expression: SOURCE },
-    columns: COLUMNS,
+    columns: await sourceColumns(executor, SOURCE, DECLARED),
     derived: [],
     rows: ['region', 'desk'],
     pivotOn: [],

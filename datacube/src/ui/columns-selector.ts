@@ -26,7 +26,6 @@
 
 export interface SelectorColumn {
   readonly name: string;
-  readonly type?: string;
 }
 
 /** What is currently being dragged, within this document. */

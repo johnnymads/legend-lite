@@ -39,6 +39,7 @@ import {
 import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { isNumeric } from '../src/types.ts';
+import { sourceColumns } from '../src/source-columns.ts';
 
 const ROWS = 200_000;
 
@@ -316,16 +317,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   const snapshot: CubeSnapshot = {
     source: { expression: source },
-    columns: [
-      { name: 'region', type: 'String' },
-      { name: 'desk', type: 'String' },
-      { name: 'book', type: 'String' },
-      { name: 'year', type: 'Integer', kind: 'dimension' },
-      { name: 'qtr', type: 'String' },
-      { name: 'notional', type: 'Float' },
-      { name: 'pnl', type: 'Float' },
-      { name: 'qty', type: 'Integer' },
-    ],
+    // the compiler types every column; the page declares only that year is a dimension
+    columns: await sourceColumns(planner, source, [{ name: 'year', kind: 'dimension' }]),
     derived: [],
     rows: ['region', 'desk', 'book'],
     pivotOn: ['year'],
@@ -639,11 +632,12 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           try {
             const m = inferModel(chosen.columns, { table: chosen.name, schema: chosen.schema });
             useModel(m.model, m.runtime);
+            const columns = await sourceColumns(planner, m.source);
             app.dispose();
             app = makeApp(
               {
                 source: { expression: m.source },
-                columns: m.columns,
+                columns,
                 derived: [],
                 rows: [],
                 pivotOn: [],
@@ -654,7 +648,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
               {
                 ...DEFAULT_CONFIGURATION,
                 reportTitle: `${chosen.schema}.${chosen.name}`,
-                columns: keyLikeFormats(m.columns),
+                columns: keyLikeFormats(columns),
               },
               [],
               {
@@ -677,6 +671,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       try {
         const opened = await ingestFile(engine, db, file);
         useModel(opened.model, opened.runtime);
+        const columns = await sourceColumns(planner, opened.source);
         // A freshly opened file groups by nothing: show the rows as
         // they are and let the user build the cube up. Guessing at
         // dimensions and measures would be wrong more often than
@@ -685,7 +680,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         app = makeApp(
           {
             source: { expression: opened.source },
-            columns: opened.columns,
+            columns,
             derived: [],
             rows: [],
             pivotOn: [],
@@ -696,7 +691,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           {
             ...DEFAULT_CONFIGURATION,
             reportTitle: opened.fileName,
-            columns: keyLikeFormats(opened.columns),
+            columns: keyLikeFormats(columns),
           },
           [],
         );
@@ -705,7 +700,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         await app.open();
         note.textContent = `${opened.fileName}: `
           + `${opened.rowCount.toLocaleString()} rows, `
-          + `${opened.columns.length} columns`;
+          + `${columns.length} columns`;
       } catch (e) {
         // Say what failed and about which file. An uploaded file is
         // the one input the user can actually fix.

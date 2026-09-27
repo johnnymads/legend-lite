@@ -30,6 +30,8 @@ import { WasmPlanner } from '../src/wasm-planner.ts';
 import { CORPUS } from './stress-corpus.ts';
 import { familyOf, isNumeric } from '../src/types.ts';
 import type { Plan } from '../src/relation-type.ts';
+import { sourceColumns } from '../src/source-columns.ts';
+import { kindOf } from '../src/snapshot.ts';
 
 export interface Outcome {
   readonly csv: string;
@@ -168,11 +170,11 @@ export async function runStress(): Promise<Outcome[]> {
       continue;
     }
     planner.useModel(opened.model, opened.runtime);
-    const cols = opened.columns;
+    const cols = await sourceColumns(planner, opened.source);
     const snap = (over: Partial<CubeSnapshot>): CubeSnapshot =>
       ({ ...base(opened.source, cols), ...over });
 
-    const dims = cols.filter((c) => c.kind === 'dimension').map((c) => c.name);
+    const dims = cols.filter((c) => kindOf(c) === 'dimension').map((c) => c.name);
     const nums = cols
       .filter((c) => isNumeric(c.type))
       .map((c) => c.name);

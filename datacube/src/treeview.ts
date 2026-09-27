@@ -276,10 +276,13 @@ export async function withChildAggregates(
   }
   const added: ResultColumn[] = query.columns.map((name) => {
     const source = found.columns.find((c) => c.name === name);
+    // the child-aggregate query's plan typed every column it returns; one it did not
+    // return is a disagreement between the query and the tree, not a Float
+    if (!source) throw new Error(`the child aggregate query returned no column '${name}'`);
     return {
       name,
-      type: source?.type ?? 'Float',
-      values: at.map((i) => (i < 0 || !source ? null : (source.values[i] ?? null))),
+      type: source.type,
+      values: at.map((i) => (i < 0 ? null : (source.values[i] ?? null))),
     };
   });
   return { ...table, columns: [...table.columns, ...added] };
@@ -423,6 +426,7 @@ export function assemble(
     mode === 'single' && snapshot.keepGroupedColumns === true
       ? dims.map((name, d) => ({
           name,
+          // the group key's TEXT (paths are text until T4 types them), so a String
           type: 'String',
           values: rows.map((row) => (row.level > d
             ? (row.path[d] ?? null)
@@ -444,6 +448,7 @@ export function assemble(
         ]
       : dims.map((name, d) => ({
           name,
+          // display labels built from the group key's text: a String until T4 types keys
           type: 'String',
           // A row shows a label only in its OWN level's column; deeper
           // columns stay empty, which is what gives the stepped look
@@ -464,12 +469,18 @@ export function assemble(
   // the group holds more than one value. Two columns of the same
   // name, one blank, is worse than either alone.
   const kept = new Set(keptDims.map((c) => c.name));
+  // every level table is plan-typed; a value column none of them typed is a bug
+  const typeOf = (name: string): string => {
+    const type = valueTypes.get(name);
+    if (type === undefined) throw new Error(`no level query typed the column '${name}'`);
+    return type;
+  };
   const valueColumns: ResultColumn[] = valueNames
     // The leaf count is part of the label, not a column of its own.
     .filter((name) => !kept.has(name) && name !== LEAF_COUNT_COLUMN)
     .map((name) => ({
     name,
-    type: valueTypes.get(name) ?? 'Unknown',
+    type: typeOf(name),
     values: rows.map((_row, i) => {
       const hit = source.get(i);
       if (!hit) return null;

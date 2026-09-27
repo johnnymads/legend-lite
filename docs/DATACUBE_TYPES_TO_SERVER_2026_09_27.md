@@ -187,7 +187,21 @@ into it, with its three shortcuts removed.
 - The demo and verification scripts read the source's relation type before choosing columns, and
   compare typed values, not rendered text.
 
-Order: T1, then T2 and T3 (independent), then T4, T5, T6, T7, T8. Legs B (one state owner) and the
+**T9. Sources (the user, 2026-09-27), after T8.** Every source is a database or file whose model
+comes from its catalog (T2) and whose types come from the compiler (T1):
+- files: CSV, Parquet, JSON, and Excel workbooks; pasted clipboard data;
+- a REST API at a user-given URL (JSON as Variant or a table, by its shape);
+- a remote database's table or query, live or snapped;
+- files in object storage (S3, GCS, Azure; Parquet, Iceberg, Delta), credentials held server side;
+- legend-engine's own sources: a saved Legend Query, a Pure function or service, a data product;
+- another cube's result or saved view (a cube over a cube).
+Streaming sources (Kafka, websocket) are recorded for later: they change the refresh model.
+
+**T10. Extract a subset of a Variant column (the user, 2026-09-27), after T6.** A sub-object or an
+array becomes a new Variant column, not only a scalar; its type is the compiler's
+(`lambdaRelationType` of the extraction), its shape the database's (T6).
+
+Order: T1, then T2 and T3 (independent), then T4, T5, T6, T7, T8, then T9 and T10. Legs B (one state owner) and the
 remaining audit legs are unaffected, except that T4's typed keys remove the key text leg B would
 otherwise carry.
 

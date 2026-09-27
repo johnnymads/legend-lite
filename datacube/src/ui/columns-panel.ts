@@ -27,7 +27,8 @@ import {
 
 export interface ColumnsPanelColumn {
   readonly name: string;
-  readonly type: string;
+  /** The compiler's type; absent for a calculated column the compiler has not typed yet. */
+  readonly type?: string;
   readonly groupable: boolean;
   /** Where it is used now, for the badge. */
   readonly usedAs?: 'rows' | 'columns';
@@ -54,6 +55,8 @@ export interface ColumnsPanelChild {
   /** What to call it here: the pivot values, e.g. `2021`. */
   readonly label: string;
   readonly visible: boolean;
+  /** Its own result type, from the plan (an average of Integers is a Float). */
+  readonly type?: string;
 }
 
 export interface ColumnsPanelOptions {
@@ -387,7 +390,7 @@ export class ColumnsToolPanel {
 
     const type = doc.createElement('span');
     type.className = 'dc-tool-panel-type';
-    type.textContent = column.type;
+    type.textContent = column.type ?? '';
     row.append(type);
 
     makeHeaderDraggable(row, column.name, column.groupable, 'panel');
@@ -517,7 +520,7 @@ export class ColumnsToolPanel {
 
     const type = doc.createElement('span');
     type.className = 'dc-tool-panel-type';
-    type.textContent = parent.type;
+    type.textContent = child.type ?? '';
     row.append(type);
 
     // Draggable like any other column: a pivoted leaf reorders its

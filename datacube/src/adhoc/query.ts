@@ -254,6 +254,25 @@ export function assembleGrid(
 
   const rowTuples = tuples(grid.rows);
   const columnTuples = tuples(grid.columns);
+  const measureOf = (row: readonly MemberPath[], col: readonly MemberPath[]): string | undefined => {
+    const member = (dimension: string): MemberPath => {
+      const r = grid.rows.findIndex((a) => a.dimension === dimension);
+      if (r >= 0) return row[r] as MemberPath;
+      const c = grid.columns.findIndex((a) => a.dimension === dimension);
+      return c >= 0 ? col[c] as MemberPath : [];
+    };
+    const measurePath = [...grid.rows, ...grid.columns].some((a) => a.dimension === MEASURES)
+      ? member(MEASURES) : povMeasure === undefined ? [] : [povMeasure];
+    return measurePath[0];
+  };
+  // A measure's type: the plan's, from any query that returned it.
+  const measureType = (measure: string): string | undefined => {
+    for (const t of results.values()) {
+      const c = t.columns.find((x) => x.name === measure);
+      if (c) return c.type;
+    }
+    return undefined;
+  };
   const valueOf = (row: readonly MemberPath[], col: readonly MemberPath[]): Scalar => {
     const member = (dimension: string): MemberPath => {
       const r = grid.rows.findIndex((a) => a.dimension === dimension);
@@ -294,6 +313,7 @@ export function assembleGrid(
   const rowDimensions = grid.rows.map((a) => a.dimension);
   const labelColumns: ResultColumn[] = rowDimensions.map((dimension, d) => ({
     name: dimension,
+    // member captions: display text, so a String
     type: 'String',
     values: rowsKept.map((ri, k) => {
       const path = rowTuples[ri]?.[d] as MemberPath;
@@ -314,9 +334,16 @@ export function assembleGrid(
   const columnDims = grid.columns.map((a) => a.dimension);
   const valueColumns: ResultColumn[] = colsKept.map((ci) => {
     const tuple = columnTuples[ci] as readonly MemberPath[];
+    // the measure's plan type; a column holding several measures (measures on the
+    // rows) has no single one, so it is Pure's top type, Any
+    const types = new Set(rowsKept.flatMap((ri) => {
+      const m = measureOf(rowTuples[ri] as readonly MemberPath[], tuple);
+      const t = m === undefined ? undefined : measureType(m);
+      return t === undefined ? [] : [t];
+    }));
     return {
       name: tuple.map((p, d) => segment(columnDims[d] as string, p)).join(PIVOT_SEPARATOR),
-      type: 'Float',
+      type: types.size === 1 ? [...types][0] as string : 'Any',
       values: rowsKept.map((ri) => cells[ri]?.[ci] ?? null),
     };
   });

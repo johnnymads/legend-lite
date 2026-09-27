@@ -759,9 +759,9 @@ export class CubeApp {
     // zones, since it only exists after the groupBy.
     const known = [
       ...rowColumns(this.#snapshot).map((c) => ({
-        name: c.name, type: c.type ?? 'Derived' })),
+        name: c.name, ...(c.type === undefined ? {} : { type: c.type }) })),
       ...(this.#snapshot.groupDerived ?? []).map((d) => ({
-        name: d.name, type: d.type ?? 'Derived' })),
+        name: d.name, ...(d.type === undefined ? {} : { type: d.type }) })),
     ];
     const listed = order
       ? [...known].sort((a, b) => {
@@ -793,6 +793,8 @@ export class CubeApp {
       perColumn.set(column, (perColumn.get(column) ?? 0) + 1);
     }
     const totalLabel = this.#config.pivotStatisticColumnName ?? 'Total';
+    const leafType = (name: string): string | undefined =>
+      this.#view?.rows.columns.find((r) => r.name === name)?.type;
     // Each measure's pivot TOTAL is one more of its columns on screen,
     // listed last so it can be hidden like any other.
     const childrenOf = (column: string): ColumnsPanelChild[] => [
@@ -806,6 +808,8 @@ export class CubeApp {
         // measure too where the row above covers more than one.
         label: (perColumn.get(column) ?? 1) > 1 ? `${values} \u00b7 ${c.measure.name}` : values,
         visible: columnConfig(this.#config, c.name).hidden !== true,
+        // the leaf's own type: the level query's plan typed it
+        ...(leafType(c.name) === undefined ? {} : { type: leafType(c.name) as string }),
       };
     });
 
@@ -829,7 +833,7 @@ export class CubeApp {
           const hidden = columnConfig(this.#config, c.name).hidden === true;
           return {
             name: c.name,
-            type: c.type,
+            ...(c.type === undefined ? {} : { type: c.type }),
             groupable: this.#isDimension(c.name),
             visible: !hidden,
             ...(children.length > 0 ? { children } : {}),
@@ -2371,10 +2375,10 @@ export class CubeApp {
         // Row-stage calculated columns filter like any other, and each
         // column brings its TYPE: it decides the operators offered and
         // the value editor shown.
-        columns: rowColumns(this.#snapshot).map((c) => ({
-          name: c.name,
-          type: c.type ?? 'String',
-        })),
+        // a column the compiler has not typed yet is not offered: its
+        // operators and editor would be a guess
+        columns: rowColumns(this.#snapshot).flatMap((c) =>
+          c.type === undefined ? [] : [{ name: c.name, type: c.type }]),
         ...(this.#snapshot.filter ? { value: this.#snapshot.filter } : {}),
         onApply: (filter) => this.#applyFilter(filter),
         onClose: close,

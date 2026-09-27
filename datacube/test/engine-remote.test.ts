@@ -113,12 +113,10 @@ describe('a TDS as a result table', () => {
     assert.deepEqual(table.columns[1]?.values, [null]);
   });
 
-  it('survives a response with no builder at all', () => {
-    const table = toResultTable({
+  it('refuses a response with no builder: its columns would have no types', () => {
+    assert.throws(() => toResultTable({
       result: { columns: ['a'], rows: [{ values: [1] }] },
-    }, 1, 0);
-    assert.deepEqual(table.columns.map((c) => c.name), ['a']);
-    assert.equal(table.columns[0]?.type, 'Unknown');
+    }, 1, 0), /without a result builder/);
   });
 });
 

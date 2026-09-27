@@ -19,6 +19,9 @@ import type { Plan } from '../../src/relation-type.ts';
 import type { ResultTable } from '../../src/result.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
+import { inferModel } from '../../src/infer.ts';
+import { sourceColumns } from '../../src/source-columns.ts';
+import { familyOf } from '../../src/types.ts';
 
 const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
 
@@ -193,5 +196,39 @@ describe('step 1: types from the compiler', () => {
     assert.equal(typeOf('avg_price'), 'Float', shown);
     assert.equal(typeOf('n'), 'Integer', shown);
     assert.equal(typeOf('last_day'), 'StrictDate', shown);
+  });
+});
+
+describe('a source\'s columns come from the compiler', () => {
+  it('an inferred model of every DuckDB type compiles, and the compiler types each column', async () => {
+    // inferModel only writes the model; this compiles it for real (the check the regex-read
+    // keyword list used to approximate) and reads the types the compiler gives back.
+    const described = [
+      ['s', 'VARCHAR'], ['big', 'BIGINT'], ['huge', 'HUGEINT'], ['ubig', 'UBIGINT'], ['i', 'INTEGER'],
+      ['ti', 'TINYINT'], ['si', 'SMALLINT'], ['d', 'DOUBLE'], ['f', 'FLOAT'], ['r', 'REAL'],
+      ['b', 'BOOLEAN'], ['day', 'DATE'], ['ts', 'TIMESTAMP'], ['tstz', 'TIMESTAMPTZ'],
+      ['dec', 'DECIMAL(9,2)'], ['num', 'NUMERIC(18,4)'], ['blob', 'BLOB'], ['uuid', 'UUID'],
+      ['iv', 'INTERVAL'], ['nested', 'STRUCT(a INTEGER)'], ['j', 'JSON'],
+    ].map(([name, type]) => ({ name: name as string, type: type as string }));
+    const m = inferModel(described, { table: 'every_type' });
+    const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
+    const columns = await sourceColumns(own, m.source, [{ name: 'big', kind: 'dimension' }]);
+    const family = Object.fromEntries(columns.map((c) => [c.name, familyOf(c.type)]));
+    assert.deepEqual(columns.map((c) => c.name), described.map((c) => c.name), 'every column, in order');
+    for (const n of ['big', 'huge', 'ubig', 'i', 'ti', 'si', 'd', 'f', 'r', 'dec', 'num']) {
+      assert.equal(family[n], 'numeric', n);
+    }
+    assert.equal(family.b, 'boolean');
+    assert.equal(family.day, 'temporal');
+    assert.equal(family.ts, 'temporal');
+    assert.equal(family.nested, 'variant');
+    assert.equal(family.j, 'variant');
+    assert.equal(family.s, 'text');
+    assert.equal(columns.find((c) => c.name === 'big')?.kind, 'dimension', 'the declared kind is kept');
+  });
+
+  it('refuses a declared column the source does not have', async () => {
+    await assert.rejects(() => sourceColumns(planner, SOURCE, [{ name: 'nope', kind: 'dimension' }]),
+      /the source has no column 'nope'/);
   });
 });

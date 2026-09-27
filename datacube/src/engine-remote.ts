@@ -76,13 +76,14 @@ export function toResultTable(
   epoch: number,
   elapsedMs: number,
 ): ResultTable {
-  // THE BUILDER NAMES THE COLUMNS AND THEIR TYPES; `result.columns`
-  // repeats the names alone. Read the builder, and fall back to the
-  // names when a response carries no builder at all.
+  // THE BUILDER NAMES THE COLUMNS AND THEIR TYPES (the engine's plan types them);
+  // `result.columns` repeats the names alone. A TDS result always carries a builder:
+  // one without it has no types to give, and a guess is refused.
   const declared = body.builder?.columns;
-  const names = declared?.map((c) => c.name)
-    ?? body.result?.columns
-    ?? [];
+  if (declared === undefined) {
+    throw new Error('the engine answered without a result builder: its columns have no types');
+  }
+  const names = declared.map((c) => c.name);
   const rows = body.result?.rows ?? [];
   const columns: ResultColumn[] = names.map((name, i) => {
     const values: Scalar[] = new Array(rows.length);
@@ -90,13 +91,10 @@ export function toResultTable(
       values[r] = (rows[r]?.values?.[i] ?? null) as Scalar;
     }
     // the builder's type is the compiler's (the engine's plan), read by the one
-    // reader of both vocabularies; a response with no builder types nothing
-    const declaredType = declared?.[i]?.type;
-    return {
-      name,
-      type: declaredType === undefined ? 'Unknown' : pureType(declaredType),
-      values,
-    };
+    // reader of both vocabularies
+    const declaredType = declared[i]?.type;
+    if (declaredType === undefined) throw new Error(`the engine typed no column '${name}'`);
+    return { name, type: pureType(declaredType), values };
   });
   return { columns, rowCount: rows.length, epoch, elapsedMs };
 }

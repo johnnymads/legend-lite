@@ -14,11 +14,11 @@ import {
 } from '../src/ui/columns-selector.ts';
 
 const ALL: SelectorColumn[] = [
-  { name: 'region', type: 'String' },
-  { name: 'country', type: 'String' },
-  { name: 'city', type: 'String' },
-  { name: 'desk', type: 'String' },
-  { name: 'notional', type: 'Float' },
+  { name: 'region' },
+  { name: 'country' },
+  { name: 'city' },
+  { name: 'desk' },
+  { name: 'notional' },
 ];
 
 describe('insertAt', () => {

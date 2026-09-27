@@ -55,6 +55,7 @@ import {
   panelShell,
   type PanelBuilder,
 } from './panel-kit.ts';
+import { defaultKind } from '../types.ts';
 
 export const KINDS: readonly { value: ColumnKind; label: string }[] = [
   { value: 'dimension', label: 'Dimension' },
@@ -205,6 +206,9 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
   }
   const name = uiState.chosen;
   const spec = draft.snapshot.columns.find((c) => c.name === name);
+  // A calculated column's row: its compiler type and its declared kind.
+  const derivedRow = [...rowColumns(draft.snapshot), ...(draft.snapshot.groupDerived ?? [])]
+    .find((x) => x.name === name);
   const cfg = (): ColumnConfiguration => columnConfig(ctx.draft().config, name);
 
   const patch = (change: ColumnPatch): void => {
@@ -253,17 +257,18 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
       },
       { width: 260 },
     ),
-    spec ? badge(doc, spec.type) : badge(doc, 'Derived'),
+    badge(doc, spec?.type ?? derivedRow?.type ?? ''),
   );
 
   const c = cfg();
-  const kind = c.kind ?? (spec ? kindOf(spec) : 'measure');
+  // the declared kind, else the default for the compiler's type (a calculated
+  // column's declared kind counts: it was ignored, every one read as a measure)
+  const kind = c.kind ?? (spec ? kindOf(spec)
+    : (derivedRow && 'kind' in derivedRow && derivedRow.kind) || defaultKind(derivedRow?.type));
   const isMeasure = kind === 'measure';
-  // The type decides which sections apply; a calculated column's is
-  // learned from its first result, and until then every section shows.
-  const type = spec?.type
-    ?? [...rowColumns(draft.snapshot), ...(draft.snapshot.groupDerived ?? [])]
-      .find((x) => x.name === name)?.type;
+  // The type decides which sections apply: the compiler's (a calculated column's is
+  // typed before its first query, by the refresh's step 0).
+  const type = spec?.type ?? derivedRow?.type;
   const dataType = type === undefined ? undefined : dataTypeOf(type);
   // Upstream: a pivot's kind is what makes it a pivot, so it cannot
   // change while the column is one.

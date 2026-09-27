@@ -4,7 +4,9 @@
 // than hand-authoring a Pure model that happens to match their
 // columns. DuckDB sniffs the types; this turns what it found into
 // the `###Relational Database` + `###Connection` + `###Runtime` that
-// the planner needs, plus the column list the cube needs.
+// the planner needs. The cube's COLUMNS are not decided here: the
+// compiler types the source once the model is in (`sourceColumns`,
+// docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md).
 //
 // Generating the model rather than special-casing "uploaded" data is
 // the whole point. Everything downstream -- the planner, the tree
@@ -20,8 +22,6 @@
 // because duckdb-wasm has it compiled in and registerFileBuffer
 // makes it no harder.
 
-import { PURE_KIND_BY_SQL_NAME } from './generated/lite-facts.ts';
-import { defaultKind } from './types.ts';
 
 /** One column, as DuckDB's `DESCRIBE` reports it. */
 export interface DescribedColumn {
@@ -36,11 +36,6 @@ export interface InferredModel {
   readonly runtime: string;
   /** The relation expression the cube reads from. */
   readonly source: string;
-  readonly columns: readonly {
-    readonly name: string;
-    readonly type: string;
-    readonly kind?: 'dimension' | 'measure';
-  }[];
 }
 
 /**
@@ -92,33 +87,6 @@ export function isNestedType(duckdbType: string): boolean {
 }
 
 /**
- * The SQL type a Database declares, to the Pure type the cube shows.
- *
- * A LOOKUP, not a table. The table is legend-lite's
- * (`RelationalKinds.pureKindOf` composed with
- * `RelationalDataType.fromName`) and is generated into
- * `src/generated/lite-facts.ts` by `tools/gen-lite-facts.mjs`, so the
- * cube cannot hold a second opinion about it. The hand-written version
- * this replaces answered 'Float' for DECIMAL where lite answers
- * 'Decimal' -- the same divergence lite's own audit found in one of
- * its readers on 2026-09-15.
- *
- * Only the LEXICAL part stays here: a declared type carries its
- * parameters (`DECIMAL(9,2)`, `VARCHAR(4096)`) and the table is keyed
- * on the bare name. Stripping them is not a type fact.
- *
- * An unknown name is String, deliberately: a column the planner can
- * only group by is far less harmful than one whose arithmetic
- * silently means something else.
- */
-export function pureTypeOf(sqlType: string): string {
-  const t = sqlType.trim().toUpperCase();
-  const paren = t.indexOf('(');
-  const bare = paren > 0 ? t.slice(0, paren).trim() : t;
-  return PURE_KIND_BY_SQL_NAME[bare] ?? 'String';
-}
-
-/**
  * Quote an identifier for a Pure Database declaration.
  *
  * A CSV header is arbitrary text -- spaces, a comma, a SQL keyword,
@@ -135,41 +103,6 @@ export function quoteIdent(name: string): string {
   // backslash first, or a name ending in one would escape the
   // closing quote.
   return `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-}
-
-/**
- * Columns that should be MEASURES rather than dimensions.
- *
- * ONLY A FRACTIONAL TYPE SUMS. Double and decimal are what money,
- * rates and weights arrive as, and summing them is what the user
- * wants. An INTEGER defaults to its unique value instead.
- *
- * <h2>Why integers do not sum</h2>
- *
- * The harm is asymmetric. Summing an id, a year, a postcode or a
- * version produces a plausible-looking number that is meaningless,
- * and nothing about the grid says so. Taking the unique value of a
- * quantity produces a blank, which reads as "no aggregate chosen" --
- * unhelpful, never misleading. Either is one click to change.
- *
- * Integers are also far more often keys than sums: ids, years,
- * quarters, codes, flags, postcodes. `quantity` is the honest cost
- * of this rule, and it is a blank rather than a wrong total.
- *
- * This replaces a name heuristic that tried to spot keys by
- * spelling. It matched `.*id$`, so in a trading dataset it
- * classified `bid` -- a price -- as a key, along with `paid`,
- * `valid`, `void` and `grid`; and it still missed `cusip`, `isin`,
- * `sedol`, `sku` and `account`. A rule that is wrong in both
- * directions and needs a per-upload DISTINCT query to prop it up is
- * worse than one line of type dispatch.
- *
- * DataCube sums every numeric (DataCubeConfigurationBuilder), so
- * this is a deliberate divergence -- on the side that cannot
- * produce a confident wrong number.
- */
-function kindOf(pureType: string): 'dimension' | 'measure' {
-  return defaultKind(pureType);
 }
 
 export interface InferOptions {
@@ -218,11 +151,7 @@ export function inferModel(
   const table = options.table;
   const schema = options.schema;
 
-  const cols = described.map((c) => {
-    const sql = sqlTypeOf(c.type);
-    const pure = pureTypeOf(sql);
-    return { name: c.name, sql, pure, kind: kindOf(pure) };
-  });
+  const cols = described.map((c) => ({ name: c.name, sql: sqlTypeOf(c.type) }));
 
   const columnLines = cols
     .map((c) => `        ${quoteIdent(c.name)} ${c.sql}`)
@@ -270,6 +199,5 @@ Runtime ${pkg}::RT
     source: schema
       ? `#>{${pkg}::DB.${quoteIdent(schema)}.${quoteIdent(table)}}#`
       : `#>{${pkg}::DB.${quoteIdent(table)}}#`,
-    columns: cols.map((c) => ({ name: c.name, type: c.pure, kind: c.kind })),
   };
 }

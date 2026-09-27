@@ -76,10 +76,8 @@ describe('ingestFile with JSON', () => {
       const r = await ingestFile(engine, files, picked(name, text));
 
       assert.equal(r.rowCount, 2);
-      const typeOf = new Map(r.columns.map((c) => [c.name, c.type]));
-      assert.equal(typeOf.get('customer'), 'String');
-      assert.equal(typeOf.get('items'), 'Variant');
-      assert.equal(typeOf.get('shipping'), 'Variant');
+      // the model's declarations; the compiler types them (Variant for SEMISTRUCTURED)
+      assert.match(r.model, /customer VARCHAR/);
       assert.match(r.model, /items SEMISTRUCTURED/);
       assert.match(r.model, /shipping SEMISTRUCTURED/);
 
@@ -108,10 +106,9 @@ describe('ingestFile with JSON', () => {
     const text = String((await engine.run(
       `SELECT content FROM read_text('nested.json')`, 0)).columns[0]!.values[0]);
     const r = await ingestFile(engine, files, picked('nested.json', text));
-    const typeOf = new Map(r.columns.map((c) => [c.name, c.type]));
-    assert.equal(typeOf.get('id'), 'Integer');
-    assert.equal(typeOf.get('xs'), 'Variant');
-    assert.equal(typeOf.get('s'), 'Variant');
+    assert.match(r.model, /id BIGINT/);
+    assert.match(r.model, /xs SEMISTRUCTURED/);
+    assert.match(r.model, /s SEMISTRUCTURED/);
   });
 
   it('opens the offered orders sample with its nested fields as Variant', async () => {
@@ -119,10 +116,10 @@ describe('ingestFile with JSON', () => {
     const r = await ingestFile(engine, files,
       picked(sampleFileName(sample), sample.build(200)));
     assert.equal(r.rowCount, 200);
-    assert.deepEqual(
-      Object.fromEntries(r.columns.map((c) => [c.name, c.type])),
-      { order_id: 'Integer', region: 'String', placed_on: 'StrictDate',
-        customer: 'Variant', items: 'Variant', tags: 'Variant',
-        total: 'Float' });
+    for (const [column, sql] of [['order_id', 'BIGINT'], ['region', 'VARCHAR'], ['placed_on', 'DATE'],
+      ['customer', 'SEMISTRUCTURED'], ['items', 'SEMISTRUCTURED'], ['tags', 'SEMISTRUCTURED'],
+      ['total', 'DOUBLE']] as const) {
+      assert.match(r.model, new RegExp(`${column} ${sql}`), column);
+    }
   });
 });
