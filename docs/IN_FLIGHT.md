@@ -73,6 +73,15 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **DataCube leg C (typed values) started** (design
+  `DATACUBE_TYPED_VALUES_DESIGN_2026_09_27.md`). Cross-area edits coming (rule 7), no logic change to
+  the compiler: `wasm/src/main/java/planner/Wasm.java` gains `planTyped`/`relationType` exports
+  (`QueryPlan.rootType` and `Compiler.compileQuery`, as JSON); `core/src/main/java/com/legend/server/`
+  `/engine/plan`'s response gains `columns` (the same root type). **For the untangle, recorded not
+  done:** legend-engine's `lambdaRelationType` reports precise primitives (Varchar(32), Int, BigInt,
+  Double, Numeric(p,s), Timestamp) where lite's typer says String/Integer/Float/Decimal/DateTime, BIT is
+  `TinyInt` there and Boolean here, and `sum` of a decimal is `Number` there and Decimal here (measured
+  table in the design doc). Building `//datacube:*`, `//wasm:*`, `//core:server` off and on.
 - 2026-09-27 warehouse: **DataCube pivots as two plain queries LANDED (this commit)**, all inside
   `datacube/` (design `DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md`): a warehouse reader's pivot now
   runs live (`live_snap_test`'s refused list is empty). New test in `//...`:
