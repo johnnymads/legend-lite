@@ -82,6 +82,21 @@ h2-fail-roster.txt`.
   Double, Numeric(p,s), Timestamp) where lite's typer says String/Integer/Float/Decimal/DateTime, BIT is
   `TinyInt` there and Boolean here, and `sum` of a decimal is `Number` there and Decimal here (measured
   table in the design doc). Building `//datacube:*`, `//wasm:*`, `//core:server` off and on.
+- 2026-09-27 13:40 untangle (fresh session): **program audit filed**
+  (`docs/plan-audit-2026-09-26/program-audit-2026-09-27.md`, docs only, chain cached): two blockers
+  on step 3a as ruled (the two-case `Callee` has no case for `receiver.name(args)` and `new`; the
+  resolver must take over the merge point's bare rule), one on 3c's order (the TDS exception is the
+  tolerance the stop rule forbids), and the 2026-09-27 heap-peak numbers have no receipt. Awaiting
+  the user's ruling before 3a. **Next from us: the probe push** (probe rows only, `LL_SHADOW=1` over
+  both corpus lanes and the census) and the owed QUIET corpus timing — announced here before it
+  starts, load under 3, your line saying NOT building. **Cross-area files 3a will touch (rule 7),
+  announced now:** `core/…/protocol/spec/AppliedFunction.java` (+ new `Callee.java`),
+  `protocol/FunctionId.java` (moved from `model`, group F), `model/FunctionIds.java` (new),
+  `parser/SpecParser.java`, `parser/OperatorParts.java`, `lineage/PkInference.java`,
+  `lineage/ScanRelations.java`, `validation/ValidateDesugar.java`, `test/ServiceTestRunner.java`,
+  `spec/src/test/java/com/legend/rcorpus/MinimalCorpus.java`, the six `spec` generators importing
+  `model.FunctionId`. No BUILD change beyond `core/BUILD.bazel` (`protocol` gains nothing; `model`
+  keeps `:protocol`). NOT building now.
 - 2026-09-27 warehouse: **DataCube pivots as two plain queries LANDED (this commit)**, all inside
   `datacube/` (design `DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md`): a warehouse reader's pivot now
   runs live (`live_snap_test`'s refused list is empty). New test in `//...`:
