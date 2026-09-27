@@ -33,9 +33,19 @@ and timing was read only when it was already 5x. The rules below are the mechani
    STAGE SEAM (the typer's `applyCore` and checkers; the lowerer by family) by the step that touches
    it, with the seam named in the record. Splitting by topic to stay under the guard stays forbidden.
 7. **Every slice: homework → probe → switch → gate → deletion → GATES.md record → push to main**
-   with the full chain green (`bazel test //... //parser-equivalence:diagnostics` and
-   `bazel test //tools/deps:all`), never force-pushed, committed as `neema2 <neema2@gmail.com>`
-   with the session trailers.
+   with the full chain green (`bazel test //...` and `bazel test //tools/deps:all`; the
+   diagnostics battery `//parser-equivalence:diagnostics` is manual and runs only on a pin bump or a
+   parser/lexer/protocol change — the 2026-08-26 ruling; the first version of this line listed it in
+   the chain by mistake, corrected 2026-09-27), never force-pushed, committed as
+   `neema2 <neema2@gmail.com>` with the session trailers. A lane's time inside a chain is a
+   scheduling artefact: a timed claim is the lane run alone (GATES.md, 2026-09-27).
+8. **Where the evidence lives.** Numbers and decisions are in `docs/GATES.md` entries (one per
+   slice) and in this directory's research files, both on main. The RAW receipts (probe TSVs, JFR
+   aggregates, chain and timing logs, ~500 MB) are on the desk only, under
+   `~/legend/platform-architecture/receipts/` (`plan-audit-2026-09-26/step{0,2,3}/`,
+   `reference-differential/`, `untangle-4b/corpus-curve-duckdb.txt`), not in any repository; every
+   GATES.md entry names the receipt file it read from, and quotes the numbers, so a session
+   without the desk can review from GATES.md and re-run the probe to regenerate a receipt.
 
 ## 1. The steps, in order
 
@@ -169,6 +179,28 @@ numbers with the reason: an overload with no rule becomes Unimplemented, which i
 **Stop rule.** A rule that can only be registered by a name pattern.
 
 ### Step 3 — #47 + A1 as one slice: the binder's candidate set and the reference's rule (3–4 days)
+
+> **Read in this order before touching step 3** (2026-09-27): (1) `plan-audit-2026-09-26/reference-matching.md`
+> including its closing "Corrections from the second reading"; (2) `kernel-reading-2026-09-26.md`
+> (the twelve reference methods as pseudo-code with line citations, §C's thirty-five traps);
+> (3) `homework-2026-09-26.md` §4–§5 (the profile and the tier probe, as corrected); (4)
+> `step3-homework-audit-2026-09-26.md` (thirty findings against the first design, each with line
+> evidence); (5) `step3-design-2026-09-26.md` — revision 2 first, then the superseded v1 it
+> appends. Revision 2 dispositions every audit finding in its §6 and cuts the step into 3a
+> (referents on the node, the ~69 typing-time mints bound by declaration group), probes, 3b (the
+> candidate rule and one index), 3c (the reference's matcher and loop), 3d (the merge point by
+> table, #43), 3e (TDS erasure out of the typer, its own inventory).
+>
+> **One decision in revision 2 is PROPOSED, not ruled** — it contradicts this section's text
+> below: the call node carries its declaration identities (`AppliedFunction.referents:
+> List<FunctionId>`, with `FunctionId`'s record moved from `model` to `protocol` and its factories
+> to `model.FunctionIds`), because the audit counted ~180 post-resolution rebuild sites, three of
+> which rebuild whole subtrees with no way to pair old and new nodes, so a side table cannot be the
+> carrier. "NEVER put `FunctionId` on the protocol node" below was about the seven-package cycle,
+> which the move dissolves. The user has not yet said yes or no; no code is written until they do.
+> The text below is the 2026-09-26 morning version and is right about WHAT changes (the candidate
+> rule, the kernel, the merge point) and superseded by revision 2 on HOW the resolver's answer
+> travels and on TDS erasure's place (3e, after 3d, with its own inventory of the 45 readers).
 
 **What it is.** The resolver produces, per compilation, a `Bindings` value: for each call node
 (by node identity), the declaration ids it may mean; the syntax node stops carrying spellings. The
