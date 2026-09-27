@@ -57,7 +57,7 @@ public final class PureV1Api {
     /** E1: a lambda's text to its protocol JSON. Text without a leading {@code |} is
      *  wrapped in a parameterless lambda spanning the whole text, as the engine does. */
     public static Answer grammarToJsonLambda(String text, boolean returnSourceInformation) {
-        return answer("PARSER", () -> {
+        return answer(400, "PARSER", () -> {
             String json = ProtocolEmitter.emitLambda(SpecParser.parseLambda(text));
             return returnSourceInformation ? json : withoutSourceInformation(json);
         });
@@ -65,7 +65,7 @@ public final class PureV1Api {
 
     /** E2: a model's text to its PMCD JSON. */
     public static Answer grammarToJsonModel(String text, boolean returnSourceInformation) {
-        return answer("PARSER", () -> {
+        return answer(400, "PARSER", () -> {
             String json = PmcdParser.parseDocument(text);
             return returnSourceInformation ? json : withoutSourceInformation(json);
         });
@@ -77,7 +77,7 @@ public final class PureV1Api {
 
     /** E5: {@code {model, lambda}} to the query's {@code RelationType}. */
     public static Answer lambdaRelationType(String body) {
-        return answer("COMPILATION", () -> {
+        return answer(400, "COMPILATION", () -> {
             Json.Obj request = Json.parseObject(body);
             String model = modelText(request.getObj("model"));
             LambdaFunction lambda = ProtocolReader.lambda(request.getObj("lambda"));
@@ -92,7 +92,8 @@ public final class PureV1Api {
 
     /** E9: an {@code ExecuteInput} to the relational TDS {@code SingleExecutionPlan}. */
     public static Answer generatePlan(String body) {
-        return answer("COMPILATION", () -> {
+        // the engine answers generatePlan's and execute's compile errors 500 (measured)
+        return answer(500, "COMPILATION", () -> {
             Json.Obj request = Json.parseObject(body);
             String model = modelText(request.getObj("model"));
             LambdaFunction lambda = ProtocolReader.lambda(request.getObj("function"));
@@ -102,6 +103,70 @@ public final class PureV1Api {
             return Json.toCompact(executionPlan(plan,
                     connectionOf(model, runtime, target.store())));
         });
+    }
+
+    // ---------------------------------------------------------------------
+    // E8: execute
+    // ---------------------------------------------------------------------
+
+    /**
+     * E8: an {@code ExecuteInput} run on its runtime's connection -- established first, as
+     * legend-engine does on acquisition -- answered in the engine's TDS result shape. The
+     * database renders every value; Java arranges the rows into {@code {"values": [...]}}.
+     */
+    public static Answer execute(String body) {
+        return answer(500, "COMPILATION", () -> {
+            Json.Obj request = Json.parseObject(body);
+            String model = modelText(request.getObj("model"));
+            LambdaFunction lambda = ProtocolReader.lambda(request.getObj("function"));
+            String runtime = runtimeOf(request, com.legend.Compiler.target(model, lambda));
+            java.io.StringWriter rows = new java.io.StringWriter();
+            QueryPlan plan = new QueryService().executeUpstream(model, lambda, runtime, rows);
+            return tdsResult(plan, rows.toString());
+        });
+    }
+
+    /**
+     * The engine's TDS result, byte for byte in its layout (its streaming serializer's
+     * separators): {@code builder} (each column's Pure type and relational spelling),
+     * the {@code relational} activity carrying the SQL, then the columns and rows.
+     */
+    static String tdsResult(QueryPlan plan, String wireRows) {
+        List<com.legend.compiler.element.type.Type.Column> cols = UpstreamRelationType.columns(plan.rootType());
+        List<Map<String, Object>> builderCols = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (var c : cols) {
+            Map<String, Object> col = new LinkedHashMap<>();
+            col.put("name", c.name());
+            col.put("type", UpstreamRelationType.typePath(c.type()));
+            col.put("relationalType", UpstreamRelationType.relationalSpelling(c.type()));
+            builderCols.add(col);
+            names.add(c.name());
+        }
+        Map<String, Object> builder = new LinkedHashMap<>();
+        builder.put("_type", "tdsBuilder");
+        builder.put("columns", builderCols);
+        Map<String, Object> activity = new LinkedHashMap<>();
+        activity.put("_type", "relational");
+        activity.put("comment", "-- \"executionTraceID\" : \"" + java.util.UUID.randomUUID() + "\"");
+        activity.put("sql", plan.sql());
+        StringBuilder out = new StringBuilder();
+        out.append("{\"builder\": ").append(Json.toCompact(builder))
+                .append(", \"activities\": ").append(Json.toCompact(List.of(activity)))
+                .append(", \"result\" : {\"columns\" : ").append(Json.toCompact(names))
+                .append(", \"rows\" : [");
+        Json.Node wire = wireRows.isEmpty() ? new Json.Arr(List.of()) : Json.parse(wireRows);
+        boolean first = true;
+        for (Json.Node row : ((Json.Arr) wire).items()) {
+            Json.Obj r = (Json.Obj) row;
+            List<Object> values = new ArrayList<>();
+            for (String n : names) {
+                values.add(r.fields().get(n));
+            }
+            out.append(first ? "" : ",").append("{\"values\": ").append(Json.toCompact(values)).append('}');
+            first = false;
+        }
+        return out.append("]}}").toString();
     }
 
     /**
@@ -278,29 +343,40 @@ public final class PureV1Api {
     }
 
     /**
-     * A call's JSON, or its failure in the engine's error shape. The honest outcomes -- the
-     * text does not parse or compile, the construct is not implemented, the request is
-     * malformed -- answer 400 with the message. Anything else is a BUG: logged whole and
-     * answered 500, never a dropped connection and never dressed as the caller's mistake.
+     * A call's JSON, or its failure in the engine's error shape, with the engine's status
+     * for each kind (measured against 4.145.0, 2026-09-27):
+     * <ul>
+     *   <li>the text does not parse or compile, or the construct is not implemented:
+     *       {@code status} with {@code errorType} (grammar and lambdaRelationType answer
+     *       400, generatePlan and execute 500);</li>
+     *   <li>a malformed request, or the database refusing: 500, no {@code errorType}, the
+     *       message naming the exception;</li>
+     *   <li>anything else is a BUG: logged whole, answered 500 the same way -- never a
+     *       dropped connection.</li>
+     * </ul>
      */
-    private static Answer answer(String errorType, Supplier<String> call) {
+    private static Answer answer(int status, String errorType, Supplier<String> call) {
         try {
             return new Answer(200, call.get());
         } catch (com.legend.error.LegendCompileException
                 | com.legend.error.NotImplementedException
-                | com.legend.sql.dialect.DialectCapability
-                | IllegalArgumentException e) {
-            return error(400, errorType, String.valueOf(e.getMessage()));
+                | com.legend.sql.dialect.DialectCapability e) {
+            return error(status, errorType, String.valueOf(e.getMessage()));
+        } catch (IllegalArgumentException | com.legend.error.DataError e) {
+            Throwable named = e instanceof com.legend.error.DataError && e.getCause() != null ? e.getCause() : e;
+            return error(500, null, named.getClass().getSimpleName() + ": " + named.getMessage());
         } catch (RuntimeException | StackOverflowError e) {
             e.printStackTrace();
-            return error(500, "UNKNOWN", e.getClass().getSimpleName() + ": " + e.getMessage());
+            return error(500, null, e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
-    private static Answer error(int status, String errorType, String message) {
+    private static Answer error(int status, @com.legend.base.Nullable String errorType, String message) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("code", -1);
-        out.put("errorType", errorType);
+        if (errorType != null) {
+            out.put("errorType", errorType);
+        }
         out.put("message", message);
         out.put("status", "error");
         return new Answer(status, Json.toCompact(out));

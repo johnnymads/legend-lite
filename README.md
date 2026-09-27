@@ -275,34 +275,30 @@ bazel run //core:server                  # LSP, query execution, SQL, diagrams
 bazel build //core:server_deploy.jar     # the one self-contained jar to ship
 ```
 
-The server starts on **port 8080**. Connect [Studio Lite](https://github.com/neema2/studio-lite) (the React IDE) to `http://localhost:8080`.
+The server starts on **port 8080**. Point any legend-engine client (DataCube, for one) at `http://localhost:8080`.
 
 ---
 
 ## HTTP API
 
-| Method | Endpoint | Description | Served by |
-|--------|----------|-------------|-----------|
-| `POST` | `/lsp` | LSP JSON-RPC — diagnostics, completions, hover | legacy |
-| `POST` | `/engine/execute` | Compile + execute Pure query → tabular or graph | **core** (legacy front/back) |
-| `POST` | `/engine/sql` | Raw SQL against a Runtime's connection | legacy |
-| `POST` | `/engine/diagram` | Extract class diagram from Pure model | legacy |
-| `GET` | `/health` | Health check | — |
+legend-lite serves legend-engine's own `pure/v1` API: the same requests and the same answers,
+so a client written for legend-engine runs against legend-lite unchanged
+(`datacube/docs/ENGINE_API_CONTRACT.md`; parity tests in `core/src/test/java/com/legend/server/`).
 
-Only `/engine/execute` reaches the live compiler, and only for the compile and
-execute steps — the request is still framed, connection-resolved and serialized
-by `engine/`. Everything else on this table runs entirely on the frozen legacy
-implementation.
+| Method | Endpoint | legend-engine's call |
+|--------|----------|----------------------|
+| `POST` | `/api/pure/v1/grammar/grammarToJson/lambda` | a query's text to its lambda JSON |
+| `POST` | `/api/pure/v1/grammar/grammarToJson/model` | a model's text to its PMCD JSON |
+| `POST` | `/api/pure/v1/compilation/lambdaRelationType` | a query's result columns and their types |
+| `POST` | `/api/pure/v1/execution/generatePlan` | the query's execution plan, carrying its SQL |
+| `POST` | `/api/pure/v1/execution/execute` | the query run: its columns, the SQL it ran, its rows |
+| `POST` | `/lsp` | LSP JSON-RPC: diagnostics, completions, hover |
+| `POST` | `/engine/sql` | raw SQL against a runtime's connection |
+| `POST` | `/engine/diagram` | a class diagram from a Pure model |
+| `GET` | `/health` | health check |
 
-### Execute Endpoint
-
-```json
-{
-  "code": "Class Person { name: String[1]; } ... Person.all()->project(~[name: p|$p.name])"
-}
-```
-
-The `code` field contains the full Pure source — model definitions + query as the last expression. Returns tabular results (columns + rows) or graph results (JSON).
+The model travels as text (`{"_type": "text", "code": ...}`); the runtime rides the query
+(`->from(runtime)`) or the request (`"runtime": {"_type": "runtimePointer", "runtime": ...}`).
 
 ---
 

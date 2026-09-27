@@ -54,7 +54,10 @@ class RawSqlLedgerTest {
     // corpus-AUTHORED text crosses the translator, which is the stated
     // contract, true at last.
     private static final Map<String, Integer> LEDGER = Map.of(
-            "StatementExecutor.java", 1,
+            // CsvSeed.adaptRaw: the raw-statement boundary, moved from StatementExecutor
+            // (2026-09-27) with the setup loop it serves (CsvSeed.run); the executor's
+            // raw effects call it -- one site still
+            "CsvSeed.java", 1,
             // Phase 1c: the ONE render-time adapter — the DuckDb pass
             // (slice 3: ResultNav's pre-adaptation DIED; it had begun
             // double-translating once the pass existed)

@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -111,9 +112,14 @@ class ConnectionLeaseTest {
         assertNotNull(qs.execute(duckModel, query, "test::TestRuntime"),
                 "3-arg execute returned no result");
 
-        // 2. executeWireJson(…) — QueryService:122 (/engine/execute)
-        assertNotNull(qs.executeWireJson(duckModel, query, "test::TestRuntime").json(),
-                "executeWireJson returned no wire JSON");
+        // 2. pure/v1 execute (E8) — PureV1Api.execute leases the runtime's connection
+        String lambda = PureV1Api.grammarToJsonLambda(query, false).json();
+        PureV1Api.Answer executed = PureV1Api.execute("{\"clientVersion\":\"vX_X_X\",\"function\":"
+                + lambda + ",\"model\":" + com.legend.json.Json.toCompact(
+                        java.util.Map.of("_type", "text", "code", duckModel))
+                + ",\"runtime\":{\"_type\":\"runtimePointer\",\"runtime\":\"test::TestRuntime\"}"
+                + ",\"context\":{\"_type\":\"BaseExecutionContext\"}}");
+        assertEquals(200, executed.status(), executed.json());
 
         // 3. execute(…, OutputStream, OutputFormat) — QueryService:138
         var csv = new ByteArrayOutputStream();

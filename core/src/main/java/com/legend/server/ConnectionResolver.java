@@ -141,9 +141,9 @@ final class ConnectionResolver {
     /** The model's STORE-SHAPING content: every parsed
      * {@code ###Relational} Database definition, FQN-sorted (record
      * toString covers tables/columns/joins deterministically; source
-     * whitespace and non-store elements do not perturb it — the
-     * /engine/execute model+query blob must key like the /engine/sql
-     * model that seeded the tables). */
+     * whitespace and non-store elements do not perturb it — a later
+     * request's model must key like the /engine/sql model that seeded
+     * the tables). */
     private static Hash storesKey(ParsedModel model) {
         return Hash.ofUtf8(model.elements().stream()
                 .filter(el -> el instanceof com.legend.model.DatabaseDefinition)
@@ -202,14 +202,16 @@ final class ConnectionResolver {
                 // user-chosen identity and shares BY DESIGN.
                 case ConnectionSpecification.EmbeddedH2(String dbName,
                         String dir, boolean auto) ->
-                        "jdbc:h2:mem:" + dbName + ";DB_CLOSE_DELAY=-1";
+                        "jdbc:h2:mem:" + dbName + ";DB_CLOSE_DELAY=-1"
+                                + com.legend.exec.H2Settings.SETTINGS;
                 // D5: the default arm shared ONE fixed testdb across
                 // every unnamed in-memory H2 connection (the same A19
                 // disease one arm up) — name per (model, definition)
                 // content, same persistence semantics as the cached arms
+                // the engine's own H2 session (H2Settings: every H2 opener, one definition)
                 default -> "jdbc:h2:mem:c_"
                         + contentKey(storesKey, def).hex().substring(0, 16)
-                        + ";DB_CLOSE_DELAY=-1";
+                        + ";DB_CLOSE_DELAY=-1" + com.legend.exec.H2Settings.SETTINGS;
             }), def));
             case Postgres -> {
                 if (!(def.specification()

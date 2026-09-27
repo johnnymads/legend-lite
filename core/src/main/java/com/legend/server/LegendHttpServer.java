@@ -22,7 +22,6 @@ import java.util.regex.Pattern;
  * 
  * Endpoints:
  * - POST /lsp - Handle LSP JSON-RPC messages (diagnostics, completions, etc.)
- * - POST /engine/execute - Execute Pure query (compile + generate SQL + run)
  * - POST /engine/sql - Execute raw SQL against Connection from Runtime
  * - GET /health - Health check
  */
@@ -48,7 +47,6 @@ public class LegendHttpServer {
         server.createContext("/lsp", new LspHandler());
 
         // Engine - query and SQL execution
-        server.createContext("/engine/execute", new ExecuteHandler());
         // legend-engine's own pure/v1 API, exactly (PureV1Api; the user's ruling of
         // 2026-09-27: lite serves upstream's APIs and nothing of its own)
         server.createContext("/api/pure/v1/", new PureV1Handler());
@@ -110,80 +108,6 @@ public class LegendHttpServer {
      * This handler separates the model (definitions) from the query (expression)
      * and executes.
      */
-    private class ExecuteHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            addCorsHeaders(exchange);
-            if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(204, -1);
-                exchange.close();
-                return;
-            }
-            if (!"POST".equals(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, "{\"error\":\"Method not allowed\"}");
-                return;
-            }
-
-            try {
-                String body = readBody(exchange);
-                Json.Obj request = Json.parseObject(body);
-                String fullSource = request.getStringOr("code", null);
-
-                if (fullSource == null || fullSource.isBlank()) {
-                    sendResponse(exchange, 400, "{\"error\":\"Missing 'code' field\"}");
-                    return;
-                }
-
-                // Extract the runtime name from the source
-                String runtimeName = extractRuntimeName(fullSource);
-                if (runtimeName == null) {
-                    sendResponse(exchange, 400, "{\"error\":\"No Runtime definition found in source\"}");
-                    return;
-                }
-
-                // Separate the model (definitions) from the query (expression at the end)
-                String[] parts = separateModelAndQuery(fullSource);
-                String modelSource = parts[0];
-                String query = parts[1];
-
-                if (query == null || query.isBlank()) {
-                    sendResponse(exchange, 400, "{\"error\":\"No query expression found after Runtime definition\"}");
-                    return;
-                }
-
-                System.out.println("Model source length: " + modelSource.length());
-                System.out.println("Query: " + query);
-                System.out.println("Runtime: " + runtimeName);
-
-                // E5: the data payload is PLAN-RENDERED JSON (the
-                // database composed the bytes); parsing it back for the
-                // envelope is ingress of DB output, not value
-                // serialization. Columns are a typed plan fact — correct
-                // even for a zero-row result. (A20 stands: data is a
-                // REAL JSON array node, never a double-encoded string.)
-                var wire = queryService.executeWireJson(
-                        modelSource, query, runtimeName);
-                Json.Node data = Json.parse(wire.json());
-
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("success", true);
-                response.put("data", data);
-                response.put("columns", wire.columns());
-                response.put("rowCount", data instanceof Json.Arr a
-                        ? a.items().size() : 0);
-
-                sendResponse(exchange, 200, Json.toCompact(response));
-
-            } catch (Exception e) {
-                e.printStackTrace();
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("success", false);
-                response.put("error", e.getMessage());
-                sendResponse(exchange, 200, Json.toCompact(response));
-            }
-        }
-    }
-
     /**
      * {@code /api/pure/v1/...}: legend-engine's API, answered by {@link PureV1Api}. The body
      * is read RAW -- a grammar text's line endings are part of its source positions.
@@ -217,6 +141,8 @@ public class LegendHttpServer {
                         PureV1Api.lambdaRelationType(body);
                 case "/api/pure/v1/execution/generatePlan" ->
                         PureV1Api.generatePlan(body);
+                case "/api/pure/v1/execution/execute" ->
+                        PureV1Api.execute(body);
                 default -> new PureV1Api.Answer(404,
                         "{\"code\":-1,\"message\":\"no such legend-engine API in legend-lite: "
                                 + exchange.getRequestURI().getPath() + "\",\"status\":\"error\"}");
@@ -296,60 +222,6 @@ public class LegendHttpServer {
             return matcher.group(1);
         }
         return null;
-    }
-
-    /**
-     * Separate the model definitions from the query expression.
-     * 
-     * The model includes all definitions (Class, Association, Database, Mapping,
-     * Connection, Runtime).
-     * The query is everything after the Runtime definition's closing brace
-     * (non-comment code).
-     * 
-     * @return String[2] where [0] = model source (definitions only), [1] = query
-     *         expression
-     */
-    private String[] separateModelAndQuery(String source) {
-        // Find the Runtime block and locate its end
-        Matcher matcher = RUNTIME_PATTERN.matcher(source);
-        if (!matcher.find()) {
-            return new String[] { source, "" };
-        }
-
-        int braceCount = 0;
-        int endOfRuntime = -1;
-
-        for (int i = matcher.end() - 1; i < source.length(); i++) {
-            char c = source.charAt(i);
-            if (c == '{')
-                braceCount++;
-            else if (c == '}') {
-                braceCount--;
-                if (braceCount == 0) {
-                    endOfRuntime = i + 1;
-                    break;
-                }
-            }
-        }
-
-        if (endOfRuntime == -1) {
-            return new String[] { source, "" };
-        }
-
-        // Model = everything up to and including the Runtime closing brace
-        String modelSource = source.substring(0, endOfRuntime);
-
-        // Query = everything after, skipping comments
-        String afterRuntime = source.substring(endOfRuntime).trim();
-        StringBuilder query = new StringBuilder();
-        for (String line : afterRuntime.split("\n")) {
-            String trimmed = line.trim();
-            if (!trimmed.isEmpty() && !trimmed.startsWith("//")) {
-                query.append(line).append("\n");
-            }
-        }
-
-        return new String[] { modelSource, query.toString().trim() };
     }
 
     public static void addCorsHeaders(HttpExchange exchange) {
@@ -469,7 +341,7 @@ public class LegendHttpServer {
         System.out.println();
         System.out.println("Endpoints:");
         System.out.println("  POST http://localhost:" + port + "/lsp         - LSP Protocol");
-        System.out.println("  POST http://localhost:" + port + "/engine/execute - Execute Pure query");
+        System.out.println("  POST http://localhost:" + port + "/api/pure/v1/... - legend-engine's pure/v1 API");
         System.out.println("  POST http://localhost:" + port + "/engine/sql     - Execute raw SQL");
         System.out.println("  GET  http://localhost:" + port + "/health         - Health check");
         System.out.println();

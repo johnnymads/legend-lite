@@ -2038,29 +2038,7 @@ final class StatementExecutor {
         if (env.runtimeFqn() != null) {
             setups.addAll(com.legend.exec.CsvSeed.declaredSteps(env.runtimeFqn(), env.ctx(), env.dialect()));
         }
-        for (com.legend.exec.CsvSeed.Step step : setups) {
-            switch (step) {
-                case com.legend.exec.CsvSeed.Step.Sql blob -> {
-                    for (String stmt : com.legend.sql.RawSql.splitStatements(blob.text())) {
-                        boolean query;
-                        try (var __o = com.legend.exec.StatementOrigin.enter(com.legend.exec.StatementOrigin.SEED)) {
-                            query = Executor.executeRaw(env.connection(), adaptRaw(stmt, env));
-                        }
-                        record(env, stmt, query);
-                    }
-                }
-                // test data's ROWS: the engine's bulk load when it has one; the
-                // referee's ledger records the one insert that lands the same rows
-                case com.legend.exec.CsvSeed.Step.Rows rows -> {
-                    try (var __o = com.legend.exec.StatementOrigin.enter(com.legend.exec.StatementOrigin.SEED)) {
-                        Executor.load(env.connection(), env.dialect(), rows.load());
-                    }
-                    if (env.options().recorder() != null) {
-                        record(env, rows.text(env.dialect()), false);
-                    }
-                }
-            }
-        }
+        com.legend.exec.CsvSeed.run(setups, env.connection(), env.dialect(), env.options().recorder());
         state.done.add(key);
         state.dirty = false;
     }
@@ -2965,8 +2943,7 @@ final class StatementExecutor {
      * DuckDB reference target (H2_BACKEND.md §12 step 12 — the rewrite
      * is a DuckDB-target adaptation, never generic). */
     private static String adaptRaw(String sql, ExecEnv env) {
-        return env.dialect().rawH2IsNative() ? sql
-                : com.legend.sql.dialect.RawSqlBoundary.h2ToDuckDb(sql);
+        return com.legend.exec.CsvSeed.adaptRaw(sql, env.dialect());
     }
 
     /** THE ONE SEND of an effect native (block-compiler stage 3, 2026-09-21): with a

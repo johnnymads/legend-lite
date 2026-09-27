@@ -90,10 +90,10 @@ class PureV1HttpTest {
     }
 
     @Test
-    @DisplayName("a query that does not compile answers the engine's error shape")
+    @DisplayName("a query that does not compile answers the engine's error shape (generatePlan: 500)")
     void compileError() throws Exception {
         HttpResponse<String> r = plan("|model::Person.all()->project(~[n: p|$p.noSuchProperty])");
-        assertEquals(400, r.statusCode(), r.body());
+        assertEquals(500, r.statusCode(), r.body());
         Json.Obj o = Json.parseObject(r.body());
         assertEquals("error", o.getString("status"));
         assertTrue(o.getString("message").contains("noSuchProperty"), r.body());
@@ -111,13 +111,15 @@ class PureV1HttpTest {
     }
 
     @Test
-    @DisplayName("the made-up /engine/plan is gone")
-    void engineplanIsGone() throws Exception {
-        HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + server.getPort() + "/engine/plan"))
-                .POST(HttpRequest.BodyPublishers.ofString("{}")).build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(404, r.statusCode());
+    @DisplayName("the made-up /engine/plan and /engine/execute are gone")
+    void theMadeUpEndpointsAreGone() throws Exception {
+        for (String path : new String[] {"/engine/plan", "/engine/execute"}) {
+            HttpResponse<String> r = HTTP.send(HttpRequest.newBuilder()
+                    .uri(URI.create("http://localhost:" + server.getPort() + path))
+                    .POST(HttpRequest.BodyPublishers.ofString("{}")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(404, r.statusCode(), path);
+        }
     }
 
     private static String sqlOf(String plan) {

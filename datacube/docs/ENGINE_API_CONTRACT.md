@@ -30,7 +30,7 @@ legend-engine is `http://host:port/api`.
 | E5 | `POST pure/v1/compilation/lambdaRelationType` (and `/batch`) | `LambdaReturnTypeInput {model, lambda}` | `RelationType {columns:[{name, genericType}]}` | the column set and types of a query, **including validating a calculated column before it is applied** | `Compile.java` | ✅ served (2026-09-27); recorded difference: lite's type names (no precise primitives yet) |
 | E6 | `POST pure/v1/compilation/lambdaReturnType` | `LambdaReturnTypeInput` | `{returnType}` | the type of an expression | `Compile.java` | ❌ |
 | E7 | `POST pure/v1/compilation/autofix/transformTdsToRelation/lambda` | lambda + model | lambda JSON | opening a legacy TDS query in DataCube | `Autofix.java` | ❌ |
-| E8 | `POST pure/v1/execution/execute` (`serializationFormat`) | `ExecuteInput {clientVersion, function, mapping, runtime, context, model, parameterValues}` | the engine's result JSON (relation: `builder` + `activities` with the SQL + `result.columns/rows`) | running the cube on the server | `Execute.java` | ⚠️ `/engine/execute` exists with a legend-lite shape — not the contract |
+| E8 | `POST pure/v1/execution/execute` (`serializationFormat`) | `ExecuteInput {clientVersion, function, mapping, runtime, context, model, parameterValues}` | the engine's result JSON (relation: `builder` + `activities` with the SQL + `result.columns/rows`) | running the cube on the server | `Execute.java` | ✅ served (2026-09-27): the engine's layout byte for byte, rows by value (`PureV1ApiTest`); `/engine/execute` deleted; recorded difference: type names |
 | E9 | `POST pure/v1/execution/generatePlan` | `ExecuteInput` | `ExecutionPlan` JSON | upstream's CACHED path: take the SQL out of the plan, run it in DuckDB-wasm | `Execute.java` | ✅ served (2026-09-27), the engine's plan JSON; `/engine/plan` deleted; recorded differences: type names, `resultColumns` carry no physical type |
 | E10 | `POST pure/v1/codeCompletion/completeCode` | `CompleteCodeInput` | `CodeCompletionResult` | typeahead in the code editors | **absent from 4.145.0** — the client has called it since 2024-10 and gets no answer from open-source engine | ❌ — to match 4.145.0 exactly, also absent; see §4 |
 | Q1 | `GET pure/v1/query/{id}`, `POST pure/v1/query/search`, `GET pure/v1/query/batch` | — / `QuerySearchSpecification` | `Query` / light queries | the **Legend Query source**: load a saved query's lambda, mapping, runtime, parameters | `ApplicationQuery.java` | ❌ no store |
@@ -63,7 +63,7 @@ variants matter:
 And on the DataCube side:
 - **C1 One client.** Every server call goes through an engine-API client
   matching `V1_EngineServerClient`'s requests. `/engine/plan` and
-  `/engine/execute` stop being called. (2026-09-27: planning moved to
+  `/engine/execute` stop being called, and are deleted (2026-09-27). (Planning moved to
   E1 + E9 in `UpstreamPlanner`; `/engine/plan` deleted.)
 - **C2 The in-tab planner speaks the same JSON.** The WebAssembly planner
   takes `ExecuteInput` and returns `ExecutionPlan`, exactly as E9 does, so

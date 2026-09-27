@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.List;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -17,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Integration test for LegendHttpServer endpoints.
  * 
- * Tests the HTTP layer with /lsp, /engine/execute, and /engine/sql.
+ * Tests the HTTP layer with /lsp, legend-engine's pure/v1 execute, and /engine/sql.
  * Uses file-based DuckDB so data persists across HTTP requests.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -127,6 +128,29 @@ class LegendHttpServerIntegrationTest {
     }
 
     // Build JSON request body properly
+    /**
+     * legend-engine's own flow, as a client makes it: the query's lambda JSON
+     * ({@code grammarToJson/lambda}), then {@code execution/execute} with the model as text
+     * and the runtime as a pointer.
+     */
+    private HttpResponse<String> executeUpstream(String model, String query, String runtime)
+            throws Exception {
+        HttpResponse<String> lambda = httpClient.send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/api/pure/v1/grammar/grammarToJson/lambda"))
+                .POST(HttpRequest.BodyPublishers.ofString(query)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, lambda.statusCode(), lambda.body());
+        String input = "{\"clientVersion\":\"vX_X_X\",\"function\":" + lambda.body()
+                + ",\"model\":{\"_type\":\"text\",\"code\":\"" + Json.escape(model) + "\"}"
+                + ",\"runtime\":{\"_type\":\"runtimePointer\",\"runtime\":\"" + runtime + "\"}"
+                + ",\"context\":{\"_type\":\"BaseExecutionContext\"}}";
+        return httpClient.send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/api/pure/v1/execution/execute"))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(input)).build(),
+                HttpResponse.BodyHandlers.ofString());
+    }
+
     private static String buildJsonRequest(String code, String sql, String runtime) {
         return "{" +
                 "\"code\":\"" + Json.escape(code) + "\"," +
@@ -255,7 +279,7 @@ class LegendHttpServerIntegrationTest {
         System.out.println("SELECT response: " + response.body());
 
         // executeSql always returns empty — raw SQL has no compiler-provided types.
-        // Use the compiled Pure pipeline (/engine/execute) for typed results.
+        // Use the compiled Pure pipeline (pure/v1 execute) for typed results.
         assertEquals(200, response.statusCode());
         assertTrue(response.body().contains("\"success\":true"),
                 "SELECT failed: " + response.body());
@@ -304,38 +328,20 @@ class LegendHttpServerIntegrationTest {
 
     @Test
     @Order(7)
-    @DisplayName("POST /engine/execute runs Pure query")
+    @DisplayName("pure/v1 execute runs a Pure query, in the engine's TDS result shape")
     void testEngineExecutePureQuery() throws Exception {
-        // Use the sample model with query appended
-        String pureCodeWithQuery = buildSampleModel() + """
-
-                model::Person.all()
-                    ->project(~[firstName:p|$p.firstName, lastName:p|$p.lastName])
-                """;
-
-        String body = String.format("{\"code\":\"%s\"}", Json.escape(pureCodeWithQuery));
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/engine/execute"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = executeUpstream(buildSampleModel(),
+                "|model::Person.all()->project(~[firstName:p|$p.firstName, lastName:p|$p.lastName])",
+                "test::TestRuntime");
         System.out.println("Execute Pure response: " + response.body());
 
-        assertEquals(200, response.statusCode());
-        // Should have success=true and return data from T_PERSON table
-        assertTrue(response.body().contains("\"success\":true"),
-                "Pure query failed: " + response.body());
+        assertEquals(200, response.statusCode(), response.body());
+        Json.Obj result = Json.parseObject(response.body());
+        assertEquals("tdsBuilder", result.getObj("builder").getString("_type"));
+        assertEquals(List.of("firstName", "lastName"),
+                result.getObj("result").getStringArray("columns"));
         // Data was inserted in Order 4, so we should see John/Smith
-        // A20 pin: data is a REAL JSON array ("data":[...]), never a
-        // double-encoded string ("data":"[...")
-        assertTrue(response.body().contains("\"data\":["),
-                "data must be a raw JSON array, got: " + response.body());
-        assertFalse(response.body().contains("\"data\":\"["),
-                "double-encoded data payload: " + response.body());
-        assertTrue(response.body().contains("John") || response.body().contains("firstName"),
+        assertTrue(response.body().contains("{\"values\": [\"John\",\"Smith\"]}"),
                 "Expected query results: " + response.body());
     }
 
@@ -476,27 +482,14 @@ class LegendHttpServerIntegrationTest {
 
         // STEP 4: Run Pure Query
         System.out.println("\n=== E2E STEP 4: Execute Pure Query ===");
-        String pureQuery = pureModel + """
-
-                model::Employee.all()
+        HttpResponse<String> queryResponse = executeUpstream(pureModel, """
+                |model::Employee.all()
                     ->filter(e | $e.department == 'Engineering')
                     ->project(~[name:e|$e.name, salary:e|$e.salary])
-                """;
-
-        String queryBody = String.format("{\"code\":\"%s\"}", Json.escape(pureQuery));
-
-        HttpRequest queryRequest = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/engine/execute"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(queryBody))
-                .build();
-
-        HttpResponse<String> queryResponse = httpClient.send(queryRequest, HttpResponse.BodyHandlers.ofString());
+                """, "test::EmpRuntime");
         System.out.println("Pure Query response: " + queryResponse.body());
 
-        assertEquals(200, queryResponse.statusCode());
-        assertTrue(queryResponse.body().contains("\"success\":true"),
-                "Pure query failed: " + queryResponse.body());
+        assertEquals(200, queryResponse.statusCode(), queryResponse.body());
         // Should return Alice and Bob (Engineering), not Carol (Marketing)
         assertTrue(queryResponse.body().contains("Alice") && queryResponse.body().contains("Bob"),
                 "Expected Alice and Bob in results: " + queryResponse.body());

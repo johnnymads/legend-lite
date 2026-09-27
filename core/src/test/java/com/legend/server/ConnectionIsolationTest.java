@@ -21,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * under an Integer[1] label). The persistence FEATURE stays: same
  * stores + same definition keep their database across requests — which
  * is what keeps the interactive HTTP flow working, where /engine/sql
- * seeds with a model text and /engine/execute posts model+query as one
- * blob (different SOURCE, same stores).
+ * seeds with a model text and a later request carries the same stores
+ * inside a different model text (different SOURCE, same stores).
  */
 class ConnectionIsolationTest {
 

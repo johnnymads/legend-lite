@@ -270,4 +270,42 @@ public final class CsvSeed {
         }
         return out;
     }
+
+    /** Runs a connection's setup steps on the session, as the engine does when it
+     *  ESTABLISHES the connection; {@code recorder} is the referee's ledger (null = none). */
+    public static void run(List<Step> setups, java.sql.Connection connection,
+            com.legend.sql.dialect.SqlDialect dialect,
+            com.legend.sql.dialect.RawSqlBoundary.@com.legend.base.Nullable Recorder recorder) {
+        for (Step step : setups) {
+            switch (step) {
+                case Step.Sql blob -> {
+                    for (String stmt : com.legend.sql.RawSql.splitStatements(blob.text())) {
+                        boolean query;
+                        try (var __o = StatementOrigin.enter(StatementOrigin.SEED)) {
+                            query = Executor.executeRaw(connection, adaptRaw(stmt, dialect));
+                        }
+                        if (recorder != null) {
+                            recorder.recordExecuted(stmt, query);
+                        }
+                    }
+                }
+                // test data's ROWS: the engine's bulk load when it has one; the
+                // referee's ledger records the one insert that lands the same rows
+                case Step.Rows rows -> {
+                    try (var __o = StatementOrigin.enter(StatementOrigin.SEED)) {
+                        Executor.load(connection, dialect, rows.load());
+                    }
+                    if (recorder != null) {
+                        recorder.recordExecuted(rows.text(dialect), false);
+                    }
+                }
+            }
+        }
+    }
+
+    /** A raw (H2-spelled) setup statement for the session's dialect. */
+    public static String adaptRaw(String sql, com.legend.sql.dialect.SqlDialect dialect) {
+        return dialect.rawH2IsNative() ? sql
+                : com.legend.sql.dialect.RawSqlBoundary.h2ToDuckDb(sql);
+    }
 }

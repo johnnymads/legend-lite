@@ -169,7 +169,7 @@ class ErrorShapeGuardrailTest {
     // result carrying the platform's whole message — the designed sentinel
     // of a test runner (a failing test must never abort the run); the
     // harness had the same two catches before it moved into the product.
-    private static final int CATCH_RETURNS_VALUE = 21;   // 17 -> 19 (2026-09-16: ServiceTestRunner's resolve/execute FAIL sentinels, the PureTestRunner pair's twins); 19 -> 21 (2026-09-27: PureV1Api.answer's two arms ARE the designed sentinel of an HTTP API -- the engine's error JSON, 400 for an honest failure, 500 for a logged bug)
+    private static final int CATCH_RETURNS_VALUE = 22;   // 17 -> 19 (2026-09-16: ServiceTestRunner's resolve/execute FAIL sentinels, the PureTestRunner pair's twins); 19 -> 21 (2026-09-27: PureV1Api.answer's two arms ARE the designed sentinel of an HTTP API -- the engine's error JSON, 400 for an honest failure, 500 for a logged bug); 21 -> 22 (2026-09-27, E8: its third arm, a malformed request or the database refusing -- the engine's measured 500 with no errorType)
 
     /** {@code endsWith("::…")} identification sites — the suffix-match
      * idiom exact-FQN doctrine retires; may only shrink. */

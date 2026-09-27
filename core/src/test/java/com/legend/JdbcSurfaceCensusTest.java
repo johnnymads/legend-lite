@@ -90,6 +90,10 @@ class JdbcSurfaceCensusTest {
             // types each value, exactly as the text path's quoted literals
             "core/src/main/duckdb/com/legend/exec/DuckDbAppenderLoad.java",
             "core/src/main/java/com/legend/exec/BulkLoad.java",   // the seam it joins: a Connection in, no SQL of its own
+            // 2026-09-27: CsvSeed.run establishes a connection -- its declared setup
+            // statements and rows, through Executor.executeRaw / Executor.load under the SEED
+            // origin; a Connection in, the database executes (moved from StatementExecutor)
+            "core/src/main/java/com/legend/exec/CsvSeed.java",
             // the driver's one metadata read, moved from Compiler: a java.sql
             // catch clause there made the plan surface need java.sql (2026-09-23)
             "core/src/main/java/com/legend/exec/JdbcMetadata.java",

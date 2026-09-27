@@ -84,10 +84,27 @@ class PureV1ApiTest {
     }
 
     @Test
-    void aMalformedRequestIsTheCallersError_notABug() {
+    void aMalformedRequestIsAnswered500WithNoErrorType_asTheEngineAnswersIt() {
+        // measured, 4.145.0: {"function": 1} -> 500, {code, message: "InvalidTypeIdException: ...",
+        // status, trace}, no errorType
         PureV1Api.Answer a = PureV1Api.generatePlan("{\"function\": 1}");
-        assertEquals(400, a.status(), a.json());
-        assertEquals("error", Json.parseObject(a.json()).getString("status"));
+        assertEquals(500, a.status(), a.json());
+        Json.Obj o = Json.parseObject(a.json());
+        assertEquals("error", o.getString("status"));
+        assertFalse(o.has("errorType"), a.json());
+    }
+
+    @Test
+    void generatePlansCompileErrorIs500_lambdaRelationTypesIs400_asTheEngineAnswersThem() {
+        String bad = PureV1Api.grammarToJsonLambda(
+                "|#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#->select(~[nope])->from(trades::h2::RT)", true).json();
+        PureV1Api.Answer plan = PureV1Api.generatePlan("{\"clientVersion\":\"vX_X_X\",\"function\":" + bad
+                + ",\"model\":" + textModel() + ",\"context\":{\"_type\":\"BaseExecutionContext\"}}");
+        assertEquals(500, plan.status(), plan.json());
+        assertEquals("COMPILATION", Json.parseObject(plan.json()).getString("errorType"));
+        PureV1Api.Answer type = PureV1Api.lambdaRelationType("{\"model\":" + textModel() + ",\"lambda\":" + bad + "}");
+        assertEquals(400, type.status(), type.json());
+        assertEquals("COMPILATION", Json.parseObject(type.json()).getString("errorType"));
     }
 
     @Test
@@ -121,7 +138,60 @@ class PureV1ApiTest {
         assertEquals(Json.toCompact(comparable(engine)), Json.toCompact(comparable(lite)));
     }
 
+    @Test
+    void e8_execute_isTheEnginesResult_rowForRow() throws Exception {
+        String request = "{\"clientVersion\":\"vX_X_X\",\"function\":" + lambda
+                + ",\"model\":" + textModel()
+                + ",\"context\":{\"_type\":\"BaseExecutionContext\"}}";
+        PureV1Api.Answer a = PureV1Api.execute(request);
+        assertEquals(200, a.status(), a.json());
+        String engineText = resource("upstream-api/e8-groupby-sort.json");
+
+        // the layout: the engine's streaming serializer's separators, byte for byte
+        assertEquals(layout(engineText), layout(a.json()));
+
+        Json.Obj lite = Json.parseObject(a.json());
+        Json.Obj engine = Json.parseObject(engineText);
+        assertEquals(Json.toCompact(inLitesVocabulary(engine.getObj("builder"))),
+                Json.toCompact(lite.getObj("builder")));
+        assertEquals(engine.getObj("result").getStringArray("columns"),
+                lite.getObj("result").getStringArray("columns"));
+        assertEquals(values(engine), values(lite));
+
+        // the activity's SQL: the rows it answers on H2, as the plan's
+        List<String> setup = sqlNode(Json.parseObject(resource("upstream-api/e9-groupby-sort.json")))
+                .getObj("connection").getObj("datasourceSpecification")
+                .getStringArray("testDataSetupSqls");
+        assertEquals(rows(setup, activitySql(engine)), rows(setup, activitySql(lite)));
+    }
+
     // ---------------------------------------------------------------------
+
+    /** The result's text with the per-run trace id, the SQL, the values and the type names
+     *  (recorded difference 1, compared below) blanked. */
+    private static String layout(String result) {
+        return result.replaceAll("\"type\":\"[^\"]*\"", "\"type\":\"\"")
+                .replaceAll("executionTraceID\\\\\" : \\\\\"[0-9a-f-]+", "executionTraceID")
+                .replaceAll("\"sql\":\"(?:[^\"\\\\]|\\\\.)*\"", "\"sql\":\"\"")
+                .replaceAll("\\{\"values\": \\[[^\\]]*\\]\\}", "{\"values\": []}");
+    }
+
+    private static String activitySql(Json.Obj result) {
+        return ((Json.Obj) result.getArr("activities").items().get(0)).getString("sql");
+    }
+
+    /** Each row's values, a number compared by its value (the engine writes 528, H2's JSON 528.0). */
+    private static List<List<Object>> values(Json.Obj result) {
+        List<List<Object>> out = new ArrayList<>();
+        for (Json.Node r : result.getObj("result").getArr("rows").items()) {
+            List<Object> row = new ArrayList<>();
+            for (Json.Node v : ((Json.Obj) r).getArr("values").items()) {
+                row.add(v instanceof Json.Num n ? (Object) Double.valueOf(n.doubleValue()) : Json.toCompact(v));
+            }
+            out.add(row);
+        }
+        return out;
+    }
 
     private String textModel() {
         return Json.toCompact(Map.of("_type", "text", "code", model));

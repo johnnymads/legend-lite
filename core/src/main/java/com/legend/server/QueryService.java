@@ -111,23 +111,19 @@ public class QueryService {
         writer.flush();
     }
 
-    /** The wire JSON plus its typed column names (a PLAN fact — correct
-     * even for a zero-row result): the HTTP response envelope's inputs. */
-    public record WireData(String json, List<String> columns) {
-    }
-
-    /** E5: the /execute endpoint's data payload — plan-rendered JSON
-     * with the envelope's column names; the connection auto-resolves
-     * from the Runtime. */
-    public WireData executeWireJson(String pureSource, String query,
-            String runtimeName) throws SQLException, IOException {
-        try (ConnectionResolver.Lease lease =
-                ConnectionResolver.resolve(pureSource, runtimeName)) {
-            var sw = new java.io.StringWriter();
-            List<String> cols = com.legend.Compiler.executeWire(pureSource, query,
-                    runtimeName, lease.connection(),
-                    com.legend.lowering.WireRender.Format.JSON, sw);
-            return new WireData(sw.toString(), cols);
+    /**
+     * Upstream {@code pure/v1/execution/execute} (E8): the runtime's connection leased, the
+     * already-parsed query run on it ({@code Compiler.executeWire}), the database's JSON rows
+     * written to {@code rows}. A database failure is a {@link com.legend.error.DataError}.
+     */
+    public com.legend.plan.QueryPlan executeUpstream(String model,
+            com.legend.protocol.spec.ValueSpecification query, String runtimeName, Writer rows) {
+        try (ConnectionResolver.Lease lease = ConnectionResolver.resolve(model, runtimeName)) {
+            return com.legend.Compiler.executeWire(model, query, runtimeName, lease.connection(), rows);
+        } catch (SQLException e) {
+            throw new com.legend.error.DataError(String.valueOf(e.getMessage()), e);
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
         }
     }
 

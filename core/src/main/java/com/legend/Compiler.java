@@ -679,6 +679,31 @@ public final class Compiler {
                 .toList();
     }
 
+    /**
+     * Upstream {@code pure/v1/execution/execute} (E8) for an already-parsed relation
+     * query: the runtime's connections are ESTABLISHED as legend-engine establishes them
+     * on every acquisition (a LocalH2 connection's declared test data runs first), then the
+     * database renders the rows as the JSON wire ({@code [row, ...]}) onto {@code out}.
+     * Returns the plan: its SQL (the activity the engine reports) and its root type.
+     */
+    public static com.legend.plan.QueryPlan executeWire(String model,
+            com.legend.protocol.spec.ValueSpecification query, String runtimeFqn,
+            java.sql.Connection connection, java.io.Writer out) throws java.io.IOException {
+        Lowered l = lowerParsed(model, query, runtimeFqn, false);
+        com.legend.plan.ResultShape shape = com.legend.plan.ResultShape.of(l.root());
+        if (shape != com.legend.plan.ResultShape.TABULAR) {
+            throw new com.legend.error.NotImplementedException(
+                    "execute: a " + shape + " result's serialization is unprobed");
+        }
+        com.legend.sql.dialect.SqlDialect dialect = dialectOf(l.ctx(), runtimeFqn, connection);
+        com.legend.exec.CsvSeed.run(com.legend.exec.CsvSeed.declaredSteps(runtimeFqn, l.ctx(), dialect),
+                connection, dialect, null);
+        out.write(com.legend.exec.Executor.wireText(dialect.render(com.legend.lowering.WireRender.wrap(
+                l.plan(), wireSchema(l.root().info()), com.legend.lowering.WireRender.Format.JSON)),
+                connection));
+        return new com.legend.plan.QueryPlan(dialect.render(l.plan()), l.root().info(), shape);
+    }
+
     /** The wire's typed relation: a tabular root's own schema; a scalar/
      *  collection root is the one-column {@code value} relation (the
      *  scalarRoot contract). */

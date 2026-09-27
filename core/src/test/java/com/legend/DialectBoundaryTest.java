@@ -48,7 +48,7 @@ class DialectBoundaryTest {
 
     /** {@code rawH2IsNative()} CALLS outside the dialect package, by file. */
     private static final Map<String, Integer> RAW_H2_CALLERS = Map.of(
-            "StatementExecutor.java", 1);   // adaptRaw — the raw-SQL boundary
+            "CsvSeed.java", 1);   // adaptRaw — the raw-SQL boundary (moved from StatementExecutor 2026-09-27 with the setup loop, CsvSeed.run; one site still)
 
     /** Lines naming a target ({@code DatabaseType.H2} / {@code .DuckDB})
      *  outside the dialect package, by file. Carrying a type as DATA needs

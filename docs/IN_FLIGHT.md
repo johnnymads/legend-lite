@@ -86,6 +86,17 @@ h2-fail-roster.txt`.
   `Varchar(n)`/`Int`/`Numeric(p,s)`/`Timestamp`/`TinyInt` (BIT), and `sum` of a decimal is
   `Decimal` here, `Number` there. Proposed after your step 3 (it is the binder's overload rules);
   BIT-as-number is a user decision.
+- 2026-09-27 warehouse: **E8 pushing: `pure/v1/execution/execute` served, `/engine/execute` DELETED**
+  (with `QueryService.executeWireJson` and the `/engine/execute` helpers). Cross-area, announced
+  (rule 7): `Compiler.executeWire` gains the parsed-lambda entry (declared connection test data
+  established first, as the engine does on acquisition); running setup steps moved from
+  `StatementExecutor` to `exec/CsvSeed.run` beside `declaredSteps`. **Your guardrails, each dated:**
+  `JavaEvalLedgerTest` `StatementExecutor` 2413 -> 2392 (ratchet down); `DialectBoundaryTest` and
+  `RawSqlLedgerTest` pins move `StatementExecutor.java` -> `CsvSeed.java` (the one adaptRaw site,
+  moved, count 1); `JdbcSurfaceCensusTest` main register + `CsvSeed`; `CATCH_RETURNS_VALUE`
+  21 -> 22. `ConnectionResolver`'s in-memory H2 arms now open with `H2Settings.SETTINGS` (the
+  engine's H2 session, "every H2 opener, one definition"). E9's compile errors now answer 500
+  and malformed requests 500 without `errorType`, as measured on 4.145.0.
 - 2026-09-27 warehouse: **U3a pushing: E1/E2/E5/E9 served under `/api/pure/v1/`, `/engine/plan`
   DELETED** (`PlanEndpointTest` with it; `/engine/execute` stays until E8). Cross-area, announced
   (rule 7): `core/BUILD.bazel` `server_lib` gains `":parser"` (one dep, E1/E2 parse there);
