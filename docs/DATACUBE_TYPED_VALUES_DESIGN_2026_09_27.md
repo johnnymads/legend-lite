@@ -63,14 +63,14 @@ so that answer carries the columns.
 
 ### Step 1: typed plans; the cube's columns from the compiler
 
-**`Planner.plan` returns `{sql, columns}`**, where each column is `{name, type, multiplicity,
-precision?, scale?}` as the compiler spells them.
+**Revised by the user's ruling of 2026-09-27: upstream's APIs only.** No endpoint of ours
+carries the types. `UPSTREAM_ENDPOINTS_DESIGN_2026_09_27.md` comes first: legend-lite serves
+E1, E5, E8 and E9 exactly, and `/engine/plan` and `/engine/execute` are deleted. Then:
 
 | plane | the columns come from |
 |---|---|
-| tab (DuckDB-WASM, the warehouse Live and Snap) | a new WASM export beside `plan`: `planTyped` (from `QueryPlan.rootType`) and `relationType` (compile only) |
-| legend-lite server page | `/engine/plan`'s response gains `columns` (lite's own API) |
-| legend-engine page | upstream `pure/v1/compilation/lambdaRelationType` |
+| tab (DuckDB-WASM, the warehouse Live and Snap) | the browser planner's answer, in upstream's `RelationType` shape (one renderer with E5) |
+| legend-lite server page and legend-engine page | upstream E9 `generatePlan`'s `tdsColumns` for a planned query; E5 `lambdaRelationType` for a source |
 
 **One reader of type names,** `cellType(name)`, maps both vocabularies to a cell kind:
 

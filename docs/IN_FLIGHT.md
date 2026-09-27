@@ -73,6 +73,18 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **the user ruled: legend-lite serves ONLY upstream's `pure/v1` APIs**
+  (design `UPSTREAM_ENDPOINTS_DESIGN_2026_09_27.md`). Coming, cross-area (rule 7):
+  - a lambda protocol-JSON READER in `core/.../protocol/` (the emitter's mirror);
+  - `Compiler.java` gains entries that take an already-parsed lambda (the same phase sequence
+    from name resolution on; no compiler change);
+  - E1/E5/E8/E9 under `/api/pure/v1/` in `core/.../server/LegendHttpServer.java`.
+
+  DELETED: `/engine/plan`, `/engine/execute` and their tests (`PlanEndpointTest`,
+  `ConnectionIsolationTest`, the parts of `LegendHttpServerIntegrationTest` and
+  `ErrorShapeGuardrailTest` that call them), which are rewritten against `/api/pure/v1`.
+  studio-lite, their other caller, is being retired by the user. Building `//core:server`,
+  `//datacube:*` and `//wasm:*` off and on.
 - 2026-09-27 warehouse: **DataCube leg C (typed values) started** (design
   `DATACUBE_TYPED_VALUES_DESIGN_2026_09_27.md`). Cross-area edits coming (rule 7), no logic change to
   the compiler: `wasm/src/main/java/planner/Wasm.java` gains `planTyped`/`relationType` exports
