@@ -42,6 +42,7 @@ import type { CalcStage } from '../calc.ts';
 import { temporalLiteral } from '../serialize.ts';
 import { isJsonValue, isRelativeDate } from '../snapshot.ts';
 import { PIVOT_SEPARATOR } from '../grid/columns.ts';
+import { familyOf, isBoolean, isNumeric, isTemporal } from '../types.ts';
 
 /**
  * A pivoted column's name is a PATH -- `2021__|__notional` -- and a
@@ -285,45 +286,38 @@ export interface MenuGroup {
  * -- takes none, because "starts with true" is not a question.
  */
 export function filterOperatorsFor(type: string): FilterOperator[] {
-  switch (type) {
-    case 'String':
-      return [
-        'equal',
-        'notEqual',
-        'lessThan',
-        'lessThanEqual',
-        'greaterThan',
-        'greaterThanEqual',
-        'contains',
-        'notContains',
-        'startsWith',
-        'notStartsWith',
-        'endsWith',
-        'notEndsWith',
-      ];
-    case 'Integer':
-    case 'Float':
-    case 'Number':
-    case 'Decimal':
-    case 'Date':
-    case 'StrictDate':
-    case 'DateTime':
-      return [
-        'equal',
-        'notEqual',
-        'lessThan',
-        'lessThanEqual',
-        'greaterThan',
-        'greaterThanEqual',
-      ];
-    // Upstream's Equal and NotEqual are the only operations that
-    // accept BOOLEAN. Without this arm a Boolean column -- `settled`,
-    // or any calculated flag -- got no value filter from the menu.
-    case 'Boolean':
-      return ['equal', 'notEqual'];
-    default:
-      return [];
+  // by the compiler type's FAMILY (generated from legend-lite's lattice), never its name
+  if (familyOf(type) === 'text') {
+    return [
+      'equal',
+      'notEqual',
+      'lessThan',
+      'lessThanEqual',
+      'greaterThan',
+      'greaterThanEqual',
+      'contains',
+      'notContains',
+      'startsWith',
+      'notStartsWith',
+      'endsWith',
+      'notEndsWith',
+    ];
   }
+  if (isNumeric(type) || isTemporal(type)) {
+    return [
+      'equal',
+      'notEqual',
+      'lessThan',
+      'lessThanEqual',
+      'greaterThan',
+      'greaterThanEqual',
+    ];
+  }
+  // Upstream's Equal and NotEqual are the only operations that
+  // accept BOOLEAN. Without this arm a Boolean column -- `settled`,
+  // or any calculated flag -- got no value filter from the menu.
+  if (isBoolean(type)) return ['equal', 'notEqual'];
+  return [];
 }
 
 /** Their label for each operator, for the value-aware filter items. */
@@ -744,7 +738,7 @@ function filterSubmenu(ctx: MenuContext): MenuItem[] {
         filterItem(column, 'isNotEmpty', undefined),
       );
     } else {
-      const operators = filterOperatorsFor(ctx.columnType ?? 'String');
+      const operators = ctx.columnType === undefined ? [] : filterOperatorsFor(ctx.columnType);
       if (operators.includes('equal')) {
         items.push(filterItem(column, 'equal', value));
         const more = operators.filter((op) => op !== 'equal');

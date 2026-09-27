@@ -46,7 +46,7 @@ before(async () => {
   conn = db.connect() as ArrowishConnection;
   engine = new DuckDbEngine(conn);
 
-  await engine.execute(
+  await engine.run(
     `CREATE TABLE trades AS SELECT * FROM (VALUES
        ('EMEA', 'GB', 2023, 100.5,  10),
        ('EMEA', 'GB', 2024, 200.25, 20),
@@ -64,7 +64,7 @@ after(async () => {
 
 describe('DuckDbEngine end-to-end', () => {
   it('returns columnar results with names and row count', async () => {
-    const r = await engine.execute(
+    const r = await engine.run(
       'SELECT region, country, notional FROM trades ORDER BY region, country, year',
       7,
     );
@@ -79,7 +79,7 @@ describe('DuckDbEngine end-to-end', () => {
   });
 
   it('preserves SQL NULL as null, not as a string', async () => {
-    const r = await engine.execute(
+    const r = await engine.run(
       "SELECT notional FROM trades WHERE region = 'AMER' AND year = 2023",
       1,
     );
@@ -88,7 +88,7 @@ describe('DuckDbEngine end-to-end', () => {
   });
 
   it('narrows BIGINT to number when it is exactly representable', async () => {
-    const r = await engine.execute('SELECT 42::BIGINT AS n', 1);
+    const r = await engine.run('SELECT 42::BIGINT AS n', 1);
     assert.equal(r.columns[0]?.values[0], 42);
     assert.equal(typeof r.columns[0]?.values[0], 'number');
   });
@@ -96,12 +96,12 @@ describe('DuckDbEngine end-to-end', () => {
   it('keeps an out-of-range BIGINT lossless as text', async () => {
     // 2^63-1 cannot be a JS number without losing its last digits, and
     // a trade id that silently rounds is worse than one shown as text.
-    const r = await engine.execute('SELECT 9223372036854775807::BIGINT AS n', 1);
+    const r = await engine.run('SELECT 9223372036854775807::BIGINT AS n', 1);
     assert.equal(r.columns[0]?.values[0], '9223372036854775807');
   });
 
   it('executes a real pivot and names the generated columns', async () => {
-    const r = await engine.execute(
+    const r = await engine.run(
       `PIVOT trades ON year IN (2023, 2024)
        USING sum(notional) GROUP BY region ORDER BY region`,
       2,
@@ -117,7 +117,7 @@ describe('DuckDbEngine end-to-end', () => {
     // The regression this file was written to catch: sum() over a
     // DECIMAL column arrived as "30075" for 300.75 -- 100x too large,
     // as a string, silently.
-    const r = await engine.execute(
+    const r = await engine.run(
       'SELECT sum(notional) AS total FROM trades',
       1,
     );
@@ -125,7 +125,7 @@ describe('DuckDbEngine end-to-end', () => {
   });
 
   it('keeps DECIMAL exact through a grouped pivot', async () => {
-    const r = await engine.execute(
+    const r = await engine.run(
       `PIVOT trades ON year IN (2023, 2024)
        USING sum(notional) GROUP BY region ORDER BY region`,
       1,
@@ -137,13 +137,13 @@ describe('DuckDbEngine end-to-end', () => {
   });
 
   it('handles negative decimals', async () => {
-    const r = await engine.execute('SELECT (-12.5)::DECIMAL(9,3) AS d', 1);
+    const r = await engine.run('SELECT (-12.5)::DECIMAL(9,3) AS d', 1);
     assert.equal(r.columns[0]?.values[0], -12.5);
   });
 
   it('reports a bad query as QueryError carrying the SQL', async () => {
     await assert.rejects(
-      () => engine.execute('SELECT * FROM no_such_table', 1),
+      () => engine.run('SELECT * FROM no_such_table', 1),
       (e: unknown) => {
         assert.equal((e as Error).name, 'QueryError');
         assert.match(
@@ -160,14 +160,14 @@ describe('DuckDbEngine end-to-end', () => {
     const guard = new EpochGuard();
 
     const slow = guard.issue((epoch) =>
-      engine.execute(
+      engine.run(
         'SELECT count(*) AS n FROM range(3000000) t(i)',
         epoch,
       ),
     );
     // A second interaction arrives before the first finishes.
     const fast = guard.issue((epoch) =>
-      engine.execute('SELECT 1 AS n', epoch),
+      engine.run('SELECT 1 AS n', epoch),
     );
 
     assert.equal(await slow, STALE);

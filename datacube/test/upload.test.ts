@@ -84,7 +84,7 @@ describe('ingestFile with JSON', () => {
       assert.match(r.model, /shipping SEMISTRUCTURED/);
 
       // The table holds what the model declares: JSON, not a STRUCT.
-      const described = await engine.execute(`DESCRIBE "${r.table}"`, 0);
+      const described = await engine.run(`DESCRIBE "${r.table}"`, 0);
       const names = described.columns.find((c) => c.name === 'column_name')!;
       const types = described.columns.find((c) => c.name === 'column_type')!;
       const duck = new Map(names.values.map((n, i) => [n, types.values[i]]));
@@ -92,7 +92,7 @@ describe('ingestFile with JSON', () => {
       assert.equal(duck.get('shipping'), 'JSON');
 
       // ... and the JSON operators the planner emits work on it.
-      const skus = await engine.execute(
+      const skus = await engine.run(
         `SELECT u ->> 'sku' AS sku FROM "${r.table}",
            UNNEST(CAST(items AS JSON[])) t(u) ORDER BY sku`, 0);
       assert.deepEqual(skus.columns[0]!.values, ['ABC', 'DEF', 'XYZ']);
@@ -102,10 +102,10 @@ describe('ingestFile with JSON', () => {
   it('converts a nested Parquet-style column too, not only JSON input', async () => {
     // A CSV cannot carry a LIST, so build the nested column the way
     // Parquet delivers one: typed, not text.
-    await engine.execute(
+    await engine.run(
       `COPY (SELECT 1 AS id, [1, 2, 3] AS xs, {'a': 1} AS s)
          TO 'nested.json' (FORMAT JSON)`, 0);
-    const text = String((await engine.execute(
+    const text = String((await engine.run(
       `SELECT content FROM read_text('nested.json')`, 0)).columns[0]!.values[0]);
     const r = await ingestFile(engine, files, picked('nested.json', text));
     const typeOf = new Map(r.columns.map((c) => [c.name, c.type]));

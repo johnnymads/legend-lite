@@ -575,6 +575,12 @@ public final class Compiler {
         return new Target(runtime, store);
     }
 
+    /** {@link #resultType(String, com.legend.protocol.spec.ValueSpecification)} for a
+     *  query's TEXT, read as {@link #plan} reads it (the browser planner's relation type). */
+    public static com.legend.compiler.element.type.ExprType resultType(String model, String query) {
+        return resultType(model, SpecParser.parse(query, com.legend.parser.Dialect.LEGEND_LITE));
+    }
+
     /** {@link #compileQuery(String, String)} for an already-parsed query (U2). */
     public static TypedSpec compileQuery(String model,
             com.legend.protocol.spec.ValueSpecification query) {

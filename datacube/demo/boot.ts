@@ -38,6 +38,7 @@ import {
 } from '../src/samples.ts';
 import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { isNumeric } from '../src/types.ts';
 
 const ROWS = 200_000;
 
@@ -290,7 +291,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   } else {
 
   status.textContent = `generating ${ROWS.toLocaleString()} rows…`;
-  await engine.execute(
+  await engine.run(
     `CREATE OR REPLACE TABLE trades AS
      SELECT
        ${sqlPick(REGIONS, 'i % 3')}            AS region,
@@ -562,7 +563,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     const keyLikeFormats = (columns: readonly { name: string; type: string; kind?: string }[]) =>
       Object.fromEntries(
         columns
-          .filter((c) => c.kind === 'dimension' && (c.type === 'Integer' || c.type === 'Float'))
+          .filter((c) => c.kind === 'dimension' && isNumeric(c.type))
           .map((c) => [c.name, {
             format: { kind: 'number' as const, displayCommas: false, maximumFractionDigits: 0 },
           }]),

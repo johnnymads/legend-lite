@@ -26,13 +26,10 @@ export interface ResultColumn {
   /**
    * Pure type name, e.g. 'Float'.
    *
-   * ONE VOCABULARY, whichever plane answered. Two backends report a
-   * column's type in their own words -- legend-engine says
-   * `meta::pure::precisePrimitives::Varchar`, an Arrow batch says
-   * `Utf8` -- and a consumer that has to know which is which cannot
-   * be written once. So each driver normalises on the way in:
-   * `pureTypeName` in engine-remote.ts for the engine's spelling and
-   * {@link pureTypeOfArrow} here for Arrow's.
+   * THE COMPILER'S, whichever plane answered: a planned query's result is
+   * typed by its plan (`PlanThenRun`, the engine page's builder), both
+   * vocabularies read by the one reader, `pureType` in relation-type.ts.
+   * Raw, unplanned SQL carries no Pure type at all (engine.ts `RawTable`).
    *
    * This was documented as the contract before it was true. The local
    * plane passed Arrow's own `Float64` straight through, and the first
@@ -70,85 +67,6 @@ export function cell(
   return col.values[rowIndex] ?? null;
 }
 
-export function columnIndex(table: ResultTable, name: string): number {
+export function columnIndex(table: { readonly columns: readonly { readonly name: string }[] }, name: string): number {
   return table.columns.findIndex((c) => c.name === name);
-}
-
-/**
- * An Arrow type name as the Pure type it carries.
- *
- * A WORKAROUND, and worth naming as one: this is the fourth
- * type converter in this codebase and the third written by hand
- * (`sqlTypeOf`, `pureTypeName`, this). It exists only because the
- * PLAN does not carry the result's types across either boundary.
- *
- * legend-lite computes them -- `QueryPlan(sql, rootType, shape)`,
- * where rootType is the relation's typed columns -- and both
- * clients drop them: the wasm export returns `.sql()`, and the
- * server client takes only the SQL node's text out of the
- * generatePlan answer (whose `resultType` does carry them). So each driver re-derives
- * from whatever metadata its own backend happens to report, in that
- * backend's own vocabulary, and every backend needs its own
- * converter. Real legend-engine publishes the same fact properly:
- * `rootExecutionNode.resultType.tdsColumns[]` carries both `type`
- * (Pure) and `relationalType` (SQL) per column.
- *
- * Fixing the boundary deletes this function and `pureTypeName` with
- * it. Until then it is here because without it ResultColumn.type
- * broke its own documented contract.
- *
- * Arrow spells a type with its width and its unit -- `Int64`,
- * `Float64`, `Decimal<38,6>`, `Timestamp<MICROSECOND>` -- and Pure
- * does not care about either. The match is on the leading token so a
- * parameterised spelling needs no separate arm.
- *
- * Unknown is NOT String: a column whose type we failed to read must
- * not silently become groupable text. It stays 'Unknown', which
- * matches no numeric test and no temporal one, so callers fall back
- * rather than assert.
- */
-export function pureTypeOfArrow(name: string): string {
-  // LETTERS AND DIGITS. The width is part of the name -- `Utf8`,
-  // `Int32`, `Float64` -- so a pattern of letters alone stops at the
-  // first digit and turns `Utf8` into `Utf`, which matched nothing and
-  // reported every string column as Unknown. Measured against
-  // duckdb-wasm: Utf8, Int32, Int64, Float64, Decimal[9e+2], Bool,
-  // Date32<DAY>, Timestamp<MICROSECOND>.
-  const head = /^[A-Za-z][A-Za-z0-9]*/.exec(name.trim())?.[0] ?? '';
-  switch (head) {
-    case 'Utf8':
-    case 'LargeUtf8':
-      return 'String';
-    case 'Bool':
-      return 'Boolean';
-    case 'Int':
-    case 'Int8':
-    case 'Int16':
-    case 'Int32':
-    case 'Int64':
-    case 'Uint8':
-    case 'Uint16':
-    case 'Uint32':
-    case 'Uint64':
-      return 'Integer';
-    case 'Float':
-    case 'Float16':
-    case 'Float32':
-    case 'Float64':
-      return 'Float';
-    // A decimal is its own Pure type, and lite spells it Decimal
-    // (RelationalKinds.pureKindOf) -- not Float. Collapsing it here
-    // would lose the distinction the generated lite-facts table
-    // exists to preserve.
-    case 'Decimal':
-      return 'Decimal';
-    case 'Date':
-    case 'Date32':
-    case 'Date64':
-      return 'StrictDate';
-    case 'Timestamp':
-      return 'DateTime';
-    default:
-      return 'Unknown';
-  }
 }

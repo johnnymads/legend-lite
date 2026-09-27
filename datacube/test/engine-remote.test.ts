@@ -4,9 +4,9 @@ import { describe, it } from 'node:test';
 import {
   LegendEngineExecutor,
   RemoteExecutionError,
-  pureTypeName,
   toResultTable,
 } from '../src/engine-remote.ts';
+import { pureType } from '../src/relation-type.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 
 const SNAPSHOT: CubeSnapshot = {
@@ -74,19 +74,17 @@ function stub(answers: (object | { status: number; body: string })[]) {
 }
 
 describe('the engine type vocabulary', () => {
-  it('normalises the engine’s names, paths and all', () => {
-    // It answers with `meta::pure::precisePrimitives::Varchar` for a
-    // string and a bare `Float` for a float; the column model reads
-    // one name, so the spelling stops here.
-    assert.equal(pureTypeName('meta::pure::precisePrimitives::Varchar'),
-      'String');
-    assert.equal(pureTypeName('Float'), 'Float');
-    assert.equal(pureTypeName('meta::pure::precisePrimitives::BigInt'),
-      'Integer');
-    assert.equal(pureTypeName('Boolean'), 'Boolean');
-    assert.equal(pureTypeName('meta::pure::metamodel::type::StrictDate'),
-      'StrictDate');
-    assert.equal(pureTypeName(undefined), 'Unknown');
+  it('reads both vocabularies into one, paths and all, and refuses what it does not know', () => {
+    // legend-engine names a relational column with its precise primitive;
+    // legend-lite's typer with the plain type. The column model reads one name.
+    assert.equal(pureType('meta::pure::precisePrimitives::Varchar'), 'String');
+    assert.equal(pureType('Float'), 'Float');
+    assert.equal(pureType('meta::pure::precisePrimitives::BigInt'), 'Integer');
+    assert.equal(pureType('meta::pure::precisePrimitives::Numeric'), 'Decimal');
+    assert.equal(pureType('meta::pure::precisePrimitives::Timestamp'), 'DateTime');
+    assert.equal(pureType('Boolean'), 'Boolean');
+    assert.equal(pureType('meta::pure::metamodel::type::StrictDate'), 'StrictDate');
+    assert.throws(() => pureType('meta::pure::precisePrimitives::Blob'), /does not read/);
   });
 });
 

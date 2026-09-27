@@ -75,7 +75,6 @@ import { load, save, toJson, treeOf } from './persist.ts';
 import { selectionStats, selectionTable, type CellRange } from './selection.ts';
 import type { Scalar } from './result.ts';
 import {
-  isVariantType,
   renameColumnReferences,
   rowColumns,
   type ColumnKind,
@@ -117,6 +116,7 @@ import {
   ColumnsToolPanel,
   type ColumnsPanelChild,
 } from './ui/columns-panel.ts';
+import { isVariant } from './types.ts';
 
 /** Rows sampled to infer what a JSON column holds. */
 const JSON_SAMPLE_ROWS = 1000;
@@ -849,7 +849,8 @@ export class CubeApp {
     this.#snapshot = view.snapshot;
     // Open column editors compile against the cube as it is now.
     if (changed) for (const editor of this.#columnEditors.values()) editor.recheck();
-    if (this.#syncCalcTypes(view)) return;
+    this.#adoptGroupStageTypes(view);
+    this.#reportSchemaChanges(view);
 
     const model = buildColumnModel(
       view.rows,
@@ -1527,7 +1528,7 @@ export class CubeApp {
         if (column) {
           // A JSON column opens on its fields: what to extend it by is
           // what is in it.
-          const json = isVariantType(rowColumns(this.#snapshot)
+          const json = isVariant(rowColumns(this.#snapshot)
             .find((c) => c.name === column)?.type);
           this.openColumnEditor(json
             ? { json: column, level: 'dimension' }
@@ -2557,80 +2558,36 @@ export class CubeApp {
   }
 
   /**
-   * Record what type each calculated column turned out to have.
+   * The GROUP-STAGE calculated columns' types, from the level query's PLAN.
    *
-   * The type is a PLAN FACT, not something to infer from the
-   * expression: `$x.a * 2` is a Float and `$x.a->toUpper()` a String,
-   * and deciding which by reading the text would be writing the type
-   * checker the planner already is. The result carries it, so it is
-   * copied onto the snapshot here.
-   *
-   * It no longer decides whether the column SUMS -- the editor asks
-   * for that (`DerivedColumn.kind`), as upstream does, so the
-   * aggregate is right on the first query instead of one query late.
-   * What still needs the type is the type-based fallback for a column
-   * with no declared kind, which a pivot also reads to decide what it
-   * spreads.
+   * A row-stage calculated column is typed by the compiler before any query
+   * (the controller's step 0), so its aggregate default is right on the first
+   * query. A group-stage one exists only after the groupBy, so the level query's
+   * plan types it -- and the result's column types ARE the plan's
+   * (`PlanThenRun`), never the engine's wire. Adopting them re-runs nothing.
    */
-  #learnCalcTypes(snapshot: CubeSnapshot, view: CubeView): CubeSnapshot {
+  #adoptGroupStageTypes(view: CubeView): void {
+    const group = this.#snapshot.groupDerived ?? [];
+    if (group.length === 0) return;
     const seen = new Map(view.rows.columns.map((c) => [c.name, c.type]));
     let changed = false;
-    const learn = (list: readonly DerivedColumn[]): DerivedColumn[] =>
-      list.map((d) => {
-        const type = seen.get(d.name);
-        if (type === undefined || type === d.type) return d;
-        changed = true;
-        return { ...d, type };
-      });
-    const derived = learn(snapshot.derived);
-    const group = learn(snapshot.groupDerived ?? []);
-    if (!changed) return snapshot;
-    return { ...snapshot, derived, groupDerived: group };
+    const typed = group.map((d) => {
+      const type = seen.get(d.name);
+      if (type === undefined || type === d.type) return d;
+      changed = true;
+      return { ...d, type };
+    });
+    if (changed) this.#snapshot = { ...this.#snapshot, groupDerived: typed };
   }
 
-  /**
-   * Adopt the learned types, and re-run once if they change the query.
-   *
-   * The aggregate DEFAULT reads a column's type: a numeric one sums,
-   * anything else takes its unique value. A calculated column has no
-   * type until a result has landed, so the first query over a GROUPED
-   * cube aggregates it as `unique` -- which renders as a blank column
-   * rather than an error, and would fix itself only on the user's
-   * next interaction.
-   *
-   * So this takes the fact out of the result, puts it in the snapshot,
-   * and runs once more. It cannot loop, because the second result
-   * reports the same types and nothing changes.
-   *
-   * Only when it MATTERS. On a flat cube nothing is aggregated and the
-   * type cannot change the query, so a second round trip would buy
-   * nothing.
-   *
-   * @returns whether a re-run was started, so the caller stops.
-   */
-  #syncCalcTypes(view: CubeView): boolean {
-    const previous = this.#snapshot;
-    const learned = this.#learnCalcTypes(previous, view);
-    if (learned === previous) return false;
-    this.#snapshot = learned;
-    // ONLY WHEN THE TYPE CAN STILL CHANGE THE QUERY. Two cases are
-    // left now that the kind is declared: a pivot has to name a type
-    // in its cast, and a column with no declared kind still falls
-    // back to the type-based default. Anything else would be a second
-    // round trip that buys nothing.
-    // A pivot decides from the type which columns it spreads and which
-    // it carries (a numeric calculated column is a measure).
-    const castsATypes = previous.pivotOn.length > 0;
-    const undeclared = [...previous.derived,
-      ...(previous.groupDerived ?? [])].some((d) => d.kind === undefined);
-    if (!castsATypes && !(undeclared && previous.rows.length > 0)) {
-      return false;
-    }
-    // The PREVIOUS snapshot goes with it, so a query the planner
-    // rejects takes the learned types back out rather than leaving the
-    // cube retrying a shape it cannot render.
-    this.#refreshOr(previous);
-    return true;
+  /** A schema change the compiler reports on a refresh, said where the user reads it. */
+  #reportSchemaChanges(view: CubeView): void {
+    const changes = view.schemaChanges ?? [];
+    if (changes.length === 0) return;
+    const said = changes.map((c) => (c.now === null
+      ? `'${c.column}' (${c.was}) is no longer in the source`
+      : `'${c.column}' is now ${c.now}, was ${c.was}`));
+    this.#status(`The source changed: ${said.join('; ')}.`, 'warn');
   }
 
   /**

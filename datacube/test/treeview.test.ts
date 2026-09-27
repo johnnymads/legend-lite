@@ -4,6 +4,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
+import type { RawTable } from '../src/engine.ts';
 import type { ResultTable } from '../src/result.ts';
 import { LEAF_COUNT_COLUMN, type CubeSnapshot } from '../src/snapshot.ts';
 import { TreeState, flattenTree, requestKey } from '../src/tree.ts';
@@ -333,7 +334,7 @@ before(async () => {
   );
   await db.instantiate();
   engine = new DuckDbEngine(db.connect() as ArrowishConnection);
-  await engine.execute(
+  await engine.run(
     `CREATE TABLE trades AS
        SELECT ((i * 7) % 3) AS r, ((i * 11) % 4) AS d,
               2020 + (i % 3) AS year,
@@ -352,12 +353,12 @@ describe('the global row cap', () => {
     // 40 groups against a cap of 10: asking for 11 is what makes
     // "there is more" a fact rather than a guess, and it costs no
     // second counting query.
-    await engine.execute(
+    await engine.run(
       `CREATE OR REPLACE TABLE many AS
          SELECT (i % 40) AS g, i * 1.0 AS v FROM range(400) t(i)`,
       1,
     );
-    const capped = await engine.execute(
+    const capped = await engine.run(
       'SELECT g, sum(v) AS total FROM many GROUP BY g ORDER BY g LIMIT 11',
       1,
     );
@@ -366,7 +367,7 @@ describe('the global row cap', () => {
   });
 
   it('reports no truncation when the level fits', async () => {
-    const fits = await engine.execute(
+    const fits = await engine.run(
       'SELECT r, sum(notional) AS total FROM trades GROUP BY r ' +
         'ORDER BY r LIMIT 11',
       1,
@@ -383,7 +384,7 @@ describe('the global row cap', () => {
 });
 
 describe('subtotals against a real engine', () => {
-  const num = (t: ResultTable, col: number, row = 0): number =>
+  const num = (t: RawTable, col: number, row = 0): number =>
     Number(t.columns[col]?.values[row] ?? NaN);
 
   it('a subtotal equals the aggregate of its children', () => {
@@ -391,11 +392,11 @@ describe('subtotals against a real engine', () => {
     // column dropped. If these ever disagree, the design is wrong --
     // not the rounding.
     return (async () => {
-      const level1 = await engine.execute(
+      const level1 = await engine.run(
         'SELECT r, sum(notional) AS total FROM trades GROUP BY r ORDER BY r',
         1,
       );
-      const level2 = await engine.execute(
+      const level2 = await engine.run(
         'SELECT r, d, sum(notional) AS total FROM trades ' +
           'GROUP BY r, d ORDER BY r, d',
         1,
@@ -419,11 +420,11 @@ describe('subtotals against a real engine', () => {
   });
 
   it('the grand total equals the aggregate of the top level', async () => {
-    const grand = await engine.execute(
+    const grand = await engine.run(
       'SELECT sum(notional) AS total FROM trades',
       1,
     );
-    const level1 = await engine.execute(
+    const level1 = await engine.run(
       'SELECT r, sum(notional) AS total FROM trades GROUP BY r',
       1,
     );
@@ -438,11 +439,11 @@ describe('subtotals against a real engine', () => {
     // count is the aggregate most likely to be re-derived wrongly,
     // because summing child counts is only correct when the grouping
     // is a true partition.
-    const grand = await engine.execute(
+    const grand = await engine.run(
       'SELECT count(*) AS n FROM trades',
       1,
     );
-    const level1 = await engine.execute(
+    const level1 = await engine.run(
       'SELECT r, count(*) AS n FROM trades GROUP BY r',
       1,
     );
@@ -600,6 +601,8 @@ describe('detail rows under the deepest group', () => {
           ]);
         return { rows, sql: 'SELECT' };
       },
+      async compile() {},
+      async relationType() { return []; },
     };
     const view = await fetchTree(CUBE, TreeState.empty().expand(['EMEA']), {
       runner, guard: new EpochGuard(), epoch: 0,
@@ -656,6 +659,8 @@ describe('opening a group under a column pivot', () => {
           sql: 'SELECT',
         };
       },
+      async compile() {},
+      async relationType() { return []; },
     };
   }
 

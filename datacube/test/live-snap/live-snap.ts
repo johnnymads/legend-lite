@@ -152,7 +152,7 @@ it('every cube case answers the same live on the warehouse and snapped in the ta
   }
 
   // SNAP: exactly the rows the reader may read, through the real SnapManager
-  const sourceSql = await planner.plan(`${SOURCE}->select(~[${COLUMNS.join(', ')}])`, snapshot);
+  const sourceSql = (await planner.plan(`${SOURCE}->select(~[${COLUMNS.join(', ')}])`, snapshot)).sql;
   const snaps = new SnapManager(local, live);
   const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', expression: SOURCE } });
   assert.equal(info.rowCount, 10, 'the snap holds every row the reader may read');
@@ -192,7 +192,7 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
   const snapshot = { ...CASES[0]!.snapshot, source: { expression: m.source } };
   const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
   const snaps = new SnapManager(local, live);
-  await snaps.snap(await own.plan(`${m.source}->select(~[${COLUMNS.join(', ')}])`, snapshot), 0,
+  await snaps.snap((await own.plan(`${m.source}->select(~[${COLUMNS.join(', ')}])`, snapshot)).sql, 0,
     { target: { schema: trades.schema, table: trades.name, expression: m.source } });
   const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
   assert.equal(shape(localOut.rows, true), shape(liveOut.rows, true));
@@ -201,5 +201,5 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
 });
 
 it('a table the reader was not granted is refused, live', async () => {
-  await assert.rejects(live.execute('SELECT * FROM secret', 0), /FORBIDDEN/);
+  await assert.rejects(live.run('SELECT * FROM secret', 0), /FORBIDDEN/);
 });

@@ -48,7 +48,7 @@ window.remoteTest = async (source: RemoteSource) => {
 
   // The shape the planner emits: a grouped aggregate over the table
   // NAME, with no idea the rows are coming over the network.
-  const table = await engine.execute(
+  const table = await engine.run(
     `SELECT region, sum(notional) AS m FROM ${JSON.stringify(source.name)}`
     + ' GROUP BY region ORDER BY region',
     1,

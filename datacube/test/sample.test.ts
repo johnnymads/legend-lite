@@ -84,8 +84,9 @@ describe('sampleCsv', () => {
     assert.equal(by('booked_at')?.type, 'DateTime');
     assert.equal(by('settled')?.type, 'Boolean');
     assert.equal(by('notional')?.kind, 'measure');
-    assert.equal(by('trade_id')?.kind, 'dimension');
-    assert.equal(by('year')?.kind, 'dimension');
+    // every numeric column is a measure unless declared otherwise (D3)
+    assert.equal(by('trade_id')?.kind, 'measure');
+    assert.equal(by('year')?.kind, 'measure');
   });
 
   it('scales to a size worth playing with', () => {

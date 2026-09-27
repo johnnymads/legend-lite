@@ -136,12 +136,23 @@ public sealed interface Type permits
             }
             m.put(pp + "Float4", FLOAT);
             m.put(pp + "Double", FLOAT);
+            // the rest of legend-pure's precisePrimitives.pure, each to the parent it declares
+            // (2026-09-27: legend-engine's lambdaRelationType names relational columns with them)
+            m.put(pp + "Varchar", STRING);       // Varchar(x) extends String
+            m.put(pp + "Timestamp", DATE_TIME);  // Timestamp extends DateTime
+            m.put(pp + "Numeric", DECIMAL);      // Numeric(precision, scale) extends Decimal
             BY_FQN = Map.copyOf(m);
         }
 
         /** Looks up a built-in primitive by FQN; empty if {@code fqn} is not a known primitive. */
         public static Optional<Primitive> findByFqn(String fqn) {
             return Optional.ofNullable(BY_FQN.get(fqn));
+        }
+
+        /** Every FQN {@link #findByFqn} knows, to its primitive: the base primitives and the
+         *  precise ones aliased to their declared parents. Read-only. */
+        public static Map<String, Primitive> byFqn() {
+            return BY_FQN;
         }
     }
 

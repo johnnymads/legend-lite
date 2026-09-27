@@ -11,7 +11,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type { QueryEngine } from '../src/engine.ts';
 import type { ResultTable } from '../src/result.ts';
 import {
   credentialStatements,
@@ -23,6 +22,7 @@ import {
   sqlLiteral,
   viewStatement,
 } from '../src/remote.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 const empty = (epoch: number): ResultTable => ({
   columns: [],
@@ -31,16 +31,15 @@ const empty = (epoch: number): ResultTable => ({
   elapsedMs: 0,
 });
 
-class RecordingEngine implements QueryEngine {
+class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
   readonly sql: string[] = [];
   failOn?: RegExp;
-  async execute(sql: string, epoch: number): Promise<ResultTable> {
+  async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     if (this.failOn?.test(sql)) throw new Error(`boom running ${sql}`);
     return empty(epoch);
   }
-  async close(): Promise<void> {}
 }
 
 describe('choosing a format', () => {

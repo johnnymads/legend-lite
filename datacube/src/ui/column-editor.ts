@@ -30,8 +30,6 @@ import { ident, type PivotColumn } from '../serialize.ts';
 import { docHint } from './docs.ts';
 import {
   WINDOW_FUNCTIONS,
-  isNumericType,
-  isVariantType,
   renameColumnReferences,
   rowColumns,
   type CubeSnapshot,
@@ -42,6 +40,7 @@ import {
   type WindowFunction,
   type WindowSpec,
 } from '../snapshot.ts';
+import { defaultKind, isVariant } from '../types.ts';
 
 /** Upstream's DataCubeExtendedColumnKind. */
 export type ColumnLevel = 'measure' | 'dimension' | 'group';
@@ -576,7 +575,7 @@ export class ColumnEditor {
     const sample = this.#options.sampleJson;
     const self = this.#original;
     const json = rowColumns(this.#options.snapshot())
-      .filter((c) => c.name !== self && isVariantType(c.type))
+      .filter((c) => c.name !== self && isVariant(c.type))
       .map((c) => c.name);
     if (!sample || json.length === 0) {
       box.remove();
@@ -891,7 +890,7 @@ function findColumn(s: CubeSnapshot, name: string): Draft | undefined {
     return {
       name,
       // A column saved before kinds were declared behaves as its type.
-      level: row.kind ?? (isNumericType(row.type) ? 'measure' : 'dimension'),
+      level: row.kind ?? defaultKind(row.type),
       mode: row.window ? 'window' : 'expression',
       expression: row.expression,
       window: row.window ?? NEW_WINDOW,

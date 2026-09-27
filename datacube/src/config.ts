@@ -26,8 +26,9 @@ import type {
   PivotTotal,
   SortDirection,
 } from './snapshot.ts';
-import { isNumericType, rowColumns } from './snapshot.ts';
+import { rowColumns } from './snapshot.ts';
 import type { CellAppearance, GridAppearance, HeatmapSpec } from './style.ts';
+import { isFractional, isNumeric } from './types.ts';
 
 /**
  * A change to some settings.
@@ -525,8 +526,8 @@ export function toFormats(
 export function numberDefaults(
   type: string | undefined,
 ): Pick<ColumnFormat, 'decimals' | 'negativeParens'> | undefined {
-  if (!isNumericType(type)) return undefined;
-  return { decimals: type === 'Integer' ? 0 : 2, negativeParens: true };
+  if (!isNumeric(type)) return undefined;
+  return { decimals: isFractional(type) ? 2 : 0, negativeParens: true };
 }
 
 /**

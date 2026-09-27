@@ -7,6 +7,11 @@
 // each an ordinary Pure query with a static type: find the values
 // (`pivotValuesQuery`), then write every level's groupBy with them
 // (`serialize`). This module runs the first and hands its answer on.
+//
+// Before either, the cube's columns are TYPED BY THE COMPILER (step 0,
+// docs/DATACUBE_TYPED_VALUES_DESIGN_2026_09_27.md): the source and its
+// calculated columns, one compile-only ask, so the aggregate each column
+// defaults to is right on the first query and nothing is learned from a result.
 
 import type { ResultTable } from './result.ts';
 import type { QueryRunner } from './runner.ts';
@@ -15,6 +20,7 @@ import {
   effectivePivotOn,
   pinnedPivotFacts,
   pivotColumns,
+  derivedExtend,
   pivotValuesQuery,
   serialize,
   type LevelScope,
@@ -23,6 +29,54 @@ import {
 } from './serialize.ts';
 import { CubeRefusal, type CubeSnapshot } from './snapshot.ts';
 import { groupValue } from './treeview.ts';
+
+/** A source column whose declared type is not what the compiler says it is now. */
+export interface SchemaChange {
+  readonly column: string;
+  readonly was: string;
+  /** The compiler's type, or null when the source no longer has the column. */
+  readonly now: string | null;
+}
+
+/**
+ * Step 0: the cube's source and row-stage calculated columns, as the COMPILER
+ * types them -- `source->extend(...)`, the calculated columns in the order they
+ * are applied, asked once per refresh through the runner's compile-only call
+ * (upstream `lambdaRelationType`; the planners cache it by grammar, so an
+ * unchanged cube costs no second compile). The snapshot adopts the answer
+ * (option B: its types are the compiler's cache); a declared source type that no
+ * longer matches is a SCHEMA CHANGE, reported, never silently kept. Group-stage
+ * calculated columns exist only after a groupBy: the level query's plan types
+ * them. A runner that types nothing (a test double) leaves the snapshot as is.
+ */
+export async function typeColumns(
+  snapshot: CubeSnapshot,
+  runner: QueryRunner,
+  signal?: AbortSignal,
+): Promise<{ readonly snapshot: CubeSnapshot; readonly changes: readonly SchemaChange[] }> {
+  const grammar = [snapshot.source.expression, ...snapshot.derived.map((d) => derivedExtend(d))]
+    .join('->');
+  const typed = await runner.relationType(grammar, signal);
+  if (typed.length === 0) return { snapshot, changes: [] };
+  const types = new Map(typed.map((c) => [c.name, c.type]));
+  const changes: SchemaChange[] = [];
+  let changed = false;
+  const columns = snapshot.columns.map((c) => {
+    const now = types.get(c.name);
+    if (now === c.type) return c;
+    changes.push({ column: c.name, was: c.type, now: now ?? null });
+    if (now === undefined) return c;
+    changed = true;
+    return { ...c, type: now };
+  });
+  const derived = snapshot.derived.map((d) => {
+    const now = types.get(d.name);
+    if (now === undefined || now === d.type) return d;
+    changed = true;
+    return { ...d, type: now };
+  });
+  return { snapshot: changed ? { ...snapshot, columns, derived } : snapshot, changes };
+}
 
 /** A pivoted cube's first step, answered: its values and its columns. */
 export interface PivotPlan {

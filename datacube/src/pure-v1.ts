@@ -10,6 +10,9 @@
 //   - `LegendEngineExecutor` (engine-remote.ts): E1 then E8, `execute`,
 //     and the server runs it.
 //
+// Both type a cube's columns before its first query through E5,
+// `lambdaRelationType` (`relationType` below each).
+//
 // The model travels as `PureModelContextText` ({_type: text, code}), which
 // both servers accept on every call (measured against legend-engine
 // 4.145.0), so no model JSON is parsed, cached or sent. The runtime rides
@@ -53,6 +56,14 @@ export class PureV1Client {
   /** E1 `grammar/grammarToJson/lambda`: the query's text to its lambda JSON. */
   lambda(pure: string, signal?: AbortSignal): Promise<unknown> {
     return this.#post('/grammar/grammarToJson/lambda', pure, pure, signal, true);
+  }
+
+  /** E5 `compilation/lambdaRelationType`: the compiler's type of a lambda's result. */
+  lambdaRelationType(lambda: unknown, pure: string, signal?: AbortSignal): Promise<unknown> {
+    return this.#post('/compilation/lambdaRelationType', {
+      lambda,
+      model: { _type: 'text', code: this.#options.model },
+    }, pure, signal);
   }
 
   /** E9 `execution/generatePlan`: the execution plan for a lambda. */

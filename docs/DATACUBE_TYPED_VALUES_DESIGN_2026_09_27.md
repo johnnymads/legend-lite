@@ -144,6 +144,27 @@ step 3's homework:
 - a Database `View` in the inferred model;
 - or an owner-published view on the warehouse.
 
+### Step 1 as landed (2026-09-27)
+
+- **Every plan is typed.** `Planner.plan` returns `{sql, columns}`: the WASM module's `planOrError`
+  answers the SQL with `UpstreamRelationType` (the renderer the `pure/v1` answers use), and
+  `UpstreamPlanner` reads generatePlan's own `tdsColumns`. `PlanThenRun` stamps each result
+  column's type from the plan and refuses a column the plan does not type. The engine page reads
+  E8's builder. `pureType` in `src/relation-type.ts` is the one reader of both vocabularies; an
+  unknown name is an error. `pureTypeName` (which read `Numeric` as `Float`) is deleted; the Arrow
+  reader types only raw, unplanned SQL (an upload's DESCRIBE, a snap's copy).
+- **Step 0 of every refresh** (`plan.ts`, `typeColumns`): one compile-only `relationType` of
+  `source->extend(calculated columns)` types the source and the row-stage calculated columns
+  before any level query; planners cache it by grammar. A declared type the compiler no longer
+  gives is reported as a schema change. `#learnCalcTypes` and its re-run are deleted;
+  group-stage calculated columns take their level query's plan types.
+- **`inferModel`'s type table stays, by decision.** It is GENERATED from legend-lite's own
+  relational kinds (`src/generated/lite-facts.ts`), not a second opinion, and step 0 re-asks the
+  compiler on every open and refresh, reporting any drift. Deleting it would move an async compile
+  into the host pages' open paths for no change in any answer.
+- Proof: S1a and S1b green (`typed_values_test`); S1c by `type_columns_test`; the WASM
+  differential now compares the typed plans (SQL and columns) against the JVM.
+
 ## The proof, named before the code
 
 **Step 1:**

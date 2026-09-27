@@ -12,6 +12,8 @@
 // query be matched against the snapshot that asked for it and discarded
 // if it is stale (see `epoch` below).
 
+import { defaultKind } from './types.ts';
+
 /**
  * What a column may be used for.
  *
@@ -98,16 +100,13 @@ export interface ColumnSpec {
 }
 
 /**
- * The kind a column should be treated as.
- *
- * Numeric columns default to measures and everything else to
- * dimensions, which is right far more often than not; an explicit
- * kind always wins, because a year is numeric and is almost always a
- * dimension.
+ * The kind a column should be treated as: its declared kind, else the default for its
+ * compiler type (`defaultKind`, decision D3 -- every numeric column a measure, as
+ * upstream). A host declares an identifier column (an id, a year) a dimension.
  */
 export function kindOf(column: ColumnSpec): ColumnKind {
   if (column.kind) return column.kind;
-  return isNumericType(column.type) ? 'measure' : 'dimension';
+  return defaultKind(column.type);
 }
 
 /** A column that exists BEFORE aggregation, source or calculated. */
@@ -148,63 +147,10 @@ export function rowColumns(s: CubeSnapshot): RowColumn[] {
     ...s.derived.map((d): RowColumn => ({
       name: d.name,
       ...(d.type === undefined ? {} : { type: d.type }),
-      kind: d.kind ?? (isNumericType(d.type) ? 'measure' : 'dimension'),
+      kind: d.kind ?? defaultKind(d.type),
       derived: true,
     })),
   ];
-}
-
-/**
- * Whether a Pure type name is one a cube can sum.
- *
- * THE predicate, because it was four. This one knew Decimal and
- * Number; the two in `serialize.ts` and the one in `infer.ts` tested
- * `Integer || Float` only, so a DECIMAL column was neither defaulted
- * to a measure nor given a SUM -- while the comment above the
- * groupBy path said "SUM for Integer/Decimal/Float". The comment was
- * right and the code was not.
- *
- * `Number` is Pure's abstract numeric; lite spells decimals
- * `Decimal` (RelationalKinds.pureKindOf), which is what
- * `src/generated/lite-facts.ts` now carries.
- */
-export function isNumericType(type: string | undefined): boolean {
-  return type === 'Integer' || isFractionalType(type);
-}
-
-/**
- * Whether a Pure type name is a type that carries a FRACTION.
- *
- * The distinction matters for one decision: whether a column with no
- * declared kind DEFAULTS to a measure. Summing an id, a year or a
- * postcode gives a plausible number that is meaningless and says
- * nothing about being wrong; leaving a quantity un-summed gives a
- * blank, which reads as "no aggregate chosen". So integers default to
- * dimensions and fractions to measures -- a deliberate divergence
- * from DataCube, which sums every numeric.
- *
- * Money and rates arrive as DOUBLE or DECIMAL and must land here.
- * Until `pureTypeOf` read its table out of legend-lite, DECIMAL was
- * mislabelled 'Float' and reached this decision by accident; lite
- * calls it 'Decimal', so the predicate has to name it.
- */
-export function isFractionalType(type: string | undefined): boolean {
-  return type === 'Float' || type === 'Number' || type === 'Decimal';
-}
-
-/**
- * Whether a Pure type name is Variant: semi-structured data (a JSON
- * object, array or scalar) in one column.
- *
- * Both spellings, because both arrive: the generated SQL-to-Pure
- * table and a remote engine say `Variant`, while a relation type the
- * compiler reports carries the full path. Nested data of every other
- * shape -- a STRUCT, a LIST, a MAP -- is converted to JSON when it is
- * loaded (`upload.ts`), so this is the one nested type the cube meets.
- */
-export function isVariantType(type: string | undefined): boolean {
-  return type === 'Variant'
-    || type === 'meta::pure::metamodel::variant::Variant';
 }
 
 /** Columns a cube may group or pivot by. */
@@ -363,19 +309,18 @@ export interface DerivedColumn {
   /** An aggregate of the child groups instead: see `ChildAggregate`. */
   readonly childAggregate?: ChildAggregate;
   /**
-   * The Pure type the expression turned out to have.
+   * The Pure type of the expression, AS THE COMPILER TYPES IT.
    *
-   * LEARNED, not declared. Nothing here can infer it -- `$x.a * 2` is
-   * a Float and `$x.a->toUpper()` a String, and deciding which by
-   * reading the expression would be writing a type checker the
-   * planner already is. So it arrives from a landed result
-   * (`ResultColumn.type`) and is recorded here, the same way the
-   * snapshot already learns the pivot's generated column names.
+   * Nothing here infers it -- `$x.a * 2` is a Float and `$x.a->toUpper()`
+   * a String, and deciding which by reading the expression would be
+   * writing the type checker the planner already is. A row-stage column
+   * is typed before any query runs (the controller's step 0,
+   * `typeColumns`: one compile-only `lambdaRelationType` of the source
+   * and its calculated columns); a group-stage one by its level query's
+   * plan. Never learned from a result and re-run.
    *
    * It matters because the aggregate DEFAULT reads it: without a type
-   * a numeric calculated column groups as `unique` rather than `sum`,
-   * which looks like a blank cell rather than an error. Undefined
-   * until the first result lands.
+   * a numeric calculated column groups as `unique` rather than `sum`.
    */
   readonly type?: string;
   /**

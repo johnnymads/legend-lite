@@ -12,15 +12,32 @@
 // matters because the deciding factor is likely to be policy on data at
 // rest rather than performance.
 
-import type { ResultTable } from './result.ts';
+import type { Plan } from './relation-type.ts';
+import type { ResultTable, Scalar } from './result.ts';
+
+/** A raw read's column: its name and values, and NO Pure type -- no compiler typed it. */
+export interface RawColumn {
+  readonly name: string;
+  readonly values: readonly Scalar[];
+}
+
+/** What raw SQL returns: DDL, a DESCRIBE, a count -- SQL no planner wrote. */
+export interface RawTable {
+  readonly columns: readonly RawColumn[];
+  readonly rowCount: number;
+  readonly epoch: number;
+  readonly elapsedMs: number;
+}
 
 export interface QueryEngine {
   /** For diagnostics and telemetry, e.g. 'duckdb-wasm'. */
   readonly name: string;
   /**
-   * Run SQL and return it columnar. `epoch` is carried through onto the
-   * result so a caller can tell which snapshot it answers; the engine
-   * itself does no staleness checking -- that is EpochGuard's job.
+   * Run a PLANNED query and return it columnar, every column typed by the plan
+   * (`typedByPlan`): the compiler's types, never the engine's wire types
+   * (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T1). `epoch` is carried through
+   * onto the result so a caller can tell which snapshot it answers; the engine itself
+   * does no staleness checking -- that is EpochGuard's job.
    *
    * `signal` aborts work a newer interaction has replaced. How much an
    * engine can honour it is its own business and differs sharply: an
@@ -29,8 +46,29 @@ export interface QueryEngine {
    * one. An engine that cannot cancel must still not PRETEND to --
    * check the signal before starting, and say so in its own doc.
    */
-  execute(sql: string, epoch: number, signal?: AbortSignal): Promise<ResultTable>;
+  execute(plan: Plan, epoch: number, signal?: AbortSignal): Promise<ResultTable>;
+  /** Run raw SQL no planner wrote: names and values, no types. Same `signal` rules. */
+  run(sql: string, epoch: number, signal?: AbortSignal): Promise<RawTable>;
   close(): Promise<void>;
+}
+
+/**
+ * A planned query's rows, typed by its plan. The engine decoded the values; the
+ * compiler says what they are. A result column the plan does not type is REFUSED: the
+ * two disagree about the query's shape, a bug to surface, never a gap to fill.
+ */
+export function typedByPlan(raw: RawTable, plan: Plan): ResultTable {
+  const types = new Map(plan.columns.map((c) => [c.name, c.type]));
+  return {
+    ...raw,
+    columns: raw.columns.map((c) => {
+      const type = types.get(c.name);
+      if (type === undefined) {
+        throw new QueryError(`the plan does not type the result column '${c.name}'`, plan.sql);
+      }
+      return { name: c.name, type, values: c.values };
+    }),
+  };
 }
 
 /** Thrown for a query the engine rejected, carrying the SQL for triage. */

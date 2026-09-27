@@ -25,9 +25,7 @@ import {
   CubeRefusal,
   LEAF_COUNT_COLUMN,
   PIVOT_TOTAL_KEY,
-  isNumericType,
   isJsonValue,
-  isVariantType,
   isRelativeDate,
   referencedColumns,
   rowColumns,
@@ -46,6 +44,7 @@ import {
 import type { RowPath } from './tree.ts';
 import { ROOT_COLUMN } from './grid/columns.ts';
 import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
+import { isBoolean, isNumeric, isTemporal, isVariant } from './types.ts';
 
 /** What the grand total's synthetic key holds. Upstream's value. */
 const ROOT_VALUE = '[ROOT]';
@@ -514,9 +513,6 @@ export const NULL_GROUP = '\u0000null';
  * isEmpty test. Without that, expanding a group whose key is null
  * silently returns no children.
  */
-/** The Pure types whose values are temporal. */
-const TEMPORAL = new Set(['Date', 'StrictDate', 'DateTime']);
-
 /**
  * A group key, turned back into the value it came from.
  *
@@ -534,17 +530,17 @@ function keyValue(type: string | undefined, value: string): FilterValue {
   // A Variant key is the document's JSON text, exactly as the database
   // printed it -- so it matches as a document (DuckDB compares JSON as
   // text, and this is that text).
-  if (isVariantType(type)) return { json: value };
+  if (isVariant(type)) return { json: value };
   // A NUMBER or a BOOLEAN key compares as one. As text it was
   // `$x.year == '2021'`, which one engine casts and another refuses.
   // Only when the text round-trips exactly: an integer past 2^53 stays
   // text rather than becoming a neighbouring number.
-  if (isNumericType(type)) {
+  if (isNumeric(type)) {
     const n = Number(value);
     return value.trim() !== '' && Number.isFinite(n) && String(n) === value ? n : value;
   }
-  if (type === 'Boolean' && (value === 'true' || value === 'false')) return value === 'true';
-  if (type === undefined || !TEMPORAL.has(type)) return value;
+  if (isBoolean(type) && (value === 'true' || value === 'false')) return value === 'true';
+  if (!isTemporal(type)) return value;
   const at = new Date(value);
   return Number.isNaN(at.getTime()) ? value : at;
 }
@@ -794,7 +790,7 @@ export function pivotValuesQuery(s: CubeSnapshot): string | null {
 function refuseUnpivotable(s: CubeSnapshot): void {
   const specOf = columnSpecs(s);
   for (const name of effectivePivotOn(s)) {
-    if (isVariantType(specOf.get(name)?.type)) {
+    if (isVariant(specOf.get(name)?.type)) {
       throw new CubeRefusal(
         `cannot pivot on '${name}': it holds JSON. Pivot on a value `
         + `extracted from it instead -- a calculated column such as `
@@ -848,7 +844,7 @@ function carriedMeasures(s: CubeSnapshot, groupCols: readonly string[]): Measure
     if (isKey.has(name) || handled.has(name)) continue;
     const spec = specOf.get(name);
     const measure = spec?.kind === 'measure'
-      || (isNumericType(spec?.type) && spec?.kind === undefined);
+      || (isNumeric(spec?.type) && spec?.kind === undefined);
     out.push(defaultMeasure(name, spec, measure ? 'sum' : 'unique'));
   }
   return out;
@@ -1045,7 +1041,7 @@ export function serialize(
       // better: a numeric column it judged key-like is a dimension.
       // An explicit kind wins over the type it is carried in.
       const measures = spec?.kind === 'measure'
-        || (isNumericType(spec?.type) && spec?.kind === undefined);
+        || (isNumeric(spec?.type) && spec?.kind === undefined);
       specs.push(aggregateSpec(configured
         ?? defaultMeasure(name, spec, measures ? 'sum' : 'unique')));
     }
@@ -1228,7 +1224,7 @@ export function childAggregateQuery(
     const configured = snapshot.measures.find((m) => m.name === of);
     if (configured) return configured;
     const spec = specOf.get(of);
-    const numeric = spec?.kind === 'measure' || (isNumericType(spec?.type) && spec?.kind === undefined);
+    const numeric = spec?.kind === 'measure' || (isNumeric(spec?.type) && spec?.kind === undefined);
     return defaultMeasure(of, spec, numeric ? 'sum' : 'unique');
   };
   const {

@@ -27,6 +27,7 @@ import type { RemoteExecutor } from './engine-remote.ts';
 import type { CubeSnapshot } from './snapshot.ts';
 import type { LevelScope } from './serialize.ts';
 import type { ResultTable } from './result.ts';
+import type { Plan, PlanColumn } from './relation-type.ts';
 
 export interface RunOutcome {
   readonly rows: ResultTable;
@@ -78,16 +79,19 @@ export interface QueryRunner {
   ): Promise<RunOutcome>;
   /**
    * Compile WITHOUT running: resolves when the query compiles, throws
-   * the compiler's refusal when it does not. Absent where this plane
-   * has no compile-only call -- a remote engine, until legend-lite
-   * serves upstream's `lambdaRelationType` -- and then a caller says
-   * so; it never executes to find out.
+   * the compiler's refusal when it does not. It never executes to find out.
    */
-  compile?(
+  compile(
     pureGrammar: string,
     snapshot: CubeSnapshot,
     signal?: AbortSignal,
   ): Promise<void>;
+  /**
+   * The compiler's type of a query's result, compile-only (upstream
+   * `lambdaRelationType` on every plane): how a cube's source and
+   * calculated columns are typed before a level query runs.
+   */
+  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]>;
 }
 
 /**
@@ -115,20 +119,25 @@ export class PlanThenRun implements QueryRunner {
     scope?: LevelScope,
     signal?: AbortSignal,
   ): Promise<RunOutcome> {
-    let sql: string;
+    let plan: Plan;
     try {
-      sql = await this.planner.plan(pureGrammar, snapshot, scope, signal);
+      plan = await this.planner.plan(pureGrammar, snapshot, scope, signal);
     } catch (error: unknown) {
       if (signal?.aborted) throw error;
       throw new QueryFailure(error, pureGrammar);
     }
+    const sql = plan.sql;
     try {
-      const rows = await this.engine.execute(sql, snapshot.epoch, signal);
-      return { rows, sql };
+      // the engine types every column by the plan (engine.ts typedByPlan)
+      return { rows: await this.engine.execute(plan, snapshot.epoch, signal), sql };
     } catch (error: unknown) {
       if (signal?.aborted) throw error;
       throw new QueryFailure(error, pureGrammar, sql);
     }
+  }
+
+  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
+    return this.planner.relationType(pureGrammar, signal);
   }
 
   /** Planning IS compiling here: the planner compiles, nothing runs. */
@@ -165,5 +174,14 @@ export class RemoteRun implements QueryRunner {
       if (signal?.aborted) throw error;
       throw new QueryFailure(error, pureGrammar);
     }
+  }
+
+  /** The engine's compile-only call: its `lambdaRelationType` answers or refuses. */
+  async compile(pureGrammar: string, _snapshot: CubeSnapshot, signal?: AbortSignal): Promise<void> {
+    await this.executor.relationType(pureGrammar, signal);
+  }
+
+  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
+    return this.executor.relationType(pureGrammar, signal);
   }
 }

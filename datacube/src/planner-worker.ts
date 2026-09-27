@@ -13,13 +13,14 @@
 // for rendering, and the two startups genuinely run at once.
 //
 // This worker deliberately contains no planning logic of its own: it
-// forwards to the module's `planOrError` and `warmModel` exports and
+// forwards to the module's `planOrError`, `relationTypeOrError` and `warmModel` exports and
 // returns what they say. A second planner is the one thing this whole
 // design exists to avoid.
 
 interface TeavmModule {
   readonly exports: {
     planOrError(model: string, query: string, runtime: string): string;
+    relationTypeOrError(model: string, query: string): string;
     warmModel(model: string): number;
   };
 }
@@ -33,9 +34,10 @@ export type Request =
     readonly model: string;
     readonly query: string;
     readonly runtime: string;
-  };
+  }
+  | { readonly id: number; readonly kind: 'relationType'; readonly model: string; readonly query: string };
 
-/** What it gets back. `answer` is planOrError's raw tagged string. */
+/** What it gets back. `answer` is the export's raw tagged string. */
 export type Response =
   | { readonly id: number; readonly ok: true; readonly answer: string }
   | { readonly id: number; readonly ok: false; readonly error: string };
@@ -69,7 +71,9 @@ self.onmessage = async (e: MessageEvent<Request & { base?: string }>) => {
     const module = await modulePromise;
     const answer = msg.kind === 'warm'
       ? (module.exports.warmModel(msg.model), 'OK\n')
-      : module.exports.planOrError(msg.model, msg.query, msg.runtime);
+      : msg.kind === 'relationType'
+        ? module.exports.relationTypeOrError(msg.model, msg.query)
+        : module.exports.planOrError(msg.model, msg.query, msg.runtime);
     const ok: Response = { id: msg.id, ok: true, answer };
     self.postMessage(ok);
   } catch (cause) {

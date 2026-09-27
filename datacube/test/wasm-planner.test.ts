@@ -11,6 +11,11 @@ import {
   WasmPlanner,
 } from '../src/wasm-planner.ts';
 
+/** A module's OK answer: the SQL and its result type (here, typing nothing). */
+function ok(sql: string): string {
+  return `OK\n${JSON.stringify({ sql, type: { _type: 'relationType', columns: [] } })}`;
+}
+
 const SNAPSHOT = {
   source: { expression: '$trades' },
   columns: [],
@@ -42,6 +47,7 @@ function fakeRuntime(
       return {
         exports: {
           planOrError: (m: string, q: string, r: string) => answer(m, q, r),
+          relationTypeOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
           warmModel: (m: string) => { onWarm?.(m); return 1; },
         },
       };
@@ -67,18 +73,32 @@ function planner(
 
 describe('WasmPlanner', () => {
   it('returns the SQL an OK answer carries', async () => {
-    const p = planner(() => 'OK\nSELECT t0.a FROM T AS t0');
-    assert.equal(
-      await p.plan('grammar', SNAPSHOT),
+    const p = planner(() => ok('SELECT t0.a FROM T AS t0'));
+    assert.equal((await p.plan('grammar', SNAPSHOT)).sql,
       'SELECT t0.a FROM T AS t0',
     );
+  });
+
+  it('carries the compiler\'s result type beside the SQL', async () => {
+    const type = {
+      _type: 'relationType',
+      columns: [
+        { name: 'region', genericType: { rawType: { _type: 'packageableType', fullPath: 'String' } } },
+        { name: 'total', genericType: { rawType: { _type: 'packageableType', fullPath: 'Decimal' } } },
+      ],
+    };
+    const p = planner(() => `OK\n${JSON.stringify({ sql: 'SELECT 1', type })}`);
+    assert.deepEqual(await p.plan('g', SNAPSHOT), {
+      sql: 'SELECT 1',
+      columns: [{ name: 'region', type: 'String' }, { name: 'total', type: 'Decimal' }],
+    });
   });
 
   it('passes the model and runtime through to the module', async () => {
     let seen: string[] = [];
     const p = planner((m, q, r) => {
       seen = [m, q, r];
-      return 'OK\nSELECT 1';
+      return ok('SELECT 1');
     });
     await p.plan('the-grammar', SNAPSHOT);
     assert.match(seen[0]!, /Database trades::DB/);
@@ -90,8 +110,8 @@ describe('WasmPlanner', () => {
     // The OK tag is stripped by finding the FIRST newline; every
     // newline after that belongs to the SQL.
     const sql = 'SELECT t0.a\nFROM T AS t0\nWHERE t0.a = 1';
-    const p = planner(() => `OK\n${sql}`);
-    assert.equal(await p.plan('g', SNAPSHOT), sql);
+    const p = planner(() => ok(sql));
+    assert.equal((await p.plan('g', SNAPSHOT)).sql, sql);
   });
 
   it('raises a PlanError carrying the compiler message on ERR', async () => {
@@ -141,7 +161,7 @@ describe('WasmPlanner', () => {
     let calls = 0;
     const cached = planner(() => {
       calls++;
-      return 'OK\nSELECT 1';
+      return ok('SELECT 1');
     });
     await cached.plan('g', SNAPSHOT);
     await cached.plan('g', SNAPSHOT);
@@ -151,7 +171,7 @@ describe('WasmPlanner', () => {
     calls = 0;
     const uncached = planner(() => {
       calls++;
-      return 'OK\nSELECT 1';
+      return ok('SELECT 1');
     }, { cache: false });
     await uncached.plan('g', SNAPSHOT);
     await uncached.plan('g', SNAPSHOT);
@@ -163,7 +183,7 @@ describe('WasmPlanner', () => {
     // boolean rather than the promise would start several 4 MB
     // fetches; this pins that it does not.
     let loads = 0;
-    const p = planner(() => 'OK\nSELECT 1', { onLoad: () => { loads++; } });
+    const p = planner(() => ok('SELECT 1'), { onLoad: () => { loads++; } });
     await Promise.all([
       p.plan('a', SNAPSHOT),
       p.plan('b', SNAPSHOT),
@@ -177,7 +197,7 @@ describe('WasmPlanner', () => {
     let plans = 0;
     const p = planner(() => {
       plans++;
-      return 'OK\nSELECT 1';
+      return ok('SELECT 1');
     }, { onLoad: () => { loads++; } });
     await p.warmUp();
     assert.equal(loads, 1);
@@ -193,7 +213,7 @@ describe('WasmPlanner', () => {
     // stayed on the critical path. warmUp must force that work, with
     // the real model, or it warms nothing.
     const warmed: string[] = [];
-    const p = planner(() => 'OK\nSELECT 1',
+    const p = planner(() => ok('SELECT 1'),
       { onWarm: (m) => { warmed.push(m); } });
     await p.warmUp();
     assert.equal(warmed.length, 1, 'warmUp must call warmModel');
@@ -209,7 +229,7 @@ describe('WasmPlanner', () => {
     let planned = false;
     const p = planner(() => {
       planned = true;
-      return 'OK\nSELECT 1';
+      return ok('SELECT 1');
     });
     await assert.rejects(
       () => p.plan('g', SNAPSHOT, undefined, ctl.signal),
@@ -225,7 +245,7 @@ describe('WasmPlanner', () => {
     const reason = new Error('superseded');
     const p = planner(() => {
       ctl.abort(reason);
-      return 'OK\nSELECT 1';
+      return ok('SELECT 1');
     });
     await assert.rejects(
       () => p.plan('g', SNAPSHOT, undefined, ctl.signal),
@@ -263,7 +283,8 @@ describe('WasmPlanner', () => {
           async load() {
             return {
               exports: {
-                planOrError: () => 'OK\nSELECT 1',
+                planOrError: () => ok('SELECT 1'),
+                relationTypeOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
                 warmModel: () => 1,
               },
             };
@@ -272,7 +293,7 @@ describe('WasmPlanner', () => {
       },
     });
     await assert.rejects(() => p.plan('g', SNAPSHOT), PlannerUnavailableError);
-    assert.equal(await p.plan('g', SNAPSHOT), 'SELECT 1');
+    assert.equal((await p.plan('g', SNAPSHOT)).sql, 'SELECT 1');
   });
 
   it('rejects an answer with neither tag rather than guessing', async () => {

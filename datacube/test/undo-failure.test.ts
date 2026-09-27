@@ -16,9 +16,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { CubeController, type Planner } from '../src/cube.ts';
-import type { QueryEngine } from '../src/engine.ts';
+import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 const BASE: CubeSnapshot = {
   source: { expression: '#>{db.T}#' },
@@ -35,17 +36,20 @@ const BASE: CubeSnapshot = {
 };
 
 class StubPlanner implements Planner {
-  async plan(): Promise<string> {
-    return 'SELECT 1';
+  async plan(): Promise<Plan> {
+    return { sql: 'SELECT 1', columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 
 /** Succeeds until `failFrom`, then refuses every query. */
-class FlakyEngine implements QueryEngine {
+class FlakyEngine extends FakeEngine {
   readonly name = 'flaky';
   calls = 0;
   failFrom = Number.POSITIVE_INFINITY;
-  async execute(_sql: string, epoch: number): Promise<ResultTable> {
+  async answer(_sql: string, epoch: number): Promise<ResultTable> {
     this.calls += 1;
     if (this.calls >= this.failFrom) throw new Error('engine is down');
     return {
@@ -58,7 +62,6 @@ class FlakyEngine implements QueryEngine {
       elapsedMs: 0,
     };
   }
-  async close(): Promise<void> {}
 }
 
 describe('an undo whose refresh fails', () => {

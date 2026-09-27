@@ -8,13 +8,14 @@ import { JSDOM } from 'jsdom';
 
 import { CubeApp } from '../src/app.ts';
 import type { Planner } from '../src/cube.ts';
-import type { QueryEngine } from '../src/engine.ts';
+import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { DEFAULT_SETTINGS, readSettings, type SettingValues } from '../src/settings.ts';
 import { buildSettingsPanel } from '../src/ui/settings-panel.ts';
 import { buildExecutionErrorAlert, markPosition } from '../src/ui/alert.ts';
 import { DOCS, docHint } from '../src/ui/docs.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 let dom: JSDOM;
 let root: HTMLElement;
@@ -147,10 +148,10 @@ const SNAPSHOT: CubeSnapshot = {
   epoch: 1,
 };
 
-class Engine implements QueryEngine {
+class Engine extends FakeEngine {
   readonly name = 'stub';
   failing = false;
-  async execute(_sql: string, epoch: number): Promise<ResultTable> {
+  async answer(_sql: string, epoch: number): Promise<ResultTable> {
     if (this.failing) throw new Error('the engine fell over');
     return {
       columns: [
@@ -160,9 +161,11 @@ class Engine implements QueryEngine {
       rowCount: 1, epoch, elapsedMs: 1,
     };
   }
-  async close(): Promise<void> {}
 }
-const planner: Planner = { plan: async () => 'SELECT 42' };
+const planner: Planner = {
+  plan: async (): Promise<Plan> => ({ sql: 'SELECT 42', columns: [] }),
+  relationType: async (): Promise<PlanColumn[]> => [],
+};
 
 function app(options: Partial<ConstructorParameters<typeof CubeApp>[2]> = {}): { app: CubeApp; engine: Engine } {
   const engine = new Engine();

@@ -36,7 +36,8 @@ import type { QueryEngine } from './engine.ts';
  * Arrow into the local store.
  */
 export interface RemoteSource {
-  execute: QueryEngine['execute'];
+  /** Raw SQL on the remote plane: the preflight count. */
+  run: QueryEngine['run'];
   arrowChunks(sql: string, signal?: AbortSignal): AsyncIterable<Uint8Array>;
 }
 
@@ -172,7 +173,7 @@ export class SnapManager {
   async preflight(sourceSql: string, epoch: number): Promise<PreflightEstimate> {
     // counted where the rows are: the remote live plane when there is one
     const engine = this.#remote ?? this.#localStore();
-    const r = await engine.execute(
+    const r = await engine.run(
       `SELECT count(*) AS n FROM (${sourceSql})`,
       epoch,
     );
@@ -232,7 +233,7 @@ export class SnapManager {
       }
       await loader.loadArrow({ ...(schema ? { schema } : {}), table: bare }, this.#remote.arrowChunks(sourceSql));
     } else {
-      await engine.execute(`CREATE OR REPLACE TABLE ${table} AS ${sourceSql}`, epoch);
+      await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${sourceSql}`, epoch);
     }
 
     const takenAt = new Date();
@@ -254,7 +255,7 @@ export class SnapManager {
     const { table, schema } = this.#state.snap;
     this.#state = { mode: 'live' };
     await this.#localStore()
-      .execute(`DROP TABLE IF EXISTS ${qualified(schema, table)}`, 0);
+      .run(`DROP TABLE IF EXISTS ${qualified(schema, table)}`, 0);
   }
 }
 

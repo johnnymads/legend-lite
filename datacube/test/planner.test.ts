@@ -24,6 +24,13 @@ const PLAN = {
   rootExecutionNode: {
     _type: 'relationalTdsInstantiation',
     executionNodes: [{ _type: 'sql', sqlQuery: 'SELECT 1', executionNodes: [] }],
+    resultType: {
+      _type: 'tds',
+      tdsColumns: [
+        { name: 'region', type: 'meta::pure::precisePrimitives::Varchar' },
+        { name: 'total', type: 'Float' },
+      ],
+    },
   },
 };
 
@@ -50,7 +57,11 @@ describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite an
       runtime: 'demo::RT',
       fetch: fakeServer(seen, ok),
     });
-    assert.equal(await p.plan('$trades->select(~[a])', SNAPSHOT), 'SELECT 1');
+    assert.deepEqual(await p.plan('$trades->select(~[a])', SNAPSHOT), {
+      sql: 'SELECT 1',
+      // the plan's own tdsColumns, both vocabularies read as one
+      columns: [{ name: 'region', type: 'String' }, { name: 'total', type: 'Float' }],
+    });
     assert.equal(seen[0]!.url, 'http://localhost:9999/api/pure/v1/grammar/grammarToJson/lambda');
     assert.equal(seen[0]!.type, 'text/plain');
     assert.equal(seen[0]!.body, '$trades->select(~[a])->from(demo::RT)');
@@ -88,6 +99,23 @@ describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite an
         return true;
       },
     );
+  });
+
+  it('types a query compile-only through lambdaRelationType, the engine\'s own call', async () => {
+    const seen: Seen[] = [];
+    const p = new UpstreamPlanner({
+      baseUrl: 'http://x', model: 'm', runtime: 'r',
+      fetch: fakeServer(seen, (path) => ({
+        json: path.endsWith('/lambda') ? { _type: 'lambda' } : {
+          _type: 'relationType',
+          columns: [{ name: 'amount', genericType: { rawType: { _type: 'packageableType',
+            fullPath: 'meta::pure::precisePrimitives::Numeric' } }, multiplicity: { lowerBound: 0, upperBound: 1 } }],
+        },
+      })),
+    });
+    assert.deepEqual(await p.relationType('#>{db::DB.T}#'), [{ name: 'amount', type: 'Decimal' }]);
+    assert.equal(new URL(seen[1]!.url).pathname, '/api/pure/v1/compilation/lambdaRelationType');
+    assert.deepEqual(JSON.parse(seen[1]!.body).model, { _type: 'text', code: 'm' });
   });
 
   it('reports an unreachable planner distinctly from a rejected plan', async () => {

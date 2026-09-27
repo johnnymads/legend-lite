@@ -5,7 +5,8 @@
 // pure text-in text-out and is therefore the half worth unit testing.
 
 import type { QueryEngine } from './engine.ts';
-import type { ResultTable, Scalar } from './result.ts';
+import type { RawTable } from './engine.ts';
+import type { Scalar } from './result.ts';
 import {
   inferModel,
   isNestedType,
@@ -116,7 +117,7 @@ export async function ingestFile(
   // error because pivot is reserved in DuckDB. tableNameOf already
   // strips it to [A-Za-z0-9_], so quoting is all that is left.
   const qt = dq(table);
-  await engine.execute(
+  await engine.run(
     `CREATE OR REPLACE TABLE ${qt} AS SELECT * FROM ${reader}`, 0);
 
   // Nested columns become JSON. legend-lite declares them
@@ -129,13 +130,13 @@ export async function ingestFile(
   if (nested.length > 0) {
     const replaced = nested
       .map((c) => `to_json(${dq(c.name)}) AS ${dq(c.name)}`).join(', ');
-    await engine.execute(
+    await engine.run(
       `CREATE OR REPLACE TABLE ${qt} AS SELECT * REPLACE (${replaced}) `
         + `FROM ${qt}`, 0);
     described = await describeTable(engine, qt);
   }
 
-  const counted = await engine.execute(
+  const counted = await engine.run(
     `SELECT count(*) AS n FROM ${qt}`, 0);
   const rowCount = Number(counted.columns[0]?.values[0] ?? 0);
 
@@ -148,7 +149,7 @@ export async function ingestFile(
 }
 
 /**
- * The table's columns and DuckDB types. A ResultTable is COLUMNAR, so
+ * The table's columns and DuckDB types. A RawTable is COLUMNAR, so
  * DESCRIBE's answer is read by picking the two columns out and zipping
  * them, not row by row.
  */
@@ -156,7 +157,7 @@ async function describeTable(
   engine: QueryEngine,
   qt: string,
 ): Promise<DescribedColumn[]> {
-  const describe = await engine.execute(`DESCRIBE ${qt}`, 0);
+  const describe = await engine.run(`DESCRIBE ${qt}`, 0);
   const names = columnOf(describe, 'column_name');
   const types = columnOf(describe, 'column_type');
   return names.map((n, i) => ({
@@ -166,7 +167,7 @@ async function describeTable(
 }
 
 /** One column of a DESCRIBE result, by name. */
-function columnOf(t: ResultTable, name: string): readonly Scalar[] {
+function columnOf(t: RawTable, name: string): readonly Scalar[] {
   const col = t.columns.find((c) => c.name === name);
   if (!col) {
     throw new Error(`DESCRIBE did not return ${name} — got `

@@ -26,6 +26,7 @@
 
 import type { Planner } from './cube.ts';
 import { PlanError } from './planner.ts';
+import { relationColumns, type Plan, type PlanColumn } from './relation-type.ts';
 import type { LevelScope } from './serialize.ts';
 import type { CubeSnapshot } from './snapshot.ts';
 
@@ -33,6 +34,7 @@ import type { CubeSnapshot } from './snapshot.ts';
 interface TeavmModule {
   readonly exports: {
     planOrError(model: string, query: string, runtime: string): string;
+    relationTypeOrError(model: string, query: string): string;
     warmModel(model: string): number;
   };
 }
@@ -100,7 +102,8 @@ export class PlannerUnavailableError extends Error {
 
 export class WasmPlanner implements Planner {
   #options: WasmPlannerOptions;
-  readonly #cache = new Map<string, string>();
+  readonly #cache = new Map<string, Plan>();
+  readonly #types = new Map<string, PlanColumn[]>();
   #module: Promise<TeavmModule> | undefined;
   #worker: Worker | undefined;
   readonly #pending = new Map<number, {
@@ -306,7 +309,7 @@ export class WasmPlanner implements Planner {
     _snapshot: CubeSnapshot,
     _scope?: LevelScope,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<Plan> {
     const useCache = this.#options.cache !== false;
     if (useCache) {
       const hit = this.#cache.get(pureGrammar);
@@ -335,32 +338,32 @@ export class WasmPlanner implements Planner {
 
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
 
-    // "OK\n<sql>" or "ERR\n<exception class>\n<message>". Failure
-    // travels in the return value rather than as a thrown Java
-    // exception so that the answer does not depend on how TeaVM
-    // bridges throwables into JS -- see wasm/README.md.
-    const nl = answer.indexOf('\n');
-    const tag = nl < 0 ? answer : answer.slice(0, nl);
-    const rest = nl < 0 ? '' : answer.slice(nl + 1);
+    // `{"sql", "type"}`: the SQL and the compiler's type of its result, in
+    // upstream's RelationType shape -- the same renderer legend-lite's
+    // pure/v1 answers use.
+    const body = JSON.parse(decode(answer, pureGrammar)) as { sql: string; type: unknown };
+    const plan: Plan = { sql: body.sql, columns: relationColumns(body.type) };
+    if (useCache) this.#cache.set(pureGrammar, plan);
+    return plan;
+  }
 
-    if (tag === 'OK') {
-      if (useCache) this.#cache.set(pureGrammar, rest);
-      return rest;
-    }
-    if (tag === 'ERR') {
-      // Drop the exception class and keep the compiler's own message:
-      // the same text the HTTP planner surfaces, so the two transports
-      // are indistinguishable to the user and to the UI that renders
-      // the failure.
-      const split = rest.indexOf('\n');
-      const message = split < 0 ? rest : rest.slice(split + 1);
-      throw new PlanError(message || 'the planner refused the query',
-        pureGrammar);
-    }
-    throw new PlannerUnavailableError(
-      `the planner module returned an unrecognised answer: ${
-        JSON.stringify(answer.slice(0, 120))}`,
-    );
+  /**
+   * The compiler's type of a query's result, compile-only: no runtime, no SQL.
+   * How the cube types its source and calculated columns before any level
+   * query runs (option B). Cached by grammar, like plans.
+   */
+  async relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
+    const useCache = this.#options.cache !== false;
+    const hit = useCache ? this.#types.get(pureGrammar) : undefined;
+    if (hit !== undefined) return hit;
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const answer = this.#useWorker()
+      ? await this.#ask({ kind: 'relationType', model: this.#options.model, query: pureGrammar })
+      : (await this.#load()).exports.relationTypeOrError(this.#options.model, pureGrammar);
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const columns = relationColumns(JSON.parse(decode(answer, pureGrammar)));
+    if (useCache) this.#types.set(pureGrammar, columns);
+    return columns;
   }
 
   /**
@@ -381,6 +384,7 @@ export class WasmPlanner implements Planner {
   useModel(model: string, runtime: string): void {
     this.#options = { ...this.#options, model, runtime };
     this.#cache.clear();
+    this.#types.clear();
   }
 
   /** Cached plan count, for tests and diagnostics. */
@@ -452,3 +456,24 @@ function onWindows(): boolean {
   return proc?.platform === 'win32';
 }
 
+/**
+ * A module answer: "OK\n<json>" or "ERR\n<exception class>\n<message>". Failure
+ * travels in the return value rather than as a thrown Java exception so that the
+ * answer does not depend on how TeaVM bridges throwables into JS -- see
+ * wasm/README.md. A refusal keeps the compiler's own message: the same text the
+ * HTTP planner surfaces, so the two transports are indistinguishable.
+ */
+function decode(answer: string, pureGrammar: string): string {
+  const nl = answer.indexOf('\n');
+  const tag = nl < 0 ? answer : answer.slice(0, nl);
+  const rest = nl < 0 ? '' : answer.slice(nl + 1);
+  if (tag === 'OK') return rest;
+  if (tag === 'ERR') {
+    const split = rest.indexOf('\n');
+    const message = split < 0 ? rest : rest.slice(split + 1);
+    throw new PlanError(message || 'the planner refused the query', pureGrammar);
+  }
+  throw new PlannerUnavailableError(
+    `the planner module returned an unrecognised answer: ${JSON.stringify(answer.slice(0, 120))}`,
+  );
+}

@@ -14,13 +14,14 @@
 //
 // Results are Arrow IPC streams, one per chunk, read by Arrow JS -- the
 // library DuckDB-WASM's own results come from -- and handed to the same
-// `toResultTable` the local plane uses. Measured: for every type the warehouse
+// `toRawTable` the local plane uses. Measured: for every type the warehouse
 // returns, the cells are identical to DuckDB-WASM's (the D1 homework, H2).
 
 import { Table, tableFromIPC, type RecordBatch } from 'apache-arrow';
 
-import { QueryError, type QueryEngine } from './engine.ts';
-import { toResultTable, type ArrowishTable } from './duckdb.ts';
+import { QueryError, typedByPlan, type QueryEngine, type RawTable } from './engine.ts';
+import type { Plan } from './relation-type.ts';
+import { toRawTable, type ArrowishTable } from './duckdb.ts';
 import type { ResultTable } from './result.ts';
 
 /** A signed-in session: where the warehouse is, and the bearer token. */
@@ -123,7 +124,11 @@ export class WarehouseEngine implements QueryEngine {
    * `signal` aborts at once: the in-flight request stops and the statement is
    * cancelled on the server.
    */
-  async execute(sql: string, epoch: number, signal?: AbortSignal): Promise<ResultTable> {
+  async execute(plan: Plan, epoch: number, signal?: AbortSignal): Promise<ResultTable> {
+    return typedByPlan(await this.run(plan.sql, epoch, signal), plan);
+  }
+
+  async run(sql: string, epoch: number, signal?: AbortSignal): Promise<RawTable> {
     const started = performance.now();
     const batches: RecordBatch[] = [];
     try {
@@ -135,7 +140,7 @@ export class WarehouseEngine implements QueryEngine {
       throw new QueryError(error instanceof Error ? error.message : String(error), sql, { cause: error });
     }
     const table = new Table(batches) as unknown as ArrowishTable;
-    return toResultTable(table, epoch, performance.now() - started);
+    return toRawTable(table, epoch, performance.now() - started);
   }
 
   /**

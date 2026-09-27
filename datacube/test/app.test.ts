@@ -5,11 +5,12 @@ import { JSDOM } from 'jsdom';
 import { CubeApp } from '../src/app.ts';
 import { pivotTotalColumn } from '../src/serialize.ts';
 import type { Planner } from '../src/cube.ts';
-import type { QueryEngine } from '../src/engine.ts';
+import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { setHeaderDrag } from '../src/ui/pivot-panel.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: 'trades' },
@@ -39,14 +40,13 @@ function result(epoch: number): ResultTable {
   };
 }
 
-class StubEngine implements QueryEngine {
+class StubEngine extends FakeEngine {
   readonly name = 'stub';
   readonly sql: string[] = [];
-  async execute(sql: string, epoch: number): Promise<ResultTable> {
+  async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     return result(epoch);
   }
-  async close(): Promise<void> {}
 }
 
 /**
@@ -57,10 +57,10 @@ class StubEngine implements QueryEngine {
  * NaN rows big -- which would let a tooltip that dropped the row
  * count pass.
  */
-class CountingEngine implements QueryEngine {
+class CountingEngine extends FakeEngine {
   readonly name = 'counting';
   readonly sql: string[] = [];
-  async execute(sql: string, epoch: number): Promise<ResultTable> {
+  async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     if (/count\(\*\)/i.test(sql)) {
       return {
@@ -72,21 +72,26 @@ class CountingEngine implements QueryEngine {
     }
     return result(epoch);
   }
-  async close(): Promise<void> {}
 }
 
 /** A planner that hands the Pure on as the "SQL", for engines that read it. */
 class EchoPlanner implements Planner {
-  async plan(pureGrammar: string): Promise<string> {
-    return pureGrammar;
+  async plan(pureGrammar: string): Promise<Plan> {
+    return { sql: pureGrammar, columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 
 class StubPlanner implements Planner {
   readonly pure: string[] = [];
-  async plan(pureGrammar: string): Promise<string> {
+  async plan(pureGrammar: string): Promise<Plan> {
     this.pure.push(pureGrammar);
-    return 'SELECT 1';
+    return { sql: 'SELECT 1', columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 
@@ -104,10 +109,10 @@ const PIVOTED: CubeSnapshot = {
  * the "SQL" is the Pure, so it can be told apart) gets the desks, and
  * every level gets its cells.
  */
-class PivotEngine implements QueryEngine {
+class PivotEngine extends FakeEngine {
   readonly name = 'pivot';
   readonly sql: string[] = [];
-  async execute(sql: string, epoch: number): Promise<ResultTable> {
+  async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     if (sql.includes('distinct()')) {
       return {
@@ -128,7 +133,6 @@ class PivotEngine implements QueryEngine {
       elapsedMs: 1,
     };
   }
-  async close(): Promise<void> {}
 }
 
 class MemoryStorage {

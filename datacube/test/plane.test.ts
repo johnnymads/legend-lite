@@ -13,9 +13,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { CubeController, type Planner } from '../src/cube.ts';
-import type { QueryEngine } from '../src/engine.ts';
+import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: '#>{trades::DB.TRADES}#' },
@@ -46,20 +47,23 @@ function result(epoch: number, n = 2): ResultTable {
 /** Records every Pure it is asked to plan, and every SQL it emits. */
 class RecordingPlanner implements Planner {
   readonly pure: string[] = [];
-  async plan(pureGrammar: string): Promise<string> {
+  async plan(pureGrammar: string): Promise<Plan> {
     this.pure.push(pureGrammar);
     // Deliberately does NOT echo the Pure: a test here asserts that
     // no Pure reaches the engine, and a stub that pasted the
     // grammar into its own output would fail that for the wrong
     // reason.
-    return `SELECT * FROM planned_${this.pure.length}`;
+    return { sql: `SELECT * FROM planned_${this.pure.length}`, columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 
-class RecordingEngine implements QueryEngine {
+class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
   readonly sql: string[] = [];
-  async execute(sql: string, epoch: number): Promise<ResultTable> {
+  async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     // `SELECT count(*)` is the snap preflight; it wants one number.
     if (/count\(\*\)/i.test(sql)) {
@@ -72,7 +76,6 @@ class RecordingEngine implements QueryEngine {
     }
     return result(epoch);
   }
-  async close(): Promise<void> {}
 }
 
 describe('snapping goes through the planner', () => {

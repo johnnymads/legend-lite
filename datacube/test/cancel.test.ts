@@ -114,16 +114,18 @@ describe('a tree fetch that is already obsolete', () => {
         // the caller is looking at it.
         if (planned === 1) controller.abort(new Superseded(1));
         if (controller.signal.aborted) throw controller.signal.reason;
-        return `SELECT ${planned}`;
+        return { sql: `SELECT ${planned}`, columns: [] };
       },
+      relationType: async () => [],
     };
     const engine: QueryEngine = {
       name: 'stub',
-      async execute(_sql, epoch, signal) {
+      async execute(_plan, epoch, signal) {
         if (signal?.aborted) throw signal.reason ?? new Error('aborted');
         executed += 1;
         return rows(epoch, ['EMEA', 'AMER']);
       },
+      async run() { throw new Error('this cube sends no raw SQL'); },
       async close() {},
     };
 
@@ -157,7 +159,12 @@ describe('the planner client', () => {
       cache: false,
       fetch: (async (_url: string, init?: RequestInit) => {
         sawSignal = init?.signal ?? undefined;
-        const plan = { rootExecutionNode: { _type: 'sql', sqlQuery: 'SELECT 1' } };
+        const plan = {
+          rootExecutionNode: {
+            _type: 'sql', sqlQuery: 'SELECT 1',
+            resultType: { _type: 'tds', tdsColumns: [{ name: 'one', type: 'Integer' }] },
+          },
+        };
         return new Response(JSON.stringify(plan), { status: 200 });
       }) as unknown as typeof fetch,
     });
@@ -204,15 +211,17 @@ describe('the controller under a burst', () => {
           await new Promise<void>((r) => { release = r; });
           if (signal?.aborted) throw signal.reason;
         }
-        return `SELECT ${planned.length}`;
+        return { sql: `SELECT ${planned.length}`, columns: [] };
       },
+      relationType: async () => [],
     };
     const engine: QueryEngine = {
       name: 'stub',
-      async execute(_sql, epoch, signal) {
+      async execute(_plan, epoch, signal) {
         if (signal?.aborted) throw signal.reason ?? new Error('aborted');
         return rows(epoch, ['EMEA']);
       },
+      async run() { throw new Error('this cube sends no raw SQL'); },
       async close() {},
     };
 

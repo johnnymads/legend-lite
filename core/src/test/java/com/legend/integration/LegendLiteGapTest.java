@@ -116,14 +116,6 @@ class LegendLiteGapTest {
     }
 
     @Test
-    @DisplayName("a precise primitive (Varchar(200)) is not a resolvable type")
-    void precisePrimitives() {
-        rejectsWith("a precise-primitive property", "precisePrimitives::Varchar", """
-                Class demo::T { k: String[1]; v: meta::pure::precisePrimitives::Varchar(200)[0..1]; }
-                """);
-    }
-
-    @Test
     @DisplayName("an M2M explosion (prop*:) is refused by the mapping normalizer")
     void m2mExplosion() {
         rejectsWith("an M2M explosion", "M2M explosion", """
@@ -149,8 +141,10 @@ class LegendLiteGapTest {
     @DisplayName("every corpus exclusion names a gap this test covers")
     void exclusionsAreAccountedFor() {
         // Guards against an exclusion being added with no executable evidence behind it.
+        // 70-surface-store2.pure left 2026-09-27: its precise-primitive gap (Varchar(200))
+        // closed when legend-lite's lattice gained legend-pure's precise primitives
         Set<String> documented = Set.of("29-money.pure", "55-canonical-store.pure",
-                "70-surface-store2.pure", "71-mapping-surface2.pure", "75-surface-gaps.pure");
+                "71-mapping-surface2.pure", "75-surface-gaps.pure");
         assertEquals(documented, StressCorpus.EXCLUDED.keySet(),
                 "StressCorpus.EXCLUDED changed. Every excluded file must have a case in "
                         + "this test showing WHY legend-lite cannot load it — an exclusion "

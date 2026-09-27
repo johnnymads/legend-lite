@@ -86,6 +86,18 @@ h2-fail-roster.txt`.
   `Varchar(n)`/`Int`/`Numeric(p,s)`/`Timestamp`/`TinyInt` (BIT), and `sum` of a decimal is
   `Decimal` here, `Number` there. Proposed after your step 3 (it is the binder's overload rules);
   BIT-as-number is a user decision.
+- 2026-09-27 warehouse: **types to the compiler, T1a+T1b pushing** (plan
+  `DATACUBE_TYPES_TO_SERVER_2026_09_27.md`, decisions D1-D5 agreed). **Cross-area, in your
+  `compiler/element/type/Type.java`:** `Primitive.BY_FQN` gains legend-pure's remaining precise
+  primitives (Varchar -> STRING, Timestamp -> DATE_TIME, Numeric -> DECIMAL, as
+  `precisePrimitives.pure` declares) and a read-only `byFqn()`. A build-time Java program
+  (`datacube/tools/typefacts/TypeFacts.java`) runs that lattice to generate DataCube's type families;
+  its diff test is in `//datacube:update_generated`. This is the start of your recorded precise-types
+  item, not the whole of it (lite's typer still reports plain names).
+- 2026-09-27 warehouse: **leg C step 1 pushing (types from the compiler)**. Cross-area:
+  `Compiler.resultType(String, String)` (the text entry, same phases); `wasm/.../Wasm.java`'s
+  `planOrError` answers `{sql, type}` and gains `relationTypeOrError` (`//json` dep in
+  `wasm/BUILD.bazel`). Everything else is in `datacube/`.
 - 2026-09-27 warehouse: **E8 pushing: `pure/v1/execution/execute` served, `/engine/execute` DELETED**
   (with `QueryService.executeWireJson` and the `/engine/execute` helpers). Cross-area, announced
   (rule 7): `Compiler.executeWire` gains the parsed-lambda entry (declared connection test data

@@ -34,7 +34,7 @@ before(async () => {
   );
   await db.instantiate();
   engine = new DuckDbEngine(db.connect() as ArrowishConnection);
-  await engine.execute(
+  await engine.run(
     `CREATE TABLE trades AS
        SELECT (i%5) AS region, (i%20) AS book,
               CAST(2020 + (i%4) AS INTEGER) AS year,
@@ -75,16 +75,16 @@ describe('SnapManager', () => {
     const snapped = s.sourceFor('trades');
 
     // The world moves on underneath.
-    await engine.execute(
+    await engine.run(
       'INSERT INTO trades SELECT 9, 9, 2024, 1.0',
       2,
     );
 
-    const fromSnap = await engine.execute(
+    const fromSnap = await engine.run(
       `SELECT count(*) AS n FROM ${snapped}`,
       3,
     );
-    const fromLive = await engine.execute(
+    const fromLive = await engine.run(
       'SELECT count(*) AS n FROM trades',
       4,
     );
@@ -92,7 +92,7 @@ describe('SnapManager', () => {
     assert.equal(fromLive.columns[0]?.values[0], 1001, 'live moved');
 
     // Clean up so later tests see the original table.
-    await engine.execute('DELETE FROM trades WHERE year = 2024', 5);
+    await engine.run('DELETE FROM trades WHERE year = 2024', 5);
   });
 
   it('returns to live on release', async () => {
@@ -130,7 +130,7 @@ describe('SnapManager', () => {
     assert.notEqual(a.table, b.table);
     // Snap A survives taking snap B, which is what makes an
     // as-of-A vs as-of-B comparison possible.
-    const stillThere = await engine.execute(
+    const stillThere = await engine.run(
       `SELECT count(*) AS n FROM "${a.table}"`,
       3,
     );

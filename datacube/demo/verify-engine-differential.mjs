@@ -112,12 +112,12 @@ async function localPlane(rows) {
   const conn = db.connect();
   const engine = new DuckDbEngine(conn);
 
-  await engine.execute('CREATE TABLE TRADES (region VARCHAR, desk VARCHAR,'
+  await engine.run('CREATE TABLE TRADES (region VARCHAR, desk VARCHAR,'
     + ' book VARCHAR, year INTEGER, qtr VARCHAR, notional DOUBLE,'
     + ' pnl DOUBLE, qty INTEGER)', 0);
   // One statement: 128 round trips through a wasm boundary is slower
   // than the rest of this harness put together.
-  await engine.execute(`INSERT INTO TRADES VALUES ${
+  await engine.run(`INSERT INTO TRADES VALUES ${
     rows.map((r) => `(${r.join(', ')})`).join(', ')}`, 0);
 
   const model = await readFile(new URL('./trades.pure', HERE), 'utf8');
@@ -270,8 +270,8 @@ for (let i = 0; i < localCases.length; i += 1) {
   let localRows;
   try {
     const run = async (pure) => local.engine.execute(await local.planner.plan(pure, ls), ls.epoch);
-    const sql = await local.planner.plan(await serializeWithValues(ls, scope, run), ls, scope);
-    localRows = normalise(await local.engine.execute(sql, ls.epoch));
+    const plan = await local.planner.plan(await serializeWithValues(ls, scope, run), ls, scope);
+    localRows = normalise(await local.engine.execute(plan, ls.epoch));
   } catch (e) {
     skipped.push({ name, where: 'the local plane',
       detail: String(e.message ?? e).slice(0, 200) });

@@ -45,8 +45,6 @@ final class StressCorpus {
             "declares canonical::MonetaryTrade over stress::Money~USD, so it falls "
                     + "with 29-money.pure. It also holds the M2M mapping and the "
                     + "ModelChainConnection runtimes.",
-            "70-surface-store2.pure",
-            "precise primitives: 'Unknown type: meta::pure::precisePrimitives::Varchar'.",
             "71-mapping-surface2.pure",
             "M2M explosion 'part*' (one target instance per source collection element) "
                     + "is refused by the mapping normalizer.",

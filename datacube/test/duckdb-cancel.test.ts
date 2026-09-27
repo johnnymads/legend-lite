@@ -63,7 +63,7 @@ describe('DuckDB streaming and cancellation', () => {
     });
 
     await assert.rejects(
-      () => engine.execute('SELECT 1', 1, ac.signal),
+      () => engine.run('SELECT 1', 1, ac.signal),
       (e: unknown) => isSuperseded(e),
     );
     assert.equal(cancelled, true, 'the pending query was cancelled');
@@ -79,7 +79,7 @@ describe('DuckDB streaming and cancellation', () => {
     // compared directly on the same rows.
     const whole = batch(['EMEA', 'AMER', 'APAC'], [1, 2, 3]);
     const viaQuery = await new DuckDbEngine({ query: () => whole })
-      .execute('SELECT 1', 7);
+      .run('SELECT 1', 7);
 
     const viaStream = await new DuckDbEngine({
       query: () => whole,
@@ -96,7 +96,7 @@ describe('DuckDB streaming and cancellation', () => {
       async cancelSent() {
         return false;
       },
-    }).execute('SELECT 1', 7, new AbortController().signal);
+    }).run('SELECT 1', 7, new AbortController().signal);
 
     assert.deepEqual(
       viaStream.columns.map((c) => ({ name: c.name, values: c.values })),
@@ -122,7 +122,7 @@ describe('DuckDB streaming and cancellation', () => {
         return false;
       },
     });
-    const out = await engine.execute(
+    const out = await engine.run(
       'SELECT 1',
       1,
       new AbortController().signal,
@@ -156,7 +156,7 @@ describe('DuckDB streaming and cancellation', () => {
       },
     });
 
-    const out = await engine.execute('SELECT 1', 1); // no signal
+    const out = await engine.run('SELECT 1', 1); // no signal
     assert.equal(streamed, true, 'a streaming connection always streams');
     assert.equal(usedQuery, false, 'and never takes the other path');
     assert.equal(out.rowCount, 1);
@@ -170,7 +170,7 @@ describe('DuckDB streaming and cancellation', () => {
         return batch(['EMEA'], [1]);
       },
     });
-    const out = await engine.execute(
+    const out = await engine.run(
       'SELECT 1',
       1,
       new AbortController().signal,
@@ -201,7 +201,7 @@ describe('DuckDB streaming and cancellation', () => {
     });
 
     await assert.rejects(
-      () => engine.execute('SELECT 1', 1, ac.signal),
+      () => engine.run('SELECT 1', 1, ac.signal),
       (e: unknown) => isSuperseded(e),
     );
   });

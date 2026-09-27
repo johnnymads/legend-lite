@@ -26,9 +26,10 @@ import { JSDOM } from 'jsdom';
 
 import { CubeApp } from '../src/app.ts';
 import type { Planner } from '../src/cube.ts';
-import type { QueryEngine } from '../src/engine.ts';
+import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: '#>{db.T}#' },
@@ -44,9 +45,9 @@ const SNAPSHOT: CubeSnapshot = {
   epoch: 1,
 };
 
-class StubEngine implements QueryEngine {
+class StubEngine extends FakeEngine {
   readonly name = 'stub';
-  async execute(_sql: string, epoch: number): Promise<ResultTable> {
+  async answer(_sql: string, epoch: number): Promise<ResultTable> {
     return {
       columns: [
         { name: 'region', type: 'String', values: ['EMEA', 'AMER'] },
@@ -57,12 +58,14 @@ class StubEngine implements QueryEngine {
       elapsedMs: 1,
     };
   }
-  async close(): Promise<void> {}
 }
 
 class StubPlanner implements Planner {
-  async plan(): Promise<string> {
-    return 'SELECT 1';
+  async plan(): Promise<Plan> {
+    return { sql: 'SELECT 1', columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 

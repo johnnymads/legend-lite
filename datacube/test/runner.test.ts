@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { CubeController, type Planner } from '../src/cube.ts';
+import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import { PlanThenRun, RemoteRun } from '../src/runner.ts';
-import type { QueryEngine } from '../src/engine.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import type { RemoteExecutor, RemoteResult } from '../src/engine-remote.ts';
 import { isStale } from '../src/epoch.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: '$trades' },
@@ -35,21 +36,23 @@ function table(epoch: number): ResultTable {
   };
 }
 
-class LocalEngine implements QueryEngine {
+class LocalEngine extends FakeEngine {
   readonly name = 'stub-duckdb';
   readonly sql: string[] = [];
-  async execute(sql: string, epoch: number): Promise<ResultTable> {
+  async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     return table(epoch);
   }
-  async close(): Promise<void> {}
 }
 
 class StubPlanner implements Planner {
   readonly pure: string[] = [];
-  async plan(pureGrammar: string): Promise<string> {
+  async plan(pureGrammar: string): Promise<Plan> {
     this.pure.push(pureGrammar);
-    return 'SELECT 1';
+    return { sql: 'SELECT 1', columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 
@@ -64,6 +67,10 @@ class StubExecutor implements RemoteExecutor {
       rows: table(snapshot.epoch),
       sql: 'select region from TRADES -- as the engine reports it',
     };
+  }
+
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 
@@ -161,6 +168,10 @@ describe('Row Limit on a FLAT cube', () => {
         },
         sql: 'select',
       };
+    }
+
+    async relationType(): Promise<PlanColumn[]> {
+      return [];
     }
   }
 

@@ -198,7 +198,7 @@ export async function mountRemote(
 ): Promise<void> {
   for (const statement of mountStatements(options)) {
     try {
-      await engine.execute(statement, 0);
+      await engine.run(statement, 0);
     } catch (cause) {
       const message = redactSecrets(
         cause instanceof Error ? cause.message : String(cause),

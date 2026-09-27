@@ -14,10 +14,10 @@
 // arithmetic. Left alone it produces a crash far from its cause, so it
 // is narrowed here, once, at the boundary.
 
-import type { QueryEngine } from './engine.ts';
-import { QueryError } from './engine.ts';
-import { pureTypeOfArrow } from './result.ts';
-import type { ResultColumn, ResultTable, Scalar } from './result.ts';
+import type { QueryEngine, RawColumn, RawTable } from './engine.ts';
+import { QueryError, typedByPlan } from './engine.ts';
+import type { Plan } from './relation-type.ts';
+import type { ResultTable, Scalar } from './result.ts';
 
 /**
  * The slice of duckdb-wasm's connection we actually use. Declaring it
@@ -206,20 +206,13 @@ function dateOnly(epochMs: number): Date {
     utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
 }
 
-/** Arrow's type object stringifies to a usable name; keep it simple. */
-function typeName(t: unknown): string {
-  if (t && typeof t === 'object' && 'toString' in t) {
-    return String(t);
-  }
-  return 'Unknown';
-}
-
-export function toResultTable(
+/** An Arrow table's columns and values; the PLAN types them (engine.ts typedByPlan). */
+export function toRawTable(
   table: ArrowishTable,
   epoch: number,
   elapsedMs: number,
-): ResultTable {
-  const columns: ResultColumn[] = [];
+): RawTable {
+  const columns: RawColumn[] = [];
   const fields = table.schema.fields;
 
   for (let c = 0; c < fields.length; c++) {
@@ -235,15 +228,8 @@ export function toResultTable(
     } else {
       values.fill(null);
     }
-    // NORMALISED to the Pure vocabulary ResultColumn.type
-    // declares. Arrow's own `Float64` matched no Pure type, so
-    // the first consumer to trust that contract -- a calculated
-    // column learning its type -- got an answer it could not use.
-    columns.push({
-      name: field.name,
-      type: pureTypeOfArrow(typeName(field.type)),
-      values,
-    });
+    // no Pure type: the plan types a planned query's columns (engine.ts typedByPlan)
+    columns.push({ name: field.name, values });
   }
 
   return { columns, rowCount: table.numRows, epoch, elapsedMs };
@@ -264,7 +250,6 @@ export function toResultTable(
  */
 class BatchAccumulator {
   #names: string[] = [];
-  #types: string[] = [];
   #convert: ((v: unknown) => Scalar)[] = [];
   #values: Scalar[][] = [];
   #rows = 0;
@@ -275,7 +260,6 @@ class BatchAccumulator {
       this.#started = true;
       for (const field of batch.schema.fields) {
         this.#names.push(field.name);
-        this.#types.push(typeName(field.type));
         this.#convert.push(converterFor(field.type));
         this.#values.push([]);
       }
@@ -293,11 +277,10 @@ class BatchAccumulator {
     this.#rows += batch.numRows;
   }
 
-  build(epoch: number, elapsedMs: number): ResultTable {
+  build(epoch: number, elapsedMs: number): RawTable {
     return {
       columns: this.#names.map((name, i) => ({
         name,
-        type: pureTypeOfArrow(this.#types[i] as string),
         values: this.#values[i] as Scalar[],
       })),
       rowCount: this.#rows,
@@ -347,11 +330,15 @@ export class DuckDbEngine implements QueryEngine {
    * stream now always streams; the signal only decides whether the
    * stream can be cut short.
    */
-  async execute(
+  async execute(plan: Plan, epoch: number, signal?: AbortSignal): Promise<ResultTable> {
+    return typedByPlan(await this.run(plan.sql, epoch, signal), plan);
+  }
+
+  async run(
     sql: string,
     epoch: number,
     signal?: AbortSignal,
-  ): Promise<ResultTable> {
+  ): Promise<RawTable> {
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     return this.#serialised(async () => {
       // Checked AGAIN after waiting for the connection. This is where
@@ -432,7 +419,7 @@ export class DuckDbEngine implements QueryEngine {
     epoch: number,
     signal: AbortSignal | undefined,
     started: number,
-  ): Promise<ResultTable> {
+  ): Promise<RawTable> {
     let table: ArrowishTable;
     try {
       table = await this.#conn.query(sql);
@@ -444,7 +431,7 @@ export class DuckDbEngine implements QueryEngine {
       );
     }
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
-    return toResultTable(table, epoch, performance.now() - started);
+    return toRawTable(table, epoch, performance.now() - started);
   }
 
   /**
@@ -458,7 +445,7 @@ export class DuckDbEngine implements QueryEngine {
     epoch: number,
     signal: AbortSignal | undefined,
     started: number,
-  ): Promise<ResultTable> {
+  ): Promise<RawTable> {
     const send = this.#conn.send;
     if (!send) throw new Error('streaming unavailable');
 

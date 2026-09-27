@@ -20,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { relationColumns } from '../../src/relation-type.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
 import { CASES, grammars, MODEL, RUNTIME } from './cases.ts';
 
@@ -37,10 +38,14 @@ function blocks(text: string): Map<string, string> {
 }
 
 // The JVM side keeps the exception class; the TS planner drops it by
-// design. Compare on the parts both sides carry.
+// design. Compare on the parts both sides carry. An OK answer is the plan
+// -- its SQL and the compiler's result type -- read through the product's
+// own reader, so the types are held to the JVM too.
 function norm(s: string): string {
   const [tag, ...rest] = s.split('\n');
-  return tag === 'ERR' ? `ERR\n${rest.slice(1).join('\n')}` : s;
+  if (tag === 'ERR') return `ERR\n${rest.slice(1).join('\n')}`;
+  const body = JSON.parse(rest.join('\n')) as { sql: string; type: unknown };
+  return `OK\n${JSON.stringify({ sql: body.sql, columns: relationColumns(body.type) })}`;
 }
 
 it('DataCube\'s own grammar plans the same in WASM and on the JVM', async () => {
@@ -61,14 +66,15 @@ it('DataCube\'s own grammar plans the same in WASM and on the JVM', async () => 
     const expected = jvm.get(name) ?? '<<missing>>';
     let actual: string;
     try {
-      actual = `OK\n${await planner.plan(grammar, c.snapshot, c.scope)}`;
+      const plan = await planner.plan(grammar, c.snapshot, c.scope);
+      actual = `OK\n${JSON.stringify({ sql: plan.sql, columns: plan.columns })}`;
       planned++;
     } catch (e) {
       // planOrError's ERR text, reassembled the way the JVM half writes
       // it, so a refusal compares as a refusal rather than as a crash.
       actual = `ERR\n?\n${(e as Error).message}`;
     }
-    if (norm(expected) !== norm(actual)) {
+    if (norm(expected) !== (actual.startsWith('OK\n') ? actual : norm(actual))) {
       differ.push(`${name}\n  grammar: ${grammar}\n  jvm : ${JSON.stringify(expected)}`
         + `\n  wasm: ${JSON.stringify(actual)}`);
     }

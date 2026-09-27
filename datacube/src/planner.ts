@@ -10,6 +10,7 @@
 
 import type { Planner } from './cube.ts';
 import { PureV1Client, type PureV1Options } from './pure-v1.ts';
+import { relationColumns, tdsColumns, type Plan, type PlanColumn } from './relation-type.ts';
 import type { LevelScope } from './serialize.ts';
 import type { CubeSnapshot } from './snapshot.ts';
 
@@ -34,12 +35,16 @@ export class PlanError extends Error {
 export class UpstreamPlanner implements Planner {
   readonly #client: PureV1Client;
   readonly #useCache: boolean;
-  readonly #cache = new Map<string, string>();
+  readonly #cache = new Map<string, Plan>();
+  readonly #types = new Map<string, PlanColumn[]>();
 
   constructor(options: UpstreamPlannerOptions) {
     this.#useCache = options.cache !== false;
     // a failure names the cube's grammar, not the query with its runtime
-    const grammarOf = (pure: string) => pure.slice(0, pure.lastIndexOf('->from('));
+    const grammarOf = (pure: string) => {
+      const at = pure.lastIndexOf('->from(');
+      return at < 0 ? pure : pure.slice(0, at);
+    };
     this.#client = new PureV1Client(options, (m, pure) => new PlanError(m, grammarOf(pure)));
   }
 
@@ -48,17 +53,30 @@ export class UpstreamPlanner implements Planner {
     _snapshot: CubeSnapshot,
     _scope?: LevelScope,
     signal?: AbortSignal,
-  ): Promise<string> {
+  ): Promise<Plan> {
     const hit = this.#useCache ? this.#cache.get(pureGrammar) : undefined;
     if (hit !== undefined) return hit;
     const pure = this.#client.query(pureGrammar);
     const lambda = await this.#client.lambda(pure, signal);
-    const sql = sqlOf(await this.#client.generatePlan(lambda, pure, signal));
+    const body = await this.#client.generatePlan(lambda, pure, signal);
+    const sql = sqlOf(body);
     if (sql === undefined) {
       throw new PlanError('the plan carries no SQL node', pureGrammar);
     }
-    if (this.#useCache) this.#cache.set(pureGrammar, sql);
-    return sql;
+    // the plan's own tdsColumns: the result's type, as the compiler gave it
+    const plan: Plan = { sql, columns: tdsColumns(body) };
+    if (this.#useCache) this.#cache.set(pureGrammar, plan);
+    return plan;
+  }
+
+  /** E5 `lambdaRelationType` (through E1 for the lambda), cached by grammar. */
+  async relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
+    const hit = this.#useCache ? this.#types.get(pureGrammar) : undefined;
+    if (hit !== undefined) return hit;
+    const lambda = await this.#client.lambda(pureGrammar, signal);
+    const columns = relationColumns(await this.#client.lambdaRelationType(lambda, pureGrammar, signal));
+    if (this.#useCache) this.#types.set(pureGrammar, columns);
+    return columns;
   }
 
   /** Cached plan count, for tests and diagnostics. */

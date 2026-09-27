@@ -26,7 +26,7 @@ import {
   type PivotColumn,
   type PivotFacts,
 } from './serialize.ts';
-import { planPivot, type PivotPlan } from './plan.ts';
+import { planPivot, typeColumns, type PivotPlan, type SchemaChange } from './plan.ts';
 import type { ResultTable } from './result.ts';
 import { SnapManager, type RemoteSource } from './snap.ts';
 import {
@@ -43,6 +43,7 @@ import {
 } from './tree.ts';
 import { DEFAULT_MAX_ROWS, fetchTree, takeRows } from './treeview.ts';
 import { History, type CubeState } from './history.ts';
+import type { Plan, PlanColumn } from './relation-type.ts';
 
 /**
  * Turns a snapshot into SQL.
@@ -70,7 +71,13 @@ export interface Planner {
     snapshot: CubeSnapshot,
     scope?: LevelScope,
     signal?: AbortSignal,
-  ): Promise<string>;
+  ): Promise<Plan>;
+  /**
+   * The compiler's type of a query's result, compile-only (upstream
+   * `lambdaRelationType`): how the cube types its source and calculated
+   * columns BEFORE a level query runs.
+   */
+  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]>;
 }
 
 export interface CubeView {
@@ -103,6 +110,11 @@ export interface CubeView {
    * drill-through read it rather than parsing `2021__|__notional`.
    */
   readonly pivot?: PivotPlan;
+  /**
+   * Source columns whose declared type the compiler no longer gives them
+   * (step 0, `typeColumns`): a schema change, for the host to show.
+   */
+  readonly schemaChanges?: readonly SchemaChange[];
 }
 
 /** A pivot's columns as header paths: values, then the measure. */
@@ -208,10 +220,11 @@ export class CubeController {
     second?: Planner | CubeControllerOptions,
     third: CubeControllerOptions = {},
   ) {
-    // WHICH FORM, by the shape of what arrived. A runner runs; an
-    // engine executes. This is a construction-time reading of the
-    // caller's intent, not a choice the cube makes for itself.
-    const asRunner = 'run' in first ? (first as QueryRunner) : null;
+    // WHICH FORM, by the shape of what arrived. An engine executes
+    // plans (and runs raw SQL); a runner has no `execute`. This is a
+    // construction-time reading of the caller's intent, not a choice
+    // the cube makes for itself.
+    const asRunner = 'execute' in first ? null : (first as QueryRunner);
     const local = asRunner
       ? null
       : new PlanThenRun(second as Planner, first as QueryEngine);
@@ -264,7 +277,6 @@ export class CubeController {
     signal?: AbortSignal,
   ): Promise<{ readonly pure: string; readonly refusal: string | null } | undefined> {
     const runner = this.#runner;
-    if (!runner.compile) return undefined;
     const s: CubeSnapshot = {
       ...snapshot,
       source: { ...snapshot.source, expression: this.#snaps.sourceFor(snapshot.source.expression) },
@@ -412,11 +424,15 @@ export class CubeController {
         // the snap was cosmetic: a table was materialised and every
         // subsequent query still went to the live source.
         const source = this.#snaps.sourceFor(snapshot.source.expression);
-        const withEpoch: CubeSnapshot = {
+        // STEP 0: the columns' types, from the compiler, before any query
+        // reads them to choose an aggregate (plan.ts, `typeColumns`).
+        const typed = await typeColumns({
           ...snapshot,
           epoch,
           source: { ...snapshot.source, expression: source },
-        };
+        }, this.#runner, signal);
+        const withEpoch: CubeSnapshot = typed.snapshot;
+        const withChanges = typed.changes.length > 0 ? { schemaChanges: typed.changes } : {};
         const measureNames = withEpoch.measures.map((m) => m.name);
         // STEP 1 of a pivoted cube: its values, from their own query,
         // on this refresh's data (plan.ts). Every level is then one
@@ -455,6 +471,7 @@ export class CubeController {
               view.levels.get(requestKey({ level: 1, parent: [] }))?.sql ??
               '',
             ...withPivot,
+            ...withChanges,
           } satisfies CubeView;
         }
 
@@ -495,6 +512,7 @@ export class CubeController {
           pure: grammar,
           sql,
           ...withPivot,
+          ...withChanges,
         } satisfies CubeView;
       });
 
@@ -546,7 +564,7 @@ export class CubeController {
         + ' local store to freeze a snapshot into.',
       );
     }
-    const sourceSql = await this.#local.planner.plan(pure, snapshot);
+    const sourceSql = (await this.#local.planner.plan(pure, snapshot)).sql;
 
     await this.#snaps.snap(sourceSql, this.#guard.current, {
       ...(label !== undefined ? { label } : {}),

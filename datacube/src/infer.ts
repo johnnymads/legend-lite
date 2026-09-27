@@ -21,7 +21,7 @@
 // makes it no harder.
 
 import { PURE_KIND_BY_SQL_NAME } from './generated/lite-facts.ts';
-import { isFractionalType } from './snapshot.ts';
+import { defaultKind } from './types.ts';
 
 /** One column, as DuckDB's `DESCRIBE` reports it. */
 export interface DescribedColumn {
@@ -169,7 +169,7 @@ export function quoteIdent(name: string): string {
  * produce a confident wrong number.
  */
 function kindOf(pureType: string): 'dimension' | 'measure' {
-  return isFractionalType(pureType) ? 'measure' : 'dimension';
+  return defaultKind(pureType);
 }
 
 export interface InferOptions {

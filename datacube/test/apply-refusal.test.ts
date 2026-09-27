@@ -10,9 +10,10 @@ import { JSDOM } from 'jsdom';
 
 import { CubeApp } from '../src/app.ts';
 import type { Planner } from '../src/cube.ts';
-import type { QueryEngine } from '../src/engine.ts';
+import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { FakeEngine } from './fake-engine.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: 'trades' },
@@ -28,9 +29,9 @@ const SNAPSHOT: CubeSnapshot = {
   epoch: 1,
 };
 
-class Engine implements QueryEngine {
+class Engine extends FakeEngine {
   readonly name = 'stub';
-  async execute(_sql: string, epoch: number): Promise<ResultTable> {
+  async answer(_sql: string, epoch: number): Promise<ResultTable> {
     return {
       columns: [
         { name: 'region', type: 'String', values: ['EMEA'] },
@@ -41,20 +42,22 @@ class Engine implements QueryEngine {
       elapsedMs: 1,
     };
   }
-  async close(): Promise<void> {}
 }
 
 /** Refuses any query capped at 43 rows -- a Row Limit of 42. */
 class RefusingPlanner implements Planner {
   refusals = 0;
   planned = 0;
-  async plan(pure: string): Promise<string> {
+  async plan(pure: string): Promise<Plan> {
     this.planned += 1;
     if (/limit\(43\)/.test(pure)) {
       this.refusals += 1;
       throw new Error('refused: no limit of 42 here');
     }
-    return 'SELECT 1';
+    return { sql: 'SELECT 1', columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
   }
 }
 

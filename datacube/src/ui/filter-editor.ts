@@ -26,15 +26,14 @@
 //    every half-typed filter on the undo stack.
 
 import {
-  isNumericType,
   isJsonValue,
   isRelativeDate,
-  isVariantType,
   type FilterCondition,
   type FilterNode,
   type FilterOperator,
   type FilterValue,
 } from '../snapshot.ts';
+import { hasTimeOfDay, isBoolean, isNumeric, isTemporal, isTimeOfDay, isVariant } from '../types.ts';
 
 /** What kind of value input an operator needs. */
 export type OperandKind = 'none' | 'single' | 'list' | 'column';
@@ -105,18 +104,18 @@ export type DataType = 'text' | 'number' | 'date' | 'time' | 'boolean'
   | 'variant';
 
 export function dataTypeOf(type: string | undefined): DataType {
-  if (isVariantType(type)) return 'variant';
-  if (type === 'Boolean') return 'boolean';
-  if (type === 'StrictTime') return 'time';
-  if (type === 'Date' || type === 'StrictDate' || type === 'DateTime'
-    || type === 'Timestamp') return 'date';
-  if (isNumericType(type) || type === 'Number') return 'number';
+  // by the compiler type's FAMILY (generated from legend-lite's lattice), never its name
+  if (isVariant(type)) return 'variant';
+  if (isBoolean(type)) return 'boolean';
+  if (isTimeOfDay(type)) return 'time';
+  if (isTemporal(type)) return 'date';
+  if (isNumeric(type)) return 'number';
   return 'text';
 }
 
 /** Whether values of this type carry a time of day. */
 function hasTime(type: string | undefined): boolean {
-  return type === 'DateTime' || type === 'Timestamp';
+  return hasTimeOfDay(type);
 }
 
 const TEXT = new Set<DataType>(['text']);

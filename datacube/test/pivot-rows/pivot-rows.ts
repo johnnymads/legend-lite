@@ -18,7 +18,8 @@ import { JSDOM } from 'jsdom';
 import { CubeApp } from '../../src/app.ts';
 import { DEFAULT_CONFIGURATION } from '../../src/config.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../../src/duckdb.ts';
-import type { QueryEngine } from '../../src/engine.ts';
+import type { QueryEngine, RawTable } from '../../src/engine.ts';
+import type { Plan } from '../../src/relation-type.ts';
 import type { CubeView } from '../../src/cube.ts';
 import type { ResultTable } from '../../src/result.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
@@ -87,10 +88,16 @@ class Watched implements QueryEngine {
   constructor(inner: DuckDbEngine) {
     this.#inner = inner;
   }
-  async execute(sql: string, epoch: number, signal?: AbortSignal): Promise<ResultTable> {
+  async execute(plan: Plan, epoch: number, signal?: AbortSignal): Promise<ResultTable> {
+    return this.#watch(() => this.#inner.execute(plan, epoch, signal));
+  }
+  async run(sql: string, epoch: number, signal?: AbortSignal): Promise<RawTable> {
+    return this.#watch(() => this.#inner.run(sql, epoch, signal));
+  }
+  async #watch<T>(go: () => Promise<T>): Promise<T> {
     this.inFlight += 1;
     try {
-      return await this.#inner.execute(sql, epoch, signal);
+      return await go();
     } finally {
       this.inFlight -= 1;
     }
@@ -157,7 +164,7 @@ unknown {
 }
 
 async function truth(sql: string): Promise<Record<string, unknown>[]> {
-  const t = await new DuckDbEngine(conn).execute(sql, 0);
+  const t = await new DuckDbEngine(conn).run(sql, 0);
   const out: Record<string, unknown>[] = [];
   for (let i = 0; i < t.rowCount; i++) {
     const row: Record<string, unknown> = {};
@@ -214,9 +221,9 @@ before(async () => {
   await db.instantiate();
   conn = db.connect() as ArrowishConnection;
   const local = new DuckDbEngine(conn);
-  await local.execute(`CREATE TABLE TRADES (region VARCHAR(32), desk VARCHAR(32), book VARCHAR(32),
+  await local.run(`CREATE TABLE TRADES (region VARCHAR(32), desk VARCHAR(32), book VARCHAR(32),
     year INTEGER, qtr VARCHAR(8), notional DOUBLE, pnl DOUBLE, qty INTEGER)`, 0);
-  await local.execute(`INSERT INTO TRADES VALUES ${ROWS}`, 0);
+  await local.run(`INSERT INTO TRADES VALUES ${ROWS}`, 0);
   planner = new WasmPlanner({ model: MODEL, runtime: RUNTIME, assetBaseUrl: MODULE_DIR, cache: false });
 });
 
@@ -293,7 +300,7 @@ describe('a grouped pivot, judged by rows', () => {
 
   // LAST: it inserts rows every check above would see.
   it('R9: more pivot values than the cap is refused, with a message', async () => {
-    await new DuckDbEngine(conn).execute(`INSERT INTO TRADES
+    await new DuckDbEngine(conn).run(`INSERT INTO TRADES
       SELECT 'ZZ', 'Rates', 'Bx' || i, 2023, 'Q1', 1, 1, 1000 + i FROM range(600) t(i)`, 0);
     const o = await openCube({ ...CUBE, rows: ['region'], pivotOn: ['book'],
       measures: [{ name: 'cnt_q', column: 'qty', fn: 'count' }] });

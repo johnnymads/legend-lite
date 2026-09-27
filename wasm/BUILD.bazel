@@ -37,6 +37,7 @@ java_library(
     deps = [
         ":teavm_api",
         "//core",
+        "//json",
     ],
 )
 

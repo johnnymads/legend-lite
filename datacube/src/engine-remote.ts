@@ -18,6 +18,7 @@ import type { CubeSnapshot } from './snapshot.ts';
 import type { LevelScope } from './serialize.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
 import { PureV1Client, type PureV1Options } from './pure-v1.ts';
+import { pureType, relationColumns, type PlanColumn } from './relation-type.ts';
 
 /** What a remote engine answers with. */
 export interface RemoteResult {
@@ -39,6 +40,8 @@ export interface RemoteExecutor {
     scope?: LevelScope,
     signal?: AbortSignal,
   ): Promise<RemoteResult>;
+  /** The compiler's type of a query's result: the engine's `lambdaRelationType`. */
+  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]>;
 }
 
 export class RemoteExecutionError extends Error {
@@ -67,49 +70,6 @@ interface TdsResponse {
   };
 }
 
-/**
- * The engine answers with its own type names, some of them paths.
- *
- * `meta::pure::precisePrimitives::Varchar` and `Float` describe the
- * same two things the rest of this product calls `String` and
- * `Float`, and the column model reads that name -- so normalise here
- * rather than teaching every reader the engine's spelling.
- */
-export function pureTypeName(type: string | undefined): string {
-  if (!type) return 'Unknown';
-  const leaf = type.slice(type.lastIndexOf(':') + 1);
-  switch (leaf) {
-    case 'Varchar':
-    case 'Char':
-    case 'Text':
-    case 'String':
-      return 'String';
-    case 'Float':
-    case 'Double':
-    case 'Decimal':
-    case 'Numeric':
-    case 'Number':
-      return 'Float';
-    case 'Integer':
-    case 'Int':
-    case 'TinyInt':
-    case 'SmallInt':
-    case 'BigInt':
-      return 'Integer';
-    case 'Boolean':
-    case 'Bit':
-      return 'Boolean';
-    case 'StrictDate':
-    case 'Date':
-      return 'StrictDate';
-    case 'DateTime':
-    case 'Timestamp':
-      return 'DateTime';
-    default:
-      return leaf;
-  }
-}
-
 /** A TDS as the engine sends it, as a ResultTable. */
 export function toResultTable(
   body: TdsResponse,
@@ -129,9 +89,12 @@ export function toResultTable(
     for (let r = 0; r < rows.length; r++) {
       values[r] = (rows[r]?.values?.[i] ?? null) as Scalar;
     }
+    // the builder's type is the compiler's (the engine's plan), read by the one
+    // reader of both vocabularies; a response with no builder types nothing
+    const declaredType = declared?.[i]?.type;
     return {
       name,
-      type: pureTypeName(declared?.[i]?.type),
+      type: declaredType === undefined ? 'Unknown' : pureType(declaredType),
       values,
     };
   });
@@ -167,5 +130,10 @@ export class LegendEngineExecutor implements RemoteExecutor {
       rows: toResultTable(body, snapshot.epoch, Date.now() - started),
       sql: body.activities?.at(-1)?.sql ?? '',
     };
+  }
+
+  async relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
+    const lambda = await this.#client.lambda(pureGrammar, signal);
+    return relationColumns(await this.#client.lambdaRelationType(lambda, pureGrammar, signal));
   }
 }

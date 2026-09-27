@@ -95,7 +95,22 @@ public final class Wasm {
     }
 
     /**
-     * {@link #plan} with the failure path folded into the RETURN VALUE.
+     * The plan AND its result's type: {@code {"sql": ..., "type": RelationType}}, the type
+     * in legend-engine's {@code lambdaRelationType} shape through the one renderer the
+     * server's {@code pure/v1} answers use ({@code UpstreamRelationType}) -- so the browser
+     * reads a column's type from the compiler, never from the engine's wire
+     * (docs/DATACUBE_TYPED_VALUES_DESIGN_2026_09_27.md, step 1).
+     */
+    public static String planTyped(String model, String query, String runtime) {
+        com.legend.plan.QueryPlan p = com.legend.Compiler.plan(model, query, runtime);
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("sql", p.sql());
+        out.put("type", com.legend.plan.UpstreamRelationType.of(p.rootType()));
+        return com.legend.json.Json.toCompact(out);
+    }
+
+    /**
+     * {@link #planTyped} with the failure path folded into the RETURN VALUE.
      *
      * <p>A refusal is an answer the planner is expected to give, so the
      * differential has to compare refusals too — and comparing them
@@ -106,7 +121,24 @@ public final class Wasm {
     @org.teavm.jso.JSExport
     public static String planOrError(String model, String query, String runtime) {
         try {
-            return "OK\n" + plan(model, query, runtime);
+            return "OK\n" + planTyped(model, query, runtime);
+        } catch (RuntimeException | StackOverflowError e) {
+            String name = e.getClass().getName();
+            return "ERR\n" + name + "\n" + (e.getMessage() == null ? "" : e.getMessage());
+        }
+    }
+
+    /**
+     * A query's result type, compile-only: upstream {@code lambdaRelationType}'s answer
+     * ({@code UpstreamRelationType}), no runtime, no lowering. How the tab types a cube's
+     * source and calculated columns before any level query runs. Failures fold into the
+     * return value as {@link #planOrError}'s do.
+     */
+    @org.teavm.jso.JSExport
+    public static String relationTypeOrError(String model, String query) {
+        try {
+            return "OK\n" + com.legend.json.Json.toCompact(com.legend.plan.UpstreamRelationType.of(
+                    com.legend.Compiler.resultType(model, query)));
         } catch (RuntimeException | StackOverflowError e) {
             String name = e.getClass().getName();
             return "ERR\n" + name + "\n" + (e.getMessage() == null ? "" : e.getMessage());

@@ -28,6 +28,8 @@ import type {
 import { ingestFile } from '../src/upload.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
 import { CORPUS } from './stress-corpus.ts';
+import { familyOf, isNumeric } from '../src/types.ts';
+import type { Plan } from '../src/relation-type.ts';
 
 export interface Outcome {
   readonly csv: string;
@@ -108,15 +110,17 @@ async function attempt(
       detail: `serialize: ${(e as Error).message}` });
     return;
   }
+  let plan: Plan;
   try {
-    sql = await deps.planner.plan(pure, snapshot, scope);
+    plan = await deps.planner.plan(pure, snapshot, scope);
+    sql = plan.sql;
   } catch (e) {
     out.push({ csv, op, verdict: 'refused', pure,
       detail: `plan: ${(e as Error).message}` });
     return;
   }
   try {
-    const r = await deps.engine.execute(sql, snapshot.epoch);
+    const r = await deps.engine.execute(plan, snapshot.epoch);
     // SQL the planner emitted that DuckDB accepted, but whose result
     // is nonsense, is still a bug -- check the shape rather than
     // trusting the absence of a throw.
@@ -170,9 +174,9 @@ export async function runStress(): Promise<Outcome[]> {
 
     const dims = cols.filter((c) => c.kind === 'dimension').map((c) => c.name);
     const nums = cols
-      .filter((c) => c.type === 'Integer' || c.type === 'Float')
+      .filter((c) => isNumeric(c.type))
       .map((c) => c.name);
-    const strs = cols.filter((c) => c.type === 'String').map((c) => c.name);
+    const strs = cols.filter((c) => familyOf(c.type) === 'text').map((c) => c.name);
     const all = cols.map((c) => c.name);
 
     out.push({ csv: entry.name, op: `ingest (${cols.length} cols, `
