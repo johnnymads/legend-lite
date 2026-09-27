@@ -184,7 +184,6 @@ export function valueTitle(value: Scalar): string {
   if (value === '') return "Value = ''";
   if (value === true) return 'Value = TRUE';
   if (value === false) return 'Value = FALSE';
-  if (value instanceof Date) return `Value = ${value.toISOString()}`;
   return `Value = ${String(value)}`;
 }
 
@@ -1194,6 +1193,7 @@ export class DataGrid {
           const text = this.#formatters.format(
             value,
             this.#options.formats?.[leaf.name] ?? DEFAULT_FORMAT,
+            table.columns[leaf.index]?.type,
           );
 
           // Colour follows the VALUE, not the column: a scale across

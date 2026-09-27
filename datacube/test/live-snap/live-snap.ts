@@ -124,7 +124,7 @@ function shape(r: ResultTable, ordered: boolean): string {
   for (let i = 0; i < r.rowCount; i++) {
     rows.push(JSON.stringify(r.columns.map((c) => {
       const v = c.values[i];
-      return v instanceof Date ? v.toISOString() : v;
+      return typeof v === 'bigint' ? v.toString() : v;
     })));
   }
   if (!ordered) rows.sort();

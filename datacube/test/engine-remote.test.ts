@@ -113,6 +113,14 @@ describe('a TDS as a result table', () => {
     assert.deepEqual(table.columns[1]?.values, [null]);
   });
 
+  it('reads the engine\'s timestamps as stored, to the microsecond', () => {
+    const table = toResultTable({
+      builder: { columns: [{ name: 'ts', type: 'DateTime' }] },
+      result: { columns: ['ts'], rows: [{ values: ['2024-01-02T03:04:05.123456000+0000'] }] },
+    }, 1, 0);
+    assert.equal(table.columns[0]?.values[0], '2024-01-02T03:04:05.123456');
+  });
+
   it('refuses a response with no builder: its columns would have no types', () => {
     assert.throws(() => toResultTable({
       result: { columns: ['a'], rows: [{ values: [1] }] },

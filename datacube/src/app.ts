@@ -1378,7 +1378,9 @@ export class CubeApp {
             leaf === undefined
               ? null
               : (this.#view.rows.columns[leaf.index]?.values[abs] ?? null);
-          value = raw as FilterValue | null;
+          // a big integer as its digits: a filter value is saved as JSON, which has no
+          // bigint; `literal` spells the digits by the column's type
+          value = (typeof raw === 'bigint' ? raw.toString() : raw) as FilterValue | null;
         }
         // A PIVOT'S OWN COLUMN -- a cell or a Total -- exists only after
         // the pivot, and every filter runs before it: a value filter on
@@ -3060,7 +3062,12 @@ function isTextEntry(target: EventTarget | null): boolean {
   );
 }
 
-function fmt(n: number): string {
+function fmt(n: number | string): string {
+  // an exact decimal's text goes to Intl as it is: its digits, not a double's
+  if (typeof n === 'string') {
+    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
+      .format(n as unknown as number);
+  }
   if (!Number.isFinite(n)) return '—';
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }

@@ -104,15 +104,9 @@ export interface TreeView {
 /** A group key as the tree's paths spell it (ad hoc members too). */
 export function groupValue(v: Scalar): string {
   if (v === null) return NULL_GROUP;
-  // LOCAL components, with no zone suffix, so `new Date(text)` reads
-  // it back as the same instant. `toISOString()` would round-trip
-  // through UTC and land the key on a different day for any zone
-  // behind or ahead far enough -- the same mistake, one layer up.
-  if (v instanceof Date) {
-    const p = (n: number): string => String(n).padStart(2, '0');
-    return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`
-      + `T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`;
-  }
+  // A cell is exact (values.ts): a date its calendar day, a timestamp its stored text to
+  // the microsecond, a big integer its digits -- so the key is that text, the same in
+  // every time zone, and `literal` writes it back by the column's type.
   return String(v);
 }
 

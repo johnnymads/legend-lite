@@ -19,7 +19,12 @@
 //    without parsing back, and parsing back is where locale bugs live.
 
 /** Scalar types a cell can hold. Null means SQL NULL, not "missing". */
-export type Scalar = string | number | boolean | Date | null;
+/**
+ * A cell's value, exact (values.ts): a date, a timestamp, a time and a decimal are the
+ * database's own text; an integer past 2^53 a bigint. Never a JS `Date`: an instant read
+ * in the viewer's time zone is not a calendar day. What it means is the column's type.
+ */
+export type Scalar = string | number | bigint | boolean | null;
 
 export interface ResultColumn {
   readonly name: string;

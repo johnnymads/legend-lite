@@ -117,8 +117,9 @@ describe('toSpreadsheetML', () => {
       columns: [
         {
           name: 'd',
-          type: 'Date',
-          values: [new Date('2026-03-01T00:00:00Z')],
+          type: 'StrictDate',
+          // a date cell is its calendar day's exact text (values.ts)
+          values: ['2026-03-01'],
         },
       ],
       rowCount: 1,

@@ -85,6 +85,8 @@ test_suite(
         ":typecheck_test",
         ":pivot_rows_test",
         ":typed_values_test",
+        ":typed_values_tokyo_test",
+        ":typed_values_new_york_test",
         ":wasm_differential_test",
     ],
 )
@@ -241,6 +243,58 @@ js_test(
 # compiler's, never an engine's wire type or one learned from a result.
 js_test(
     name = "typed_values_test",
+    size = "medium",
+    chdir = package_name(),
+    data = [
+        "test/strict-reporter.mjs",
+        "test/typed-values/typed-values.ts",
+        ":node_modules/@duckdb/duckdb-wasm",
+        ":node_modules/jsdom",
+        ":src",
+        "//wasm:planner",
+    ],
+    entry_point = "test/typed-values/typed-values.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--experimental-wasm-exnref",
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=./test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+)
+
+# the same file east / west of UTC (T3): a date must be its own day everywhere
+js_test(
+    env = {"TZ": "Asia/Tokyo"},
+    name = "typed_values_tokyo_test",
+    size = "medium",
+    chdir = package_name(),
+    data = [
+        "test/strict-reporter.mjs",
+        "test/typed-values/typed-values.ts",
+        ":node_modules/@duckdb/duckdb-wasm",
+        ":node_modules/jsdom",
+        ":src",
+        "//wasm:planner",
+    ],
+    entry_point = "test/typed-values/typed-values.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--experimental-wasm-exnref",
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=./test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+)
+
+# the same file east / west of UTC (T3): a date must be its own day everywhere
+js_test(
+    env = {"TZ": "America/New_York"},
+    name = "typed_values_new_york_test",
     size = "medium",
     chdir = package_name(),
     data = [

@@ -79,10 +79,8 @@ describe('FormatterCache', () => {
     const c = new FormatterCache();
     assert.equal(c.format('EMEA'), 'EMEA');
     assert.equal(c.format(1234.567, { kind: 'auto', ...EN }), '1,234.57');
-    assert.match(
-      c.format(new Date('2024-03-01T00:00:00Z'), { kind: 'auto', ...EN }),
-      /2024/,
-    );
+    // a date's value is its calendar text; the column's compiler type says it is a date
+    assert.equal(c.format('2024-03-01', { kind: 'auto', ...EN }, 'StrictDate'), 'Mar 01, 2024');
   });
 
   it('falls back to the raw value rather than throwing on bad input', () => {

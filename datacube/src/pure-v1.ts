@@ -19,6 +19,8 @@
 // the query (`->from(runtime)`), as it does in every relation query
 // upstream has.
 
+import { parseExact } from './values.ts';
+
 export interface PureV1Options {
   /** e.g. `http://127.0.0.1:6300` (legend-engine) or `http://localhost:8080` (legend-lite). */
   readonly baseUrl: string;
@@ -121,9 +123,13 @@ export class PureV1Client {
       throw this.#fail(serverMessage(raw) ?? `the server returned ${response.status}`, pure);
     }
     try {
-      return JSON.parse(raw);
-    } catch {
-      throw this.#fail(`the server's answer was not JSON: ${raw.slice(0, 200)}`, pure);
+      // numbers exact: a result's big integers and decimals keep every digit (values.ts)
+      return parseExact(raw);
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        throw this.#fail(`the server's answer was not JSON: ${raw.slice(0, 200)}`, pure);
+      }
+      throw e;
     }
   }
 }

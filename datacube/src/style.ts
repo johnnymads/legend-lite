@@ -14,6 +14,7 @@
 
 import type { FontCase } from './format.ts';
 import type { Scalar } from './result.ts';
+import { numberOf } from './values.ts';
 
 /** Which of the four colour slots a value falls into. */
 export type ValueState = 'normal' | 'negative' | 'zero' | 'error';
@@ -288,8 +289,10 @@ export function columnRange(values: readonly Scalar[]): HeatmapRange | null {
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   let seen = false;
-  for (const v of values) {
-    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+  for (const cell of values) {
+    // a decimal's exact text or a bigint places on the scale like a number (presentation)
+    const v = numberOf(cell);
+    if (v === null) continue;
     seen = true;
     if (v < min) min = v;
     if (v > max) max = v;
@@ -345,8 +348,9 @@ export function heatColour(
   spec: HeatmapSpec,
   range: HeatmapRange | null,
 ): string | null {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const n = numberOf(value);
+  if (n === null) return null;
   const r = spec.range ?? range;
   if (!r) return null;
-  return mixHex(spec.from, spec.to, heatPosition(value, r));
+  return mixHex(spec.from, spec.to, heatPosition(n, r));
 }

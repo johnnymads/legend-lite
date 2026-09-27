@@ -70,7 +70,7 @@ describe('selectionStats', () => {
     assert.equal(s.cells, 3);
     assert.equal(s.blank, 1);
     assert.equal(s.numeric, 2);
-    assert.equal(s.sum, 5);
+    assert.equal(s.sum, '5', 'exact decimal text');
     assert.equal(s.average, 2.5, 'divided by 2, not by 3');
   });
 
@@ -83,7 +83,7 @@ describe('selectionStats', () => {
     });
     assert.equal(s.numeric, 5, 'three labels excluded');
     assert.equal(Number.isNaN(s.sum), false);
-    assert.equal(s.sum, 55);
+    assert.equal(s.sum, '55');
   });
 
   it('counts a real zero as a value, not a blank', () => {
@@ -145,7 +145,7 @@ describe('a selection reads the columns ON SCREEN (P2-36)', () => {
 
   it('stats read the column at each on-screen position', () => {
     const s = selectionStats(TABLE, SHOWN, { anchor: { row: 0, col: 0 }, focus: { row: 2, col: 0 } });
-    assert.equal(s.sum, 50, 'q2 (20 + 0 + 30), not region and not q1');
+    assert.equal(s.sum, '50', 'q2 (20 + 0 + 30), not region and not q1');
   });
 
   it('a copy is those columns, headed by their labels', () => {

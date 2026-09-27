@@ -18,6 +18,7 @@ import type { QueryEngine, RawColumn, RawTable } from './engine.ts';
 import { QueryError, typedByPlan } from './engine.ts';
 import type { Plan } from './relation-type.ts';
 import type { ResultTable, Scalar } from './result.ts';
+import { dayText, decimalText, exactInteger, timeText, timestampText } from './values.ts';
 
 /**
  * The slice of duckdb-wasm's connection we actually use. Declaring it
@@ -63,6 +64,8 @@ export interface ArrowishTable {
 export interface ArrowishVector {
   readonly length: number;
   get(i: number): unknown;
+  /** Arrow's chunks: the raw storage `get()` rounds (a timestamp to milliseconds). */
+  readonly data?: readonly { readonly values: ArrayLike<unknown>; readonly offset: number; readonly length: number }[];
 }
 
 /**
@@ -75,22 +78,13 @@ export interface ArrowishVector {
 export function toScalar(v: unknown): Scalar {
   if (v === null || v === undefined) return null;
 
-  if (typeof v === 'bigint') {
-    // Narrow to number when it is exactly representable; otherwise keep
-    // full precision as text rather than silently rounding. A trade id
-    // that loses its last digits is worse than one rendered as a string.
-    return v >= BigInt(Number.MIN_SAFE_INTEGER) &&
-      v <= BigInt(Number.MAX_SAFE_INTEGER)
-      ? Number(v)
-      : v.toString();
-  }
+  // An integer exactly: a number while it is one, a bigint beyond 2^53 (values.ts).
+  if (typeof v === 'bigint') return exactInteger(v);
 
   if (typeof v === 'number' || typeof v === 'string' ||
       typeof v === 'boolean') {
     return v;
   }
-
-  if (v instanceof Date) return v;
 
   // A raw Arrow buffer with no column type to interpret it. Decimals
   // reach `decimalToScalar` instead, via the per-column converter;
@@ -131,79 +125,49 @@ export function toScalar(v: unknown): Scalar {
  */
 export function decimalToScalar(raw: unknown, scale: number): Scalar {
   const unscaled = BigInt(String(raw));
-  const safe =
-    unscaled >= BigInt(Number.MIN_SAFE_INTEGER) &&
-    unscaled <= BigInt(Number.MAX_SAFE_INTEGER);
-
-  if (scale <= 0) return safe ? Number(unscaled) : unscaled.toString();
-
-  const negative = unscaled < 0n;
-  const digits = (negative ? -unscaled : unscaled)
-    .toString()
-    .padStart(scale + 1, '0');
-  const text =
-    `${negative ? '-' : ''}${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
-
-  return safe ? Number(text) : text;
+  // scale 0 holds an integer (DuckDB returns a SUM of integers as one): an exact integer.
+  // Otherwise ALWAYS the exact text: a DECIMAL column is never half numbers, half strings.
+  return scale <= 0 ? exactInteger(unscaled * 10n ** BigInt(-scale)) : decimalText(unscaled, scale);
 }
 
-/**
- * A converter for one column, chosen once from its Arrow type rather
- * than re-derived per cell.
- */
-function converterFor(type: unknown): (v: unknown) => Scalar {
-  if (
-    type &&
-    typeof type === 'object' &&
-    'scale' in type &&
-    typeof (type as { scale: unknown }).scale === 'number'
-  ) {
-    const scale = (type as { scale: number }).scale;
-    return (v) => (v === null || v === undefined ? null : decimalToScalar(v, scale));
-  }
-  const temporal = temporalKindOf(type);
-  if (temporal) {
-    return (v) => (v === null || v === undefined ? null
-      : v instanceof Date ? v
-      : temporal === 'date' ? dateOnly(Number(v)) : new Date(Number(v)));
-  }
-  return toScalar;
-}
+/** One column's decoder: a vector and a row to the value, exactly as stored (values.ts). */
+type Decode = (vector: ArrowishVector, row: number) => Scalar;
 
-/**
- * Whether an Arrow type is temporal, and whether it is DATE-ONLY.
- *
- * Note what this deliberately does NOT do: read the unit. Arrow JS
- * normalises both date and timestamp vectors to EPOCH MILLISECONDS
- * on `get()`, so `Date32<DAY>` and `Timestamp<MICROSECOND>` both
- * hand over milliseconds and the declared unit describes storage,
- * not what arrives here. An earlier version scaled by the unit and
- * produced "Invalid Date" for dates and "Jan 19, 1970" for
- * microsecond timestamps -- both measured in a browser, which is the
- * only place this could have been settled.
- */
-export function temporalKindOf(type: unknown): 'date' | 'timestamp' | undefined {
-  const name = String(type ?? '');
-  if (/^Date\d*</.test(name)) return 'date';
-  if (/^Timestamp</.test(name)) return 'timestamp';
+/** The raw stored value of a row, across Arrow's chunks: what `get()` would round. */
+function rawAt(vector: ArrowishVector, row: number): unknown {
+  let i = row;
+  for (const chunk of vector.data ?? []) {
+    if (i < chunk.length) return chunk.values[chunk.offset + i];
+    i -= chunk.length;
+  }
   return undefined;
 }
 
 /**
- * A date-only value, at LOCAL midnight.
- *
- * A DATE has no instant in it -- 2021-02-09 is a calendar day, not a
- * moment -- but it arrives as UTC midnight, and the formatter renders
- * in the viewer's zone. West of Greenwich that is the previous
- * evening, so the grid showed "Feb 08, 2021" for a row whose CSV
- * says 2021-02-09. Rebuilding the same year/month/day locally keeps
- * the calendar date the user typed, which is the only reading of a
- * date column that is ever right.
+ * A decoder for one column, chosen once from its Arrow STORAGE type -- what the database
+ * wrote -- and exact: a DATE is its calendar day (never a local-midnight instant), a
+ * TIMESTAMP keeps its microseconds, a DECIMAL its digits. What the value MEANS is the
+ * plan's compiler type; this only keeps it exact.
  */
-function dateOnly(epochMs: number): Date {
-  const utc = new Date(epochMs);
-  return new Date(
-    utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+function decoderFor(type: unknown): Decode {
+  const name = String(type ?? '');
+  const nonNull = (d: Decode): Decode => (v, r) => (v.get(r) === null || v.get(r) === undefined ? null : d(v, r));
+  if (type && typeof type === 'object' && 'scale' in type
+      && typeof (type as { scale: unknown }).scale === 'number' && /^Decimal/.test(name)) {
+    const scale = (type as { scale: number }).scale;
+    return nonNull((v, r) => decimalToScalar(v.get(r), scale));
+  }
+  if (/^Date32</.test(name)) return nonNull((v, r) => dayText(Number(rawAt(v, r))));
+  if (/^Date64</.test(name)) return nonNull((v, r) => dayText(Math.floor(Number(v.get(r)) / 86_400_000)));
+  const unit = /<(SECOND|MILLISECOND|MICROSECOND|NANOSECOND)/.exec(name)?.[1];
+  const toMicros = (raw: unknown): bigint => {
+    const n = BigInt(raw as bigint | number);
+    return unit === 'SECOND' ? n * 1_000_000n : unit === 'MILLISECOND' ? n * 1000n
+      : unit === 'NANOSECOND' ? n / 1000n : n;
+  };
+  if (/^Timestamp</.test(name)) return nonNull((v, r) => timestampText(toMicros(rawAt(v, r))));
+  if (/^Time(32|64)</.test(name)) return nonNull((v, r) => timeText(toMicros(rawAt(v, r))));
+  return (v, r) => toScalar(v.get(r));
 }
 
 /** An Arrow table's columns and values; the PLAN types them (engine.ts typedByPlan). */
@@ -221,9 +185,9 @@ export function toRawTable(
     const vector = table.getChildAt(c);
     const values: Scalar[] = new Array(table.numRows);
     if (vector) {
-      const convert = converterFor(field.type);
+      const decode = decoderFor(field.type);
       for (let r = 0; r < table.numRows; r++) {
-        values[r] = convert(vector.get(r));
+        values[r] = decode(vector, r);
       }
     } else {
       values.fill(null);
@@ -250,7 +214,7 @@ export function toRawTable(
  */
 class BatchAccumulator {
   #names: string[] = [];
-  #convert: ((v: unknown) => Scalar)[] = [];
+  #decode: Decode[] = [];
   #values: Scalar[][] = [];
   #rows = 0;
   #started = false;
@@ -260,16 +224,16 @@ class BatchAccumulator {
       this.#started = true;
       for (const field of batch.schema.fields) {
         this.#names.push(field.name);
-        this.#convert.push(converterFor(field.type));
+        this.#decode.push(decoderFor(field.type));
         this.#values.push([]);
       }
     }
     for (let c = 0; c < this.#names.length; c++) {
       const vector = batch.getChildAt(c);
       const out = this.#values[c] as Scalar[];
-      const convert = this.#convert[c] as (v: unknown) => Scalar;
+      const decode = this.#decode[c] as Decode;
       if (vector) {
-        for (let r = 0; r < batch.numRows; r++) out.push(convert(vector.get(r)));
+        for (let r = 0; r < batch.numRows; r++) out.push(decode(vector, r));
       } else {
         for (let r = 0; r < batch.numRows; r++) out.push(null);
       }

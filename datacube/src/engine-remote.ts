@@ -19,6 +19,8 @@ import type { LevelScope } from './serialize.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
 import { PureV1Client, type PureV1Options } from './pure-v1.ts';
 import { pureType, relationColumns, type PlanColumn } from './relation-type.ts';
+import { hasTimeOfDay } from './types.ts';
+import { timestampFromText } from './values.ts';
 
 /** What a remote engine answers with. */
 export interface RemoteResult {
@@ -94,7 +96,15 @@ export function toResultTable(
     // reader of both vocabularies
     const declaredType = declared[i]?.type;
     if (declaredType === undefined) throw new Error(`the engine typed no column '${name}'`);
-    return { name, type: pureType(declaredType), values };
+    const type = pureType(declaredType);
+    // a timestamp as stored (the engine writes nanoseconds and a zone), exact like every plane's
+    if (hasTimeOfDay(type)) {
+      for (let r = 0; r < values.length; r++) {
+        const v = values[r];
+        if (typeof v === 'string') values[r] = timestampFromText(v);
+      }
+    }
+    return { name, type, values };
   });
   return { columns, rowCount: rows.length, epoch, elapsedMs };
 }

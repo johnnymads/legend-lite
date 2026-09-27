@@ -86,6 +86,8 @@ h2-fail-roster.txt`.
   `Varchar(n)`/`Int`/`Numeric(p,s)`/`Timestamp`/`TinyInt` (BIT), and `sum` of a decimal is
   `Decimal` here, `Number` there. Proposed after your step 3 (it is the binder's overload rules);
   BIT-as-number is a user decision.
+- 2026-09-27 warehouse: **types to the compiler, T3 pushing (exact cells)**: DataCube only;
+  typed-values runs in Tokyo and New York lanes too (`//datacube:typed_values_{tokyo,new_york}_test`).
 - 2026-09-27 warehouse: **types to the compiler, T1c pushing**: hosts get a source's columns from
   the compiler (`sourceColumns`), `inferModel` writes the model only, the regex-reading
   `tools/gen-lite-facts.mjs` is deleted (the Java generator writes all of `lite-facts.ts`, adding

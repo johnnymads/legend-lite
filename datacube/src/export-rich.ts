@@ -19,6 +19,7 @@
 
 import type { ColumnFormat, FormatterCache } from './format.ts';
 import type { ResultTable, Scalar } from './result.ts';
+import { isNumeric, isTemporal, isTimeOfDay } from './types.ts';
 
 export interface RichExportOptions {
   readonly title?: string;
@@ -63,10 +64,11 @@ export function toHtml(
   options: RichExportOptions = {},
 ): string {
   const cols = chosen(table, options);
+  const typeOfName = (n: string): string | undefined => cols.find((c) => c.name === n)?.type;
   const title = options.title ?? 'DataCube export';
   const fmt = (v: Scalar, name: string): string =>
     options.formatters
-      ? options.formatters.format(v, options.formats?.[name])
+      ? options.formatters.format(v, options.formats?.[name], typeOfName(name))
       : v === null
         ? ''
         : String(v);
@@ -83,9 +85,9 @@ export function toHtml(
     const cells = cols
       .map((c) => {
         const v = c.values[r] ?? null;
-        // Numbers right-align; text does not. Doing it per cell
-        // rather than per column keeps a mixed column readable.
-        const cls = isNumber(v) ? ' class="n"' : '';
+        // Numbers right-align; text does not -- by the column's compiler type (a
+        // decimal's value is its exact text), and a non-null cell of it.
+        const cls = v !== null && (isNumeric(c.type) || isNumber(v)) ? ' class="n"' : '';
         return `<td${cls}>${escapeXml(fmt(v, c.name))}</td>`;
       })
       .join('');
@@ -132,21 +134,25 @@ export function toSpreadsheetML(
   options: RichExportOptions = {},
 ): string {
   const cols = chosen(table, options);
+  const typeOfName = (n: string): string | undefined => cols.find((c) => c.name === n)?.type;
   const title = options.title ?? 'DataCube';
 
+  // A cell's spreadsheet type is its column's COMPILER type, never its JS type: a
+  // date's value is its exact calendar text (values.ts), a decimal its exact digits.
+  const typeOf = new Map(cols.map((c) => [c.name, c.type]));
   const cell = (v: Scalar, name: string): string => {
     if (v === null) return '<Cell/>';
-    if (isNumber(v)) {
-      return `<Cell><Data ss:Type="Number">${v}</Data></Cell>`;
+    const type = typeOf.get(name);
+    if (isNumeric(type) || isNumber(v) || typeof v === 'bigint') {
+      return `<Cell><Data ss:Type="Number">${String(v)}</Data></Cell>`;
     }
-    if (v instanceof Date) {
-      return (
-        `<Cell ss:StyleID="d"><Data ss:Type="DateTime">` +
-        `${v.toISOString().replace(/\.\d+Z$/, '')}</Data></Cell>`
-      );
+    if (isTemporal(type) && !isTimeOfDay(type) && typeof v === 'string') {
+      // SpreadsheetML's DateTime is seconds precision, no zone: the day, or the time as stored
+      const at = v.includes('T') || v.includes(' ') ? v.replace(' ', 'T').replace(/\.\d+$/, '') : `${v}T00:00:00`;
+      return `<Cell ss:StyleID="d"><Data ss:Type="DateTime">${at}</Data></Cell>`;
     }
     const text = options.formatters
-      ? options.formatters.format(v, options.formats?.[name])
+      ? options.formatters.format(v, options.formats?.[name], typeOfName(name))
       : String(v);
     return `<Cell><Data ss:Type="String">${escapeXml(text)}</Data></Cell>`;
   };

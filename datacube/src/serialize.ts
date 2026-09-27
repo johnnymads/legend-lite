@@ -23,6 +23,7 @@
 
 import {
   CubeRefusal,
+  columnType,
   LEAF_COUNT_COLUMN,
   PIVOT_TOTAL_KEY,
   isJsonValue,
@@ -112,9 +113,26 @@ export function temporalLiteral(v: Date): string {
     : `%${day}T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`;
 }
 
-export function literal(v: FilterValue): string {
+/** The exact texts values.ts writes: a day, a timestamp, a time of day; an exact number. */
+const TEMPORAL_TEXT = /^(-?\d{4,}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2}(\.\d+)?)?|\d{2}:\d{2}:\d{2}(\.\d+)?)$/;
+const EXACT_NUMBER = /^-?\d+(\.\d+)?$/;
+
+/** A column's compiler type, by name: how a value's literal is spelled (T3). */
+export type TypeOf = (column: string) => string | undefined;
+
+/**
+ * A value as a Pure literal. `type` is its column's COMPILER type: a cell's date, timestamp,
+ * time or decimal is the database's exact text (values.ts), so the type -- never the
+ * text's JS type -- says it is a `%2024-01-02`, a `%2024-01-02T03:04:05.123456` or an
+ * exact number. (T4 replaces this spelling with typed protocol-JSON nodes, decision D2.)
+ */
+export function literal(v: FilterValue, type?: string): string {
   if (isRelativeDate(v)) return v.relative === 'today' ? 'today()' : 'now()';
   if (isJsonValue(v)) return `fromJson('${escapePure(v.json)}')`;
+  if (typeof v === 'string' && isTemporal(type) && TEMPORAL_TEXT.test(v)) {
+    return `%${v.replace(' ', 'T')}`;
+  }
+  if (typeof v === 'string' && isNumeric(type) && EXACT_NUMBER.test(v)) return v;
   if (typeof v === 'string') return `'${escapePure(v)}'`;
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   if (v instanceof Date) return temporalLiteral(v);
@@ -249,7 +267,7 @@ function preLowered(v: FilterValue): string {
   return typeof v === 'string' ? literal(v.toLowerCase()) : literal(v);
 }
 
-export function filterExpression(node: FilterNode, param = 'x'): string {
+export function filterExpression(node: FilterNode, param = 'x', typeOf: TypeOf = () => undefined): string {
   switch (node.kind) {
     case 'and':
     case 'or': {
@@ -259,15 +277,16 @@ export function filterExpression(node: FilterNode, param = 'x'): string {
         return node.kind === 'and' ? 'true' : 'false';
       }
       const op = node.kind === 'and' ? ' && ' : ' || ';
-      const parts = node.children.map((c) => filterExpression(c, param));
+      const parts = node.children.map((c) => filterExpression(c, param, typeOf));
       return parts.length === 1 ? parts[0]! : `(${parts.join(op)})`;
     }
     case 'not':
-      return `!(${filterExpression(node.child, param)})`;
+      return `!(${filterExpression(node.child, param, typeOf)})`;
     case 'condition': {
       const ref = colRef(param, node.column);
       const lower = lowerRef(ref);
-      const one = () => literal(node.value as FilterValue);
+      const type = typeOf(node.column);
+      const one = () => literal(node.value as FilterValue, type);
       const many = () => (node.value as readonly FilterValue[]) ?? [];
 
       const cmp = COMPARISON[node.operator];
@@ -312,9 +331,9 @@ export function filterExpression(node: FilterNode, param = 'x'): string {
         case 'notEndsWith':
           return `!${ref}->endsWith(${one()})`;
         case 'in':
-          return `${ref}->in([${many().map(literal).join(', ')}])`;
+          return `${ref}->in([${many().map((v) => literal(v, type)).join(', ')}])`;
         case 'notIn':
-          return `!${ref}->in([${many().map(literal).join(', ')}])`;
+          return `!${ref}->in([${many().map((v) => literal(v, type)).join(', ')}])`;
 
         // Both sides are lowered rather than trusting collation, which
         // differs between backends and would let the same cube answer
@@ -535,14 +554,10 @@ function keyValue(type: string | undefined, value: string): FilterValue {
   // `$x.year == '2021'`, which one engine casts and another refuses.
   // Only when the text round-trips exactly: an integer past 2^53 stays
   // text rather than becoming a neighbouring number.
-  if (isNumeric(type)) {
-    const n = Number(value);
-    return value.trim() !== '' && Number.isFinite(n) && String(n) === value ? n : value;
-  }
+  // A number or a date keeps its EXACT text; `literal` spells it by the column's type
+  // (an integer past 2^53, a decimal's digits, a timestamp's microseconds all survive).
   if (isBoolean(type) && (value === 'true' || value === 'false')) return value === 'true';
-  if (!isTemporal(type)) return value;
-  const at = new Date(value);
-  return Number.isNaN(at.getTime()) ? value : at;
+  return value;
 }
 
 /**
@@ -771,7 +786,7 @@ export function pivotValuesQuery(s: CubeSnapshot): string | null {
   refuseUnpivotable(s);
   const parts: string[] = [s.source.expression];
   for (const d of s.derived) parts.push(derivedExtend(d));
-  if (s.filter) parts.push(`filter(x|${filterExpression(s.filter)})`);
+  if (s.filter) parts.push(`filter(x|${filterExpression(s.filter, 'x', (c) => columnType(s, c))})`);
   parts.push(`select(~[${on.map(ident).join(', ')}])`);
   parts.push('distinct()');
   parts.push(sortClause(on.map((column) => ({
@@ -803,8 +818,9 @@ function refuseUnpivotable(s: CubeSnapshot): void {
 /** Pinned values as step 1's answer (`pivotValues`, one key). */
 export function pinnedPivotFacts(s: CubeSnapshot): PivotFacts | null {
   if (s.pivotValues === undefined || s.pivotValues.length === 0) return null;
+  // A key as `groupValue` writes a tree key: a cell's exact text (a filter editor's Date,
+  // until T4 types the editor's values, keeps its old local spelling)
   const p = (n: number): string => String(n).padStart(2, '0');
-  // A date as `groupValue` writes a tree key: local components.
   const key = (v: FilterValue): string => (v instanceof Date
     ? `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`
       + `T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
@@ -818,7 +834,7 @@ function tupleCondition(s: CubeSnapshot, tuple: readonly string[]): string {
   const conditions = memberConditions(s, effectivePivotOn(s), tuple);
   return filterExpression(conditions.length === 1
     ? conditions[0]!
-    : { kind: 'and', children: conditions });
+    : { kind: 'and', children: conditions }, 'x', (c) => columnType(s, c));
 }
 
 /**
@@ -984,11 +1000,12 @@ export function serialize(
   const conditions: FilterNode[] = [];
   if (snapshot.filter) conditions.push(snapshot.filter);
   if (scope) conditions.push(...parentConditions(snapshot, scope.parent));
+  const typeOf: TypeOf = (c) => columnType(snapshot, c);
   if (conditions.length === 1) {
-    parts.push(`filter(x|${filterExpression(conditions[0]!)})`);
+    parts.push(`filter(x|${filterExpression(conditions[0]!, 'x', typeOf)})`);
   } else if (conditions.length > 1) {
     parts.push(
-      `filter(x|${filterExpression({ kind: 'and', children: conditions })})`,
+      `filter(x|${filterExpression({ kind: 'and', children: conditions }, 'x', typeOf)})`,
     );
   }
 

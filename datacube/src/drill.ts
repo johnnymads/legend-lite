@@ -18,7 +18,7 @@
 // drillable grain instead of storing aggregated results.
 
 import { derivedExtend, effectivePivotOn, filterExpression, memberConditions } from './serialize.ts';
-import type { CubeSnapshot, FilterNode } from './snapshot.ts';
+import { columnType, type CubeSnapshot, type FilterNode } from './snapshot.ts';
 import type { RowPath } from './tree.ts';
 
 export interface DrillRequest {
@@ -77,10 +77,10 @@ export function drillQuery(
 
   const conditions = drillConditions(snapshot, request);
   if (conditions.length === 1) {
-    parts.push(`filter(x|${filterExpression(conditions[0]!)})`);
+    parts.push(`filter(x|${filterExpression(conditions[0]!, 'x', (c) => columnType(snapshot, c))})`);
   } else if (conditions.length > 1) {
     parts.push(
-      `filter(x|${filterExpression({ kind: 'and', children: conditions })})`,
+      `filter(x|${filterExpression({ kind: 'and', children: conditions }, 'x', (c) => columnType(snapshot, c))})`,
     );
   }
 

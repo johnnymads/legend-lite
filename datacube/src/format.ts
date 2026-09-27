@@ -19,6 +19,7 @@
 // format, while the measure underneath stays one numeric value.
 
 import type { Scalar } from './result.ts';
+import { hasTimeOfDay, isNumeric, isTemporal, isTimeOfDay } from './types.ts';
 
 export type FormatKind =
   | 'auto'
@@ -209,6 +210,7 @@ export class FormatterCache {
           year: 'numeric',
           month: 'short',
           day: '2-digit',
+          timeZone: 'UTC',
         });
         break;
       case 'datetime':
@@ -218,6 +220,7 @@ export class FormatterCache {
           day: '2-digit',
           hour: '2-digit',
           minute: '2-digit',
+          timeZone: 'UTC',
         });
         break;
       case 'currency':
@@ -252,19 +255,23 @@ export class FormatterCache {
     return made;
   }
 
-  format(value: Scalar, format: ColumnFormat = DEFAULT_FORMAT): string {
+  /**
+   * A cell as text. `type` is the column's COMPILER type: 'auto' renders a date, a
+   * timestamp or a number by it (a date's value is its calendar text, so its own JS type
+   * says nothing). Dates and timestamps render in UTC -- as stored, never shifted into the
+   * viewer's zone (the user's ruling on what a DateTime means).
+   */
+  format(value: Scalar, format: ColumnFormat = DEFAULT_FORMAT, type?: string): string {
     if (value === null || value === undefined) {
       return format.nullText ?? '';
     }
 
     if (format.kind === 'auto' || format.kind === 'text') {
-      // 'auto' renders by the value's own type, so a cube with no
-      // configured formats still looks sane.
-      if (value instanceof Date) {
-        return this.format(value, { ...format, kind: 'date' });
+      if (format.kind === 'auto' && isTemporal(type) && !isTimeOfDay(type)) {
+        return this.format(value, { ...format, kind: hasTimeOfDay(type) ? 'datetime' : 'date' }, type);
       }
-      if (typeof value === 'number') {
-        return this.format(value, { ...format, kind: 'number' });
+      if (format.kind === 'auto' && (isNumeric(type) || typeof value === 'number' || typeof value === 'bigint')) {
+        return this.format(value, { ...format, kind: 'number' }, type);
       }
       return applyCase(String(value), format.fontCase);
     }
@@ -273,18 +280,20 @@ export class FormatterCache {
     if (!intl) return String(value);
 
     if (intl instanceof Intl.DateTimeFormat) {
-      const d = value instanceof Date ? value : new Date(String(value));
-      return Number.isNaN(d.getTime())
-        ? String(value)
-        : applyCase(intl.format(d), format.fontCase);
+      const at = instantOf(value);
+      return at === null ? String(value) : applyCase(intl.format(at), format.fontCase);
     }
 
+    // exact numbers stay exact to Intl (it formats a bigint, and a decimal's text)
+    const exact = typeof value === 'bigint' || (typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value));
     let n = typeof value === 'number' ? value : Number(value);
     if (Number.isNaN(n)) return String(value);
 
     // A named scale divides AND suffixes; a bare divisor only divides.
     let suffix = '';
+    let scaled = false;
     if (format.numberScale) {
+      scaled = true;
       const s =
         format.numberScale === 'auto'
           ? autoScale(n)
@@ -292,8 +301,18 @@ export class FormatterCache {
       n = n / s.divisor;
       suffix = s.suffix;
     } else if (format.scale !== undefined && format.scale !== 0) {
+      scaled = true;
       n = n / format.scale;
     }
+    // unscaled, an exact value reaches Intl as it is: its digits, not a double's
+    type IntlNumber = Parameters<Intl.NumberFormat['format']>[0];
+    const negative = exact ? String(value).trim().startsWith('-') : n < 0;
+    const shown = (abs: boolean): IntlNumber => {
+      if (!exact || scaled) return abs ? Math.abs(n) : n;
+      const v = value as bigint | string;
+      if (!abs) return v as IntlNumber;
+      return (typeof v === 'bigint' ? (v < 0n ? -v : v) : v.replace(/^-/, '')) as IntlNumber;
+    };
     // DataCube's unit: glued on after the number ("12.5kg"), or --
     // when it starts with `_` -- before it, without the `_` ("_$" is
     // "$12.5"): the one field that spells a currency sign in a cube
@@ -305,9 +324,9 @@ export class FormatterCache {
     // Parentheses wrap the WHOLE rendering, units included: "($1.2m)"
     // rather than "($1.2)m", which reads as a different number.
     const body =
-      format.negativeParens && n < 0
-        ? `(${prefix}${intl.format(Math.abs(n))}${suffix})`
-        : `${prefix}${intl.format(n)}${suffix}`;
+      format.negativeParens && negative
+        ? `(${prefix}${intl.format(shown(true))}${suffix})`
+        : `${prefix}${intl.format(shown(false))}${suffix}`;
     return applyCase(body, format.fontCase);
   }
 
@@ -317,4 +336,19 @@ export class FormatterCache {
     this.#hits = 0;
     this.#misses = 0;
   }
+}
+
+/**
+ * A date's or a timestamp's text as the instant Intl formats IN UTC: its calendar day at
+ * UTC midnight, or its time as stored. Null for text that is not one.
+ */
+function instantOf(value: Scalar): Date | null {
+  if (typeof value !== 'string') return null;
+  const m = /^(-?\d{4,})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?)?$/.exec(value);
+  if (!m) return null;
+  const at = new Date(0);
+  at.setUTCFullYear(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  at.setUTCHours(Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0),
+    Number((m[7] ?? '0').slice(0, 3).padEnd(3, '0')));
+  return at;
 }

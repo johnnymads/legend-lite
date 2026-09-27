@@ -12,7 +12,6 @@ import { after, before, describe, it } from 'node:test';
 import {
   DuckDbEngine,
   decimalToScalar,
-  temporalKindOf,
   toScalar,
 } from '../src/duckdb.ts';
 import type { ArrowishConnection } from '../src/duckdb.ts';
@@ -93,11 +92,11 @@ describe('DuckDbEngine end-to-end', () => {
     assert.equal(typeof r.columns[0]?.values[0], 'number');
   });
 
-  it('keeps an out-of-range BIGINT lossless as text', async () => {
+  it('keeps an out-of-range BIGINT lossless, as a bigint', async () => {
     // 2^63-1 cannot be a JS number without losing its last digits, and
-    // a trade id that silently rounds is worse than one shown as text.
+    // a trade id that silently rounds is worse than any other answer.
     const r = await engine.run('SELECT 9223372036854775807::BIGINT AS n', 1);
-    assert.equal(r.columns[0]?.values[0], '9223372036854775807');
+    assert.equal(r.columns[0]?.values[0], 9223372036854775807n);
   });
 
   it('executes a real pivot and names the generated columns', async () => {
@@ -110,7 +109,7 @@ describe('DuckDbEngine end-to-end', () => {
     assert.deepEqual(names, ['region', '2023', '2024']);
     const i2024 = columnIndex(r, '2024');
     const amer = r.columns[0]?.values.indexOf('AMER') ?? -1;
-    assert.equal(r.columns[i2024]?.values[amer], 300.75);
+    assert.equal(r.columns[i2024]?.values[amer], '300.75', 'a DECIMAL is its exact text');
   });
 
   it('applies DECIMAL scale instead of returning the unscaled integer', async () => {
@@ -121,7 +120,7 @@ describe('DuckDbEngine end-to-end', () => {
       'SELECT sum(notional) AS total FROM trades',
       1,
     );
-    assert.equal(r.columns[0]?.values[0], 651.5);
+    assert.equal(r.columns[0]?.values[0], '651.50');
   });
 
   it('keeps DECIMAL exact through a grouped pivot', async () => {
@@ -132,13 +131,13 @@ describe('DuckDbEngine end-to-end', () => {
     );
     const emea = r.columns[0]?.values.indexOf('EMEA') ?? -1;
     const i2023 = columnIndex(r, '2023');
-    // 100.5 + 50.0, not 15050
-    assert.equal(r.columns[i2023]?.values[emea], 150.5);
+    // 100.5 + 50.0, not 15050 -- exact, at the DECIMAL's scale
+    assert.equal(r.columns[i2023]?.values[emea], '150.50');
   });
 
   it('handles negative decimals', async () => {
     const r = await engine.run('SELECT (-12.5)::DECIMAL(9,3) AS d', 1);
-    assert.equal(r.columns[0]?.values[0], -12.5);
+    assert.equal(r.columns[0]?.values[0], '-12.500', 'exact, at its declared scale');
   });
 
   it('reports a bad query as QueryError carrying the SQL', async () => {
@@ -184,10 +183,10 @@ describe('DuckDbEngine end-to-end', () => {
 
 describe('decimalToScalar', () => {
   it('reinserts the decimal point from the unscaled integer', () => {
-    assert.equal(decimalToScalar('30075', 2), 300.75);
-    assert.equal(decimalToScalar('-12500', 3), -12.5);
-    assert.equal(decimalToScalar('5', 2), 0.05);
-    assert.equal(decimalToScalar('0', 2), 0);
+    assert.equal(decimalToScalar('30075', 2), '300.75');
+    assert.equal(decimalToScalar('-12500', 3), '-12.500');
+    assert.equal(decimalToScalar('5', 2), '0.05');
+    assert.equal(decimalToScalar('0', 2), '0.00');
   });
 
   it('treats scale 0 as an integer', () => {
@@ -216,30 +215,5 @@ describe('toScalar', () => {
       toScalar({ a: 1n, b: 'x' }),
       '{"a":"1","b":"x"}',
     );
-  });
-});
-
-describe('temporalKindOf', () => {
-  // Arrow JS normalises BOTH date and timestamp vectors to epoch
-  // milliseconds on get(), so the declared unit describes storage,
-  // not what reaches this code. Scaling by it produced "Invalid
-  // Date" for dates and "Jan 19, 1970" for microsecond timestamps.
-  it('recognises a date, whatever unit it declares', () => {
-    assert.equal(temporalKindOf('Date32<DAY>'), 'date');
-    assert.equal(temporalKindOf('Date64<MILLISECOND>'), 'date');
-  });
-
-  it('recognises a timestamp, zoned or not', () => {
-    assert.equal(temporalKindOf('Timestamp<MICROSECOND>'), 'timestamp');
-    assert.equal(temporalKindOf('Timestamp<NANOSECOND>'), 'timestamp');
-    assert.equal(temporalKindOf('Timestamp<MICROSECOND, UTC>'), 'timestamp');
-  });
-
-  it('leaves every non-temporal type alone', () => {
-    // A multiplier here would turn a plain number into a Date.
-    for (const t of ['Int64', 'Float64', 'Utf8', 'Bool',
-      'Decimal<18,2>', 'Null', '']) {
-      assert.equal(temporalKindOf(t), undefined, t);
-    }
   });
 });

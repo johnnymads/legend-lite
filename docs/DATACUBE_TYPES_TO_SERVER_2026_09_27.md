@@ -157,6 +157,16 @@ into it, with its three shortcuts removed.
 - Every `typeof`/`instanceof` on a cell becomes a switch on the column's type.
 - Proof: design step 2's rows (S2a–S2d) under `TZ=Asia/Tokyo` and `TZ=America/New_York` lanes.
 
+**T3 as landed (2026-09-27).** A cell keeps the database's exact form (`src/values.ts`): a DATE its
+calendar text, a TIMESTAMP its stored text to the microsecond (read from Arrow's raw storage, not
+`get()`), a DECIMAL its exact text, an integer a bigint past 2^53; JS `Date` left `Scalar`. The
+engine page reads JSON with exact numbers (`parseExact`) and timestamps as stored. The formatter
+takes the column's compiler type and renders dates in UTC; exports, the tooltip, group keys, spread
+sheets, charts, heatmaps and selection stats read by type; selection sums are exact. A filter value
+from a cell is spelled by its column's type (the bridge until T4's protocol JSON). S2a-S2c green in
+UTC, Tokyo and New York. Left for T4: the filter editor's own date inputs (still JS `Date`, the DST
+and local-clock bugs).
+
 **T4. Typed keys and literals through the compiler.**
 - Group keys, members and filter values stay typed values end to end; the NULL group is a real
   null. Literals are rendered by the compiler's composer (D2). Saved views store literals the

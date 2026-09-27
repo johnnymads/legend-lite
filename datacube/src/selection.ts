@@ -11,6 +11,8 @@
 
 import type { LeafColumn } from './grid/columns.ts';
 import type { ResultTable, Scalar } from './result.ts';
+import { isNumeric } from './types.ts';
+import { asDecimal, exactSum } from './values.ts';
 
 /**
  * The columns a selection's positions name: the grid's VISIBLE leaves, in
@@ -91,7 +93,8 @@ export interface SelectionStats {
   readonly numeric: number;
   /** Cells holding nothing. */
   readonly blank: number;
-  readonly sum: number;
+  /** EXACT: decimal text (values.ts `exactSum`), so a DECIMAL beyond 2^53 sums to its digits. */
+  readonly sum: string;
   readonly average: number;
   readonly min: number;
   readonly max: number;
@@ -118,6 +121,7 @@ export function selectionStats(
   let numeric = 0;
   let blank = 0;
   let sum = 0;
+  const exact: unknown[] = [];
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
@@ -131,11 +135,16 @@ export function selectionStats(
         blank += 1;
         continue;
       }
-      if (typeof v === 'number' && Number.isFinite(v)) {
+      // numeric by the column's COMPILER type: a decimal's value is its exact text and a
+      // big integer a bigint, and `typeof` would skip both (a number where no type is known)
+      const isNumber = isNumeric(column?.type) || typeof v === 'number' || typeof v === 'bigint';
+      const n = typeof v === 'number' ? v : Number(v);
+      if (isNumber && Number.isFinite(n) && asDecimal(v) !== null) {
         numeric += 1;
-        sum += v;
-        if (v < min) min = v;
-        if (v > max) max = v;
+        sum += n;
+        exact.push(v);
+        if (n < min) min = n;
+        if (n > max) max = n;
       }
     }
   }
@@ -144,7 +153,7 @@ export function selectionStats(
     cells,
     numeric,
     blank,
-    sum,
+    sum: exactSum(exact),
     average: numeric > 0 ? sum / numeric : 0,
     min: numeric > 0 ? min : 0,
     max: numeric > 0 ? max : 0,

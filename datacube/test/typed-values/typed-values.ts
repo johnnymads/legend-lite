@@ -22,6 +22,8 @@ import { WasmPlanner } from '../../src/wasm-planner.ts';
 import { inferModel } from '../../src/infer.ts';
 import { sourceColumns } from '../../src/source-columns.ts';
 import { familyOf } from '../../src/types.ts';
+import { toCsv } from '../../src/export.ts';
+import { selectionStats } from '../../src/selection.ts';
 
 const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
 
@@ -32,6 +34,10 @@ Database typed::DB
     (
         region VARCHAR(32), qty INTEGER, big BIGINT, amount DECIMAL(10,2),
         price DOUBLE, day DATE, ts TIMESTAMP, flag BIT
+    )
+    Table BIG
+    (
+        id INTEGER, amount DECIMAL(38,2)
     )
 )
 
@@ -139,6 +145,8 @@ before(async () => {
     ('EMEA', 1, 9007199254740993, 10.25, 1.5, DATE '2024-01-02', TIMESTAMP '2024-01-02 03:04:05.123456', true),
     ('EMEA', 2, 1, 20.50, 2.5, DATE '2024-01-03', TIMESTAMP '2024-01-03 00:00:00', false),
     ('AMER', 3, 2, 30.75, 3.5, DATE '2024-02-01', TIMESTAMP '2024-02-01 12:00:00', true)`, 0);
+  await local.run('CREATE TABLE BIG (id INTEGER, amount DECIMAL(38,2))', 0);
+  await local.run(`INSERT INTO BIG VALUES (1, 12345678901234567.89), (2, 1.01)`, 0);
   planner = new WasmPlanner({ model: MODEL, runtime: 'typed::RT', assetBaseUrl: MODULE_DIR, cache: false });
 });
 
@@ -230,5 +238,59 @@ describe('a source\'s columns come from the compiler', () => {
   it('refuses a declared column the source does not have', async () => {
     await assert.rejects(() => sourceColumns(planner, SOURCE, [{ name: 'nope', kind: 'dimension' }]),
       /the source has no column 'nope'/);
+  });
+});
+
+/** A flat cube over one source, its columns typed by the compiler, opened for real. */
+async function flat(source: string, filter?: CubeSnapshot['filter']) {
+  return openCube({
+    source: { expression: source },
+    columns: await sourceColumns(planner, source),
+    derived: [],
+    rows: [],
+    pivotOn: [],
+    measures: [],
+    sorts: [],
+    ...(filter ? { filter } : {}),
+    epoch: 1,
+  });
+}
+
+/** One column's exported text, row by row: what a CSV carries, unformatted. */
+function exported(view: { rows: ResultTable }, column: string): string[] {
+  const i = view.rows.columns.findIndex((c) => c.name === column);
+  const lines = toCsv({ ...view.rows, columns: [view.rows.columns[i]!] }, { bom: false })
+    .trim().split(/\r\n/).slice(1);
+  return lines.sort();
+}
+
+describe('step 2: exact cells, whatever the time zone (run under TZ lanes)', () => {
+  it('S2a: a DATE exports as its own calendar day, east and west of UTC', async () => {
+    const o = await flat(SOURCE);
+    assert.deepEqual(o.errors, []);
+    assert.deepEqual(exported(o.app.controller.view!, 'day'), ['2024-01-02', '2024-01-03', '2024-02-01']);
+  });
+
+  it('S2b: a TIMESTAMP keeps its microseconds, and a filter from its cell finds exactly its row', async () => {
+    const o = await flat(SOURCE);
+    const view = o.app.controller.view!;
+    assert.ok(exported(view, 'ts').includes('2024-01-02T03:04:05.123456'), exported(view, 'ts').join(' | '));
+    // the right-click menu's "filter by this value": the cell's own value
+    const ts = view.rows.columns.find((c) => c.name === 'ts')!;
+    const at = ts.values.findIndex((v) => v !== null && String(v).includes('03:04:05'));
+    const filtered = await flat(SOURCE, { kind: 'condition', column: 'ts', operator: 'equal',
+      value: ts.values[at] as never });
+    assert.deepEqual(filtered.errors, []);
+    assert.equal(filtered.app.controller.view?.rows.rowCount, 1, 'exactly the row the cell came from');
+  });
+
+  it('S2c: a DECIMAL(38,2) beyond 2^53 exports and sums exactly', async () => {
+    const o = await flat('#>{typed::DB.BIG}#');
+    const view = o.app.controller.view!;
+    assert.deepEqual(exported(view, 'amount'), ['1.01', '12345678901234567.89']);
+    const c = view.columns.leaves.findIndex((l) => l.name === 'amount');
+    const stats = selectionStats(view.rows, view.columns.leaves, {
+      anchor: { row: 0, col: c }, focus: { row: 1, col: c } });
+    assert.equal(String(stats.sum), '12345678901234568.90');
   });
 });

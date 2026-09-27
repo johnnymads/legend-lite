@@ -31,6 +31,7 @@ import {
   type Outline,
   type OutlineDimension,
 } from './state.ts';
+import { numberOf } from '../values.ts';
 
 /** What the mode queries: the cube's source and measures, and its outline. */
 export interface AdHocCube {
@@ -298,7 +299,8 @@ export function assembleGrid(
   const cells = rowTuples.map((row) => columnTuples.map((col) => valueOf(row, col)));
   const o = grid.options;
   const empty = (v: Scalar): boolean => v === null;
-  const zero = (v: Scalar): boolean => v === 0;
+  // zero by value: a decimal's exact text '0.00' is a zero too
+  const zero = (v: Scalar): boolean => numberOf(v) === 0;
   const keepRow = (vals: readonly Scalar[]): boolean =>
     !(o.suppressMissingRows && vals.every(empty))
     && !(o.suppressZeroRows && vals.every((v) => empty(v) || zero(v)) && vals.some(zero));

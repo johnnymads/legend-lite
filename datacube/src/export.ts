@@ -71,7 +71,6 @@ export function escapeField(
 /** Raw scalar as text, with null distinct from the string "null". */
 function rawText(v: Scalar): string {
   if (v === null || v === undefined) return '';
-  if (v instanceof Date) return v.toISOString();
   return String(v);
 }
 
@@ -100,7 +99,7 @@ export function toDelimited(
     const cells = wanted.map((c) => {
       const v = c.values[r] ?? null;
       const text = options.formatted
-        ? options.formatters!.format(v, options.formats?.[c.name])
+        ? options.formatters!.format(v, options.formats?.[c.name], c.type)
         : rawText(v);
       return escapeField(text, delimiter);
     });

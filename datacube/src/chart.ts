@@ -15,8 +15,10 @@
 // re-querying and risking a picture that disagrees with the numbers
 // beside it.
 
-import type { ResultTable, Scalar } from './result.ts';
+import type { ResultTable } from './result.ts';
 import { TREE_COLUMN } from './treeview.ts';
+import { isNumeric } from './types.ts';
+import { numberOf } from './values.ts';
 
 export interface ChartPoint {
   readonly label: string;
@@ -43,9 +45,7 @@ const PALETTE = [
   '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac',
 ];
 
-function isNumeric(v: Scalar): v is number {
-  return typeof v === 'number' && Number.isFinite(v);
-}
+
 
 /**
  * Pick the label and value columns out of a result.
@@ -66,21 +66,20 @@ export function chartData(
   const labelCol =
     byName(options.labelColumn)
     ?? table.columns.find((c) => c.name === TREE_COLUMN)
-    ?? table.columns.find((c) => c.values.some((v) => typeof v === 'string'));
+    ?? table.columns.find((c) => !isNumeric(c.type) && c.values.some((v) => v !== null));
 
   const valueCol =
     byName(options.valueColumn)
-    ?? table.columns.find(
-      (c) => c.name !== labelCol?.name && c.values.some(isNumeric),
-    );
+    // the first NUMERIC column by its compiler type (a decimal's value is its exact text)
+    ?? table.columns.find((c) => c.name !== labelCol?.name && isNumeric(c.type));
 
   if (!valueCol) return [];
 
   const out: ChartPoint[] = [];
   const limit = options.limit ?? 50;
   for (let r = 0; r < table.rowCount && out.length < limit; r++) {
-    const v = valueCol.values[r] ?? null;
-    if (!isNumeric(v)) continue;
+    const v = numberOf(valueCol.values[r] ?? null);
+    if (v === null) continue;
     const raw = labelCol?.values[r] ?? null;
     out.push({ label: raw === null ? '' : String(raw), value: v });
   }

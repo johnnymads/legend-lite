@@ -25,6 +25,7 @@
 
 import type { ColumnFormat, FormatterCache } from './format.ts';
 import type { ResultTable, Scalar } from './result.ts';
+import { isNumeric } from './types.ts';
 
 export interface DocExportOptions {
   readonly title?: string;
@@ -78,11 +79,11 @@ function grid(
       cols.map((c) => {
         const v: Scalar = c.values[r] ?? null;
         const text = options.formatters
-          ? options.formatters.format(v, options.formats?.[c.name])
+          ? options.formatters.format(v, options.formats?.[c.name], c.type)
           : v === null
             ? ''
             : String(v);
-        return { text: clip(text), numeric: typeof v === 'number' };
+        return { text: clip(text), numeric: isNumeric(c.type) };
       }),
     );
   }
