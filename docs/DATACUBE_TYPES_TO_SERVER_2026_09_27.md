@@ -150,6 +150,24 @@ into it, with its three shortcuts removed.
 - Proof: design step 3's rows (S3a–S3c); an upload and a warehouse table of the same file get the
   same model.
 
+**T2 as landed (2026-09-27).** The DuckDB dialect reads its own catalog: `SqlDialect.catalogType`
+(`DuckDb`: DECIMAL/NUMERIC keep precision; STRUCT/LIST/MAP/UNION become SEMISTRUCTURED via
+`to_json`; TIMESTAMPTZ its UTC TIMESTAMP; UBIGINT/HUGEINT DECIMAL(20,0)/(38,0); UTINYINT..UINTEGER
+the next signed width; TIME/UUID/INTERVAL/ENUM/BIT/VARINT text; BLOB and anything unknown refused
+by column). `CatalogModel` writes the Database, the accessor and the conversions, and refuses two
+columns a case apart and a schema/table name the accessor cannot carry (upstream splits
+`#>{db.s.t}#` on dots, unquoted). The tab's module exports it (`databaseFromCatalogOrError`,
+`WasmPlanner.databaseFromCatalog`); `inferModel` only wraps its Database in a connection and
+runtime. An upload applies the conversions at ingest; a warehouse table is read-only, so a column
+that needs one is left out and named in the status. Deleted: `sqlTypeOf`, `isNestedType`,
+`quoteIdent`, the upload's own `to_json` rewrite. Proof: `CatalogModelTest` compiles every DuckDB
+type and reads the compiler's type back; `upload.test` runs the conversions in DuckDB-WASM (a
+TIMESTAMPTZ lands in UTC to the microsecond, UBIGINT's maximum exact, UUID and TIME as text);
+typed-values refuses a BLOB by name (S3c). **S3a is NOT met for a warehouse table:** its STRUCT
+column is left out rather than navigable. Closing it needs either the dialect to navigate a native
+STRUCT/LIST (no conversion at all, which also serves remote databases), or a converting view owned
+by the warehouse; recorded for T9 with the HTTP `schemaExploration` endpoint for server databases.
+
 **T3. Exact cells.**
 - Each reader decodes by the compiler's type, not the engine's: a date is a calendar date, a
   decimal an exact decimal, an integer exact past 2^53, a timestamp keeps its microseconds, TIME

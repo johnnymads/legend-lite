@@ -76,4 +76,13 @@ public interface SqlDialect {
      *  rule and literal spelling. */
     String render(com.legend.sql.SqlDml dml);
 
+    /** A column type as this database's CATALOG spells it, read into what a Pure Database
+     *  declares and the conversion it needs at the source (T2: a store's model comes from the
+     *  database's own catalog, decided inside its dialect). Refused where unprobed; a type the
+     *  dialect cannot declare is refused, naming it -- never guessed as text. */
+    default CatalogType catalogType(String catalogType) {
+        throw new DialectCapability("reading this database's catalog type '" + catalogType
+                + "' is not implemented for " + getClass().getSimpleName());
+    }
+
 }

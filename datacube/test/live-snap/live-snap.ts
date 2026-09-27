@@ -186,7 +186,9 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
   assert.deepEqual(objects.map((o) => `${o.schema}.${o.name}`), ['main.TRADES'],
     'the reader sees exactly what it was granted');
   const trades = objects[0]!;
-  const m = inferModel(trades.columns, { table: trades.name, schema: trades.schema });
+  const m = await inferModel((t) => planner.databaseFromCatalog(t), trades.columns,
+    { table: trades.name, schema: trades.schema, convertible: false });
+  assert.deepEqual(m.excluded, []);
   const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
   const pure = `${m.source}->groupBy(~[region], ~[notional:x|$x.notional:y|$y->sum()])->sort([~region->ascending()])`;
   const snapshot = { ...CASES[0]!.snapshot, source: { expression: m.source } };

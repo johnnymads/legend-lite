@@ -9,7 +9,7 @@ import type { RawTable } from './engine.ts';
 import type { Scalar } from './result.ts';
 import {
   inferModel,
-  isNestedType,
+  type CatalogBuilder,
   type DescribedColumn,
   type InferredModel,
 } from './infer.ts';
@@ -78,6 +78,7 @@ export async function ingestFile(
   db: DuckDbFiles,
   file: { name: string; text(): Promise<string>;
     arrayBuffer(): Promise<ArrayBuffer> },
+  build: CatalogBuilder,
 ): Promise<UploadResult> {
   const format = formatOf(file.name);
   const table = tableNameOf(file.name);
@@ -120,20 +121,19 @@ export async function ingestFile(
   await engine.run(
     `CREATE OR REPLACE TABLE ${qt} AS SELECT * FROM ${reader}`, 0);
 
-  // Nested columns become JSON. legend-lite declares them
-  // SEMISTRUCTURED and navigates them with DuckDB's JSON operators,
-  // which do not apply to a STRUCT or a LIST -- so the table has to
-  // hold what the model says it holds. Parquet carries nested columns
-  // too, which is why this is not JSON-only.
-  let described = await describeTable(engine, qt);
-  const nested = described.filter((c) => isNestedType(c.type));
-  if (nested.length > 0) {
-    const replaced = nested
-      .map((c) => `to_json(${dq(c.name)}) AS ${dq(c.name)}`).join(', ');
+  // The compiler reads DESCRIBE's types (T2) and says which columns the
+  // table must convert to hold what the model declares: a nested STRUCT or
+  // LIST becomes JSON (legend-lite navigates a Variant with DuckDB's JSON
+  // operators), a TIMESTAMPTZ its UTC timestamp, a UBIGINT an exact
+  // DECIMAL(20,0). An upload is ours to rewrite, so it is rewritten here.
+  const inferred = await inferModel(build, await describeTable(engine, qt),
+    { table, convertible: true });
+  if (inferred.conversions.length > 0) {
+    const replaced = inferred.conversions
+      .map((c) => `${c.sql} AS ${dq(c.column)}`).join(', ');
     await engine.run(
       `CREATE OR REPLACE TABLE ${qt} AS SELECT * REPLACE (${replaced}) `
         + `FROM ${qt}`, 0);
-    described = await describeTable(engine, qt);
   }
 
   const counted = await engine.run(
@@ -141,7 +141,7 @@ export async function ingestFile(
   const rowCount = Number(counted.columns[0]?.values[0] ?? 0);
 
   return {
-    ...inferModel(described, { table }),
+    ...inferred,
     table,
     rowCount,
     fileName: file.name,

@@ -13,7 +13,8 @@
 // for rendering, and the two startups genuinely run at once.
 //
 // This worker deliberately contains no planning logic of its own: it
-// forwards to the module's `planOrError`, `relationTypeOrError` and `warmModel` exports and
+// forwards to the module's `planOrError`, `relationTypeOrError`, `databaseFromCatalogOrError`
+// and `warmModel` exports and
 // returns what they say. A second planner is the one thing this whole
 // design exists to avoid.
 
@@ -21,6 +22,7 @@ interface TeavmModule {
   readonly exports: {
     planOrError(model: string, query: string, runtime: string): string;
     relationTypeOrError(model: string, query: string): string;
+    databaseFromCatalogOrError(catalog: string): string;
     warmModel(model: string): number;
   };
 }
@@ -35,7 +37,8 @@ export type Request =
     readonly query: string;
     readonly runtime: string;
   }
-  | { readonly id: number; readonly kind: 'relationType'; readonly model: string; readonly query: string };
+  | { readonly id: number; readonly kind: 'relationType'; readonly model: string; readonly query: string }
+  | { readonly id: number; readonly kind: 'databaseFromCatalog'; readonly catalog: string };
 
 /** What it gets back. `answer` is the export's raw tagged string. */
 export type Response =
@@ -73,7 +76,9 @@ self.onmessage = async (e: MessageEvent<Request & { base?: string }>) => {
       ? (module.exports.warmModel(msg.model), 'OK\n')
       : msg.kind === 'relationType'
         ? module.exports.relationTypeOrError(msg.model, msg.query)
-        : module.exports.planOrError(msg.model, msg.query, msg.runtime);
+        : msg.kind === 'databaseFromCatalog'
+          ? module.exports.databaseFromCatalogOrError(msg.catalog)
+          : module.exports.planOrError(msg.model, msg.query, msg.runtime);
     const ok: Response = { id: msg.id, ok: true, answer };
     self.postMessage(ok);
   } catch (cause) {

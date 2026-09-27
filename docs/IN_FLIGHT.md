@@ -73,6 +73,13 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **types to the compiler, T2 (model from the catalog), pushing** (parser_parity re-pinned 2569 -> 2571: CatalogModelTest's wrapper joined the own corpus).
+  Cross-area: `core/src/main/java/com/legend/sql/dialect/` gains `CatalogType`, `CatalogModel`
+  and `SqlDialect.catalogType` (default refuses; `DuckDb` reads DuckDB's catalog type names into
+  a declared store type plus the conversion the source must apply), with `CatalogModelTest`;
+  `wasm/src/main/java/planner/Wasm.java` gains the export `databaseFromCatalogOrError`. No change
+  to existing dialect behaviour. DataCube's TypeScript type table (`sqlTypeOf`/`isNestedType`)
+  is deleted: uploads and warehouse tables are declared by the compiler.
 - 2026-09-27 warehouse: **move group F (this commit, by `move_classes.py --group F`, user-approved):**
   `com.legend.exec.QueryPlan` and `ResultShape` -> `com.legend.plan` (plan facts on compiler types
   only; in `exec` they made every plan-only client -- the browser planner, the coming `pure/v1`

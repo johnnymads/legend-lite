@@ -54,6 +54,10 @@ _EXTRA_DATA = {
     ], exclude = ["test/fake-engine.ts", "test/strict-reporter.mjs"]),
 }
 
+# the tests that write a model from a table's columns ask the compiler (T2): legend-lite's
+# own WASM module, loaded by test/catalog-builder.ts
+_WASM_TESTS = ["infer", "upload"]
+
 # node:test files run TypeScript directly (--experimental-strip-types), from the
 # package directory (a guardrail test walks src/ relative to it). Two
 # reporters: spec for the log, and strict-reporter.mjs for the EXIT CODE —
@@ -67,10 +71,13 @@ _EXTRA_DATA = {
         ":src",
         "test/fake-engine.ts",
         "test/strict-reporter.mjs",
-    ] + _EXTRA_DATA.get(t[len("test/"):-len(".test.ts")], []),
+    ] + _EXTRA_DATA.get(t[len("test/"):-len(".test.ts")], []) + (
+        ["test/catalog-builder.ts", "//wasm:planner"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
+    ),
     entry_point = t,
     node_options = [
         "--experimental-strip-types",
+    ] + (["--experimental-wasm-exnref"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []) + [
         "--disable-warning=ExperimentalWarning",
         "--test-reporter=spec",
         "--test-reporter-destination=stdout",

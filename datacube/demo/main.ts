@@ -55,7 +55,10 @@ async function inBrowserPlanner(_status: HTMLElement): Promise<Engine> {
     // Only this entry can take an uploaded file: the data lands in
     // the tab's own DuckDB, and the planner it feeds is in the tab
     // too, so the model can change without anything being deployed.
-    setModel: (model, runtime) => planner.useModel(model, runtime),
+    models: {
+      fromCatalog: (table) => planner.databaseFromCatalog(table),
+      use: (model, runtime) => planner.useModel(model, runtime),
+    },
   };
 }
 

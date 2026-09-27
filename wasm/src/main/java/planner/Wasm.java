@@ -146,6 +146,46 @@ public final class Wasm {
     }
 
     /**
+     * A Pure Database from a DuckDB table's CATALOG (T2): the rows {@code DESCRIBE} reports,
+     * read by legend-lite's DuckDB dialect -- the declared types, and the conversions the
+     * source must apply, or the columns left out when it cannot.
+     * {@code {"path", "schema"?, "table", "convertible", "columns": [{"name","type"}]}} in;
+     * {@code "OK\n" + {"text", "accessor", "conversions": [{"column","sql"}], "excluded": [name]}}
+     * or the refusal out, as
+     * {@link #planOrError}'s are folded.
+     */
+    @org.teavm.jso.JSExport
+    public static String databaseFromCatalogOrError(String catalogJson) {
+        try {
+            com.legend.json.Json.Obj in = com.legend.json.Json.parseObject(catalogJson);
+            java.util.List<com.legend.sql.dialect.CatalogModel.Column> columns = new java.util.ArrayList<>();
+            for (com.legend.json.Json.Node n : in.getArr("columns").items()) {
+                com.legend.json.Json.Obj c = (com.legend.json.Json.Obj) n;
+                columns.add(new com.legend.sql.dialect.CatalogModel.Column(c.getString("name"), c.getString("type")));
+            }
+            com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
+                    in.getString("path"), in.getStringOr("schema", null), in.getString("table"), columns,
+                    new com.legend.sql.dialect.DuckDb(), in.getBool("convertible"));
+            java.util.List<java.util.Map<String, Object>> conversions = new java.util.ArrayList<>();
+            for (com.legend.sql.dialect.CatalogModel.Conversion c : db.conversions()) {
+                java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                m.put("column", c.column());
+                m.put("sql", c.sql());
+                conversions.add(m);
+            }
+            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("text", db.text());
+            out.put("accessor", db.accessor());
+            out.put("conversions", conversions);
+            out.put("excluded", db.excluded());
+            return "OK\n" + com.legend.json.Json.toCompact(out);
+        } catch (RuntimeException | StackOverflowError e) {
+            String name = e.getClass().getName();
+            return "ERR\n" + name + "\n" + (e.getMessage() == null ? "" : e.getMessage());
+        }
+    }
+
+    /**
      * Force {@code Prelude}'s static initialiser and nothing else.
      *
      * <p>Cold start is ~550ms against ~10ms warm, and "the first plan

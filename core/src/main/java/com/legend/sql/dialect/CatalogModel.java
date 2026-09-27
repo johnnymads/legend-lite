@@ -1,0 +1,118 @@
+// Copyright 2026 Legend Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+package com.legend.sql.dialect;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * A Pure Database built from a database's own CATALOG (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md,
+ * T2) -- the shape upstream's {@code pure/v1/utilities/database/schemaExploration} builds from
+ * JDBC metadata, here from the catalog rows a caller read ({@code DESCRIBE}, a warehouse's
+ * listing). Each column's type is read by the database's own dialect
+ * ({@link SqlDialect#catalogType}); a column whose value must be converted at the source
+ * comes back with its conversion, for the caller to apply where the source allows it. The
+ * browser's copy of this (a TypeScript type table) is deleted: the compiler decides.
+ */
+public final class CatalogModel {
+
+    private CatalogModel() {
+    }
+
+    /** One catalog column: its name and the type the database reports for it. */
+    public record Column(String name, String catalogType) {
+    }
+
+    /** A column's conversion at the source: SQL over the column, e.g. {@code to_json("items")}. */
+    public record Conversion(String column, String sql) {
+    }
+
+    /**
+     * The Database element's text; the relation accessor that reads the table
+     * ({@code #>{db.schema.table}#}); the conversions its declarations need; and the columns
+     * left out because their source cannot convert them.
+     */
+    public record Database(String text, String accessor, List<Conversion> conversions, List<String> excluded) {
+    }
+
+    /**
+     * {@code ###Relational Database <path> ( [Schema s (] Table t ( col TYPE, ... ) [)] )}.
+     * A column of a type the dialect cannot declare is refused, naming the column; so are two
+     * columns one name apart only by case (the database would not tell them apart either).
+     *
+     * @param convertible whether the source can apply a conversion (an upload rewritten at
+     *                    ingest can; a read-only table cannot). When it cannot, a column that
+     *                    needs one is left out of the Database and named in {@code excluded}.
+     */
+    public static Database database(String path, @com.legend.base.Nullable String schema, String table,
+            List<Column> columns, SqlDialect dialect, boolean convertible) {
+        if (columns.isEmpty()) {
+            throw new IllegalArgumentException("the table '" + table + "' has no columns");
+        }
+        accessorName("schema", schema);
+        accessorName("table", table);
+        List<String> lines = new ArrayList<>();
+        List<Conversion> conversions = new ArrayList<>();
+        List<String> excluded = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (Column c : columns) {
+            if (!seen.add(c.name().toLowerCase(java.util.Locale.ROOT))) {
+                throw new IllegalArgumentException("the table '" + table + "' has two columns named '"
+                        + c.name() + "'");
+            }
+            CatalogType t;
+            try {
+                t = dialect.catalogType(c.catalogType());
+            } catch (DialectCapability e) {
+                throw new DialectCapability("column '" + c.name() + "': " + e.getMessage());
+            }
+            if (t.conversion() != null && !convertible) {
+                excluded.add(c.name());
+                continue;
+            }
+            lines.add(ident(c.name()) + " " + t.declared());
+            if (t.conversion() != null) {
+                conversions.add(new Conversion(c.name(),
+                        t.conversion().replace("%s", sqlIdent(c.name()))));
+            }
+        }
+        if (lines.isEmpty()) {
+            throw new IllegalArgumentException("every column of '" + table
+                    + "' needs a conversion its source cannot apply: " + String.join(", ", excluded));
+        }
+        String tableBlock = "Table " + ident(table) + "\n    (\n        "
+                + String.join(",\n        ", lines) + "\n    )";
+        String body = schema == null ? "    " + tableBlock
+                : "    Schema " + ident(schema) + "\n    (\n        "
+                        + tableBlock.replace("\n", "\n    ") + "\n    )";
+        String accessor = "#>{" + path + "." + (schema == null ? "" : schema + ".") + table + "}#";
+        return new Database("###Relational\nDatabase " + path + "\n(\n" + body + "\n)\n", accessor,
+                List.copyOf(conversions), List.copyOf(excluded));
+    }
+
+    /**
+     * A schema or table name the accessor can carry. Upstream reads {@code #>{db.schema.table}#}
+     * by splitting on {@code .} with no quoting, so only a plain identifier survives it.
+     */
+    private static void accessorName(String what, @com.legend.base.Nullable String name) {
+        if (name != null && !name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            throw new IllegalArgumentException("the " + what + " name '" + name
+                    + "' cannot be read through #>{db." + what + "}#: only a plain identifier can");
+        }
+    }
+
+    /** A name as a Pure Database identifier: bare when it is one, else quoted with the
+     *  lexer's backslash escapes (a doubled quote would end the token). */
+    static String ident(String name) {
+        if (name.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            return name;
+        }
+        return "\"" + name.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    /** A name as a SQL identifier, always quoted, for a conversion's column reference. */
+    private static String sqlIdent(String name) {
+        return "\"" + name.replace("\"", "\"\"") + "\"";
+    }
+}

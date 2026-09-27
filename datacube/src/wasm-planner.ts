@@ -25,6 +25,7 @@
 // it while the user is still looking at an empty grid.
 
 import type { Planner } from './cube.ts';
+import type { CatalogDatabase, CatalogTable } from './infer.ts';
 import { PlanError } from './planner.ts';
 import { relationColumns, type Plan, type PlanColumn } from './relation-type.ts';
 import type { LevelScope } from './serialize.ts';
@@ -35,6 +36,7 @@ interface TeavmModule {
   readonly exports: {
     planOrError(model: string, query: string, runtime: string): string;
     relationTypeOrError(model: string, query: string): string;
+    databaseFromCatalogOrError(catalog: string): string;
     warmModel(model: string): number;
   };
 }
@@ -364,6 +366,21 @@ export class WasmPlanner implements Planner {
     const columns = relationColumns(JSON.parse(decode(answer, pureGrammar)));
     if (useCache) this.#types.set(pureGrammar, columns);
     return columns;
+  }
+
+  /**
+   * A Pure Database for a table, from the rows its CATALOG reports (`DESCRIBE`, a
+   * warehouse's listing), read by legend-lite's DuckDB dialect
+   * (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T2): the declared types, the accessor that
+   * reads it, and the conversions the source must apply -- or, for a source that cannot
+   * convert, the columns left out. The compiler decides every column; nothing here does.
+   */
+  async databaseFromCatalog(table: CatalogTable): Promise<CatalogDatabase> {
+    const catalog = JSON.stringify(table);
+    const answer = this.#useWorker()
+      ? await this.#ask({ kind: 'databaseFromCatalog', catalog })
+      : (await this.#load()).exports.databaseFromCatalogOrError(catalog);
+    return JSON.parse(decode(answer, `the columns of ${table.table}`)) as CatalogDatabase;
   }
 
   /**

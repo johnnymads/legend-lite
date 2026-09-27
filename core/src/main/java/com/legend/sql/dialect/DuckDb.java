@@ -72,6 +72,64 @@ public final class DuckDb extends AnsiSqlRenderer {
         return super.timestampLit(iso);
     }
 
+    /**
+     * A DuckDB catalog type (what {@code DESCRIBE} reports) as a Pure Database declares it
+     * (T2; the design's step 3 table). Every type the DDL can say is declared as itself; a
+     * type it cannot is converted at the source, explicitly -- nested values to JSON (a
+     * Variant), the unsigned and 128-bit integers to exact decimals, a time of day, a UUID,
+     * an interval, an enum and a bit string to their canonical text. A BLOB, and any type
+     * this dialect does not know, is refused: never guessed as text.
+     */
+    @Override
+    public CatalogType catalogType(String catalogType) {
+        String t = catalogType.trim().toUpperCase(java.util.Locale.ROOT);
+        java.util.regex.Matcher dec = java.util.regex.Pattern
+                .compile("^(DECIMAL|NUMERIC)\\s*\\(\\s*(\\d+)\\s*(?:,\\s*(\\d+)\\s*)?\\)$").matcher(t);
+        if (dec.matches()) {
+            return new CatalogType("DECIMAL(" + dec.group(2) + ","
+                    + (dec.group(3) == null ? "0" : dec.group(3)) + ")", null);
+        }
+        java.util.regex.Matcher varchar = java.util.regex.Pattern
+                .compile("^VARCHAR\\s*\\(\\s*(\\d+)\\s*\\)$").matcher(t);
+        if (varchar.matches()) {
+            return new CatalogType("VARCHAR(" + varchar.group(1) + ")", null);
+        }
+        // nested: STRUCT(...), MAP(...), UNION(...), a LIST (T[]) or an ARRAY (T[n])
+        if (t.matches("^(STRUCT|MAP|UNION)\\s*\\(.*") || t.matches(".*\\[\\d*\\]$")) {
+            return new CatalogType("SEMISTRUCTURED", "to_json(%s)");
+        }
+        if (t.startsWith("ENUM(") || t.startsWith("ENUM (")) {
+            return new CatalogType("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
+        }
+        return switch (t) {
+            case "VARCHAR", "TEXT", "STRING", "CHAR", "BPCHAR" -> new CatalogType("VARCHAR(4096)", null);
+            case "BOOLEAN", "BOOL", "LOGICAL" -> new CatalogType("BIT", null);
+            case "TINYINT", "INT1" -> new CatalogType("TINYINT", null);
+            case "SMALLINT", "INT2", "SHORT" -> new CatalogType("SMALLINT", null);
+            case "INTEGER", "INT", "INT4", "SIGNED" -> new CatalogType("INTEGER", null);
+            case "BIGINT", "INT8", "LONG" -> new CatalogType("BIGINT", null);
+            // an unsigned or 128-bit integer holds values its signed width cannot: exact decimals
+            case "UTINYINT" -> new CatalogType("SMALLINT", null);
+            case "USMALLINT" -> new CatalogType("INTEGER", null);
+            case "UINTEGER" -> new CatalogType("BIGINT", null);
+            case "UBIGINT" -> new CatalogType("DECIMAL(20,0)", "CAST(%s AS DECIMAL(20,0))");
+            case "HUGEINT", "INT128" -> new CatalogType("DECIMAL(38,0)", "CAST(%s AS DECIMAL(38,0))");
+            case "FLOAT", "REAL", "FLOAT4" -> new CatalogType("REAL", null);
+            case "DOUBLE", "FLOAT8" -> new CatalogType("DOUBLE", null);
+            case "DATE" -> new CatalogType("DATE", null);
+            case "TIMESTAMP", "DATETIME", "TIMESTAMP_US", "TIMESTAMP_MS", "TIMESTAMP_S", "TIMESTAMP_NS"
+                -> new CatalogType("TIMESTAMP", null);
+            // a zoned timestamp is its UTC instant: read as stored, in UTC
+            case "TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ"
+                -> new CatalogType("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)");
+            case "JSON" -> new CatalogType("SEMISTRUCTURED", null);
+            case "TIME", "TIME WITH TIME ZONE", "TIMETZ", "UUID", "INTERVAL", "BIT", "BITSTRING", "VARINT"
+                -> new CatalogType("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
+            default -> throw new DialectCapability("a column of DuckDB type '" + catalogType
+                    + "' cannot be declared in a Pure Database (a BLOB, or a type this dialect does not read)");
+        };
+    }
+
     public DuckDb() {
         super(Lexicon.DUCKDB, TypeNames.DUCKDB, Spellings.DUCKDB);
     }

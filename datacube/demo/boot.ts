@@ -19,7 +19,7 @@ import type { Planner } from '../src/cube.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { mountRemote } from '../src/remote.ts';
 import { ingestFile } from '../src/upload.ts';
-import { inferModel } from '../src/infer.ts';
+import { inferModel, type CatalogBuilder } from '../src/infer.ts';
 import { pageConfig } from './page-config.ts';
 import {
   listObjects,
@@ -149,7 +149,8 @@ export interface Engine {
   readonly source: string;
   readonly snapTarget: { readonly table: string; readonly expression: string };
   /**
-   * Repoint the planner at a model inferred from an opened file.
+   * Models made in this tab: the compiler's Database for a table's catalog
+   * (T2), and repointing the planner at the model around it.
    *
    * OPTIONAL, and absent is meaningful: the server entry plans
    * against a fixed model on a running legend-lite, where an
@@ -157,7 +158,10 @@ export interface Engine {
    * nothing and the upload control never appears. The capability
    * and the affordance are the same fact.
    */
-  readonly setModel?: (model: string, runtime: string) => void;
+  readonly models?: {
+    readonly fromCatalog: CatalogBuilder;
+    use(model: string, runtime: string): void;
+  };
   /**
    * What the status line should say about this planner.
    *
@@ -312,7 +316,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   performance.mark('dc:data-ready');
   status.textContent = 'starting planner…';
-  const { planner, source, snapTarget, label, setModel } = await engineReady;
+  const { planner, source, snapTarget, label, models } = await engineReady;
   status.textContent = label;
 
   const snapshot: CubeSnapshot = {
@@ -410,11 +414,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       // the same node the planner writes to.
       hostStatus: (slot) => slot.append(status),
       hostMenu: () => [
-        // ONLY IF THE PAGE CAN OPEN FILES. Without `setModel` the
+        // ONLY IF THE PAGE CAN OPEN FILES. Without `models` the
         // bar's controls are inert -- this page's planner compiles a
         // fixed model -- and an entry that opens a panel of dead
         // controls is the dead-button fault one layer up.
-        ...(setModel
+        ...(models
           ? [{ id: 'host.data' as const, label: 'Data\u2026' }]
           : []),
         { id: 'host.query', label: 'Generated Pure & SQL\u2026' },
@@ -509,15 +513,15 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   // OPENING A FILE.
   //
-  // DuckDB reads it and sniffs the schema, `inferModel` writes a Pure
-  // model around what it found, and the cube is rebuilt against that.
+  // DuckDB reads it and sniffs the schema, the compiler declares what it
+  // found and `inferModel` writes a Pure model around that, and the cube is rebuilt against that.
   // Nothing downstream learns the data was uploaded: the planner
   // compiles an ordinary model over an ordinary table, which is why
   // the SQL panel, the tree and the snap plane all keep working
   // without a second code path.
   const uploadBar = document.getElementById('uploadbar');
   if (uploadBar) uploadBar.hidden = true;
-  if (setModel) {
+  if (models) {
     const bar = must('uploadbar');
     const note = must('uploadnote');
     const input = must('uploadfile') as HTMLInputElement;
@@ -563,7 +567,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       );
 
     // Narrowed once: the check above does not reach into a function.
-    const useModel = setModel;
+    const local = models;
 
     // A WAREHOUSE. Sign in (the development sign-in: the warehouse's own
     // users), list what this user may read, and open one: the model comes
@@ -630,8 +634,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         if (!chosen || !session) return;
         void (async () => {
           try {
-            const m = inferModel(chosen.columns, { table: chosen.name, schema: chosen.schema });
-            useModel(m.model, m.runtime);
+            // A warehouse table is read-only: a column the compiler says must be
+            // converted to be declared cannot be, so it is left out, and named.
+            const m = await inferModel(local.fromCatalog, chosen.columns,
+              { table: chosen.name, schema: chosen.schema, convertible: false });
+            local.use(m.model, m.runtime);
             const columns = await sourceColumns(planner, m.source);
             app.dispose();
             app = makeApp(
@@ -658,7 +665,9 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             );
             status.textContent = `live on the warehouse as ${(session as WarehouseSession).principal}`;
             await app.open();
-            say(`${chosen.schema}.${chosen.name}: live on the warehouse as ${(session as WarehouseSession).principal}`);
+            say(`${chosen.schema}.${chosen.name}: live on the warehouse as ${(session as WarehouseSession).principal}`
+              + (m.excluded.length === 0 ? ''
+                : ` — left out, as this tab cannot convert them on a read-only table: ${m.excluded.join(', ')}`));
           } catch (e) {
             say(e instanceof Error ? e.message : String(e), true);
           }
@@ -669,8 +678,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       note.classList.remove('bad');
       note.textContent = `reading ${file.name}…`;
       try {
-        const opened = await ingestFile(engine, db, file);
-        useModel(opened.model, opened.runtime);
+        const opened = await ingestFile(engine, db, file, local.fromCatalog);
+        local.use(opened.model, opened.runtime);
         const columns = await sourceColumns(planner, opened.source);
         // A freshly opened file groups by nothing: show the rows as
         // they are and let the user build the cube up. Guessing at

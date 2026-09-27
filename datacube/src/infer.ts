@@ -2,9 +2,11 @@
 //
 // This is what lets someone open the page and drop a file in, rather
 // than hand-authoring a Pure model that happens to match their
-// columns. DuckDB sniffs the types; this turns what it found into
-// the `###Relational Database` + `###Connection` + `###Runtime` that
-// the planner needs. The cube's COLUMNS are not decided here: the
+// columns. DuckDB sniffs the types and reports them (`DESCRIBE`, or a
+// warehouse's catalog); legend-lite's DuckDB dialect reads those into the
+// `###Relational Database` (T2: `WasmPlanner.databaseFromCatalog`, the
+// compiler's own reading -- this file holds no type table); this wraps it
+// in the `###Connection` + `###Runtime` the planner needs. The cube's COLUMNS are not decided here: the
 // compiler types the source once the model is in (`sourceColumns`,
 // docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md).
 //
@@ -30,79 +32,44 @@ export interface DescribedColumn {
   readonly type: string;
 }
 
+/** A table's catalog, as the compiler's builder takes it. */
+export interface CatalogTable {
+  /** The Database element's path, e.g. `local::DB`. */
+  readonly path: string;
+  readonly schema?: string;
+  readonly table: string;
+  readonly columns: readonly DescribedColumn[];
+  /**
+   * Whether the source can apply a conversion: an upload, rewritten at ingest, can; a
+   * read-only warehouse table cannot, and a column that needs one is left out.
+   */
+  readonly convertible: boolean;
+}
+
+/** The compiler's Database for a catalog. */
+export interface CatalogDatabase {
+  /** `###Relational Database ...`, every column declared by the dialect. */
+  readonly text: string;
+  /** The relation expression that reads the table: `#>{local::DB.t}#`. */
+  readonly accessor: string;
+  /** SQL over a column the source must apply so it holds its declared type. */
+  readonly conversions: readonly { readonly column: string; readonly sql: string }[];
+  /** Columns left out because the source cannot convert them. */
+  readonly excluded: readonly string[];
+}
+
+/** The compiler's builder: `WasmPlanner.databaseFromCatalog`. */
+export type CatalogBuilder = (table: CatalogTable) => Promise<CatalogDatabase>;
+
 export interface InferredModel {
   /** Pure source: database, connection, runtime. */
   readonly model: string;
   readonly runtime: string;
   /** The relation expression the cube reads from. */
   readonly source: string;
-}
-
-/**
- * A DuckDB type to the SQL type a legend-lite Database declares.
- *
- * Deliberately conservative: an unrecognised type becomes VARCHAR,
- * because a column the planner can only group by is far less harmful
- * than one whose arithmetic silently means something else. The list
- * covers what DuckDB's CSV, Parquet and JSON readers actually produce.
- */
-export function sqlTypeOf(duckdbType: string): string {
-  const t = duckdbType.trim().toUpperCase();
-  // DECIMAL(p,s) and VARCHAR(n) carry their own precision; keep it.
-  if (/^DECIMAL\s*\(/.test(t) || /^NUMERIC\s*\(/.test(t)) {
-    return t.replace(/^NUMERIC/, 'DECIMAL');
-  }
-  switch (t) {
-    case 'BOOLEAN': case 'BOOL': return 'BIT';
-    case 'TINYINT': case 'SMALLINT': case 'INTEGER': case 'INT':
-      return 'INTEGER';
-    case 'BIGINT': case 'HUGEINT': case 'UBIGINT': return 'BIGINT';
-    case 'FLOAT': case 'REAL': case 'DOUBLE': return 'DOUBLE';
-    case 'DECIMAL': case 'NUMERIC': return 'DECIMAL(38,6)';
-    case 'DATE': return 'DATE';
-    case 'TIMESTAMP': case 'TIMESTAMP WITH TIME ZONE': case 'TIMESTAMPTZ':
-      return 'TIMESTAMP';
-    // Semi-structured: a Variant to the planner. STRUCT, LIST and MAP
-    // columns are converted to JSON as they are loaded (`upload.ts`),
-    // so by the time this runs they are JSON too.
-    case 'JSON': return 'SEMISTRUCTURED';
-    default:
-      return isNestedType(t) ? 'SEMISTRUCTURED' : 'VARCHAR(4096)';
-  }
-}
-
-/**
- * Whether a DuckDB type is nested: a STRUCT, a LIST (`INTEGER[]`, or
- * a fixed-size `INTEGER[3]`), a MAP or a UNION.
- *
- * legend-lite has no column type for these -- a Database declares
- * `SEMISTRUCTURED` and the planner reads it as Variant, navigating it
- * with DuckDB's JSON operators. Those operators need JSON, so such a
- * column is converted with `to_json` when it is loaded rather than
- * declared as something it is not.
- */
-export function isNestedType(duckdbType: string): boolean {
-  const t = duckdbType.trim().toUpperCase();
-  return /^(STRUCT|MAP|UNION)\s*\(/.test(t) || /\[\d*\]$/.test(t);
-}
-
-/**
- * Quote an identifier for a Pure Database declaration.
- *
- * A CSV header is arbitrary text -- spaces, a comma, a SQL keyword,
- * a leading digit, a quote character -- and it arrives from outside.
- * Anything that is not a plain identifier is quoted and escaped so
- * that the header stays a NAME and cannot become grammar.
- */
-export function quoteIdent(name: string): string {
-  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return name;
-  // BACKSLASH, not a doubled quote. The lexer's escape inside a
-  // quoted identifier is the backslash, and it terminates the token
-  // at the first unescaped `"` -- so `"a""b"` lexes as `"a"` then
-  // `"b"` and breaks the whole Database declaration. Escape the
-  // backslash first, or a name ending in one would escape the
-  // closing quote.
-  return `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  /** What the source must apply, and what was left out (see `CatalogDatabase`). */
+  readonly conversions: CatalogDatabase['conversions'];
+  readonly excluded: CatalogDatabase['excluded'];
 }
 
 export interface InferOptions {
@@ -117,63 +84,29 @@ export interface InferOptions {
   readonly schema?: string;
   /** Package for the generated elements. Must be a valid Pure path. */
   readonly pkg?: string;
+  /** See `CatalogTable.convertible`. */
+  readonly convertible: boolean;
 }
 
 /**
- * Turn `DESCRIBE`'s answer into a model the planner can compile.
- *
- * Throws on an empty schema rather than emitting a Database with no
- * columns: the planner's refusal for that is about a malformed model,
- * which is a confusing thing to show someone who just picked a file.
+ * Turn a table's catalog into a model the planner can compile: the compiler's Database,
+ * wrapped in a DuckDB connection and a runtime.
  */
-export function inferModel(
+export async function inferModel(
+  build: CatalogBuilder,
   described: readonly DescribedColumn[],
   options: InferOptions,
-): InferredModel {
-  if (described.length === 0) {
-    throw new Error('the file has no columns — is it empty, '
-      + 'or missing its header row?');
-  }
-  const seen = new Set<string>();
-  for (const c of described) {
-    const key = c.name.toLowerCase();
-    if (seen.has(key)) {
-      // DuckDB will have disambiguated already; if one still slips
-      // through, two columns of the same name make every reference
-      // to it ambiguous, and the planner's error would not explain
-      // which file caused it.
-      throw new Error(`the file has two columns named '${c.name}'`);
-    }
-    seen.add(key);
-  }
-
+): Promise<InferredModel> {
   const pkg = options.pkg ?? 'local';
-  const table = options.table;
-  const schema = options.schema;
+  const db = await build({
+    path: `${pkg}::DB`,
+    ...(options.schema === undefined ? {} : { schema: options.schema }),
+    table: options.table,
+    columns: described,
+    convertible: options.convertible,
+  });
 
-  const cols = described.map((c) => ({ name: c.name, sql: sqlTypeOf(c.type) }));
-
-  const columnLines = cols
-    .map((c) => `        ${quoteIdent(c.name)} ${c.sql}`)
-    .join(',\n');
-
-  const tableBlock = `Table ${quoteIdent(table)}
-    (
-${columnLines}
-    )`;
-  const body = schema
-    ? `    Schema ${quoteIdent(schema)}
-    (
-        ${tableBlock.replace(/\n/g, '\n    ')}
-    )`
-    : `    ${tableBlock}`;
-
-  const model = `###Relational
-Database ${pkg}::DB
-(
-${body}
-)
-
+  const model = `${db.text}
 ###Connection
 RelationalDatabaseConnection ${pkg}::Conn
 {
@@ -196,8 +129,8 @@ Runtime ${pkg}::RT
   return {
     model,
     runtime: `${pkg}::RT`,
-    source: schema
-      ? `#>{${pkg}::DB.${quoteIdent(schema)}.${quoteIdent(table)}}#`
-      : `#>{${pkg}::DB.${quoteIdent(table)}}#`,
+    source: db.accessor,
+    conversions: db.conversions,
+    excluded: db.excluded,
   };
 }

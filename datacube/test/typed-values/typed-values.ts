@@ -209,16 +209,17 @@ describe('step 1: types from the compiler', () => {
 
 describe('a source\'s columns come from the compiler', () => {
   it('an inferred model of every DuckDB type compiles, and the compiler types each column', async () => {
-    // inferModel only writes the model; this compiles it for real (the check the regex-read
-    // keyword list used to approximate) and reads the types the compiler gives back.
+    // The compiler declares each column (T2: DuckDB's dialect reads DESCRIBE's type); this
+    // compiles the model for real and reads the types the compiler gives back.
     const described = [
       ['s', 'VARCHAR'], ['big', 'BIGINT'], ['huge', 'HUGEINT'], ['ubig', 'UBIGINT'], ['i', 'INTEGER'],
       ['ti', 'TINYINT'], ['si', 'SMALLINT'], ['d', 'DOUBLE'], ['f', 'FLOAT'], ['r', 'REAL'],
       ['b', 'BOOLEAN'], ['day', 'DATE'], ['ts', 'TIMESTAMP'], ['tstz', 'TIMESTAMPTZ'],
-      ['dec', 'DECIMAL(9,2)'], ['num', 'NUMERIC(18,4)'], ['blob', 'BLOB'], ['uuid', 'UUID'],
+      ['dec', 'DECIMAL(9,2)'], ['num', 'NUMERIC(18,4)'], ['uuid', 'UUID'],
       ['iv', 'INTERVAL'], ['nested', 'STRUCT(a INTEGER)'], ['j', 'JSON'],
     ].map(([name, type]) => ({ name: name as string, type: type as string }));
-    const m = inferModel(described, { table: 'every_type' });
+    const m = await inferModel((t) => planner.databaseFromCatalog(t), described,
+      { table: 'every_type', convertible: true });
     const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
     const columns = await sourceColumns(own, m.source, [{ name: 'big', kind: 'dimension' }]);
     const family = Object.fromEntries(columns.map((c) => [c.name, familyOf(c.type)]));
@@ -229,10 +230,16 @@ describe('a source\'s columns come from the compiler', () => {
     assert.equal(family.b, 'boolean');
     assert.equal(family.day, 'temporal');
     assert.equal(family.ts, 'temporal');
+    assert.equal(family.tstz, 'temporal');
     assert.equal(family.nested, 'variant');
     assert.equal(family.j, 'variant');
     assert.equal(family.s, 'text');
     assert.equal(columns.find((c) => c.name === 'big')?.kind, 'dimension', 'the declared kind is kept');
+  });
+
+  it('a type the dialect cannot declare is refused, naming the column', async () => {
+    await assert.rejects(inferModel((t) => planner.databaseFromCatalog(t), [{ name: 'payload', type: 'BLOB' }],
+      { table: 'blobs', convertible: true }), /payload.*BLOB/s);
   });
 
   it('refuses a declared column the source does not have', async () => {

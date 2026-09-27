@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { csvCell, SAMPLE_COLUMNS, sampleCsv } from '../src/samples.ts';
-import { inferModel } from '../src/infer.ts';
 
 describe('csvCell', () => {
   it('leaves an ordinary value alone', () => {
@@ -64,27 +63,6 @@ describe('sampleCsv', () => {
       }
       assert.equal(fields, SAMPLE_COLUMNS.length, `line ${i}: ${line}`);
     }
-  });
-
-  it('covers every branch the schema inference has', () => {
-    // A sample that only had strings and doubles would let the
-    // interesting half of inferModel rot untested in practice.
-    const described = [
-      { name: 'trade_id', type: 'BIGINT' },
-      { name: 'trade_date', type: 'DATE' },
-      { name: 'booked_at', type: 'TIMESTAMP' },
-      { name: 'region', type: 'VARCHAR' },
-      { name: 'year', type: 'BIGINT' },
-      { name: 'notional', type: 'DOUBLE' },
-      { name: 'settled', type: 'BOOLEAN' },
-    ];
-    // the model declares each column's SQL type; the COMPILER types it (typed-values.ts)
-    const m = inferModel(described, { table: 'sample_trades' });
-    assert.match(m.model, /trade_date DATE/);
-    assert.match(m.model, /booked_at TIMESTAMP/);
-    assert.match(m.model, /settled BIT/);
-    assert.match(m.model, /notional DOUBLE/);
-    assert.match(m.model, /trade_id BIGINT/);
   });
 
   it('scales to a size worth playing with', () => {
