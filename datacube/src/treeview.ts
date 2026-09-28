@@ -13,11 +13,11 @@
 
 import type { EpochGuard } from './epoch.ts';
 import type { QueryRunner } from './runner.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { childAggregateLambda, levelLambda, type Parsed } from './query.ts';
 import {
   NULL_GROUP,
-  childAggregateQuery,
   detailSnapshot,
-  serialize,
   type LevelScope,
   type PivotFacts,
 } from './serialize.ts';
@@ -70,7 +70,7 @@ export interface LevelData {
    * Optional because a level assembled by hand in a test has no
    * query behind it, and `assemble` does not read them.
    */
-  readonly pure?: string;
+  readonly query?: Lambda;
   readonly sql?: string;
 }
 
@@ -153,6 +153,8 @@ export async function fetchTree(
      * that its rows answer its query.
      */
     readonly runner: QueryRunner;
+    /** The snapshot's source and calculated columns, parsed (query.ts `parseSnapshot`). */
+    readonly parsed: Parsed;
     readonly guard: EpochGuard;
     readonly epoch: number;
     readonly assemble?: AssembleOptions;
@@ -194,9 +196,9 @@ export async function fetchTree(
       const scoped = detail
         ? { level: target.rows.length, parent: [], limit: maxRows + 1 }
         : { ...request, limit: maxRows + 1 };
-      const grammar = serialize(target, scoped, deps.pivot);
+      const query = levelLambda(target, deps.parsed, scoped, deps.pivot);
       const { rows: full, sql } = await deps.runner.run(
-        grammar, { ...target, epoch: deps.epoch }, scoped, deps.signal,
+        query, { ...target, epoch: deps.epoch }, scoped, deps.signal,
       );
       const truncated = full.rowCount > maxRows;
       const capped = truncated ? takeRows(full, maxRows) : full;
@@ -209,7 +211,7 @@ export async function fetchTree(
         table,
         paths: pathsOf(request, table, depth),
         truncated,
-        pure: grammar,
+        query,
         sql,
       });
       // A superseded interaction should stop fetching the rest of the
@@ -248,14 +250,15 @@ export async function withChildAggregates(
   paths: readonly RowPath[],
   deps: {
     readonly runner: QueryRunner;
+    readonly parsed: Parsed;
     readonly snapshot: CubeSnapshot;
     readonly signal?: AbortSignal;
   },
 ): Promise<ResultTable> {
   const scope: LevelScope = { level: request.level, parent: request.parent };
-  const query = childAggregateQuery(snapshot, scope);
+  const query = childAggregateLambda(snapshot, deps.parsed, scope);
   if (query === null || table.rowCount === 0) return table;
-  const { rows: found } = await deps.runner.run(query.pure, deps.snapshot, scope, deps.signal);
+  const { rows: found } = await deps.runner.run(query.query, deps.snapshot, scope, deps.signal);
   const level = request.level;
   const at: number[] = [];
   if (level === 0) {

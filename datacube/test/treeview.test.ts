@@ -17,6 +17,7 @@ import {
 } from '../src/treeview.ts';
 import { EpochGuard } from '../src/epoch.ts';
 import type { QueryRunner } from '../src/runner.ts';
+import { liteParse, liteParsed, litePrint } from './lite-compiler.ts';
 import { NULL_GROUP, serialize } from '../src/serialize.ts';
 
 const SNAPSHOT: CubeSnapshot = {
@@ -585,7 +586,8 @@ describe('detail rows under the deepest group', () => {
     const sent: string[] = [];
     const runner: QueryRunner = {
       name: 'stub',
-      async run(pure) {
+      async run(query) {
+        const pure = await litePrint(query);
         sent.push(pure);
         const rows = pure.includes('groupBy')
           ? table([
@@ -603,9 +605,11 @@ describe('detail rows under the deepest group', () => {
       },
       async compile() {},
       async relationType() { return []; },
+      parse: liteParse,
+      print: litePrint,
     };
     const view = await fetchTree(CUBE, TreeState.empty().expand(['EMEA']), {
-      runner, guard: new EpochGuard(), epoch: 0,
+      runner, parsed: await liteParsed(CUBE), guard: new EpochGuard(), epoch: 0,
     });
     const detail = sent.find((q) => !q.includes('groupBy'));
     assert.ok(detail, `no detail query among ${sent.join(' | ')}`);
@@ -650,8 +654,8 @@ describe('opening a group under a column pivot', () => {
   function runner(sent: string[]): QueryRunner {
     return {
       name: 'stub',
-      async run(pure, snapshot) {
-        sent.push(pure);
+      async run(query, snapshot) {
+        sent.push(await litePrint(query));
         const keys = snapshot.rows.map((name) => ({
           name, values: [name === 'segment' ? 'S' : 'Acme'] }));
         return {
@@ -661,13 +665,15 @@ describe('opening a group under a column pivot', () => {
       },
       async compile() {},
       async relationType() { return []; },
+      parse: liteParse,
+      print: litePrint,
     };
   }
 
   it('opens the detail rows with the cube\'s pivot columns, in one groupBy', async () => {
     const sent: string[] = [];
     await fetchTree(PIVOTED, TreeState.empty().expand(['Acme']), {
-      runner: runner(sent), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
+      runner: runner(sent), parsed: await liteParsed(PIVOTED), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
     });
     const detail = sent.find((q) => q.includes("$x.customer == 'Acme'"));
     assert.ok(detail, sent.join(' | '));
@@ -681,7 +687,7 @@ describe('opening a group under a column pivot', () => {
     const sent: string[] = [];
     const twoLevels = { ...PIVOTED, rows: ['segment', 'customer'] };
     await fetchTree(twoLevels, TreeState.empty().expand(['S']), {
-      runner: runner(sent), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
+      runner: runner(sent), parsed: await liteParsed(twoLevels), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
     });
     const child = sent.filter((q) => q.includes("$x.segment == 'S'"));
     assert.equal(child.some((q) => /limit\(0\)/.test(q)), false, child.join(' | '));

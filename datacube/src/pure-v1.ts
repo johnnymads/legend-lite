@@ -5,10 +5,13 @@
 // same requests go to either server and only the base URL differs. Two
 // callers, one transport:
 //
-//   - `UpstreamPlanner` (planner.ts): E1 then E9, `generatePlan`, and the
-//     tab runs the plan's SQL -- upstream's cached path;
-//   - `LegendEngineExecutor` (engine-remote.ts): E1 then E8, `execute`,
-//     and the server runs it.
+//   - `UpstreamPlanner` (planner.ts): E9, `generatePlan`, and the tab runs the plan's SQL --
+//     upstream's cached path;
+//   - `LegendEngineExecutor` (engine-remote.ts): E8, `execute`, and the server runs it.
+//
+// The cube's queries travel as protocol JSON, built as trees (query.ts, pure-protocol): no E1
+// on their way. Pure text crosses only at the human edges -- E1 parses what a person typed, E4
+// prints a query for a person to read (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T4b).
 //
 // Both type a cube's columns before its first query through E5,
 // `lambdaRelationType` (`relationType` below each).
@@ -19,7 +22,18 @@
 // the query (`->from(runtime)`), as it does in every relation query
 // upstream has.
 
-import { parseExact } from './values.ts';
+import { element, fn, lambda, readLambda, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
+import { parseExact as parseExactValues } from './values.ts';
+
+/** A server's JSON answer with its numbers exact (values.ts): a SyntaxError names the answer. */
+function parseExact(raw: string): unknown {
+  try {
+    return parseExactValues(raw);
+  } catch (e) {
+    if (e instanceof SyntaxError) throw new Error(`the server's answer was not JSON: ${raw.slice(0, 200)}`);
+    throw e;
+  }
+}
 
 export interface PureV1Options {
   /** e.g. `http://127.0.0.1:6300` (legend-engine) or `http://localhost:8080` (legend-lite). */
@@ -32,8 +46,14 @@ export interface PureV1Options {
   readonly fetch?: typeof fetch;
 }
 
-/** How a caller names a failure: its own error class, carrying the query. */
-export type Failure = (message: string, pure: string) => Error;
+/**
+ * How a caller names a failure: its own error class, carrying what was asked -- the query (a
+ * tree), or, for a parse, the text.
+ */
+export type Failure = (message: string, subject: Lambda | string) => Error;
+
+/** E4's `renderStyle`: PRETTY across lines (upstream's default for a person), STANDARD on one. */
+export type PrintStyle = 'PRETTY' | 'STANDARD';
 
 export class PureV1Client {
   readonly #options: PureV1Options;
@@ -50,43 +70,53 @@ export class PureV1Client {
     return this.#options.baseUrl.replace(/\/$/, '');
   }
 
-  /** The query as the server reads it: the cube's grammar from the runtime. */
-  query(pureGrammar: string): string {
-    return `${pureGrammar}->from(${this.#options.runtime})`;
+  /** The query as the server runs it: its relation read from the runtime, `->from(runtime)`. */
+  fromRuntime(query: Lambda): Lambda {
+    const body = query.body[0];
+    if (query.body.length !== 1 || body === undefined || query.parameters.length > 0) {
+      throw this.#fail('a cube query is one relation expression with no parameters', query);
+    }
+    return lambda([], fn('from', body, element(this.#options.runtime)));
   }
 
-  /** E1 `grammar/grammarToJson/lambda`: the query's text to its lambda JSON. */
-  lambda(pure: string, signal?: AbortSignal): Promise<unknown> {
-    return this.#post('/grammar/grammarToJson/lambda', pure, pure, signal, true);
+  /** E1 `grammar/grammarToJson/lambda`: what a person typed, as its lambda. */
+  async parse(text: string, signal?: AbortSignal): Promise<Lambda> {
+    const raw = await this.#post('/grammar/grammarToJson/lambda?returnSourceInformation=false', text, text, signal, 'text');
+    return readLambda(raw);
   }
 
-  /** E5 `compilation/lambdaRelationType`: the compiler's type of a lambda's result. */
-  lambdaRelationType(lambda: unknown, pure: string, signal?: AbortSignal): Promise<unknown> {
-    return this.#post('/compilation/lambdaRelationType', {
-      lambda,
+  /** E4 `grammar/jsonToGrammar/lambda`: a query as Pure text, for a person to read. */
+  print(query: Lambda, style: PrintStyle = 'PRETTY', signal?: AbortSignal): Promise<string> {
+    return this.#post(`/grammar/jsonToGrammar/lambda?renderStyle=${style}`, query, query, signal, 'json');
+  }
+
+  /** E5 `compilation/lambdaRelationType`: the compiler's type of a query's result. */
+  async lambdaRelationType(query: Lambda, signal?: AbortSignal): Promise<unknown> {
+    return parseExact(await this.#post('/compilation/lambdaRelationType', {
+      lambda: query,
       model: { _type: 'text', code: this.#options.model },
-    }, pure, signal);
+    }, query, signal, 'json'));
   }
 
-  /** E9 `execution/generatePlan`: the execution plan for a lambda. */
-  generatePlan(lambda: unknown, pure: string, signal?: AbortSignal): Promise<unknown> {
-    return this.#post('/execution/generatePlan', this.#input(lambda, {}), pure, signal);
+  /** E9 `execution/generatePlan`: the execution plan for a query. */
+  async generatePlan(query: Lambda, signal?: AbortSignal): Promise<unknown> {
+    return parseExact(await this.#post('/execution/generatePlan', this.#input(this.fromRuntime(query), {}), query, signal, 'json'));
   }
 
-  /** E8 `execution/execute`: the rows for a lambda, run by the server. */
-  execute(lambda: unknown, pure: string, signal?: AbortSignal): Promise<unknown> {
-    return this.#post('/execution/execute', this.#input(lambda, {
+  /** E8 `execution/execute`: the rows for a query, run by the server. */
+  async execute(query: Lambda, signal?: AbortSignal): Promise<unknown> {
+    return parseExact(await this.#post('/execution/execute', this.#input(this.fromRuntime(query), {
       queryTimeOutInSeconds: 60,
       enableConstraints: true,
-    }), pure, signal);
+    }), query, signal, 'json'));
   }
 
-  #input(lambda: unknown, context: object): object {
+  #input(query: Lambda, context: object): object {
     return {
       // vX_X_X carries the protocol models production versions lack
       // -- DuckDB's among them, which is upstream's reason too.
       clientVersion: 'vX_X_X',
-      function: lambda,
+      function: query,
       model: { _type: 'text', code: this.#options.model },
       // REQUIRED. Without it legend-engine answers 500 with a
       // NullPointerException out of `processExecutionContext` rather
@@ -95,20 +125,25 @@ export class PureV1Client {
     };
   }
 
+  /**
+   * One call; the answer's raw text. A request carrying a query is written with the protocol
+   * library's exact JSON (a decimal's digits and an integer past 2^53 kept; JSON.stringify would
+   * refuse or round them).
+   */
   async #post(
     path: string,
     body: unknown,
-    pure: string,
+    subject: Lambda | string,
     signal: AbortSignal | undefined,
-    text = false,
-  ): Promise<unknown> {
+    as: 'text' | 'json',
+  ): Promise<string> {
     const url = `${this.baseUrl}/api/pure/v1${path}`;
     let response: Response;
     try {
       response = await this.#fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': text ? 'text/plain' : 'application/json' },
-        body: text ? (body as string) : JSON.stringify(body),
+        headers: { 'Content-Type': as === 'text' ? 'text/plain' : 'application/json' },
+        body: as === 'text' ? (body as string) : toJson(body),
         ...(signal ? { signal } : {}),
       });
     } catch (cause) {
@@ -116,21 +151,13 @@ export class PureV1Client {
       // mattering, not the server failing. Report it as what it is, or
       // telemetry reads a responsive grid as an outage.
       if (signal?.aborted) throw signal.reason ?? cause;
-      throw this.#fail(`could not reach the server at ${url}: ${String(cause)}`, pure);
+      throw this.#fail(`could not reach the server at ${url}: ${String(cause)}`, subject);
     }
     const raw = await response.text();
     if (!response.ok) {
-      throw this.#fail(serverMessage(raw) ?? `the server returned ${response.status}`, pure);
+      throw this.#fail(serverMessage(raw) ?? `the server returned ${response.status}`, subject);
     }
-    try {
-      // numbers exact: a result's big integers and decimals keep every digit (values.ts)
-      return parseExact(raw);
-    } catch (e) {
-      if (e instanceof SyntaxError) {
-        throw this.#fail(`the server's answer was not JSON: ${raw.slice(0, 200)}`, pure);
-      }
-      throw e;
-    }
+    return raw;
   }
 }
 

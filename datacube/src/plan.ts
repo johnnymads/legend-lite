@@ -15,14 +15,13 @@
 
 import type { ResultTable } from './result.ts';
 import type { QueryRunner } from './runner.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { levelLambda, pivotValuesLambda, sourceWithDerived, type Parsed } from './query.ts';
 import {
   MAX_PIVOT_VALUES,
   effectivePivotOn,
   pinnedPivotFacts,
   pivotColumns,
-  derivedExtend,
-  pivotValuesQuery,
-  serialize,
   type LevelScope,
   type PivotColumn,
   type PivotFacts,
@@ -52,11 +51,10 @@ export interface SchemaChange {
 export async function typeColumns(
   snapshot: CubeSnapshot,
   runner: QueryRunner,
+  parsed: Parsed,
   signal?: AbortSignal,
 ): Promise<{ readonly snapshot: CubeSnapshot; readonly changes: readonly SchemaChange[] }> {
-  const grammar = [snapshot.source.expression, ...snapshot.derived.map((d) => derivedExtend(d))]
-    .join('->');
-  const typed = await runner.relationType(grammar, signal);
+  const typed = await runner.relationType(sourceWithDerived(snapshot, parsed).lambda(), signal);
   if (typed.length === 0) return { snapshot, changes: [] };
   const types = new Map(typed.map((c) => [c.name, c.type]));
   const changes: SchemaChange[] = [];
@@ -84,7 +82,7 @@ export interface PivotPlan {
   /** Every column the pivot makes, cells then Totals, with what each IS. */
   readonly columns: readonly PivotColumn[];
   /** The values query and its SQL; null when the values were pinned. */
-  readonly pure: string | null;
+  readonly query: Lambda | null;
   readonly sql: string | null;
 }
 
@@ -99,18 +97,19 @@ export interface PivotPlan {
 export async function planPivot(
   snapshot: CubeSnapshot,
   runner: QueryRunner,
+  parsed: Parsed,
   signal?: AbortSignal,
 ): Promise<PivotPlan | undefined> {
   if (effectivePivotOn(snapshot).length === 0) return undefined;
   const pinned = pinnedPivotFacts(snapshot);
   if (pinned) {
-    return { facts: pinned, columns: pivotColumns(snapshot, pinned), pure: null, sql: null };
+    return { facts: pinned, columns: pivotColumns(snapshot, pinned), query: null, sql: null };
   }
-  const pure = pivotValuesQuery(snapshot);
-  if (pure === null) throw new Error('a pivoted cube has no values query');
-  const { rows, sql } = await runner.run(pure, snapshot, undefined, signal);
+  const query = pivotValuesLambda(snapshot, parsed);
+  if (query === null) throw new Error('a pivoted cube has no values query');
+  const { rows, sql } = await runner.run(query, snapshot, undefined, signal);
   const facts = pivotFacts(rows, snapshot);
-  return { facts, columns: pivotColumns(snapshot, facts), pure, sql };
+  return { facts, columns: pivotColumns(snapshot, facts), query, sql };
 }
 
 /**
@@ -140,14 +139,15 @@ export function pivotFacts(rows: ResultTable, snapshot: CubeSnapshot): PivotFact
  * verification harnesses): step 1 through `runValues` when the cube
  * pivots, then the level written with its answer.
  */
-export async function serializeWithValues(
+export async function levelWithValues(
   snapshot: CubeSnapshot,
+  parsed: Parsed,
   scope: LevelScope | undefined,
-  runValues: (pure: string) => Promise<ResultTable>,
-): Promise<string> {
-  if (effectivePivotOn(snapshot).length === 0) return serialize(snapshot, scope);
+  runValues: (query: Lambda) => Promise<ResultTable>,
+): Promise<Lambda> {
+  if (effectivePivotOn(snapshot).length === 0) return levelLambda(snapshot, parsed, scope);
   const pinned = pinnedPivotFacts(snapshot);
-  const values = pivotValuesQuery(snapshot);
+  const values = pivotValuesLambda(snapshot, parsed);
   const facts = pinned ?? (values === null ? { tuples: [] } : pivotFacts(await runValues(values), snapshot));
-  return serialize(snapshot, scope, facts);
+  return levelLambda(snapshot, parsed, scope, facts);
 }

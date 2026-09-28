@@ -17,7 +17,6 @@ import type { ResultColumn, ResultTable, Scalar } from '../result.ts';
 import {
   memberConditions,
   NULL_GROUP,
-  serialize,
   type LevelScope,
 } from '../serialize.ts';
 import type { CubeSnapshot, FilterNode, Measure } from '../snapshot.ts';
@@ -51,7 +50,6 @@ export interface AdHocQuery {
   readonly snapshot: CubeSnapshot;
   /** The level it was serialised at; absent for a shape with no grouping. */
   readonly scope?: LevelScope;
-  readonly pure: string;
 }
 
 const KEY_SEP = '\u0000';
@@ -179,9 +177,8 @@ export function planQueries(cube: AdHocCube, grid: AdHocGrid): AdHocQuery[] {
     if (!filter) delete (snapshot as { filter?: FilterNode }).filter;
     const scope: LevelScope | undefined = groupColumns.length > 0
       ? { level: groupColumns.length, parent: [] } : undefined;
-    const pure = serialize(snapshot, scope);
     return { key: shape.join(','), groupColumns, measures, snapshot,
-      ...(scope ? { scope } : {}), pure };
+      ...(scope ? { scope } : {}) };
   });
 }
 

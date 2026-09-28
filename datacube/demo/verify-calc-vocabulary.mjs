@@ -23,7 +23,7 @@ import { readFile } from 'node:fs/promises';
 
 import { CALC_FUNCTIONS } from '../src/calc.ts';
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
-import { serialize } from '../src/serialize.ts';
+import { levelLambda, parseSnapshot } from '../src/query.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
 import { ENGINE_COLUMNS } from './engine-cases.mjs';
 
@@ -84,7 +84,7 @@ for (const fn of CALC_FUNCTIONS) {
 
   const localSnap = snapshotFor(fn, '#>{trades::DB.TRADES}#');
   try {
-    await planner.plan(serialize(localSnap), localSnap);
+    await planner.plan(levelLambda(localSnap, await parseSnapshot(localSnap, (t) => planner.parse(t))));
   } catch (e) {
     row.local = String(e.message ?? e).replace(/\s+/g, ' ').slice(0, 150);
   }
@@ -96,7 +96,8 @@ for (const fn of CALC_FUNCTIONS) {
       // EXECUTED, not just planned: the case-insensitive filters
       // compiled on the engine and then failed to render, so planning
       // alone is not the question.
-      await executor.execute(serialize(engineSnap), engineSnap);
+      await executor.execute(
+        levelLambda(engineSnap, await parseSnapshot(engineSnap, (t) => executor.parse(t))), engineSnap);
     } catch (e) {
       row.engine = String(e.message ?? e).replace(/\s+/g, ' ').slice(0, 150);
     }

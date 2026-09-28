@@ -8,6 +8,7 @@ import { typeColumns } from '../src/plan.ts';
 import type { PlanColumn } from '../src/relation-type.ts';
 import type { QueryRunner } from '../src/runner.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { liteParse, liteParsed, litePrint } from './lite-compiler.ts';
 
 const CUBE: CubeSnapshot = {
   source: { expression: '#>{db::DB.T}#' },
@@ -29,7 +30,9 @@ function compiler(answer: PlanColumn[], asked: string[]): QueryRunner {
     name: 'compiler',
     run: async () => { throw new Error('step 0 runs nothing'); },
     compile: async () => undefined,
-    relationType: async (pure: string) => { asked.push(pure); return answer; },
+    relationType: async (query) => { asked.push(await litePrint(query)); return answer; },
+    parse: liteParse,
+    print: litePrint,
   };
 }
 
@@ -41,8 +44,8 @@ describe('typeColumns: the compiler types the cube before its first query', () =
       { name: 'amount', type: 'Decimal' },
       { name: 'gone', type: 'Integer' },
       { name: 'twice', type: 'Decimal' },
-    ], asked));
-    assert.deepEqual(asked, ['#>{db::DB.T}#->extend(~[twice: x|$x.amount * 2])']);
+    ], asked), await liteParsed(CUBE));
+    assert.deepEqual(asked, ['|#>{db::DB.T}#->extend(~[twice:x|$x.amount * 2])']);
     assert.equal(out.snapshot.derived[0]?.type, 'Decimal', 'typed before any query');
     assert.equal(out.snapshot.columns.find((c) => c.name === 'amount')?.type, 'Decimal');
     // S1c: a declared type the compiler no longer gives is a schema change, said
@@ -54,7 +57,7 @@ describe('typeColumns: the compiler types the cube before its first query', () =
       { name: 'region', type: 'String' },
       { name: 'amount', type: 'Float' },
       { name: 'twice', type: 'Float' },
-    ], []));
+    ], []), await liteParsed(CUBE));
     assert.deepEqual(out.changes, [{ column: 'gone', was: 'Integer', now: null }]);
   });
 
@@ -63,7 +66,7 @@ describe('typeColumns: the compiler types the cube before its first query', () =
       { name: 'region', type: 'String' },
       { name: 'amount', type: 'Float' },
       { name: 'gone', type: 'Integer' },
-    ], []));
+    ], []), await liteParsed({ ...CUBE, derived: [] }));
     assert.deepEqual(out.changes, []);
     assert.equal(out.snapshot.columns, CUBE.columns);
   });

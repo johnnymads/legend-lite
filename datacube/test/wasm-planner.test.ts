@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { PlanError } from '../src/planner.ts';
-import type { CubeSnapshot } from '../src/snapshot.ts';
+import { fromElement, toJson } from '../../pure-protocol/src/index.ts';
 import {
   fileUrlToPath,
   pathToFileUrl,
@@ -15,17 +15,6 @@ import {
 function ok(sql: string): string {
   return `OK\n${JSON.stringify({ sql, type: { _type: 'relationType', columns: [] } })}`;
 }
-
-const SNAPSHOT = {
-  source: { expression: '$trades' },
-  columns: [],
-  derived: [],
-  rows: [],
-  pivotOn: [],
-  measures: [],
-  sorts: [],
-  epoch: 1,
-} satisfies CubeSnapshot;
 
 /**
  * A stand-in for the 4 MB module.
@@ -49,8 +38,8 @@ function fakeRuntime(
           planOrError: (m: string, q: string, r: string) => answer(m, q, r),
           relationTypeOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
           databaseFromCatalogOrError: () => 'ERR\nfake\nnot in this fake',
-          planJsonOrError: () => 'ERR\nfake\nnot in this fake',
-          relationTypeJsonOrError: () => 'ERR\nfake\nnot in this fake',
+          planJsonOrError: (m: string, q: string, r: string) => answer(m, q, r),
+          relationTypeJsonOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
           composeLambdaOrError: () => 'ERR\nfake\nnot in this fake',
           lambdaJsonOrError: () => 'ERR\nfake\nnot in this fake',
           warmModel: (m: string) => { onWarm?.(m); return 1; },
@@ -79,7 +68,7 @@ function planner(
 describe('WasmPlanner', () => {
   it('returns the SQL an OK answer carries', async () => {
     const p = planner(() => ok('SELECT t0.a FROM T AS t0'));
-    assert.equal((await p.plan('grammar', SNAPSHOT)).sql,
+    assert.equal((await p.planText('grammar')).sql,
       'SELECT t0.a FROM T AS t0',
     );
   });
@@ -93,7 +82,7 @@ describe('WasmPlanner', () => {
       ],
     };
     const p = planner(() => `OK\n${JSON.stringify({ sql: 'SELECT 1', type })}`);
-    assert.deepEqual(await p.plan('g', SNAPSHOT), {
+    assert.deepEqual(await p.planText('g'), {
       sql: 'SELECT 1',
       columns: [{ name: 'region', type: 'String' }, { name: 'total', type: 'Decimal' }],
     });
@@ -105,7 +94,7 @@ describe('WasmPlanner', () => {
       seen = [m, q, r];
       return ok('SELECT 1');
     });
-    await p.plan('the-grammar', SNAPSHOT);
+    await p.planText('the-grammar');
     assert.match(seen[0]!, /Database trades::DB/);
     assert.equal(seen[1], 'the-grammar');
     assert.equal(seen[2], 'trades::RT');
@@ -116,19 +105,19 @@ describe('WasmPlanner', () => {
     // newline after that belongs to the SQL.
     const sql = 'SELECT t0.a\nFROM T AS t0\nWHERE t0.a = 1';
     const p = planner(() => ok(sql));
-    assert.equal((await p.plan('g', SNAPSHOT)).sql, sql);
+    assert.equal((await p.planText('g')).sql, sql);
   });
 
   it('raises a PlanError carrying the compiler message on ERR', async () => {
     const p = planner(() =>
       'ERR\ncom.legend.compiler.spec.TypeInferenceException\n'
       + "unknown column 'nope'");
-    await assert.rejects(() => p.plan('g2', SNAPSHOT), (e: unknown) => {
+    await assert.rejects(() => p.planText('g2'), (e: unknown) => {
       assert.ok(e instanceof PlanError);
       // The exception CLASS is dropped; the message is what a user
       // can act on, and it must match the HTTP planner's text.
       assert.equal(e.message, "unknown column 'nope'");
-      assert.equal(e.grammar, 'g2');
+      assert.equal(e.subject, 'g2');
       return true;
     });
   });
@@ -137,7 +126,7 @@ describe('WasmPlanner', () => {
     const p = planner(() =>
       'ERR\ncom.legend.parser.ParseException\n[1:40] expected expression,'
       + '\n  got end of input');
-    await assert.rejects(() => p.plan('g', SNAPSHOT), (e: unknown) => {
+    await assert.rejects(() => p.planText('g'), (e: unknown) => {
       assert.ok(e instanceof PlanError);
       assert.equal(
         e.message,
@@ -156,8 +145,8 @@ describe('WasmPlanner', () => {
       calls++;
       return 'ERR\nX\nnope';
     });
-    await assert.rejects(() => p.plan('g', SNAPSHOT));
-    await assert.rejects(() => p.plan('g', SNAPSHOT));
+    await assert.rejects(() => p.planText('g'));
+    await assert.rejects(() => p.planText('g'));
     assert.equal(calls, 2);
     assert.equal(p.cacheSize, 0);
   });
@@ -168,8 +157,8 @@ describe('WasmPlanner', () => {
       calls++;
       return ok('SELECT 1');
     });
-    await cached.plan('g', SNAPSHOT);
-    await cached.plan('g', SNAPSHOT);
+    await cached.planText('g');
+    await cached.planText('g');
     assert.equal(calls, 1);
     assert.equal(cached.cacheSize, 1);
 
@@ -178,8 +167,8 @@ describe('WasmPlanner', () => {
       calls++;
       return ok('SELECT 1');
     }, { cache: false });
-    await uncached.plan('g', SNAPSHOT);
-    await uncached.plan('g', SNAPSHOT);
+    await uncached.planText('g');
+    await uncached.planText('g');
     assert.equal(calls, 2);
   });
 
@@ -190,9 +179,9 @@ describe('WasmPlanner', () => {
     let loads = 0;
     const p = planner(() => ok('SELECT 1'), { onLoad: () => { loads++; } });
     await Promise.all([
-      p.plan('a', SNAPSHOT),
-      p.plan('b', SNAPSHOT),
-      p.plan('c', SNAPSHOT),
+      p.planText('a'),
+      p.planText('b'),
+      p.planText('c'),
     ]);
     assert.equal(loads, 1);
   });
@@ -207,7 +196,7 @@ describe('WasmPlanner', () => {
     await p.warmUp();
     assert.equal(loads, 1);
     assert.equal(plans, 0);
-    await p.plan('g', SNAPSHOT);
+    await p.planText('g');
     assert.equal(loads, 1, 'warmUp must satisfy the later load');
   });
 
@@ -237,7 +226,7 @@ describe('WasmPlanner', () => {
       return ok('SELECT 1');
     });
     await assert.rejects(
-      () => p.plan('g', SNAPSHOT, undefined, ctl.signal),
+      () => p.planText('g', ctl.signal),
       (e: unknown) => e === reason,
     );
     assert.equal(planned, false, 'an aborted plan must not do the work');
@@ -253,7 +242,7 @@ describe('WasmPlanner', () => {
       return ok('SELECT 1');
     });
     await assert.rejects(
-      () => p.plan('g', SNAPSHOT, undefined, ctl.signal),
+      () => p.planText('g', ctl.signal),
       (e: unknown) => e === reason,
     );
   });
@@ -268,7 +257,7 @@ describe('WasmPlanner', () => {
         runtime: 'r',
         loadRuntime: () => Promise.reject(new Error('404')),
       });
-      await assert.rejects(() => p.plan('g', SNAPSHOT), (e: unknown) => {
+      await assert.rejects(() => p.planText('g'), (e: unknown) => {
         assert.ok(e instanceof PlannerUnavailableError);
         assert.ok(!(e instanceof PlanError));
         assert.match(e.message, /bazel build \/\/datacube:site/);
@@ -302,13 +291,37 @@ describe('WasmPlanner', () => {
         };
       },
     });
-    await assert.rejects(() => p.plan('g', SNAPSHOT), PlannerUnavailableError);
-    assert.equal((await p.plan('g', SNAPSHOT)).sql, 'SELECT 1');
+    await assert.rejects(() => p.planText('g'), PlannerUnavailableError);
+    assert.equal((await p.planText('g')).sql, 'SELECT 1');
+  });
+
+  it('plans a TREE through the JSON entry, sending the query\'s exact JSON, cached by it', async () => {
+    const seen: string[] = [];
+    const p = planner((_m, q) => {
+      seen.push(q);
+      return ok('SELECT 1');
+    });
+    const query = fromElement('trades::T').select(['a']).lambda();
+    assert.equal((await p.plan(query)).sql, 'SELECT 1');
+    await p.plan(fromElement('trades::T').select(['a']).lambda());
+    assert.deepEqual(seen, [toJson(query)], 'an equal tree is the same query: planned once');
+  });
+
+  it('keeps the text entry and the tree entry apart in its cache', async () => {
+    let calls = 0;
+    const p = planner(() => {
+      calls++;
+      return ok('SELECT 1');
+    });
+    const query = fromElement('trades::T').select(['a']).lambda();
+    await p.plan(query);
+    await p.planText(toJson(query));
+    assert.equal(calls, 2);
   });
 
   it('rejects an answer with neither tag rather than guessing', async () => {
     const p = planner(() => 'SELECT 1');
-    await assert.rejects(() => p.plan('g', SNAPSHOT),
+    await assert.rejects(() => p.planText('g'),
       PlannerUnavailableError);
   });
 });

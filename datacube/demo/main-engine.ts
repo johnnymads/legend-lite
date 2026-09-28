@@ -90,6 +90,7 @@ async function main(): Promise<void> {
     epoch: 1,
   };
 
+  let printed = 0;
   const app = new CubeApp(must('app'), snapshot, {
     // ONE ARRANGEMENT, chosen by which page you opened. The cube
     // cannot change it while it runs.
@@ -114,7 +115,12 @@ async function main(): Promise<void> {
       goToPlane(item.id);
     },
     onView: (view) => {
-      must('pure').textContent = view.pure;
+      // The query as the compiler prints it; a later view's print wins.
+      const printing = (printed += 1);
+      void app.controller.print(view.query, 'STANDARD').then(
+        (text) => { if (printing === printed) must('pure').textContent = text; },
+        (error: unknown) => { if (printing === printed) must('pure').textContent = String(error); },
+      );
       // The engine's own report of the SQL it ran, which is the only
       // SQL this page ever sees.
       must('sql').textContent = view.sql

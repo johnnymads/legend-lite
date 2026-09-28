@@ -7,6 +7,8 @@ import { describe, it } from 'node:test';
 
 import type { ResultTable } from '../src/result.ts';
 import type { QueryRunner } from '../src/runner.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { fakeParsed } from './fake-planner.ts';
 import { childAggregateQuery, serialize } from '../src/serialize.ts';
 import { renameColumnReferences, totalOrderSorts, type CubeSnapshot } from '../src/snapshot.ts';
 import { withChildAggregates } from '../src/treeview.ts';
@@ -69,17 +71,17 @@ describe('placing the figures', () => {
   };
 
   it('each group row gets its own figure, by key, whatever order the answer came in', async () => {
-    const sent: string[] = [];
+    const sent: Lambda[] = [];
     const runner: QueryRunner = {
       name: 'stub',
-      async run(pure: string) {
-        sent.push(pure);
+      async run(query: Lambda) {
+        sent.push(query);
         return { rows: table({ region: ['EMEA', 'AMER'], weakest: [300, 50] }), sql: '' };
       },
     } as unknown as QueryRunner;
     const level = table({ region: ['AMER', 'APAC', 'EMEA'], notional: [1200, 900, 1700] });
     const out = await withChildAggregates(CUBE, { level: 1, parent: [] }, level,
-      [['AMER'], ['APAC'], ['EMEA']], { runner, snapshot: CUBE });
+      [['AMER'], ['APAC'], ['EMEA']], { runner, parsed: await fakeParsed(CUBE), snapshot: CUBE });
     assert.equal(sent.length, 1);
     assert.deepEqual(out.columns.find((c) => c.name === 'weakest')?.values, [50, null, 300]);
   });

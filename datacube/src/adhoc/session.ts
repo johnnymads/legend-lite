@@ -35,9 +35,8 @@ import {
   type ZoomLevel,
 } from './state.ts';
 
-/** Pure in, rows out: the cube's own runner, whichever plane it is. */
+/** A cube level in, rows out: the cube's own runner, whichever plane it is. */
 export type Run = (
-  pure: string,
   snapshot: CubeSnapshot,
   scope: LevelScope | undefined,
 ) => Promise<ResultTable>;
@@ -85,7 +84,7 @@ export class AdHocSession {
     const queries = planQueries(this.cube, grid);
     const results = new Map<string, ResultTable>();
     for (const q of queries) {
-      results.set(q.key, await this.#run(q.pure, q.snapshot, q.scope));
+      results.set(q.key, await this.#run(q.snapshot, q.scope));
       if (seq !== this.#seq) return null;
     }
     const view = assembleGrid(this.cube, grid, results, queries);
@@ -132,7 +131,7 @@ export class AdHocSession {
       return depth === 1 && under.length === 0 ? this.cube.outline.measures.map((m) => [m]) : [];
     }
     const q = memberQuery(this.cube, dimension, under, depth);
-    return membersFrom(await this.#run(q.pure, q.snapshot, q.scope), depth);
+    return membersFrom(await this.#run(q.snapshot, q.scope), depth);
   }
 
   /** How many generations a dimension has (Measures: one). */

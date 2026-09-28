@@ -46,6 +46,10 @@ _TESTS = glob(["test/*.test.ts"])
 _EXTRA_DATA = {
     # lite's parser for the twins (pure-protocol's test helper)
     "query-twins": ["//pure-protocol:typescript_sources", "test/wasm-differential/cases.ts"],
+    # lite's parser and printer (test/lite-compiler.ts): what query a level builds
+    "treeview": ["//pure-protocol:typescript_sources"],
+    "type-columns": ["//pure-protocol:typescript_sources"],
+    "adhoc-query": ["//pure-protocol:typescript_sources"],
     # the in-memory source the Ad Hoc Analysis tests query
     "adhoc-session": ["test/adhoc-fixture.ts"],
     "adhoc-mode": ["test/adhoc-fixture.ts"],
@@ -62,12 +66,12 @@ _EXTRA_DATA = {
         "test/**/*.mjs",
         "test/**/*.ts",
         "tools/**/*",
-    ], exclude = ["test/fake-engine.ts", "test/strict-reporter.mjs"]),
+    ], exclude = ["test/fake-engine.ts", "test/fake-planner.ts", "test/strict-reporter.mjs"]),
 }
 
 # the tests that write a model from a table's columns ask the compiler (T2): legend-lite's
 # own WASM module, loaded by test/catalog-builder.ts
-_WASM_TESTS = ["infer", "upload", "query-twins"]
+_WASM_TESTS = ["infer", "upload", "query-twins", "treeview", "type-columns", "adhoc-query"]
 
 # node:test files run TypeScript directly (--experimental-strip-types), from the
 # package directory (a guardrail test walks src/ relative to it). Two
@@ -81,9 +85,10 @@ _WASM_TESTS = ["infer", "upload", "query-twins"]
         ":node_modules/jsdom",
         ":src",
         "test/fake-engine.ts",
+        "test/fake-planner.ts",
         "test/strict-reporter.mjs",
     ] + _EXTRA_DATA.get(t[len("test/"):-len(".test.ts")], []) + (
-        ["test/catalog-builder.ts", "//wasm:planner"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
+        ["test/catalog-builder.ts", "test/lite-compiler.ts", "//wasm:planner"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
     ),
     entry_point = t,
     node_options = [

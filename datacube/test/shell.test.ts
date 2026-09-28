@@ -16,6 +16,7 @@ import { buildSettingsPanel } from '../src/ui/settings-panel.ts';
 import { buildExecutionErrorAlert, markPosition } from '../src/ui/alert.ts';
 import { DOCS, docHint } from '../src/ui/docs.ts';
 import { FakeEngine } from './fake-engine.ts';
+import { fakeParse, fakePrint } from './fake-planner.ts';
 
 let dom: JSDOM;
 let root: HTMLElement;
@@ -165,6 +166,8 @@ class Engine extends FakeEngine {
 const planner: Planner = {
   plan: async (): Promise<Plan> => ({ sql: 'SELECT 42', columns: [] }),
   relationType: async (): Promise<PlanColumn[]> => [],
+  parse: fakeParse,
+  print: fakePrint,
 };
 
 function app(options: Partial<ConstructorParameters<typeof CubeApp>[2]> = {}): { app: CubeApp; engine: Engine } {

@@ -47,8 +47,8 @@ function matches(row: Row, f: FilterNode | undefined): boolean {
 
 /** Answers a snapshot as the planner + engine would: filter, group, aggregate, sort. */
 export function fakeRun(calls: string[]): Run {
-  return async (pure, snapshot) => {
-    calls.push(pure);
+  return async (snapshot) => {
+    calls.push(snapshot.rows.join(','));
     const rows = DATA.filter((r) => matches(r, snapshot.filter));
     const keys = snapshot.rows;
     const groups = new Map<string, Row[]>();

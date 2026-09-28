@@ -91,7 +91,7 @@ export function casesFor(SOURCE) {
     },
     // A pivot's values come from their own query (src/plan.ts); a
     // harness that only compiles uses these, and one that runs queries
-    // finds them itself (serializeWithValues).
+    // finds them itself (levelWithValues).
     {
       name: 'column pivot',
       snapshot: cube({ pivotOn: ['year'], measures: [SUM] }),

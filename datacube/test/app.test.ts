@@ -11,6 +11,8 @@ import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { setHeaderDrag } from '../src/ui/pivot-panel.ts';
 import { FakeEngine } from './fake-engine.ts';
+import { fakeParse, fakePrint } from './fake-planner.ts';
+import { toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: 'trades' },
@@ -74,25 +76,29 @@ class CountingEngine extends FakeEngine {
   }
 }
 
-/** A planner that hands the Pure on as the "SQL", for engines that read it. */
+/** A planner that hands the query's JSON on as the "SQL", for engines that read it. */
 class EchoPlanner implements Planner {
-  async plan(pureGrammar: string): Promise<Plan> {
-    return { sql: pureGrammar, columns: [] };
+  async plan(query: Lambda): Promise<Plan> {
+    return { sql: toJson(query), columns: [] };
   }
   async relationType(): Promise<PlanColumn[]> {
     return [];
   }
+  parse = fakeParse;
+  print = fakePrint;
 }
 
 class StubPlanner implements Planner {
-  readonly pure: string[] = [];
-  async plan(pureGrammar: string): Promise<Plan> {
-    this.pure.push(pureGrammar);
+  readonly queries: Lambda[] = [];
+  async plan(query: Lambda): Promise<Plan> {
+    this.queries.push(query);
     return { sql: 'SELECT 1', columns: [] };
   }
   async relationType(): Promise<PlanColumn[]> {
     return [];
   }
+  parse = fakeParse;
+  print = fakePrint;
 }
 
 /** A cube pivoted on desk, grouped by region. */
@@ -106,7 +112,7 @@ const PIVOTED: CubeSnapshot = {
 /** An engine that answers in the shape a pivot produces. */
 /**
  * A pivot's two steps, answered: the values query (with `EchoPlanner`
- * the "SQL" is the Pure, so it can be told apart) gets the desks, and
+ * the "SQL" is the query's JSON, so it can be told apart) gets the desks, and
  * every level gets its cells.
  */
 class PivotEngine extends FakeEngine {
@@ -114,7 +120,7 @@ class PivotEngine extends FakeEngine {
   readonly sql: string[] = [];
   async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
-    if (sql.includes('distinct()')) {
+    if (sql.includes('"function":"distinct"')) {
       return {
         columns: [{ name: 'desk', type: 'String', values: ['A', 'B'] }],
         rowCount: 2,
@@ -911,9 +917,9 @@ describe('the app', () => {
       },
     });
     await pivoted.open();
-    const level = engine.sql.find((s) => s.includes('groupBy(')) ?? '';
-    assert.match(level, /'A__\|__total'/, 'the hidden column is still asked for');
-    assert.match(level, /'B__\|__total'/);
+    const level = engine.sql.find((s) => s.includes('"function":"groupBy"')) ?? '';
+    assert.match(level, /"A__\|__total"/, 'the hidden column is still asked for');
+    assert.match(level, /"B__\|__total"/);
     // Hidden on screen, all the same.
     const shown = [...host.querySelectorAll('.dc-th[data-column]')]
       .map((e) => (e as HTMLElement).dataset['column']);

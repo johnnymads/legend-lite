@@ -17,6 +17,8 @@ import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { FakeEngine } from './fake-engine.ts';
+import { fakeParse, fakePrint } from './fake-planner.ts';
+import { toJson, type ColSpecArrayInstance, type Lambda } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: '#>{trades::DB.TRADES}#' },
@@ -44,20 +46,35 @@ function result(epoch: number, n = 2): ResultTable {
   };
 }
 
-/** Records every Pure it is asked to plan, and every SQL it emits. */
+/** Records every query it is asked to plan (as its JSON), and every SQL it emits. */
 class RecordingPlanner implements Planner {
   readonly pure: string[] = [];
-  async plan(pureGrammar: string): Promise<Plan> {
-    this.pure.push(pureGrammar);
-    // Deliberately does NOT echo the Pure: a test here asserts that
+  readonly queries: Lambda[] = [];
+  async plan(query: Lambda): Promise<Plan> {
+    this.queries.push(query);
+    this.pure.push(toJson(query));
+    // Deliberately does NOT echo the query: a test here asserts that
     // no Pure reaches the engine, and a stub that pasted the
-    // grammar into its own output would fail that for the wrong
+    // query into its own output would fail that for the wrong
     // reason.
     return { sql: `SELECT * FROM planned_${this.pure.length}`, columns: [] };
   }
   async relationType(): Promise<PlanColumn[]> {
     return [];
   }
+  parse = fakeParse;
+  print = fakePrint;
+}
+
+/** A `source->select(~[...])` query's source (as the stand-in parse holds it) and columns. */
+function selectOf(q: Lambda): { readonly source: unknown; readonly columns: readonly string[] } | undefined {
+  const f = q.body[0];
+  if (f?._type !== 'func' || f.function !== 'select') return undefined;
+  const [source, columns] = f.parameters;
+  return {
+    source: (source as { readonly value?: unknown } | undefined)?.value,
+    columns: (columns as ColSpecArrayInstance).value.colSpecs.map((c) => c.name),
+  };
 }
 
 class RecordingEngine extends FakeEngine {
@@ -89,15 +106,17 @@ describe('snapping goes through the planner', () => {
     const c = new CubeController(engine, planner);
     await c.update(SNAPSHOT);
     planner.pure.length = 0;
+    planner.queries.length = 0;
 
     await c.snap('test');
 
-    // A select over the LIVE source, in Pure -- the columns being
+    // A select over the LIVE source, as a query -- the columns being
     // whatever the snapshot actually references.
     assert.ok(
-      planner.pure.some((p) =>
-        /^#>\{trades::DB\.TRADES\}#->select\(~\[[^\]]+\]\)$/.test(p),
-      ),
+      planner.queries.some((q) => {
+        const s = selectOf(q);
+        return s?.source === '#>{trades::DB.TRADES}#' && s.columns.length > 0;
+      }),
       `planner saw: ${planner.pure.join(' ;; ')}`,
     );
     assert.equal(
@@ -112,10 +131,11 @@ describe('snapping goes through the planner', () => {
     const c = new CubeController(new RecordingEngine(), planner);
     // a measure over one column: the other is still copied
     await c.update(SNAPSHOT);
-    planner.pure.length = 0;
+    planner.queries.length = 0;
     await c.snap('test');
-    assert.ok(planner.pure.includes('#>{trades::DB.TRADES}#->select(~[region, notional])'),
-      `planner saw: ${planner.pure.join(' ;; ')}`);
+    assert.ok(planner.queries.some((q) => JSON.stringify(selectOf(q)) === JSON.stringify(
+      { source: '#>{trades::DB.TRADES}#', columns: ['region', 'notional'] })),
+    `planner saw: ${planner.pure.join(' ;; ')}`);
   });
 
   it('snaps a FRESH cube, one that groups and measures nothing', async () => {
@@ -124,10 +144,11 @@ describe('snapping goes through the planner', () => {
     const planner = new RecordingPlanner();
     const c = new CubeController(new RecordingEngine(), planner);
     await c.update({ ...SNAPSHOT, measures: [], columns: [...SNAPSHOT.columns, { name: 'trade date', type: 'StrictDate' }] });
-    planner.pure.length = 0;
+    planner.queries.length = 0;
     await c.snap('test');
-    assert.ok(planner.pure.includes("#>{trades::DB.TRADES}#->select(~[region, notional, 'trade date'])"),
-      `planner saw: ${planner.pure.join(' ;; ')}`);
+    assert.ok(planner.queries.some((q) => JSON.stringify(selectOf(q)) === JSON.stringify(
+      { source: '#>{trades::DB.TRADES}#', columns: ['region', 'notional', 'trade date'] })),
+    `planner saw: ${planner.pure.join(' ;; ')}`);
     assert.equal(c.snaps.isSnapped, true);
   });
 
@@ -206,7 +227,7 @@ describe('the snapped plane actually redirects', () => {
 
     await c.refresh();
     assert.ok(
-      planner.pure.every((p) => p.includes('"dc_snap_1"')),
+      planner.pure.every((p) => p.includes('\\"dc_snap_1\\"')),
       planner.pure.join(' ;; '),
     );
   });

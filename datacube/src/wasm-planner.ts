@@ -24,12 +24,12 @@
 // Pure prelude, which is why `warmUp()` exists and why the demo calls
 // it while the user is still looking at an empty grid.
 
+import { readLambda, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { Planner } from './cube.ts';
 import type { CatalogDatabase, CatalogTable } from './infer.ts';
 import { PlanError } from './planner.ts';
+import type { PrintStyle } from './pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from './relation-type.ts';
-import type { LevelScope } from './serialize.ts';
-import type { CubeSnapshot } from './snapshot.ts';
 
 /** The subset of TeaVM's module surface this file uses. */
 interface TeavmModule {
@@ -310,57 +310,37 @@ export class WasmPlanner implements Planner {
     module.exports.warmModel(this.#options.model);
   }
 
-  async plan(
-    pureGrammar: string,
-    _snapshot: CubeSnapshot,
-    _scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<Plan> {
+  /**
+   * Pure TEXT planned: the text entry (planOrError), kept for callers that send grammar -- a
+   * harness, another tool (the user, 2026-09-27: upstream accepts grammar). The cube sends trees
+   * (`plan`).
+   */
+  async planText(pureGrammar: string, signal?: AbortSignal): Promise<Plan> {
     const useCache = this.#options.cache !== false;
-    if (useCache) {
-      const hit = this.#cache.get(pureGrammar);
-      if (hit !== undefined) return hit;
-    }
-
+    const key = `text:${pureGrammar}`;
+    const hit = useCache ? this.#cache.get(key) : undefined;
+    if (hit !== undefined) return hit;
     // Planning inside the module is synchronous and uninterruptible,
     // so an abort cannot stop it -- but it can stop a stale answer
-    // reaching the grid. Check on both sides of the call: before, to
-    // skip work already known to be pointless; after, because the
-    // user may have moved on while it ran.
+    // reaching the grid. Check on both sides of the call.
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
-
     const answer = this.#useWorker()
-      ? await this.#ask({
-        kind: 'plan',
-        model: this.#options.model,
-        query: pureGrammar,
-        runtime: this.#options.runtime,
-      })
-      : (await this.#load()).exports.planOrError(
-        this.#options.model,
-        pureGrammar,
-        this.#options.runtime,
-      );
-
+      ? await this.#ask({ kind: 'plan', model: this.#options.model, query: pureGrammar, runtime: this.#options.runtime })
+      : (await this.#load()).exports.planOrError(this.#options.model, pureGrammar, this.#options.runtime);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
-
-    // `{"sql", "type"}`: the SQL and the compiler's type of its result, in
-    // upstream's RelationType shape -- the same renderer legend-lite's
-    // pure/v1 answers use.
+    // `{"sql", "type"}`: the SQL and the compiler's type of its result, in upstream's
+    // RelationType shape -- the same renderer legend-lite's pure/v1 answers use.
     const body = JSON.parse(decode(answer, pureGrammar)) as { sql: string; type: unknown };
     const plan: Plan = { sql: body.sql, columns: relationColumns(body.type) };
-    if (useCache) this.#cache.set(pureGrammar, plan);
+    if (useCache) this.#cache.set(key, plan);
     return plan;
   }
 
-  /**
-   * The compiler's type of a query's result, compile-only: no runtime, no SQL.
-   * How the cube types its source and calculated columns before any level
-   * query runs (option B). Cached by grammar, like plans.
-   */
-  async relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
+  /** Pure TEXT typed, compile-only: the text entry (relationTypeOrError). */
+  async relationTypeText(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
     const useCache = this.#options.cache !== false;
-    const hit = useCache ? this.#types.get(pureGrammar) : undefined;
+    const key = `text:${pureGrammar}`;
+    const hit = useCache ? this.#types.get(key) : undefined;
     if (hit !== undefined) return hit;
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const answer = this.#useWorker()
@@ -368,61 +348,68 @@ export class WasmPlanner implements Planner {
       : (await this.#load()).exports.relationTypeOrError(this.#options.model, pureGrammar);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const columns = relationColumns(JSON.parse(decode(answer, pureGrammar)));
-    if (useCache) this.#types.set(pureGrammar, columns);
+    if (useCache) this.#types.set(key, columns);
     return columns;
   }
 
-  // ---- protocol JSON: each the in-tab twin of a pure/v1 endpoint (T4a) ----
+  // ---- protocol trees: each the in-tab twin of a pure/v1 endpoint (T4a) ----
 
-  /** E9's twin: a lambda's protocol JSON planned: its SQL and the compiler's result type. */
-  async planJson(lambda: unknown, signal?: AbortSignal): Promise<Plan> {
-    const json = JSON.stringify(lambda);
+  /** E9's twin: a query (a protocol tree) planned -- its SQL and the compiler's result type. */
+  async plan(query: Lambda, signal?: AbortSignal): Promise<Plan> {
+    const json = toJson(query);
     const useCache = this.#options.cache !== false;
-    const key = `json:${json}`;
-    const hit = useCache ? this.#cache.get(key) : undefined;
+    const hit = useCache ? this.#cache.get(json) : undefined;
     if (hit !== undefined) return hit;
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const answer = this.#useWorker()
       ? await this.#ask({ kind: 'planJson', model: this.#options.model, lambda: json, runtime: this.#options.runtime })
       : (await this.#load()).exports.planJsonOrError(this.#options.model, json, this.#options.runtime);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
-    const body = JSON.parse(decode(answer, json)) as { sql: string; type: unknown };
+    const body = JSON.parse(decode(answer, query)) as { sql: string; type: unknown };
     const plan: Plan = { sql: body.sql, columns: relationColumns(body.type) };
-    if (useCache) this.#cache.set(key, plan);
+    if (useCache) this.#cache.set(json, plan);
     return plan;
   }
 
-  /** E5's twin: a lambda's protocol JSON typed, compile-only. */
-  async relationTypeJson(lambda: unknown, signal?: AbortSignal): Promise<PlanColumn[]> {
-    const json = JSON.stringify(lambda);
+  /**
+   * E5's twin: a query typed, compile-only. How the cube types its source and calculated
+   * columns before any level query runs. Cached by the query's JSON, like plans.
+   */
+  async relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]> {
+    const json = toJson(query);
     const useCache = this.#options.cache !== false;
-    const hit = useCache ? this.#types.get(`json:${json}`) : undefined;
+    const hit = useCache ? this.#types.get(json) : undefined;
     if (hit !== undefined) return hit;
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
     const answer = this.#useWorker()
       ? await this.#ask({ kind: 'relationTypeJson', model: this.#options.model, lambda: json })
       : (await this.#load()).exports.relationTypeJsonOrError(this.#options.model, json);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
-    const columns = relationColumns(JSON.parse(decode(answer, json)));
-    if (useCache) this.#types.set(`json:${json}`, columns);
+    const columns = relationColumns(JSON.parse(decode(answer, query)));
+    if (useCache) this.#types.set(json, columns);
     return columns;
   }
 
-  /** E4's twin: a lambda's protocol JSON as Pure text, as upstream prints it. */
-  async compose(lambda: unknown, style: 'PRETTY' | 'STANDARD' = 'PRETTY'): Promise<string> {
-    const json = JSON.stringify(lambda);
+  /** E4's twin: a query as Pure text, as upstream prints it. */
+  async compose(query: Lambda, style: PrintStyle = 'PRETTY'): Promise<string> {
+    const json = toJson(query);
     const answer = this.#useWorker()
       ? await this.#ask({ kind: 'compose', lambda: json, style })
       : (await this.#load()).exports.composeLambdaOrError(json, style);
-    return decode(answer, json);
+    return decode(answer, query);
   }
 
-  /** E1's twin: Pure text as its lambda's protocol JSON, without source information. */
-  async lambdaJson(text: string): Promise<unknown> {
+  /** A query printed for a person to read (the Planner's `print`): PRETTY unless asked. */
+  print(query: Lambda, style: PrintStyle = 'PRETTY'): Promise<string> {
+    return this.compose(query, style);
+  }
+
+  /** E1's twin: what a person typed, as its lambda, numbers exact. */
+  async parse(text: string): Promise<Lambda> {
     const answer = this.#useWorker()
       ? await this.#ask({ kind: 'lambdaJson', text })
       : (await this.#load()).exports.lambdaJsonOrError(text);
-    return JSON.parse(decode(answer, text));
+    return readLambda(decode(answer, text));
   }
 
   /**
@@ -537,7 +524,7 @@ function onWindows(): boolean {
  * wasm/README.md. A refusal keeps the compiler's own message: the same text the
  * HTTP planner surfaces, so the two transports are indistinguishable.
  */
-function decode(answer: string, pureGrammar: string): string {
+function decode(answer: string, subject: Lambda | string): string {
   const nl = answer.indexOf('\n');
   const tag = nl < 0 ? answer : answer.slice(0, nl);
   const rest = nl < 0 ? '' : answer.slice(nl + 1);
@@ -545,7 +532,7 @@ function decode(answer: string, pureGrammar: string): string {
   if (tag === 'ERR') {
     const split = rest.indexOf('\n');
     const message = split < 0 ? rest : rest.slice(split + 1);
-    throw new PlanError(message || 'the planner refused the query', pureGrammar);
+    throw new PlanError(message || 'the planner refused the query', subject);
   }
   throw new PlannerUnavailableError(
     `the planner module returned an unrecognised answer: ${JSON.stringify(answer.slice(0, 120))}`,

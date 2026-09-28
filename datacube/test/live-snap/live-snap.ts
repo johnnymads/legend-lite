@@ -137,14 +137,13 @@ function ordered(sql: string): boolean {
 }
 
 it('every cube case answers the same live on the warehouse and snapped in the tab', async () => {
-  const snapshot = CASES[0]!.snapshot;
   const liveRunner = new PlanThenRun(planner, live);
   const localRunner = new PlanThenRun(planner, local);
 
   const liveAnswers = new Map<string, { sql: string; rows: ResultTable } | { refused: string }>();
   for (const [i, { name, grammar }] of grammars().entries()) {
     try {
-      const out = await liveRunner.run(grammar, CASES[i]!.snapshot, CASES[i]!.scope);
+      const out = await liveRunner.run(await planner.parse(`|${grammar}`), CASES[i]!.snapshot, CASES[i]!.scope);
       liveAnswers.set(name, out);
     } catch (e: unknown) {
       liveAnswers.set(name, { refused: e instanceof Error ? e.message : String(e) });
@@ -152,7 +151,7 @@ it('every cube case answers the same live on the warehouse and snapped in the ta
   }
 
   // SNAP: exactly the rows the reader may read, through the real SnapManager
-  const sourceSql = (await planner.plan(`${SOURCE}->select(~[${COLUMNS.join(', ')}])`, snapshot)).sql;
+  const sourceSql = (await planner.plan(await planner.parse(`|${SOURCE}->select(~[${COLUMNS.join(', ')}])`))).sql;
   const snaps = new SnapManager(local, live);
   const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', expression: SOURCE } });
   assert.equal(info.rowCount, 10, 'the snap holds every row the reader may read');
@@ -161,7 +160,7 @@ it('every cube case answers the same live on the warehouse and snapped in the ta
   const differ: string[] = [];
   let compared = 0;
   for (const [i, { name, grammar }] of grammars().entries()) {
-    const snapped = await localRunner.run(grammar, CASES[i]!.snapshot, CASES[i]!.scope);
+    const snapped = await localRunner.run(await planner.parse(`|${grammar}`), CASES[i]!.snapshot, CASES[i]!.scope);
     const l = liveAnswers.get(name)!;
     if ('refused' in l) {
       refused.push(name);
@@ -190,11 +189,11 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
     { table: trades.name, schema: trades.schema, convertible: false });
   assert.deepEqual(m.excluded, []);
   const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
-  const pure = `${m.source}->groupBy(~[region], ~[notional:x|$x.notional:y|$y->sum()])->sort([~region->ascending()])`;
+  const pure = await own.parse(`|${m.source}->groupBy(~[region], ~[notional:x|$x.notional:y|$y->sum()])->sort([~region->ascending()])`);
   const snapshot = { ...CASES[0]!.snapshot, source: { expression: m.source } };
   const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
   const snaps = new SnapManager(local, live);
-  await snaps.snap((await own.plan(`${m.source}->select(~[${COLUMNS.join(', ')}])`, snapshot)).sql, 0,
+  await snaps.snap((await own.plan(await own.parse(`|${m.source}->select(~[${COLUMNS.join(', ')}])`))).sql, 0,
     { target: { schema: trades.schema, table: trades.name, expression: m.source } });
   const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
   assert.equal(shape(localOut.rows, true), shape(liveOut.rows, true));

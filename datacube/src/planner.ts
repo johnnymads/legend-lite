@@ -9,10 +9,9 @@
 // 2026-09-27).
 
 import type { Planner } from './cube.ts';
-import { PureV1Client, type PureV1Options } from './pure-v1.ts';
+import { PureV1Client, type PrintStyle, type PureV1Options } from './pure-v1.ts';
 import { relationColumns, tdsColumns, type Plan, type PlanColumn } from './relation-type.ts';
-import type { LevelScope } from './serialize.ts';
-import type { CubeSnapshot } from './snapshot.ts';
+import { toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 
 export interface UpstreamPlannerOptions extends PureV1Options {
   /**
@@ -24,14 +23,20 @@ export interface UpstreamPlannerOptions extends PureV1Options {
 }
 
 export class PlanError extends Error {
-  readonly grammar: string;
-  constructor(message: string, grammar: string) {
+  /** What was asked: the query (a tree), or, for a parse, the text a person typed. */
+  readonly subject: Lambda | string;
+  constructor(message: string, subject: Lambda | string) {
     super(message);
     this.name = 'PlanError';
-    this.grammar = grammar;
+    this.subject = subject;
   }
 }
 
+/**
+ * The planner on a server: legend-lite's or legend-engine's `pure/v1`, E9 `generatePlan` for a
+ * query's SQL and E5 `lambdaRelationType` for its type -- the query sent as the protocol tree the
+ * cube built. E1 and E4 only at the human edges (`parse`, `print`).
+ */
 export class UpstreamPlanner implements Planner {
   readonly #client: PureV1Client;
   readonly #useCache: boolean;
@@ -40,43 +45,40 @@ export class UpstreamPlanner implements Planner {
 
   constructor(options: UpstreamPlannerOptions) {
     this.#useCache = options.cache !== false;
-    // a failure names the cube's grammar, not the query with its runtime
-    const grammarOf = (pure: string) => {
-      const at = pure.lastIndexOf('->from(');
-      return at < 0 ? pure : pure.slice(0, at);
-    };
-    this.#client = new PureV1Client(options, (m, pure) => new PlanError(m, grammarOf(pure)));
+    this.#client = new PureV1Client(options, (m, subject) => new PlanError(m, subject));
   }
 
-  async plan(
-    pureGrammar: string,
-    _snapshot: CubeSnapshot,
-    _scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<Plan> {
-    const hit = this.#useCache ? this.#cache.get(pureGrammar) : undefined;
+  async plan(query: Lambda, signal?: AbortSignal): Promise<Plan> {
+    const key = toJson(query);
+    const hit = this.#useCache ? this.#cache.get(key) : undefined;
     if (hit !== undefined) return hit;
-    const pure = this.#client.query(pureGrammar);
-    const lambda = await this.#client.lambda(pure, signal);
-    const body = await this.#client.generatePlan(lambda, pure, signal);
+    const body = await this.#client.generatePlan(query, signal);
     const sql = sqlOf(body);
-    if (sql === undefined) {
-      throw new PlanError('the plan carries no SQL node', pureGrammar);
-    }
+    if (sql === undefined) throw new PlanError('the plan carries no SQL node', query);
     // the plan's own tdsColumns: the result's type, as the compiler gave it
     const plan: Plan = { sql, columns: tdsColumns(body) };
-    if (this.#useCache) this.#cache.set(pureGrammar, plan);
+    if (this.#useCache) this.#cache.set(key, plan);
     return plan;
   }
 
-  /** E5 `lambdaRelationType` (through E1 for the lambda), cached by grammar. */
-  async relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
-    const hit = this.#useCache ? this.#types.get(pureGrammar) : undefined;
+  /** E5 `lambdaRelationType`, cached by the query's JSON. */
+  async relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]> {
+    const key = toJson(query);
+    const hit = this.#useCache ? this.#types.get(key) : undefined;
     if (hit !== undefined) return hit;
-    const lambda = await this.#client.lambda(pureGrammar, signal);
-    const columns = relationColumns(await this.#client.lambdaRelationType(lambda, pureGrammar, signal));
-    if (this.#useCache) this.#types.set(pureGrammar, columns);
+    const columns = relationColumns(await this.#client.lambdaRelationType(query, signal));
+    if (this.#useCache) this.#types.set(key, columns);
     return columns;
+  }
+
+  /** E1: what a person typed, as its lambda. */
+  parse(text: string, signal?: AbortSignal): Promise<Lambda> {
+    return this.#client.parse(text, signal);
+  }
+
+  /** E4: a query as Pure text, for a person to read. */
+  print(query: Lambda, style: PrintStyle = 'PRETTY', signal?: AbortSignal): Promise<string> {
+    return this.#client.print(query, style, signal);
   }
 
   /** Cached plan count, for tests and diagnostics. */

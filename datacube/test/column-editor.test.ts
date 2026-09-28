@@ -7,11 +7,11 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { JSDOM } from 'jsdom';
 
+import type { CompileOutcome } from '../src/cube.ts';
 import {
   ColumnEditor,
   caretFor,
   type ColumnEditorStart,
-  type CompileOutcome,
 } from '../src/ui/column-editor.ts';
 import type { CubeSnapshot, DerivedColumn } from '../src/snapshot.ts';
 
@@ -46,7 +46,7 @@ function open(start: ColumnEditorStart): ColumnEditor {
     debounceMs: 0,
     compile: async (candidate): Promise<CompileOutcome | undefined> => {
       compiled.push(candidate);
-      return canCompile ? { pure: 't->extend(~[x: x|1])', refusal: refuse } : undefined;
+      return canCompile ? { query: null, refusal: refuse } : undefined;
     },
     apply: async (row, group, rename) => {
       applied.push({ row, group, ...(rename ? { rename } : {}) });
@@ -180,17 +180,21 @@ describe('an existing column', () => {
 });
 
 describe('caretFor', () => {
-  it('points INSIDE the expression when the compiler names a position there', () => {
-    const pure = "t->extend(~[m: x|$x.a + $x.nope])";
-    const col = pure.indexOf('$x.nope') + 1;
-    assert.equal(caretFor(pure, `no column 'nope' [1:${col}]`, 'm', '$x.a + $x.nope'),
-      '$x.a + $x.nope\n       ^');
+  it('points INSIDE the expression when its parse was refused at a position there', () => {
+    const parsing = 'x|$x.a + $x.nope)';
+    const col = parsing.indexOf(')') + 1;
+    assert.equal(caretFor(parsing, `unexpected ')' [1:${col}]`, '$x.a + $x.nope)'),
+      '$x.a + $x.nope)\n              ^');
   });
 
-  it('says nothing when there is no position, or it is elsewhere', () => {
-    const pure = "t->extend(~[m: x|$x.a])";
-    assert.equal(caretFor(pure, 'no position', 'm', '$x.a'), undefined);
-    assert.equal(caretFor(pure, 'elsewhere [1:1]', 'm', '$x.a'), undefined);
+  it('places a position on a later line of the expression', () => {
+    assert.equal(caretFor('x|$x.a +\n  $x.b)', 'unexpected [2:7]', '$x.a +\n  $x.b)'), '  $x.b)\n      ^');
+  });
+
+  it('says nothing when there is no position, the parse was of another text, or nothing was parsed', () => {
+    assert.equal(caretFor('x|$x.a', 'no position', '$x.a'), undefined);
+    assert.equal(caretFor('x|$x.other', 'elsewhere [1:3]', '$x.a'), undefined);
+    assert.equal(caretFor(undefined, 'a compile refusal [1:3]', '$x.a'), undefined);
   });
 });
 
@@ -265,7 +269,7 @@ describe('a window column', () => {
     const cube: CubeSnapshot = { ...CUBE, derived: [...CUBE.derived, { name: 'prev', expression: '', kind: 'measure', window: w }] };
     new ColumnEditor(root, {
       snapshot: () => cube, start: { edit: 'prev' }, debounceMs: 0,
-      compile: async () => ({ pure: '', refusal: null }), apply: async () => null, onClose: () => {},
+      compile: async () => ({ query: null, refusal: null }), apply: async () => null, onClose: () => {},
     });
     assert.equal($<HTMLSelectElement>('.dc-calc-mode').value, 'window');
     assert.equal($<HTMLSelectElement>('.dc-win-fn').value, 'lag');
@@ -288,7 +292,7 @@ describe('picking a JSON field', () => {
       debounceMs: 0,
       compile: async (candidate) => {
         compiled.push(candidate);
-        return { pure: 't', refusal: null };
+        return { query: null, refusal: null };
       },
       apply: async (row, group) => { applied.push({ row, group }); return null; },
       onClose: () => { closed += 1; },
@@ -346,7 +350,7 @@ describe('picking a JSON field', () => {
   it('offers no JSON section on a cube without JSON columns', async () => {
     new ColumnEditor(root, {
       snapshot: () => CUBE, start: {}, debounceMs: 0,
-      compile: async () => ({ pure: 't', refusal: null }),
+      compile: async () => ({ query: null, refusal: null }),
       apply: async () => null, onClose: () => {},
       sampleJson: async () => [],
     });

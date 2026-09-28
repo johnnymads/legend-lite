@@ -13,7 +13,7 @@
 
 import type { Dimension } from '../dimensions.ts';
 import type { ResultTable } from '../result.ts';
-import { memberConditions, serialize, type LevelScope } from '../serialize.ts';
+import { memberConditions, type LevelScope } from '../serialize.ts';
 import type { Scalar } from '../result.ts';
 import {
   rowColumns,
@@ -69,7 +69,6 @@ export function buildCube(
 export interface MemberQuery {
   readonly snapshot: CubeSnapshot;
   readonly scope: LevelScope;
-  readonly pure: string;
   readonly depth: number;
 }
 
@@ -106,7 +105,7 @@ export function memberQuery(
     leafCount: false,
   };
   const scope: LevelScope = { level: keys.length, parent: [] };
-  return { snapshot, scope, pure: serialize(snapshot, scope), depth };
+  return { snapshot, scope, depth };
 }
 
 /** The member paths a member query answered. */

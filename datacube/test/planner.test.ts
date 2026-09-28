@@ -5,18 +5,7 @@ import {
   PlanError,
   UpstreamPlanner,
 } from '../src/planner.ts';
-import type { CubeSnapshot } from '../src/snapshot.ts';
-
-const SNAPSHOT = {
-  source: { expression: '$trades' },
-  columns: [],
-  derived: [],
-  rows: [],
-  pivotOn: [],
-  measures: [],
-  sorts: [],
-  epoch: 1,
-} satisfies CubeSnapshot;
+import { element, fn, fromElement, lambda, toJson } from '../../pure-protocol/src/index.ts';
 
 /** A plan as legend-engine's generatePlan shapes it: the SQL in a nested sql node. */
 const PLAN = {
@@ -46,10 +35,14 @@ function fakeServer(seen: Seen[], answer: (path: string) => { status?: number; j
   }) as unknown as typeof fetch;
 }
 
-const ok = (path: string) => ({ json: path.endsWith('/lambda') ? { _type: 'lambda' } : PLAN });
+const ok = (path: string) => ({ json: path.endsWith('/lambda') ? JSON.parse(toJson(Q)) : PLAN });
+
+/** A cube query, as DataCube builds one. */
+const Q = fromElement('demo::T').select(['a']).lambda();
+const OTHER = fromElement('demo::T').select(['b']).lambda();
 
 describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite and the engine', () => {
-  it('asks grammarToJson/lambda for the query, then generatePlan, and returns the plan\'s SQL', async () => {
+  it('sends the query to generatePlan with its runtime, and returns the plan\'s SQL', async () => {
     const seen: Seen[] = [];
     const p = new UpstreamPlanner({
       baseUrl: 'http://localhost:9999/',
@@ -57,27 +50,27 @@ describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite an
       runtime: 'demo::RT',
       fetch: fakeServer(seen, ok),
     });
-    assert.deepEqual(await p.plan('$trades->select(~[a])', SNAPSHOT), {
+    assert.deepEqual(await p.plan(Q), {
       sql: 'SELECT 1',
       // the plan's own tdsColumns, both vocabularies read as one
       columns: [{ name: 'region', type: 'String' }, { name: 'total', type: 'Float' }],
     });
-    assert.equal(seen[0]!.url, 'http://localhost:9999/api/pure/v1/grammar/grammarToJson/lambda');
-    assert.equal(seen[0]!.type, 'text/plain');
-    assert.equal(seen[0]!.body, '$trades->select(~[a])->from(demo::RT)');
-    assert.equal(seen[1]!.url, 'http://localhost:9999/api/pure/v1/execution/generatePlan');
-    const input = JSON.parse(seen[1]!.body);
+    // The query is already protocol: one call, nothing parsed first.
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.url, 'http://localhost:9999/api/pure/v1/execution/generatePlan');
+    assert.equal(seen[0]!.type, 'application/json');
+    const input = JSON.parse(seen[0]!.body);
     assert.deepEqual(input.model, { _type: 'text', code: 'Class demo::Person {}' });
-    assert.deepEqual(input.function, { _type: 'lambda' });
+    assert.deepEqual(input.function, JSON.parse(toJson(lambda([], fn('from', Q.body[0]!, element('demo::RT'))))));
   });
 
-  it('caches, because planning the same grammar is pure', async () => {
+  it('caches, because planning the same query is pure', async () => {
     const seen: Seen[] = [];
     const p = new UpstreamPlanner({ baseUrl: 'http://x', model: 'm', runtime: 'r', fetch: fakeServer(seen, ok) });
-    await p.plan('g', SNAPSHOT);
-    await p.plan('g', SNAPSHOT);
-    await p.plan('other', SNAPSHOT);
-    assert.equal(seen.length, 4, 'two calls per new grammar; the repeat was served from cache');
+    await p.plan(Q);
+    await p.plan(fromElement('demo::T').select(['a']).lambda());
+    await p.plan(OTHER);
+    assert.equal(seen.length, 2, 'one call per new query; the equal repeat was served from cache');
     assert.equal(p.cacheSize, 2);
   });
 
@@ -91,11 +84,11 @@ describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite an
         : { json: {} })),
     });
     await assert.rejects(
-      () => p.plan('bad grammar', SNAPSHOT),
+      () => p.plan(Q),
       (e: unknown) => {
         assert.ok(e instanceof PlanError);
         assert.match((e as Error).message, /Column 'nope' not found/);
-        assert.equal((e as PlanError).grammar, 'bad grammar');
+        assert.equal((e as PlanError).subject, Q);
         return true;
       },
     );
@@ -105,17 +98,39 @@ describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite an
     const seen: Seen[] = [];
     const p = new UpstreamPlanner({
       baseUrl: 'http://x', model: 'm', runtime: 'r',
-      fetch: fakeServer(seen, (path) => ({
-        json: path.endsWith('/lambda') ? { _type: 'lambda' } : {
+      fetch: fakeServer(seen, () => ({
+        json: {
           _type: 'relationType',
           columns: [{ name: 'amount', genericType: { rawType: { _type: 'packageableType',
             fullPath: 'meta::pure::precisePrimitives::Numeric' } }, multiplicity: { lowerBound: 0, upperBound: 1 } }],
         },
       })),
     });
-    assert.deepEqual(await p.relationType('#>{db::DB.T}#'), [{ name: 'amount', type: 'Decimal' }]);
-    assert.equal(new URL(seen[1]!.url).pathname, '/api/pure/v1/compilation/lambdaRelationType');
-    assert.deepEqual(JSON.parse(seen[1]!.body).model, { _type: 'text', code: 'm' });
+    assert.deepEqual(await p.relationType(Q), [{ name: 'amount', type: 'Decimal' }]);
+    assert.equal(new URL(seen[0]!.url).pathname, '/api/pure/v1/compilation/lambdaRelationType');
+    assert.deepEqual(JSON.parse(seen[0]!.body).model, { _type: 'text', code: 'm' });
+  });
+
+  it('parses what a person typed through grammarToJson (E1), and prints a query through jsonToGrammar (E4)', async () => {
+    const seen: Seen[] = [];
+    const p = new UpstreamPlanner({
+      baseUrl: 'http://x', model: 'm', runtime: 'r',
+      fetch: (async (url: string, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        seen.push({ url, body: String(init?.body ?? ''), type: headers['Content-Type'] ?? '' });
+        return new Response(new URL(url).pathname.includes('jsonToGrammar')
+          ? 'demo::T->select(~[a])' : toJson(Q), { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    assert.deepEqual(await p.parse('|demo::T->select(~[a])'), Q);
+    assert.equal(new URL(seen[0]!.url).pathname, '/api/pure/v1/grammar/grammarToJson/lambda');
+    assert.equal(seen[0]!.type, 'text/plain');
+    assert.equal(seen[0]!.body, '|demo::T->select(~[a])');
+    assert.equal(await p.print(Q), 'demo::T->select(~[a])');
+    const printed = new URL(seen[1]!.url);
+    assert.equal(printed.pathname, '/api/pure/v1/grammar/jsonToGrammar/lambda');
+    assert.equal(printed.searchParams.get('renderStyle'), 'PRETTY');
+    assert.deepEqual(JSON.parse(seen[1]!.body), JSON.parse(toJson(Q)));
   });
 
   it('reports an unreachable planner distinctly from a rejected plan', async () => {
@@ -125,6 +140,6 @@ describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite an
       runtime: 'r',
       fetch: (() => Promise.reject(new Error('ECONNREFUSED'))) as never,
     });
-    await assert.rejects(() => p.plan('g', SNAPSHOT), /could not reach the server at http:\/\/x/);
+    await assert.rejects(() => p.plan(Q), /could not reach the server at http:\/\/x/);
   });
 });

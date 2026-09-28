@@ -83,7 +83,8 @@ const PLANNER = new UpstreamPlanner({ baseUrl: ENGINE, model: MODEL, runtime: 't
 
 async function plan(pure) {
   try {
-    return { sql: await PLANNER.plan(pure, undefined), error: undefined };
+    // the query as text (a harness writes it): the engine parses it (E1), then plans it (E9)
+    return { sql: await PLANNER.plan(await PLANNER.parse(`|${pure}`)), error: undefined };
   } catch (e) {
     if (e instanceof PlanError) return { sql: undefined, error: e.message };
     throw e;

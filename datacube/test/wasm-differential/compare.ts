@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 import { relationColumns } from '../../src/relation-type.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
-import { CASES, grammars, MODEL, RUNTIME } from './cases.ts';
+import { grammars, MODEL, RUNTIME } from './cases.ts';
 
 // Beside this package in the runfiles: the module and its runtime
 // (//wasm:planner), and the JVM's answers.
@@ -61,12 +61,11 @@ it('DataCube\'s own grammar plans the same in WASM and on the JVM', async () => 
 
   const differ: string[] = [];
   let planned = 0;
-  for (const [i, { name, grammar }] of queries.entries()) {
-    const c = CASES[i]!;
+  for (const { name, grammar } of queries) {
     const expected = jvm.get(name) ?? '<<missing>>';
     let actual: string;
     try {
-      const plan = await planner.plan(grammar, c.snapshot, c.scope);
+      const plan = await planner.planText(grammar);
       actual = `OK\n${JSON.stringify({ sql: plan.sql, columns: plan.columns })}`;
       planned++;
     } catch (e) {
@@ -93,20 +92,19 @@ it('the same queries as protocol JSON: the same plan, and the printer round-trip
     cache: false,
   });
   const differ: string[] = [];
-  for (const [i, { name, grammar }] of grammars().entries()) {
-    const c = CASES[i]!;
+  for (const { name, grammar } of grammars()) {
     // E1's twin: the text as the wire carries it
-    const json = await planner.lambdaJson(grammar);
+    const json = await planner.parse(grammar);
     // E9's twin on the JSON plans exactly what the text plans
-    const fromText = await planner.plan(grammar, c.snapshot, c.scope);
-    const fromJson = await planner.planJson(json);
+    const fromText = await planner.planText(grammar);
+    const fromJson = await planner.plan(json);
     if (fromJson.sql !== fromText.sql || JSON.stringify(fromJson.columns) !== JSON.stringify(fromText.columns)) {
       differ.push(`${name}: planJson differs from plan\n  text: ${fromText.sql}\n  json: ${fromJson.sql}`);
     }
     // E4's twin prints it; the print parses back to the same JSON, in both styles
     for (const style of ['STANDARD', 'PRETTY'] as const) {
       const text = await planner.compose(json, style);
-      const again = await planner.lambdaJson(text);
+      const again = await planner.parse(text);
       if (JSON.stringify(again) !== JSON.stringify(json)) {
         differ.push(`${name} (${style}): the print does not parse back to the same JSON\n  print: ${text}`);
       }

@@ -5,7 +5,9 @@
 // Every user interaction goes through `update`, which is what keeps
 // "one snapshot, one query, one render" true rather than aspirational.
 
+import { from, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
+import type { PrintStyle } from './pure-v1.ts';
 import { EpochGuard, isStale, type Stale } from './epoch.ts';
 import {
   buildColumnModel,
@@ -15,17 +17,22 @@ import {
 import type { CubeSnapshot } from './snapshot.ts';
 import { CubeRefusal } from './snapshot.ts';
 import {
-  childAggregateQuery,
   effectivePivotOn,
-  ident,
   pinnedPivotFacts,
   pivotLabel,
-  pivotValuesQuery,
-  serialize,
   type LevelScope,
   type PivotColumn,
   type PivotFacts,
 } from './serialize.ts';
+import {
+  childAggregateLambda,
+  levelLambda,
+  parseSnapshot,
+  pivotValuesLambda,
+  type Parsed,
+} from './query.ts';
+import { RemoteExecutionError } from './engine-remote.ts';
+import { PlanError } from './planner.ts';
 import { planPivot, typeColumns, type PivotPlan, type SchemaChange } from './plan.ts';
 import type { ResultTable } from './result.ts';
 import { SnapManager, type RemoteSource } from './snap.ts';
@@ -45,6 +52,16 @@ import { DEFAULT_MAX_ROWS, fetchTree, takeRows } from './treeview.ts';
 import { History, type CubeState } from './history.ts';
 import type { Plan, PlanColumn } from './relation-type.ts';
 
+/** What compiling a cube found: the query refused (or the first), and why. */
+export interface CompileOutcome {
+  /** The refused query, or the first one when all compile; null when a text did not parse. */
+  readonly query: Lambda | null;
+  /** The compiler's refusal; null when every query compiles. */
+  readonly refusal: string | null;
+  /** The text whose PARSE was refused (a calculated column as `x|<expression>`), whose `[line:col]` the refusal names. */
+  readonly parsing?: string;
+}
+
 /**
  * Turns a snapshot into SQL.
  *
@@ -58,26 +75,18 @@ import type { Plan, PlanColumn } from './relation-type.ts';
  * interface stays narrow and the real implementation calls the engine.
  */
 export interface Planner {
-  /**
-   * Pure grammar in, SQL out.
-   *
-   * `scope` names the tree level the grammar was generated for. A real
-   * planner ignores it, because the grammar already says which columns
-   * group -- it is passed so that a caller which cannot parse Pure
-   * still knows what it was handed.
-   */
-  plan(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<Plan>;
+  /** A query (a protocol tree, query.ts) in, SQL and the compiler's result type out. */
+  plan(query: Lambda, signal?: AbortSignal): Promise<Plan>;
   /**
    * The compiler's type of a query's result, compile-only (upstream
    * `lambdaRelationType`): how the cube types its source and calculated
    * columns BEFORE a level query runs.
    */
-  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]>;
+  relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]>;
+  /** What a person typed (a source, a calculated column) as its lambda: E1, the compiler's parse. */
+  parse(text: string, signal?: AbortSignal): Promise<Lambda>;
+  /** A query as Pure text, for a person to read: E4, the compiler's print (PRETTY unless asked). */
+  print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string>;
 }
 
 export interface CubeView {
@@ -95,13 +104,11 @@ export interface CubeView {
   /**
    * The query, for the "show me the query" panel.
    *
-   * BOTH, because they answer different questions: the Pure is what
-   * this product emitted, the SQL is what the planner made of it
-   * and what the engine actually ran. `sql` held Pure for the whole
-   * life of this project -- a panel labelled SQL that had never
-   * shown any.
+   * BOTH, because they answer different questions: the query is what
+   * this product built (shown as the compiler prints it), the SQL is what
+   * the planner made of it and what the engine actually ran.
    */
-  readonly pure: string;
+  readonly query: Lambda;
   readonly sql: string;
   /**
    * A pivoted cube's first step, answered: the values it found and
@@ -195,6 +202,12 @@ export class CubeController {
   readonly #history: History;
   /** The last state that reached the screen. See #remember. */
   #lastState: CubeState | null = null;
+  /**
+   * What a person typed (a source, a calculated column's expression), as the
+   * compiler parsed it. Parsing is a pure function of the text, so a refresh
+   * re-parses nothing it has seen; a refused parse is not kept.
+   */
+  readonly #parses = new Map<string, Promise<Lambda>>();
 
   /**
    * Two arrangements, and the choice is the CALL, not a flag.
@@ -255,6 +268,19 @@ export class CubeController {
     return this.#snaps.isSnapped && this.#local ? this.#local : this.#liveRunner;
   }
 
+  /** The snapshot's text, parsed through this cube's runner (query.ts `parseSnapshot`). */
+  #parse(snapshot: CubeSnapshot, signal?: AbortSignal): Promise<Parsed> {
+    const runner = this.#runner;
+    return parseSnapshot(snapshot, (text, sig) => {
+      const known = this.#parses.get(text);
+      if (known) return known;
+      const parsed = runner.parse(text, sig);
+      this.#parses.set(text, parsed);
+      parsed.catch(() => this.#parses.delete(text));
+      return parsed;
+    }, signal);
+  }
+
   /** Which arrangement answers queries, for diagnostics. */
   get runnerName(): string {
     return this.#runner.name;
@@ -275,7 +301,7 @@ export class CubeController {
   async compile(
     snapshot: CubeSnapshot,
     signal?: AbortSignal,
-  ): Promise<{ readonly pure: string; readonly refusal: string | null } | undefined> {
+  ): Promise<CompileOutcome | undefined> {
     const runner = this.#runner;
     const s: CubeSnapshot = {
       ...snapshot,
@@ -296,7 +322,20 @@ export class CubeController {
     // keys (their literals have the types the draft's will), and none
     // otherwise -- the level still compiles its Totals and carried
     // columns, and the cell form is the same for every value.
-    const valuesQuery = pivotValuesQuery(s);
+    let parsed: Parsed;
+    try {
+      parsed = await this.#parse(s, signal);
+    } catch (error: unknown) {
+      if (signal?.aborted) throw error;
+      const parsing = (error instanceof PlanError || error instanceof RemoteExecutionError)
+        && typeof error.subject === 'string' ? error.subject : undefined;
+      return {
+        query: null,
+        refusal: error instanceof Error ? error.message : String(error),
+        ...(parsing === undefined ? {} : { parsing }),
+      };
+    }
+    const valuesQuery = pivotValuesLambda(s, parsed);
     const shown = this.#view;
     const facts: PivotFacts | undefined = effectivePivotOn(s).length === 0
       ? undefined
@@ -308,20 +347,20 @@ export class CubeController {
     const queries = [
       ...(valuesQuery !== null ? [valuesQuery] : []),
       ...scopes.flatMap((scope) => {
-        const child = scope ? childAggregateQuery(s, scope) : null;
-        const level = serialize(s, scope, facts);
-        return child ? [level, child.pure] : [level];
+        const child = scope ? childAggregateLambda(s, parsed, scope) : null;
+        const level = levelLambda(s, parsed, scope, facts);
+        return child ? [level, child.query] : [level];
       }),
     ];
-    for (const pure of queries) {
+    for (const query of queries) {
       try {
-        await runner.compile(pure, s, signal);
+        await runner.compile(query, s, signal);
       } catch (error: unknown) {
         if (signal?.aborted) throw error;
-        return { pure, refusal: error instanceof Error ? error.message : String(error) };
+        return { query, refusal: error instanceof Error ? error.message : String(error) };
       }
     }
-    return { pure: queries[0] ?? '', refusal: null };
+    return { query: queries[0] ?? null, refusal: null };
   }
 
 
@@ -336,12 +375,26 @@ export class CubeController {
    * drill-through that could not run.
    */
   async runQuery(
-    pureGrammar: string,
+    query: Lambda,
     snapshot: CubeSnapshot,
     scope?: LevelScope,
     signal?: AbortSignal,
   ): Promise<RunOutcome> {
-    return this.#runner.run(pureGrammar, snapshot, scope, signal);
+    return this.#runner.run(query, snapshot, scope, signal);
+  }
+
+  /**
+   * The snapshot's source and calculated columns as the compiler parses them,
+   * for a host's own query. The snapshot's source is read as it stands: a
+   * view's snapshot already names what its plane reads.
+   */
+  async parsed(snapshot: CubeSnapshot, signal?: AbortSignal): Promise<Parsed> {
+    return this.#parse(snapshot, signal);
+  }
+
+  /** A query as Pure text for a person to read: the compiler's print (E4). */
+  async print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string> {
+    return this.#runner.print(query, style, signal);
   }
 
   get view(): CubeView | null {
@@ -424,20 +477,22 @@ export class CubeController {
         // the snap was cosmetic: a table was materialised and every
         // subsequent query still went to the live source.
         const source = this.#snaps.sourceFor(snapshot.source.expression);
-        // STEP 0: the columns' types, from the compiler, before any query
-        // reads them to choose an aggregate (plan.ts, `typeColumns`).
-        const typed = await typeColumns({
+        const reading: CubeSnapshot = {
           ...snapshot,
           epoch,
           source: { ...snapshot.source, expression: source },
-        }, this.#runner, signal);
+        };
+        const parsed = await this.#parse(reading, signal);
+        // STEP 0: the columns' types, from the compiler, before any query
+        // reads them to choose an aggregate (plan.ts, `typeColumns`).
+        const typed = await typeColumns(reading, this.#runner, parsed, signal);
         const withEpoch: CubeSnapshot = typed.snapshot;
         const withChanges = typed.changes.length > 0 ? { schemaChanges: typed.changes } : {};
         const measureNames = withEpoch.measures.map((m) => m.name);
         // STEP 1 of a pivoted cube: its values, from their own query,
         // on this refresh's data (plan.ts). Every level is then one
         // groupBy written with them.
-        const pivot = await planPivot(withEpoch, this.#runner, signal);
+        const pivot = await planPivot(withEpoch, this.#runner, parsed, signal);
         const pivotPaths = pivotHeaderPaths(pivot?.columns);
         const withPivot = pivot ? { pivot } : {};
 
@@ -446,6 +501,7 @@ export class CubeController {
         if (withEpoch.rows.length > 0) {
           const view = await fetchTree(withEpoch, this.#tree, {
             runner: this.#runner,
+            parsed,
             guard: this.#guard,
             epoch,
             signal,
@@ -464,7 +520,7 @@ export class CubeController {
             rows: view.table,
             treeRows: view.rows,
             truncated: view.truncated,
-            pure: serialize(withEpoch, { level: 1, parent: [] }, pivot?.facts),
+            query: levelLambda(withEpoch, parsed, { level: 1, parent: [] }, pivot?.facts),
             // The level-1 plan is the representative one: it is the
             // query behind the rows a user is looking at.
             sql:
@@ -486,9 +542,9 @@ export class CubeController {
         const scope = maxRows === undefined
           ? undefined
           : ({ level: 1, parent: [], limit: maxRows + 1 } as const);
-        const grammar = serialize(withEpoch, scope, pivot?.facts);
+        const query = levelLambda(withEpoch, parsed, scope, pivot?.facts);
         const { rows: full, sql } = await this.#runner.run(
-          grammar,
+          query,
           withEpoch,
           scope,
           signal,
@@ -509,7 +565,7 @@ export class CubeController {
           rows,
           treeRows: [],
           truncated: cut ? [{ level: 1, parent: [] }] : [],
-          pure: grammar,
+          query,
           sql,
           ...withPivot,
           ...withChanges,
@@ -552,10 +608,8 @@ export class CubeController {
     // something to keep exploring (rule 3, "drillable grain"), so a column
     // added to the view after snapping must answer from the snap too. A
     // fresh cube references none, which made this `select(~[])` and the
-    // planner refuse it. Names go through `ident`, so a column called
+    // planner refuse it. The query is a tree, so a column called
     // `trade date` is a name, not grammar.
-    const columns = snapshot.columns.map((c) => ident(c.name)).join(', ');
-    const pure = `${snapshot.source.expression}->select(~[${columns}])`;
     if (!this.#local) {
       // The SnapManager says the same thing; saying it here too
       // keeps the reason next to the attempt.
@@ -564,7 +618,11 @@ export class CubeController {
         + ' local store to freeze a snapshot into.',
       );
     }
-    const sourceSql = (await this.#local.planner.plan(pure, snapshot)).sql;
+    const planner = this.#local.planner;
+    const source = (await planner.parse(`|${snapshot.source.expression}`)).body[0];
+    if (source === undefined) throw new CubeRefusal(`the source '${snapshot.source.expression}' is not an expression`);
+    const query = from(source).select(snapshot.columns.map((c) => c.name)).lambda();
+    const sourceSql = (await planner.plan(query)).sql;
 
     await this.#snaps.snap(sourceSql, this.#guard.current, {
       ...(label !== undefined ? { label } : {}),
@@ -702,16 +760,17 @@ export class CubeController {
   }
 
   /**
-   * Run one query through this cube's runner -- whichever plane it is --
-   * outside the tree: Ad Hoc Analysis mode's grid and member lookups.
+   * One level of a cube of the host's own, as a query through this cube's
+   * runner -- whichever plane it is -- outside the tree: Ad Hoc Analysis
+   * mode's grid and member lookups.
    */
-  async query(
-    pure: string,
+  async level(
     snapshot: CubeSnapshot,
     scope?: LevelScope,
     signal?: AbortSignal,
   ): Promise<ResultTable> {
-    const { rows } = await this.#runner.run(pure, snapshot, scope, signal);
+    const query = levelLambda(snapshot, await this.#parse(snapshot, signal), scope);
+    const { rows } = await this.#runner.run(query, snapshot, scope, signal);
     return rows;
   }
 

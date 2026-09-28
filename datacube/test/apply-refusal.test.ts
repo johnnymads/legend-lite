@@ -14,6 +14,8 @@ import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { FakeEngine } from './fake-engine.ts';
+import { fakeParse, fakePrint, limitsOf } from './fake-planner.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: 'trades' },
@@ -48,9 +50,9 @@ class Engine extends FakeEngine {
 class RefusingPlanner implements Planner {
   refusals = 0;
   planned = 0;
-  async plan(pure: string): Promise<Plan> {
+  async plan(query: Lambda): Promise<Plan> {
     this.planned += 1;
-    if (/limit\(43\)/.test(pure)) {
+    if (limitsOf(query).includes(43)) {
       this.refusals += 1;
       throw new Error('refused: no limit of 42 here');
     }
@@ -59,6 +61,8 @@ class RefusingPlanner implements Planner {
   async relationType(): Promise<PlanColumn[]> {
     return [];
   }
+  parse = fakeParse;
+  print = fakePrint;
 }
 
 const flush = async (): Promise<void> => {
@@ -110,7 +114,8 @@ describe('Properties > Apply with a refused draft', () => {
     // upstream's code-check alert, showing the query that was refused.
     const alert = root.querySelector('.dc-alert-error') as HTMLElement;
     assert.match(alert?.textContent ?? '', /Can't safely apply changes/);
-    assert.match(alert?.querySelector('.dc-alert-codecheck')?.textContent ?? '', /limit\(43\)/);
+    // the refused query, as the planner prints it (this double's print is its JSON): the cap of 43
+    assert.match(alert?.querySelector('.dc-alert-codecheck')?.textContent ?? '', /\{"_type":"integer","value":43\}/);
     assert.notEqual(app.snapshot.maxRows, 42, 'the refused snapshot stayed');
     assert.notEqual(app.configuration.maxRows, 42, 'the refused setting stayed');
     assert.ok(statuses.some(([t, k]) => k === 'error' && /refused/.test(t)));

@@ -46,7 +46,8 @@ import { availableDimensions, useDimension } from './dimensions.ts';
 import { AdHocMode } from './adhoc/mode.ts';
 import { carryOver } from './adhoc/outline.ts';
 import { AdHocSession } from './adhoc/session.ts';
-import { drillQuery } from './drill.ts';
+import { drillLambda, levelLambda } from './query.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
 import type { RemoteSource } from './snap.ts';
 import { exportFileName, toCsv, toEml } from './export.ts';
@@ -59,7 +60,7 @@ import {
   buildExecutionErrorAlert,
   type AlertOptions,
 } from './ui/alert.ts';
-import { isPivotTotalColumn, pivotLabel, serialize, type PivotColumn } from './serialize.ts';
+import { isPivotTotalColumn, pivotLabel, type PivotColumn } from './serialize.ts';
 import { toHtml, toSpreadsheetML } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
 import { toBarChart, toTreemap } from './chart.ts';
@@ -847,7 +848,7 @@ export class CubeApp {
     this.#view = view;
     this.#options.onView?.(view);
     this.#treeRows = view.treeRows;
-    this.#debug('query', { pure: view.pure, sql: view.sql, rows: view.rows.rowCount,
+    this.#debug('query', { query: view.query, sql: view.sql, rows: view.rows.rowCount,
       ms: view.rows.elapsedMs, snapshot: view.snapshot });
     const changed = this.#snapshot !== view.snapshot;
     this.#snapshot = view.snapshot;
@@ -1933,7 +1934,7 @@ export class CubeApp {
       ? undefined
       : view.pivot?.columns.find((c) => c.name === leaf.name);
     const pivotPath = planned?.tuple ?? undefined;
-    const pure = drillQuery(view.snapshot, {
+    const query = drillLambda(view.snapshot, await this.#controller.parsed(view.snapshot), {
       path: meta.path,
       ...(pivotPath ? { pivotPath } : {}),
     });
@@ -1942,7 +1943,7 @@ export class CubeApp {
     // no local engine here to call, and a drill-through that works on
     // two planes out of three is a broken feature on the third.
     const { rows: table } = await this.#controller.runQuery(
-      pure,
+      query,
       view.snapshot,
     );
     this.#showOverlay('Drill-through', (host) => {
@@ -2226,8 +2227,8 @@ export class CubeApp {
       this.#status('Ad Hoc Analysis needs at least one dimension column', 'warn');
       return;
     }
-    const session = new AdHocSession(cube, (pure, snapshot, scope) =>
-      this.#controller.query(pure, snapshot, scope), grid);
+    const session = new AdHocSession(cube, (snapshot, scope) =>
+      this.#controller.level(snapshot, scope), grid);
     const middle = this.#els.grid.parentElement as HTMLElement;
     const host = this.#doc.createElement('div');
     middle.before(host);
@@ -2359,7 +2360,7 @@ export class CubeApp {
     };
     const scope = { level: 0, parent: [], limit: JSON_SAMPLE_ROWS };
     const { rows } = await this.#controller.runQuery(
-      serialize(flat, scope), flat, scope);
+      levelLambda(flat, await this.#controller.parsed(flat), scope), flat, scope);
     return rows.columns.find((c) => c.name === column)?.values ?? [];
   }
 
@@ -2440,7 +2441,7 @@ export class CubeApp {
       this.#status(refusal, 'error');
       this.#codeCheckAlert(
         "Query Validation Failure: Can't safely apply changes. Check the query code below for more details.",
-        refusal, checked.pure);
+        refusal, await this.#queryText(checked.query, checked.parsing));
       return false;
     }
     const wasRoot = this.#config.showRootAggregation;
@@ -2509,13 +2510,28 @@ export class CubeApp {
     this.#debug('failure', error);
     if (!isQueryFailure(error)) return;
     const download = this.#options.download;
-    this.#showOverlay('Error', (host, close) => buildExecutionErrorAlert(host, {
+    void this.#queryText(error.query).then((pure) => this.#showOverlay('Error', (host, close) => buildExecutionErrorAlert(host, {
       message: "Data Fetch Failure: Can't execute query.",
       text: `Error: ${message}`,
-      pure: error.pure,
+      pure,
       ...(error.sql !== undefined ? { sql: error.sql } : {}),
       ...(download ? { download } : {}),
-    }, close), { key: 'alert:execution', replace: true, size: EXECUTION_ERROR_WINDOW });
+    }, close), { key: 'alert:execution', replace: true, size: EXECUTION_ERROR_WINDOW }));
+  }
+
+  /**
+   * A query as a person reads it: the text whose parse was refused, as it was
+   * typed (the position a parse refusal names is in it), else the query as the
+   * compiler prints it (E4). A print that fails says so in its place.
+   */
+  async #queryText(query: Lambda | null, parsing?: string): Promise<string> {
+    if (parsing !== undefined) return parsing;
+    if (query === null) return '';
+    try {
+      return await this.#controller.print(query);
+    } catch (error: unknown) {
+      return `(the query could not be printed: ${error instanceof Error ? error.message : String(error)})`;
+    }
   }
 
   /** Upstream's documentation panel, on the entry a (?) named. */

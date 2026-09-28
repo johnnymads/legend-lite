@@ -25,6 +25,7 @@ import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { TreeState } from '../src/tree.ts';
 import { FakeEngine } from './fake-engine.ts';
+import { fakeParse, fakePrint } from './fake-planner.ts';
 
 const BASE: CubeSnapshot = {
   source: { expression: '#>{db.T}#' },
@@ -47,6 +48,8 @@ class StubPlanner implements Planner {
   async relationType(): Promise<PlanColumn[]> {
     return [];
   }
+  parse = fakeParse;
+  print = fakePrint;
 }
 
 class StubEngine extends FakeEngine {

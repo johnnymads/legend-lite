@@ -15,9 +15,9 @@
 // So this is not a planner. Pure in, ROWS out.
 
 import type { CubeSnapshot } from './snapshot.ts';
-import type { LevelScope } from './serialize.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
-import { PureV1Client, type PureV1Options } from './pure-v1.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { PureV1Client, type PrintStyle, type PureV1Options } from './pure-v1.ts';
 import { pureType, relationColumns, type PlanColumn } from './relation-type.ts';
 import { hasTimeOfDay } from './types.ts';
 import { timestampFromText } from './values.ts';
@@ -36,22 +36,22 @@ export interface RemoteResult {
 }
 
 export interface RemoteExecutor {
-  execute(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<RemoteResult>;
+  execute(query: Lambda, snapshot: CubeSnapshot, signal?: AbortSignal): Promise<RemoteResult>;
   /** The compiler's type of a query's result: the engine's `lambdaRelationType`. */
-  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]>;
+  relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]>;
+  /** What a person typed, as its lambda: the engine's `grammarToJson`. */
+  parse(text: string, signal?: AbortSignal): Promise<Lambda>;
+  /** A query as Pure text for a person: the engine's `jsonToGrammar`. */
+  print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string>;
 }
 
 export class RemoteExecutionError extends Error {
-  readonly pure: string;
-  constructor(message: string, pure: string) {
+  /** What was asked: the query, or, for a parse, the text. */
+  readonly subject: Lambda | string;
+  constructor(message: string, subject: Lambda | string) {
     super(message);
     this.name = 'RemoteExecutionError';
-    this.pure = pure;
+    this.subject = subject;
   }
 }
 
@@ -110,8 +110,8 @@ export function toResultTable(
 }
 
 /**
- * Pure in, rows out, through a running server's `pure/v1` API: the query
- * parsed (`grammarToJson/lambda`), then `execution/execute`.
+ * A query in, rows out, through a running server's `pure/v1` API: the query's protocol tree to
+ * `execution/execute`.
  */
 export class LegendEngineExecutor implements RemoteExecutor {
   readonly #client: PureV1Client;
@@ -124,24 +124,24 @@ export class LegendEngineExecutor implements RemoteExecutor {
     return this.#client.baseUrl;
   }
 
-  async execute(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    _scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<RemoteResult> {
-    const pure = this.#client.query(pureGrammar);
+  async execute(query: Lambda, snapshot: CubeSnapshot, signal?: AbortSignal): Promise<RemoteResult> {
     const started = Date.now();
-    const lambda = await this.#client.lambda(pure, signal);
-    const body = (await this.#client.execute(lambda, pure, signal)) as TdsResponse;
+    const body = (await this.#client.execute(query, signal)) as TdsResponse;
     return {
       rows: toResultTable(body, snapshot.epoch, Date.now() - started),
       sql: body.activities?.at(-1)?.sql ?? '',
     };
   }
 
-  async relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
-    const lambda = await this.#client.lambda(pureGrammar, signal);
-    return relationColumns(await this.#client.lambdaRelationType(lambda, pureGrammar, signal));
+  async relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]> {
+    return relationColumns(await this.#client.lambdaRelationType(query, signal));
+  }
+
+  parse(text: string, signal?: AbortSignal): Promise<Lambda> {
+    return this.#client.parse(text, signal);
+  }
+
+  print(query: Lambda, style: PrintStyle = 'PRETTY', signal?: AbortSignal): Promise<string> {
+    return this.#client.print(query, style, signal);
   }
 }

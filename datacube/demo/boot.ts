@@ -388,6 +388,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // the new cube's first render.)
     must('offstage').append(status);
     host.replaceChildren();
+    let printed = 0;
     const created: CubeApp = new CubeApp(host, snap, {
       engine,
       planner,
@@ -490,11 +491,16 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           status.classList.remove('bad');
           status.textContent = label;
         }
-        // The Pure this product emitted, and the SQL the planner made
-        // of it. Both, because they answer different questions -- and
-        // because the SQL panel showed Pure until the real planner
-        // started returning SQL worth reading.
-        must('pure').textContent = view.pure;
+        // The query this product built, as the compiler prints it, and
+        // the SQL the planner made of it. Both, because they answer
+        // different questions -- and because the SQL panel showed Pure
+        // until the real planner started returning SQL worth reading.
+        // The print is asked for; a later view's print wins.
+        const printing = (printed += 1);
+        void created.controller.print(view.query, 'STANDARD').then(
+          (text) => { if (printing === printed) must('pure').textContent = text; },
+          (error: unknown) => { if (printing === printed) must('pure').textContent = String(error); },
+        );
         must('sql').textContent =
           view.sql || '(the demo shim plans per level; expand a row)';
       },

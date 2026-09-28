@@ -20,7 +20,9 @@
 import * as duckdb from '@duckdb/duckdb-wasm';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
-import { serializeWithValues } from '../src/plan.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { levelWithValues } from '../src/plan.ts';
+import { parseSnapshot } from '../src/query.ts';
 import type { LevelScope } from '../src/serialize.ts';
 import type {
   AggregateFn, CubeSnapshot, FilterNode, FilterOperator,
@@ -100,11 +102,15 @@ async function attempt(
 ): Promise<void> {
   let pure = '';
   let sql = '';
+  let query: Lambda;
   try {
     // A pivot is two queries: its values first (src/plan.ts), on the
-    // same planner and engine as the level.
-    pure = await serializeWithValues(snapshot, scope, async (values) =>
-      deps.engine.execute(await deps.planner.plan(values, snapshot), snapshot.epoch));
+    // same planner and engine as the level. The query is a tree; its
+    // print is what the outcome records for a person to read.
+    const parsed = await parseSnapshot(snapshot, (text) => deps.planner.parse(text));
+    query = await levelWithValues(snapshot, parsed, scope, async (values) =>
+      deps.engine.execute(await deps.planner.plan(values), snapshot.epoch));
+    pure = await deps.planner.print(query, 'STANDARD');
   } catch (e) {
     // The serialiser refusing is still a refusal, not a crash: it
     // declines shapes the cube cannot express.
@@ -114,7 +120,7 @@ async function attempt(
   }
   let plan: Plan;
   try {
-    plan = await deps.planner.plan(pure, snapshot, scope);
+    plan = await deps.planner.plan(query);
     sql = plan.sql;
   } catch (e) {
     out.push({ csv, op, verdict: 'refused', pure,

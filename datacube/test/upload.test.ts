@@ -69,11 +69,6 @@ const ORDERS = [
     shipping: { city: 'Paris', express: false } },
 ];
 
-/** A snapshot for `plan`: the planner reads only the grammar. */
-const SNAPSHOT = {
-  source: { expression: '' }, columns: [], derived: [], rows: [], pivotOn: [], measures: [], sorts: [], epoch: 1,
-};
-
 describe('ingestFile with JSON', () => {
   for (const [label, name, text] of [
     ['an array of records', 'orders.json', JSON.stringify(ORDERS)],
@@ -99,10 +94,11 @@ describe('ingestFile with JSON', () => {
       assert.match(duck.get('shipping')!, /^STRUCT\(/);
 
       // ... and the planner's own SQL reads it as a Variant: an index, a key, a whole value.
-      const plan = await plannerFor(r.model, r.runtime).plan(`${r.source}`
+      const planner = plannerFor(r.model, r.runtime);
+      const plan = await planner.plan(await planner.parse(`|${r.source}`
         + `->extend(~[first_sku: x | $x.items->get(0)->get('sku')->to(@String),`
         + ` city: x | $x.shipping->get('city')->to(@String)])`
-        + `->select(~[id, first_sku, city, shipping])->sort([~id->ascending()])`, SNAPSHOT);
+        + `->select(~[id, first_sku, city, shipping])->sort([~id->ascending()])`));
       const out = await engine.execute(plan, 0);
       const col = (n: string) => out.columns.find((c) => c.name === n)!;
       assert.deepEqual(col('first_sku').values, ['ABC', 'DEF']);

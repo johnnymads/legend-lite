@@ -19,6 +19,7 @@ import { readFile } from 'node:fs/promises';
 
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
 import { pivotValuesQuery, serialize } from '../src/serialize.ts';
+import { levelLambda, parseSnapshot } from '../src/query.ts';
 
 const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
   .replace(/\/$/, '');
@@ -151,7 +152,8 @@ if (!ONLY || 'server mode'.includes(ONLY.toLowerCase())) {
       sorts: [{ column: 'region', direction: 'asc' }],
       epoch: 3,
     };
-    const out = await executor.execute(serialize(snapshot), snapshot);
+    const out = await executor.execute(
+      levelLambda(snapshot, await parseSnapshot(snapshot, (t) => executor.parse(t))), snapshot);
     const by = Object.fromEntries(out.rows.columns.map((c) => [c.name, c]));
     // Derived from the seed's own shape (notional counts 1..N),
     // not copied from a run -- see tools that generate

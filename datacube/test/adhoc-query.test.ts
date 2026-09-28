@@ -20,6 +20,14 @@ import {
   type AdHocGrid,
 } from '../src/adhoc/state.ts';
 import type { ResultTable } from '../src/result.ts';
+import { levelLambda } from '../src/query.ts';
+import type { LevelScope } from '../src/serialize.ts';
+import { liteParsed, litePrint } from './lite-compiler.ts';
+
+/** A query as the compiler prints it: the level the Ad Hoc query names, built and printed by lite. */
+async function printed(q: { readonly snapshot: AdHocCube['snapshot']; readonly scope?: LevelScope }): Promise<string> {
+  return litePrint(levelLambda(q.snapshot, await liteParsed(q.snapshot), q.scope));
+}
 
 const CUBE: AdHocCube = {
   snapshot: {
@@ -69,19 +77,19 @@ const zoomed = (): AdHocGrid => {
 };
 
 describe('the queries: one per shape', () => {
-  it('a grid mixing generations asks one query per generation, each filtered to its members', () => {
+  it('a grid mixing generations asks one query per generation, each filtered to its members', async () => {
     const qs = planQueries(CUBE, zoomed());
     assert.deepEqual(qs.map((q) => q.key), ['0', '1', '2']);
-    const [top, years, quarters] = qs;
-    assert.doesNotMatch(top!.pure, /groupBy\(~\[year/, 'the top is one row, ungrouped');
-    assert.match(years!.pure, /groupBy\(~\[year\]/);
-    assert.match(years!.pure, /\$x\.year == '2021'.*\$x\.year == '2022'/s);
-    assert.match(quarters!.pure, /groupBy\(~\[year, quarter\]/);
-    assert.match(quarters!.pure, /\$x\.quarter == 'Q1'/);
-    assert.doesNotMatch(quarters!.pure, /'2022'/, 'only the members shown at that generation');
+    const [top, years, quarters] = await Promise.all(qs.map(printed));
+    assert.doesNotMatch(top!, /groupBy\(~\[year/, 'the top is one row, ungrouped');
+    assert.match(years!, /groupBy\(~\[year\]/);
+    assert.match(years!, /\$x\.year == '2021'.*\$x\.year == '2022'/s);
+    assert.match(quarters!, /groupBy\(~\[year, quarter\]/);
+    assert.match(quarters!, /\$x\.quarter == 'Q1'/);
+    assert.doesNotMatch(quarters!, /'2022'/, 'only the members shown at that generation');
   });
 
-  it('many members are filtered by what covers them, never one condition each', () => {
+  it('many members are filtered by what covers them, never one condition each', async () => {
     // Every quarter of 100 years: 400 members at generation 2.
     const years = Array.from({ length: 100 }, (_v, i) => [String(2000 + i)]);
     const quarters = years.flatMap(([y]) => ['Q1', 'Q2', 'Q3', 'Q4'].map((q) => [y as string, q]));
@@ -92,11 +100,12 @@ describe('the queries: one per shape', () => {
     assert.deepEqual(coveringMembers(quarters), [[]], 'still too many: the top, no filter');
     let g = initialGrid(CUBE.outline);
     g = zoomIn(g, 'Time', [], quarters);
-    const deep = planQueries(CUBE, g).find((q) => q.key === '2');
-    assert.ok(deep);
-    assert.match(deep.pure, /groupBy\(~\[year, quarter\]/);
-    assert.doesNotMatch(deep.pure, /\$x\.quarter ==/, 'no per-member conditions');
-    assert.doesNotMatch(deep.pure, /\$x\.year ==/, 'the top covers them: no filter');
+    const found = planQueries(CUBE, g).find((q) => q.key === '2');
+    assert.ok(found);
+    const deep = await printed(found);
+    assert.match(deep, /groupBy\(~\[year, quarter\]/);
+    assert.doesNotMatch(deep, /\$x\.quarter ==/, 'no per-member conditions');
+    assert.doesNotMatch(deep, /\$x\.year ==/, 'the top covers them: no filter');
   });
 
   it('a superset answer places exactly the members shown', () => {
@@ -111,16 +120,17 @@ describe('the queries: one per shape', () => {
     assert.deepEqual(view.table.columns[1]?.values, [2, 3]);
   });
 
-  it('the POV pins every query', () => {
+  it('the POV pins every query', async () => {
     const g = setPov(zoomed(), 'Geography', ['EMEA']);
-    for (const q of planQueries(CUBE, g)) assert.match(q.pure, /\$x\.region == 'EMEA'/);
+    for (const q of planQueries(CUBE, g)) assert.match(await printed(q), /\$x\.region == 'EMEA'/);
   });
 
-  it('asks only for the measures shown', () => {
+  it('asks only for the measures shown', async () => {
     const g = { ...zoomed(), columns: [{ dimension: 'Measures', members: [['pnl']] }] };
     for (const q of planQueries(CUBE, g)) {
-      assert.match(q.pure, /pnl/);
-      assert.doesNotMatch(q.pure, /notional/);
+      const text = await printed(q);
+      assert.match(text, /pnl/);
+      assert.doesNotMatch(text, /notional/);
     }
   });
 });

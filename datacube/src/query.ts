@@ -569,3 +569,29 @@ export function drillLambda(snapshot: CubeSnapshot, parsed: Parsed, request: Dri
   }
   return rel.limit(request.limit ?? DEFAULT_DRILL_LIMIT).lambda();
 }
+
+/** The compiler's parse (the runner's `parse`): what a person typed, as its lambda. */
+export type Parse = (text: string, signal?: AbortSignal) => Promise<Lambda>;
+
+/**
+ * The snapshot's text parsed by the compiler, once: its source and each calculated column's
+ * expression. Until T4b step 3 the snapshot holds TEXT for these (what a person typed); step 3
+ * makes it hold the parsed forms and this goes.
+ */
+export async function parseSnapshot(s: CubeSnapshot, parse: Parse, signal?: AbortSignal): Promise<Parsed> {
+  const source = (await parse(`|${s.source.expression}`, signal)).body[0];
+  if (source === undefined) throw new CubeRefusal(`the source '${s.source.expression}' is not an expression`);
+  const lambdas = new Map<string, Lambda>();
+  for (const d of [...s.derived, ...(s.groupDerived ?? [])]) {
+    if (d.window || d.childAggregate || lambdas.has(d.expression)) continue;
+    lambdas.set(d.expression, await parse(`x|${d.expression}`, signal));
+  }
+  return {
+    source,
+    expression: (text) => {
+      const l = lambdas.get(text);
+      if (!l) throw new Error(`a calculated column's expression was not parsed: ${text}`);
+      return l;
+    },
+  };
+}

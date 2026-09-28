@@ -9,6 +9,11 @@ import type { CubeSnapshot } from '../src/snapshot.ts';
 import type { RemoteExecutor, RemoteResult } from '../src/engine-remote.ts';
 import { isStale } from '../src/epoch.ts';
 import { FakeEngine } from './fake-engine.ts';
+import { fakeParse, fakePrint, limitsOf } from './fake-planner.ts';
+import { fromElement, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
+
+/** A cube query, as DataCube builds one. */
+const Q = fromElement('demo::T').select(['region']).lambda();
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: '$trades' },
@@ -46,23 +51,25 @@ class LocalEngine extends FakeEngine {
 }
 
 class StubPlanner implements Planner {
-  readonly pure: string[] = [];
-  async plan(pureGrammar: string): Promise<Plan> {
-    this.pure.push(pureGrammar);
+  readonly queries: Lambda[] = [];
+  async plan(query: Lambda): Promise<Plan> {
+    this.queries.push(query);
     return { sql: 'SELECT 1', columns: [] };
   }
   async relationType(): Promise<PlanColumn[]> {
     return [];
   }
+  parse = fakeParse;
+  print = fakePrint;
 }
 
 class StubExecutor implements RemoteExecutor {
-  readonly pure: string[] = [];
+  readonly queries: Lambda[] = [];
   async execute(
-    pureGrammar: string,
+    query: Lambda,
     snapshot: CubeSnapshot,
   ): Promise<RemoteResult> {
-    this.pure.push(pureGrammar);
+    this.queries.push(query);
     return {
       rows: table(snapshot.epoch),
       sql: 'select region from TRADES -- as the engine reports it',
@@ -72,6 +79,8 @@ class StubExecutor implements RemoteExecutor {
   async relationType(): Promise<PlanColumn[]> {
     return [];
   }
+  parse = fakeParse;
+  print = fakePrint;
 }
 
 describe('the two arrangements', () => {
@@ -79,8 +88,8 @@ describe('the two arrangements', () => {
     const engine = new LocalEngine();
     const planner = new StubPlanner();
     const runner = new PlanThenRun(planner, engine);
-    const out = await runner.run('$t->select(~[region])', SNAPSHOT);
-    assert.deepEqual(planner.pure, ['$t->select(~[region])']);
+    const out = await runner.run(Q, SNAPSHOT);
+    assert.deepEqual(planner.queries, [Q]);
     assert.deepEqual(engine.sql, ['SELECT 1']);
     assert.equal(out.sql, 'SELECT 1');
     assert.equal(out.rows.rowCount, 1);
@@ -90,8 +99,8 @@ describe('the two arrangements', () => {
   it('asks a remote engine ONCE, and reports the SQL it ran', async () => {
     const executor = new StubExecutor();
     const runner = new RemoteRun(executor);
-    const out = await runner.run('$t->select(~[region])', SNAPSHOT);
-    assert.deepEqual(executor.pure, ['$t->select(~[region])']);
+    const out = await runner.run(Q, SNAPSHOT);
+    assert.deepEqual(executor.queries, [Q]);
     // The SQL is the engine's report of what happened, not something
     // this side produced or will run.
     assert.match(out.sql, /as the engine reports it/);
@@ -114,8 +123,8 @@ describe('a controller on a remote engine', () => {
     await controller.update(SNAPSHOT);
     views.push(controller.view?.rows.rowCount ?? -1);
     assert.deepEqual(views, [1]);
-    assert.equal(executor.pure.length, 1);
-    assert.match(executor.pure[0] ?? '', /\$trades/);
+    assert.equal(executor.queries.length, 1);
+    assert.match(toJson(executor.queries[0]!), /\$trades/);
     assert.equal(controller.runnerName, 'engine');
   });
 
@@ -124,9 +133,9 @@ describe('a controller on a remote engine', () => {
     // plan and execute by hand in the app, which on this plane would
     // have had no local engine to call at all.
     const { executor, controller } = remote();
-    const out = await controller.runQuery('$trades->limit(5)', SNAPSHOT);
+    const out = await controller.runQuery(Q, SNAPSHOT);
     assert.equal(out.rows.rowCount, 1);
-    assert.deepEqual(executor.pure, ['$trades->limit(5)']);
+    assert.deepEqual(executor.queries, [Q]);
   });
 
   it('REFUSES to snap, and says why', async () => {
@@ -152,9 +161,9 @@ describe('Row Limit on a FLAT cube', () => {
   // A flat cube fetched every row whatever General Properties > Row
   // Limit said: only tree levels were capped (2026-09-25 sweep).
   class ManyRows implements RemoteExecutor {
-    readonly pure: string[] = [];
-    async execute(pureGrammar: string, snapshot: CubeSnapshot): Promise<RemoteResult> {
-      this.pure.push(pureGrammar);
+    readonly queries: Lambda[] = [];
+    async execute(query: Lambda, snapshot: CubeSnapshot): Promise<RemoteResult> {
+      this.queries.push(query);
       const n = 5;
       return {
         rows: {
@@ -173,6 +182,8 @@ describe('Row Limit on a FLAT cube', () => {
     async relationType(): Promise<PlanColumn[]> {
       return [];
     }
+    parse = fakeParse;
+    print = fakePrint;
   }
 
   it('asks for one more than the limit, shows the limit, and says so', async () => {
@@ -180,7 +191,7 @@ describe('Row Limit on a FLAT cube', () => {
     const controller = new CubeController(new RemoteRun(executor));
     const v = await controller.update({ ...SNAPSHOT, maxRows: 3 });
     if (isStale(v)) throw new Error('stale');
-    assert.match(executor.pure.at(-1) ?? '', /limit\(4\)/);
+    assert.deepEqual(limitsOf(executor.queries.at(-1)!), [4]);
     assert.equal(v.rows.rowCount, 3);
     assert.equal(v.truncated.length, 1);
   });
@@ -190,7 +201,7 @@ describe('Row Limit on a FLAT cube', () => {
     const controller = new CubeController(new RemoteRun(executor));
     const v = await controller.update({ ...SNAPSHOT });
     if (isStale(v)) throw new Error('stale');
-    assert.doesNotMatch(executor.pure.at(-1) ?? '', /limit\(/);
+    assert.deepEqual(limitsOf(executor.queries.at(-1)!), []);
     assert.equal(v.rows.rowCount, 5);
     assert.equal(v.truncated.length, 0);
   });

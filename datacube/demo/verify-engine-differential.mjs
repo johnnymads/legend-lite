@@ -47,7 +47,8 @@ import { readFile } from 'node:fs/promises';
 
 import { DuckDbEngine } from '../src/duckdb.ts';
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
-import { serializeWithValues } from '../src/plan.ts';
+import { levelWithValues } from '../src/plan.ts';
+import { parseSnapshot } from '../src/query.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
 import { casesFor } from './engine-cases.mjs';
 
@@ -269,8 +270,9 @@ for (let i = 0; i < localCases.length; i += 1) {
 
   let localRows;
   try {
-    const run = async (pure) => local.engine.execute(await local.planner.plan(pure, ls), ls.epoch);
-    const plan = await local.planner.plan(await serializeWithValues(ls, scope, run), ls, scope);
+    const run = async (query) => local.engine.execute(await local.planner.plan(query), ls.epoch);
+    const parsed = await parseSnapshot(ls, (t) => local.planner.parse(t));
+    const plan = await local.planner.plan(await levelWithValues(ls, parsed, scope, run));
     localRows = normalise(await local.engine.execute(plan, ls.epoch));
   } catch (e) {
     skipped.push({ name, where: 'the local plane',
@@ -280,9 +282,10 @@ for (let i = 0; i < localCases.length; i += 1) {
 
   let engineRows;
   try {
-    const pure = await serializeWithValues(es, scope,
+    const parsed = await parseSnapshot(es, (t) => executor.parse(t));
+    const query = await levelWithValues(es, parsed, scope,
       async (values) => (await executor.execute(values, es)).rows);
-    const out = await executor.execute(pure, es, scope);
+    const out = await executor.execute(query, es);
     engineRows = normalise(out.rows);
   } catch (e) {
     differed.push({ name, detail: `the engine REFUSED it: `

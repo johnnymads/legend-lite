@@ -21,6 +21,8 @@
 // could, a health-check fallback hid three real bugs for the life of
 // the project.
 
+import type { Lambda } from '../../pure-protocol/src/index.ts';
+import type { PrintStyle } from './pure-v1.ts';
 import type { QueryEngine } from './engine.ts';
 import type { Planner } from './cube.ts';
 import type { RemoteExecutor } from './engine-remote.ts';
@@ -48,15 +50,15 @@ export interface RunOutcome {
  * saw before; the alert's "Show debug info?" reads the rest.
  */
 export class QueryFailure extends Error {
-  /** The Pure this product emitted. */
-  readonly pure: string;
+  /** The query this product built (a protocol tree; the compiler prints it for a person). */
+  readonly query: Lambda;
   /** The SQL, when planning got that far. */
   readonly sql: string | undefined;
 
-  constructor(cause: unknown, pure: string, sql?: string) {
+  constructor(cause: unknown, query: Lambda, sql?: string) {
     super(cause instanceof Error ? cause.message : String(cause), { cause });
     this.name = 'QueryFailure';
-    this.pure = pure;
+    this.query = query;
     this.sql = sql;
   }
 }
@@ -65,43 +67,31 @@ export class QueryFailure extends Error {
 export function isQueryFailure(error: unknown): error is QueryFailure {
   return typeof error === 'object' && error !== null
     && (error as { name?: unknown }).name === 'QueryFailure'
-    && typeof (error as { pure?: unknown }).pure === 'string';
+    && typeof (error as { query?: { _type?: unknown } }).query?._type === 'string';
 }
 
 export interface QueryRunner {
   /** For diagnostics: which arrangement answered. */
   readonly name: string;
-  run(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<RunOutcome>;
+  run(query: Lambda, snapshot: CubeSnapshot, scope?: LevelScope, signal?: AbortSignal): Promise<RunOutcome>;
   /**
    * Compile WITHOUT running: resolves when the query compiles, throws
    * the compiler's refusal when it does not. It never executes to find out.
    */
-  compile(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    signal?: AbortSignal,
-  ): Promise<void>;
+  compile(query: Lambda, snapshot: CubeSnapshot, signal?: AbortSignal): Promise<void>;
   /**
    * The compiler's type of a query's result, compile-only (upstream
    * `lambdaRelationType` on every plane): how a cube's source and
    * calculated columns are typed before a level query runs.
    */
-  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]>;
+  relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]>;
+  /** What a person typed, as its lambda: the compiler's parse (E1 or its twin in the tab). */
+  parse(text: string, signal?: AbortSignal): Promise<Lambda>;
+  /** A query as Pure text for a person to read: the compiler's print (E4 or its twin). */
+  print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string>;
 }
 
-/**
- * Plan, then execute locally. The shape both browser planes use.
- *
- * The two halves stay visible to the controller as well, because
- * SNAPPING needs them: freezing a cube means asking the planner for
- * the source SQL and the engine to materialise it, which a remote
- * engine cannot do for us.
- */
+/** The planner makes the SQL, the tab's engine runs it. */
 export class PlanThenRun implements QueryRunner {
   readonly name: string;
   readonly planner: Planner;
@@ -113,18 +103,13 @@ export class PlanThenRun implements QueryRunner {
     this.name = `plan+${engine.name}`;
   }
 
-  async run(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<RunOutcome> {
+  async run(query: Lambda, snapshot: CubeSnapshot, _scope?: LevelScope, signal?: AbortSignal): Promise<RunOutcome> {
     let plan: Plan;
     try {
-      plan = await this.planner.plan(pureGrammar, snapshot, scope, signal);
+      plan = await this.planner.plan(query, signal);
     } catch (error: unknown) {
       if (signal?.aborted) throw error;
-      throw new QueryFailure(error, pureGrammar);
+      throw new QueryFailure(error, query);
     }
     const sql = plan.sql;
     try {
@@ -132,21 +117,25 @@ export class PlanThenRun implements QueryRunner {
       return { rows: await this.engine.execute(plan, snapshot.epoch, signal), sql };
     } catch (error: unknown) {
       if (signal?.aborted) throw error;
-      throw new QueryFailure(error, pureGrammar, sql);
+      throw new QueryFailure(error, query, sql);
     }
   }
 
-  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
-    return this.planner.relationType(pureGrammar, signal);
+  relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]> {
+    return this.planner.relationType(query, signal);
   }
 
   /** Planning IS compiling here: the planner compiles, nothing runs. */
-  async compile(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    await this.planner.plan(pureGrammar, snapshot, undefined, signal);
+  async compile(query: Lambda, _snapshot: CubeSnapshot, signal?: AbortSignal): Promise<void> {
+    await this.planner.plan(query, signal);
+  }
+
+  parse(text: string, signal?: AbortSignal): Promise<Lambda> {
+    return this.planner.parse(text, signal);
+  }
+
+  print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string> {
+    return this.planner.print(query, style, signal);
   }
 }
 
@@ -159,29 +148,30 @@ export class RemoteRun implements QueryRunner {
     this.executor = executor;
   }
 
-  async run(
-    pureGrammar: string,
-    snapshot: CubeSnapshot,
-    scope?: LevelScope,
-    signal?: AbortSignal,
-  ): Promise<RunOutcome> {
+  async run(query: Lambda, snapshot: CubeSnapshot, _scope?: LevelScope, signal?: AbortSignal): Promise<RunOutcome> {
     try {
-      const out = await this.executor.execute(
-        pureGrammar, snapshot, scope, signal,
-      );
+      const out = await this.executor.execute(query, snapshot, signal);
       return { rows: out.rows, sql: out.sql };
     } catch (error: unknown) {
       if (signal?.aborted) throw error;
-      throw new QueryFailure(error, pureGrammar);
+      throw new QueryFailure(error, query);
     }
   }
 
   /** The engine's compile-only call: its `lambdaRelationType` answers or refuses. */
-  async compile(pureGrammar: string, _snapshot: CubeSnapshot, signal?: AbortSignal): Promise<void> {
-    await this.executor.relationType(pureGrammar, signal);
+  async compile(query: Lambda, _snapshot: CubeSnapshot, signal?: AbortSignal): Promise<void> {
+    await this.executor.relationType(query, signal);
   }
 
-  relationType(pureGrammar: string, signal?: AbortSignal): Promise<PlanColumn[]> {
-    return this.executor.relationType(pureGrammar, signal);
+  relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]> {
+    return this.executor.relationType(query, signal);
+  }
+
+  parse(text: string, signal?: AbortSignal): Promise<Lambda> {
+    return this.executor.parse(text, signal);
+  }
+
+  print(query: Lambda, style?: PrintStyle, signal?: AbortSignal): Promise<string> {
+    return this.executor.print(query, style, signal);
   }
 }

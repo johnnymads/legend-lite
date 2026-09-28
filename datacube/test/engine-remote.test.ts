@@ -8,6 +8,7 @@ import {
 } from '../src/engine-remote.ts';
 import { pureType } from '../src/relation-type.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { element, fn, fromElement, lambda, toJson } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { expression: '#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#' },
@@ -22,6 +23,9 @@ const SNAPSHOT: CubeSnapshot = {
   sorts: [],
   epoch: 7,
 };
+
+/** A cube query, as DataCube builds one: a relation expression, no runtime. */
+const QUERY = fromElement('trades::T').select(['region']).lambda();
 
 /** A TDS exactly as legend-engine 4.138.5 sends one. */
 const ANSWER = {
@@ -137,27 +141,27 @@ describe('the engine executor', () => {
       fetch: fetchStub ?? stub(answers).fetchStub,
     });
 
-  it('names the runtime in the query, sends the model as text, and asks the two endpoints', async () => {
-    const { calls, fetchStub } = stub([{ parsed: true }, ANSWER]);
+  it('names the runtime in the query, sends the model as text, and asks the one endpoint', async () => {
+    const { calls, fetchStub } = stub([ANSWER]);
     const out = await executor([], fetchStub)
-      .execute('$t->select(~[region])', SNAPSHOT);
+      .execute(QUERY, SNAPSHOT);
 
+    // The query is already protocol: nothing to parse first.
     assert.deepEqual(calls.map((c) => new URL(c.url).pathname), [
-      '/api/pure/v1/grammar/grammarToJson/lambda',
       '/api/pure/v1/execution/execute',
     ]);
-    // The query carries its runtime: our own planners take it
-    // out-of-band, the engine does not.
-    assert.match(calls[0]?.body ?? '', /->from\(trades::h2::RT\)$/);
-    assert.equal(calls[0]?.type, 'text/plain');
+    assert.equal(calls[0]?.type, 'application/json');
     // The model travels as text, which every server accepts on every
     // call: nothing to parse first, nothing to cache.
-    const sent = JSON.parse(calls[1]?.body ?? '{}');
+    const sent = JSON.parse(calls[0]?.body ?? '{}');
     assert.deepEqual(sent.model, {
       _type: 'text',
       code: '###Relational\nDatabase trades::h2::DB()',
     });
-    assert.deepEqual(sent.function, { parsed: true });
+    // The query carries its runtime: our own planners take it
+    // out-of-band, the engine does not.
+    assert.deepEqual(sent.function, JSON.parse(toJson(
+      lambda([], fn('from', QUERY.body[0]!, element('trades::h2::RT'))))));
     // And the execute call carries the context the engine requires.
     assert.equal(sent.context._type, 'BaseExecutionContext');
     assert.equal(sent.clientVersion, 'vX_X_X');
@@ -181,7 +185,7 @@ describe('the engine executor', () => {
     const fetchStub = (async () =>
       new Response(body, { status: 500 })) as unknown as typeof fetch;
     await assert.rejects(
-      () => executor([], fetchStub).execute('$t->select(~[x])', SNAPSHOT),
+      () => executor([], fetchStub).execute(QUERY, SNAPSHOT),
       (err: Error) => {
         assert.ok(err instanceof RemoteExecutionError);
         assert.match(err.message, /Can't find a match for function/);
@@ -197,7 +201,7 @@ describe('the engine executor', () => {
       throw new TypeError('fetch failed');
     }) as unknown as typeof fetch;
     await assert.rejects(
-      () => executor([], fetchStub).execute('$t->select(~[x])', SNAPSHOT),
+      () => executor([], fetchStub).execute(QUERY, SNAPSHOT),
       (err: Error) => err instanceof RemoteExecutionError
         && /could not reach the server at http:\/\/engine:6300/.test(
           err.message),
@@ -215,8 +219,23 @@ describe('the engine executor', () => {
     }) as unknown as typeof fetch;
     await assert.rejects(
       () => executor([], fetchStub)
-        .execute('$t->select(~[x])', SNAPSHOT, undefined, controller.signal),
+        .execute(QUERY, SNAPSHOT, controller.signal),
       (err: Error) => err === reason,
     );
+  });
+});
+
+describe('what a person typed, parsed by the server (E1)', () => {
+  it('sends the text, without source positions, and reads the lambda', async () => {
+    const { calls, fetchStub } = stub([JSON.parse(toJson(QUERY))]);
+    const parsed = await new LegendEngineExecutor({
+      baseUrl: 'http://engine:6300/', model: '', runtime: 'trades::h2::RT', fetch: fetchStub,
+    }).parse("|trades::T->select(~[region])");
+    const url = new URL(calls[0]?.url ?? '');
+    assert.equal(url.pathname, '/api/pure/v1/grammar/grammarToJson/lambda');
+    assert.equal(url.searchParams.get('returnSourceInformation'), 'false');
+    assert.equal(calls[0]?.body, '|trades::T->select(~[region])');
+    assert.equal(calls[0]?.type, 'text/plain');
+    assert.deepEqual(parsed, QUERY);
   });
 });

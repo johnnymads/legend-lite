@@ -23,6 +23,8 @@ import type { CubeSnapshot } from '../src/snapshot.ts';
 import { fetchTree } from '../src/treeview.ts';
 import { PlanThenRun } from '../src/runner.ts';
 import { TreeState } from '../src/tree.ts';
+import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { fakeParse, fakeParsed, fakePrint, someQuery } from './fake-planner.ts';
 
 const GROUPED: CubeSnapshot = {
   source: { expression: '#>{db.T}#' },
@@ -117,6 +119,8 @@ describe('a tree fetch that is already obsolete', () => {
         return { sql: `SELECT ${planned}`, columns: [] };
       },
       relationType: async () => [],
+      parse: fakeParse,
+      print: fakePrint,
     };
     const engine: QueryEngine = {
       name: 'stub',
@@ -130,11 +134,13 @@ describe('a tree fetch that is already obsolete', () => {
     };
 
     const state = TreeState.fromPaths([['EMEA']]);
+    const parsed = await fakeParsed(GROUPED);
     await assert.rejects(
       () => fetchTree(GROUPED, state, {
         // The levels ask a RUNNER now: plan-then-execute is one
         // arrangement of that, a remote engine is another.
         runner: new PlanThenRun(planner, engine),
+        parsed,
         guard,
         epoch: guard.current,
         signal: controller.signal,
@@ -168,11 +174,11 @@ describe('the planner client', () => {
         return new Response(JSON.stringify(plan), { status: 200 });
       }) as unknown as typeof fetch,
     });
-    await planner.plan('grammar', GROUPED);
+    await planner.plan(someQuery('grammar'));
     assert.ok(sawSignal === undefined, 'no signal passed, none forwarded');
 
     const ac = new AbortController();
-    await planner.plan('grammar2', GROUPED, undefined, ac.signal);
+    await planner.plan(someQuery('grammar2'), ac.signal);
     assert.equal(sawSignal, ac.signal, 'the caller signal reaches fetch');
   });
 
@@ -193,7 +199,7 @@ describe('the planner client', () => {
     });
 
     await assert.rejects(
-      () => planner.plan('grammar', GROUPED, undefined, ac.signal),
+      () => planner.plan(someQuery('grammar'), ac.signal),
       (e: unknown) => isSuperseded(e),
     );
   });
@@ -201,11 +207,11 @@ describe('the planner client', () => {
 
 describe('the controller under a burst', () => {
   it('abandons the first refresh when a second arrives', async () => {
-    const planned: string[] = [];
+    const planned: Lambda[] = [];
     let release: (() => void) | undefined;
     const planner: Planner = {
-      async plan(pure, _s, _scope, signal) {
-        planned.push(pure);
+      async plan(query, signal) {
+        planned.push(query);
         if (planned.length === 1) {
           // Hold the first interaction open until the second has run.
           await new Promise<void>((r) => { release = r; });
@@ -214,6 +220,8 @@ describe('the controller under a burst', () => {
         return { sql: `SELECT ${planned.length}`, columns: [] };
       },
       relationType: async () => [],
+      parse: fakeParse,
+      print: fakePrint,
     };
     const engine: QueryEngine = {
       name: 'stub',

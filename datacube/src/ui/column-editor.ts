@@ -26,7 +26,8 @@ import {
 } from '../calc.ts';
 import type { Extraction } from '../json-shape.ts';
 import { buildJsonFields, freeName } from './json-fields.ts';
-import { ident, type PivotColumn } from '../serialize.ts';
+import type { CompileOutcome } from '../cube.ts';
+import type { PivotColumn } from '../serialize.ts';
 import { docHint } from './docs.ts';
 import {
   WINDOW_FUNCTIONS,
@@ -57,13 +58,6 @@ export type ColumnEditorStart =
     /** A JSON column whose fields to offer first. */
     readonly json?: string }
   | { readonly edit: string };
-
-export interface CompileOutcome {
-  /** The Pure that was compiled, to place a position the refusal names. */
-  readonly pure: string;
-  /** The compiler's refusal; null when it compiles. */
-  readonly refusal: string | null;
-}
 
 export interface ColumnEditorOptions {
   /** The cube as it is NOW: other windows change it under this one. */
@@ -326,7 +320,7 @@ export class ColumnEditor {
     } else if (outcome.refusal === null) {
       this.#check = { state: 'ok' };
     } else {
-      const caret = caretFor(outcome.pure, outcome.refusal, this.#draft.name.trim(), expression);
+      const caret = caretFor(outcome.parsing, outcome.refusal, expression);
       this.#check = {
         state: 'refused',
         message: outcome.refusal,
@@ -910,26 +904,20 @@ function findColumn(s: CubeSnapshot, name: string): Draft | undefined {
 
 /**
  * Where the refusal points INSIDE the expression, as the line with a
- * caret under it -- when the compiler named a `[line:col]` and it falls
- * in the expression. The compiled text is the cube's whole query; the
- * expression sits in it after `~[<name>: x|`, so its offset is found
- * there, never guessed.
+ * caret under it -- when the refused text is this expression's parse
+ * (`x|<expression>`, query.ts `parseSnapshot`) and the parser named a
+ * `[line:col]` in it. The position is in the parsed text, whose head is
+ * known, so the offset is found, never guessed.
  */
 export function caretFor(
-  pure: string,
+  parsing: string | undefined,
   refusal: string,
-  name: string,
   expression: string,
 ): string | undefined {
   const at = /\[(\d+):(\d+)\]/.exec(refusal);
-  if (!at) return undefined;
-  const head = `~[${ident(name)}: x|`;
-  const start = pure.indexOf(head);
-  if (start < 0) return undefined;
-  const exprStart = start + head.length;
-  if (pure.slice(exprStart, exprStart + expression.length) !== expression) return undefined;
-  const offset = offsetOf(pure, Number(at[1]), Number(at[2]));
-  const rel = offset - exprStart;
+  const head = 'x|';
+  if (!at || parsing !== `${head}${expression}`) return undefined;
+  const rel = offsetOf(parsing, Number(at[1]), Number(at[2])) - head.length;
   if (rel < 0 || rel > expression.length) return undefined;
   const lineStart = expression.lastIndexOf('\n', rel - 1) + 1;
   const lineEnd = expression.indexOf('\n', rel);
