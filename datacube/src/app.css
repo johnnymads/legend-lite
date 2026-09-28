@@ -2315,31 +2315,11 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.dc-board-bar {
-  flex: none;
-  display: flex;
-  gap: var(--dc-pad-1);
-  justify-content: flex-end;
-}
-
-.dc-board-bar [aria-pressed='true'] {
-  border-color: var(--dc-active);
-  color: var(--dc-active);
-}
-
-.dc-board-area {
-  flex: 1 1 auto;
-  min-height: 0;
   overflow: auto;
   position: relative;
 }
 
-.dc-board-grid { display: grid; }
+.dc-board-grid { display: grid; position: relative; }
 
 .dc-board-live {
   position: absolute;
@@ -2362,6 +2342,7 @@
 
 .dc-tile:focus-visible { outline: 2px solid var(--dc-active); outline-offset: 1px; }
 
+/* the title bar is the handle, always: no edit mode */
 .dc-tile-head {
   flex: none;
   display: flex;
@@ -2371,15 +2352,32 @@
   padding: 0 var(--dc-pad-1) 0 var(--dc-pad-2);
   border-bottom: 1px solid var(--dc-line-faint);
   font-weight: 500;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 
 .dc-tile-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dc-tile-actions { flex: none; display: flex; gap: 2px; }
+
+.dc-tile-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  padding: 0 4px;
+  border: 1px solid var(--dc-active);
+  border-radius: var(--dc-radius-sm);
+  cursor: text;
+}
+
+.dc-tile-actions { flex: none; display: flex; align-items: center; gap: 4px; }
 
 .dc-tile-button,
-.dc-tile-remove {
+.dc-tile-remove,
+.dc-tile-chip {
   font: inherit;
+  font-weight: 400;
   font-size: var(--dc-text-sm-size);
+  line-height: 18px;
   padding: 0 6px;
   border: 1px solid var(--dc-line);
   border-radius: var(--dc-radius-sm);
@@ -2390,14 +2388,25 @@
 
 .dc-tile-button[aria-pressed='true'] { border-color: var(--dc-active); color: var(--dc-active); }
 
-/* In edit mode the title bar is the handle; the content keeps its own gestures. */
-.dc-board-editing .dc-tile { border-style: dashed; }
-.dc-tile-head.dc-tile-handle { cursor: grab; background: var(--dc-header-bg); touch-action: none; }
-.dc-tile-dragging { opacity: 0.85; z-index: 1; box-shadow: var(--dc-popup-shadow); }
-.dc-tile-dragging .dc-tile-head { cursor: grabbing; }
+/* what a chart filters the cube to: the way back out */
+.dc-tile-chip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-color: var(--dc-active);
+  color: var(--dc-active);
+  background: var(--dc-selected-bg);
+}
 
-.dc-tile-body { flex: 1 1 auto; min-height: 0; display: flex; }
-.dc-tile-body > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
+.dc-tile-chip[hidden],
+.dc-tile-remove[hidden] { display: none; }
+
+/* remove and resize are there on every tile, quiet until it is pointed at or focused */
+.dc-tile-remove { border-color: transparent; opacity: 0; }
+.dc-tile:hover .dc-tile-remove,
+.dc-tile:focus-within .dc-tile-remove { opacity: 1; }
+.dc-tile-remove:hover { border-color: var(--dc-line); }
 
 .dc-tile-resize {
   position: absolute;
@@ -2407,8 +2416,36 @@
   height: 14px;
   cursor: nwse-resize;
   touch-action: none;
+  opacity: 0;
   background: linear-gradient(135deg, transparent 50%, var(--dc-line-strong) 50%);
 }
+
+.dc-tile:hover .dc-tile-resize,
+.dc-tile:focus-within .dc-tile-resize { opacity: 1; }
+
+.dc-board-narrow .dc-tile-head { cursor: default; }
+.dc-board-narrow .dc-tile-resize { display: none; }
+
+/* a drag: the tile follows the pointer, the placeholder shows where it lands */
+.dc-tile-dragging {
+  z-index: 2;
+  opacity: 0.9;
+  box-shadow: var(--dc-popup-shadow);
+  pointer-events: none;
+}
+
+.dc-tile-dragging .dc-tile-head { cursor: grabbing; }
+
+.dc-board-placeholder {
+  border: 2px dashed var(--dc-active);
+  border-radius: var(--dc-radius-sm);
+  background: var(--dc-selection-fill);
+}
+
+.dc-board-placeholder[hidden] { display: none; }
+
+.dc-tile-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.dc-tile-body > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
 
 .dc-chart-tile { display: flex; }
 .dc-chart-tile .dc-chartpanel { flex: 1 1 auto; min-width: 0; }

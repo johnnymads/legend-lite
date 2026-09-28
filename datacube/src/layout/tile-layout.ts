@@ -212,6 +212,226 @@ export function moveTile(layout: Layout, id: string, x: number, y: number, cols:
   return place(layout, id, { x, y, w: t.w, h: t.h }, cols, options);
 }
 
+/** A grid cell: where the pointer is. */
+export interface Cell {
+  readonly x: number;
+  readonly y: number;
+}
+
+const contains = (r: Rect, c: Cell): boolean =>
+  c.x >= r.x && c.x < r.x + r.w && c.y >= r.y && c.y < r.y + r.h;
+
+/**
+ * Lay `row` side by side from column `x0`, `span` columns, in the given
+ * order: equal shares, the columns left over to the first tiles, one each.
+ * Null when a share would be narrower than a tile's minimum.
+ */
+function share(row: readonly Tile[], x0: number, span: number): Tile[] | null {
+  const each = Math.floor(span / row.length);
+  let x = x0;
+  const out: Tile[] = [];
+  for (const [i, t] of row.entries()) {
+    const w = each + (i < span - each * row.length ? 1 : 0);
+    if (w < (t.minW ?? 1)) return null;
+    out.push({ ...t, x, w });
+    x += w;
+  }
+  return out;
+}
+
+/** `layout` with `changed` swapped in, or null when a changed tile would overlap an unchanged one. */
+function swapIn(layout: readonly Tile[], changed: readonly Tile[]): Tile[] | null {
+  const ids = new Set(changed.map((t) => t.id));
+  const kept = layout.filter((t) => !ids.has(t.id));
+  if (changed.some((c) => firstCollision(c, kept))) return null;
+  return [...kept, ...changed];
+}
+
+/**
+ * The page with tile `id` taken off it, its hole healed: what floats up
+ * floats up, and then, if the hole is still there, its row closes over it
+ * -- the tiles that sat beside it on the same row share the row's width
+ * again, or else the neighbour it was beside widens back into it. So a
+ * chart taken from beside the grid gives the grid its width back, and one
+ * taken from a row of charts leaves the rest of the row sharing it.
+ */
+export function liftTile(layout: Layout, id: string, cols: number): Tile[] {
+  const gone = tileOf(layout, id);
+  const rest = compact(layout.filter((t) => t.id !== id));
+  if (gone.static) return rest;
+  // the row it was part of: tiles on its top edge, running unbroken through its place
+  const onRow = [...rest.filter((t) => t.y === gone.y && !t.static), gone].sort((a, b) => a.x - b.x);
+  const at = onRow.indexOf(gone);
+  let lo = at;
+  let hi = at;
+  while (lo > 0 && onRow[lo - 1]!.x + onRow[lo - 1]!.w === onRow[lo]!.x) lo--;
+  while (hi < onRow.length - 1 && onRow[hi]!.x + onRow[hi]!.w === onRow[hi + 1]!.x) hi++;
+  const run = onRow.slice(lo, hi + 1);
+  const neighbours = run.filter((t) => t.id !== id);
+  if (neighbours.length > 0) {
+    const x0 = run[0]!.x;
+    const span = run[run.length - 1]!.x + run[run.length - 1]!.w - x0;
+    const shared = share(neighbours, x0, Math.min(span, cols - x0));
+    const healed = shared && swapIn(rest, shared);
+    if (healed) return compact(healed);
+  }
+  return rest;
+}
+
+/** Take tile `id` off the page for good: lifted, hole healed, settled. */
+export function removeTile(layout: Layout, id: string, cols: number): Tile[] {
+  return liftTile(layout, id, cols).sort((a, b) =>
+    layout.findIndex((t) => t.id === a.id) - layout.findIndex((t) => t.id === b.id));
+}
+
+/**
+ * Whether `t` is one of a ROW: tiles side by side on one top edge, of one
+ * height, none wider than half the page. A wide tile with a narrow one
+ * beside it (a grid and its side chart) is not a row -- dropping on the
+ * grid must not squeeze it into sharing the width with its neighbours.
+ */
+function inRow(layout: readonly Tile[], t: Tile, cols: number): boolean {
+  const members = layout.filter((u) => u.y === t.y && u.h === t.h && !u.static);
+  return members.length >= 2 && members.every((u) => u.w <= cols / 2);
+}
+
+/**
+ * Put `d` into the row starting at `d.y`: the tiles whose top edge is that
+ * row and whose height is `d`'s (a tall tile beside the row is not part of
+ * it). The row's tiles, with `d` among them where the pointer says, are
+ * laid side by side -- keeping their widths when they fit the page,
+ * sharing it evenly when not. Null when `d` would cover something that is
+ * not on the row, or the row cannot take it.
+ */
+function intoRow(rest: readonly Tile[], d: Tile, pointer: Cell, cols: number): Tile[] | null {
+  const member = (t: Tile) => t.y === d.y && t.h === d.h && !t.static;
+  const row = rest.filter(member).sort((a, b) => a.x - b.x);
+  if (row.length === 0) return null;
+  const before = row.filter((t) => t.x + t.w / 2 <= pointer.x);
+  const order = [...before, d, ...row.filter((t) => !before.includes(t))];
+  const total = order.reduce((n, t) => n + t.w, 0);
+  let laid: Tile[] | null;
+  if (total <= cols) {
+    // keep every width; start where the row did, pulled left if it would overrun
+    let x = Math.min(row[0]!.x, d.x, cols - total);
+    laid = order.map((t) => {
+      const placed = { ...t, x };
+      x += t.w;
+      return placed;
+    });
+  } else {
+    laid = share(order, 0, cols);
+  }
+  return laid && swapIn(rest.filter((t) => !member(t)), laid);
+}
+
+/**
+ * Where a tile dragged by the pointer lands. The drag's one rule is that
+ * NOTHING MOVES UNLESS THE POINTER IS ON IT: the tile's rectangle brushing
+ * a neighbour displaces nothing; what the pointer is over decides.
+ *
+ *   - its own place: nothing changes (a grab is not a move);
+ *   - a tile of the same size: the two swap;
+ *   - near the left or right edge of a tile that can give up the width
+ *     (keeping half of its own): the dragged tile goes beside it;
+ *   - near the top of a tile: the dragged tile goes above it;
+ *   - anywhere else on a tile: below it -- into the row there, if one
+ *     starts there;
+ *   - empty space: where it is put, joining the row it lands on, slid
+ *     sideways under the pointer, or else down, clear of what it covers.
+ *
+ * The tile is lifted first (`liftTile`: its hole healed), and the page is
+ * settled after, so the answer is exactly where the drop lands: the
+ * placeholder shows it, and letting go puts the tile there.
+ */
+export function dragTile(layout: Layout, id: string, rect: Rect, pointer: Cell, cols: number): Tile[] {
+  const from = tileOf(layout, id);
+  if (from.static || contains(from, pointer)) return [...layout];
+  const rest = liftTile(layout, id, cols);
+  const want = normalize({ ...from, x: rect.x, y: rect.y }, cols);
+  const over = rest.find((t) => contains(t, pointer));
+  let settled: Tile[] | null = null;
+  let target: Tile = want;
+  if (over && over.static) {
+    target = { ...want, y: firstFreeRowDown(want, rest) };
+  } else if (over && !(over.w === from.w && over.h === from.h) && inRow(rest, over, cols)
+    && (settled = intoRow(rest, { ...want, y: over.y, h: Math.max(from.minH ?? 1, over.h) }, pointer, cols))) {
+    // a tile of a row: join the row there, at its height
+  } else if (over && over.w === from.w && over.h === from.h) {
+    // same size: trade places
+    settled = [...rest.map((t) => (t.id === over.id ? { ...t, x: from.x, y: from.y } : t)),
+      { ...from, x: over.x, y: over.y }];
+    if (firstCollision(settled[settled.length - 1]!, settled.slice(0, -1))) settled = null;
+  } else if (over) {
+    const side = Math.max(1, Math.min(2, Math.floor(over.w / 4)));
+    const top = Math.min(Math.ceil(over.h / 2), Math.max(2, Math.ceil(from.h / 2)));
+    const room = over.w - from.w >= Math.max(over.minW ?? 1, Math.ceil(over.w / 2));
+    const left = pointer.x < over.x + side;
+    const right = pointer.x >= over.x + over.w - side;
+    if (room && (left || right)) {
+      const narrowed = { ...over, w: over.w - from.w, x: left ? over.x + from.w : over.x };
+      // beside it, as tall as it: flush, no hole under the shorter one
+      target = { ...from, x: left ? over.x : over.x + over.w - from.w, y: over.y,
+        h: Math.max(from.minH ?? 1, over.h) };
+      settled = pushDown([...rest.map((t) => (t.id === over.id ? narrowed : t)), target], target);
+    } else if (pointer.y < over.y + top) {
+      target = { ...want, y: over.y };
+    } else {
+      // below it: into the row there, at the row's height
+      const y = over.y + over.h;
+      const rowH = rest.find((t) => t.y === y && !t.static)?.h;
+      target = { ...want, y, h: Math.max(from.minH ?? 1, rowH ?? want.h) };
+      settled = intoRow(rest, target, pointer, cols);
+    }
+  } else if (firstCollision(want, rest)) {
+    // overlapping a row: join it (the nearest, when it covers more than one)
+    const rows = [...new Set(rest.filter((t) => collides(t, want) && t.h === want.h).map((t) => t.y))]
+      .sort((a, b) => Math.abs(a - want.y) - Math.abs(b - want.y));
+    for (const y of rows) {
+      settled = intoRow(rest, { ...want, y }, pointer, cols);
+      if (settled) break;
+    }
+    if (!settled) {
+      // slide clear sideways, still under the pointer, before going down
+      const xs: number[] = [];
+      for (let x = Math.max(0, pointer.x - want.w + 1); x <= Math.min(pointer.x, cols - want.w); x++) xs.push(x);
+      xs.sort((a, b) => Math.abs(a - want.x) - Math.abs(b - want.x));
+      const x = xs.find((x) => !firstCollision({ ...want, x }, rest));
+      target = x !== undefined ? { ...want, x } : { ...want, y: firstFreeRowDown(want, rest) };
+    }
+  }
+  settled ??= pushDown([...rest, target], target);
+  return compact(settled)
+    .sort((a, b) => layout.findIndex((t) => t.id === a.id) - layout.findIndex((t) => t.id === b.id));
+}
+
+/**
+ * The page a board shows until its user arranges it by hand: the main tile
+ * across the top, `mainH` rows tall, and the others in rows below it, up to
+ * `perRow` side by side sharing the width, each row the rest of one screen
+ * (at least `minH`).
+ */
+export function below(
+  main: string, others: readonly string[], cols: number, rows: number, mainH: number,
+  perRow = 4, minH = 1,
+): Tile[] {
+  if (others.length === 0) return [{ id: main, x: 0, y: 0, w: cols, h: rows }];
+  const h = Math.max(minH, rows - mainH);
+  const out: Tile[] = [{ id: main, x: 0, y: 0, w: cols, h: mainH }];
+  for (let start = 0; start < others.length; start += perRow) {
+    const row = others.slice(start, start + perRow);
+    const share = Math.floor(cols / row.length);
+    let x = 0;
+    row.forEach((id, i) => {
+      // the columns left over go to the first tiles, one each
+      const w = share + (i < cols - share * row.length ? 1 : 0);
+      out.push({ id, x, y: mainH + (start / perRow) * h, w, h });
+      x += w;
+    });
+  }
+  return out;
+}
+
 /**
  * Resize tile `id` to `w` x `h`, keeping its top-left corner.
  *

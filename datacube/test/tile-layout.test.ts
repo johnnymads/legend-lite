@@ -9,6 +9,10 @@ import {
   type Layout,
   type Tile,
   beside,
+  below,
+  dragTile,
+  liftTile,
+  removeTile,
   bottom,
   collides,
   compact,
@@ -401,5 +405,120 @@ describe('beside', () => {
     const tall = beside('g', ['a', 'b', 'c', 'd', 'e'], 12, 24, 7, 6);
     assert.deepEqual(tall.slice(1).map((t) => t.h), [6, 6, 6, 6, 6]);
     assert.deepEqual(problems(tall, 12), []);
+  });
+});
+
+describe('below', () => {
+  it('puts the charts in a row under the main tile, sharing the width', () => {
+    assert.deepEqual(below('grid', ['a', 'b', 'c'], 12, 24, 14, 4, 6), [
+      { id: 'grid', x: 0, y: 0, w: 12, h: 14 },
+      { id: 'a', x: 0, y: 14, w: 4, h: 10 },
+      { id: 'b', x: 4, y: 14, w: 4, h: 10 },
+      { id: 'c', x: 8, y: 14, w: 4, h: 10 },
+    ]);
+  });
+
+  it('starts a second row after four, and gives the main tile the page when alone', () => {
+    const l = below('g', ['a', 'b', 'c', 'd', 'e'], 12, 24, 14, 4, 6);
+    assert.deepEqual(l.filter((t) => t.y === 24).map((t) => [t.id, t.x, t.w]), [['e', 0, 12]]);
+    assert.deepEqual(problems(l, 12), []);
+    assert.deepEqual(below('g', [], 12, 24, 14), [{ id: 'g', x: 0, y: 0, w: 12, h: 24 }]);
+  });
+});
+
+/** Drag `id` by the cell one in from its top-left corner to `to`, as the board does. */
+const dragTo = (l: Layout, id: string, to: [number, number]): Tile[] => {
+  const t = l.find((u) => u.id === id)!;
+  return dragTile(l, id, { x: to[0] - 1, y: to[1], w: t.w, h: t.h }, { x: to[0], y: to[1] }, 12);
+};
+const DEFAULT = below('grid', ['c1', 'c2', 'c3'], 12, 24, 14, 4, 6);
+
+describe('dragTile: nothing moves unless the pointer is on it', () => {
+  it('changes nothing while the pointer is still on the tile\'s own place', () => {
+    assert.deepEqual(dragTo(DEFAULT, 'c3', [9, 15]), DEFAULT);
+  });
+
+  it('reorders a row: a chart dragged along it goes where the pointer is, the rest keep their order', () => {
+    assert.deepEqual(pos(dragTo(DEFAULT, 'c1', [9, 16])), {
+      grid: [0, 0, 12, 14], c1: [8, 14, 4, 10], c2: [0, 14, 4, 10], c3: [4, 14, 4, 10],
+    });
+  });
+
+  it('swaps two tiles of the same size that are not a row', () => {
+    const l = [T('a', 0, 0, 6, 6), T('b', 6, 0, 6, 6), T('c', 0, 6, 6, 6), T('d', 6, 6, 3, 6)];
+    // a and c are the same size, on different rows: dropping a on c swaps them
+    assert.deepEqual(pos(dragTile(l, 'a', { x: 0, y: 7, w: 6, h: 6 }, { x: 1, y: 7 }, 12)),
+      { a: [0, 6, 6, 6], b: [6, 0, 6, 6], c: [0, 0, 6, 6], d: [6, 6, 3, 6] });
+  });
+
+  it('puts a chart beside the grid, as tall as it, and the row it left closes up', () => {
+    assert.deepEqual(pos(dragTo(DEFAULT, 'c3', [11, 6])), {
+      grid: [0, 0, 8, 14], c1: [0, 14, 6, 10], c2: [6, 14, 6, 10], c3: [8, 0, 4, 14],
+    });
+  });
+
+  it('puts it back into the row, at the row\'s height, where the pointer is; the grid widens again', () => {
+    const side = dragTo(DEFAULT, 'c3', [11, 6]);
+    assert.deepEqual(pos(dragTo(side, 'c3', [6, 20])), {
+      grid: [0, 0, 12, 14], c1: [0, 14, 4, 10], c2: [8, 14, 4, 10], c3: [4, 14, 4, 10],
+    });
+  });
+
+  it('puts a chart above the grid from the grid\'s top edge', () => {
+    const l = removeTile(removeTile(DEFAULT, 'c2', 12), 'c3', 12);
+    assert.deepEqual(pos(dragTo(l, 'c1', [5, 1])), { grid: [0, 10, 12, 14], c1: [0, 0, 12, 10] });
+  });
+
+  it('never squeezes a tile to less than half its width to make room beside it', () => {
+    // the grid is 7 wide: a 5-wide chart on its edge would leave it 2
+    const l = beside('grid', ['c1', 'c2', 'c3'], 12, 24, 7, 6);
+    const r = dragTo(l, 'c1', [6, 7]);
+    assert.equal(r.find((t) => t.id === 'grid')!.w, 7);
+  });
+
+  // the moves a user made, from a grid with its charts stacked beside it
+  it('moves every chart from the side to under the grid, one at a time', () => {
+    let l = beside('grid', ['c1', 'c2', 'c3'], 12, 24, 7, 6);
+    l = dragTo(l, 'c1', [1, 26]);
+    assert.deepEqual(pos(l).c1, [0, 24, 5, 8], 'the first goes under the grid, the grid unmoved');
+    assert.deepEqual(pos(l).grid, [0, 0, 7, 24]);
+    l = dragTo(l, 'c2', [6, 26]);
+    assert.deepEqual(pos(l).c2, [5, 24, 5, 8], 'the second beside it');
+    l = dragTo(l, 'c3', [11, 25]);
+    assert.deepEqual(pos(l), {
+      grid: [0, 0, 12, 24], c1: [0, 24, 4, 8], c2: [4, 24, 4, 8], c3: [8, 24, 4, 8],
+    }, 'the last: the grid takes its width back, the three share the row');
+    assert.deepEqual(problems(l, 12), []);
+  });
+
+  it('leaves the page legal whatever the pointer does', () => {
+    let seed = 7;
+    const rnd = (n: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+    let l: Tile[] = DEFAULT;
+    for (let i = 0; i < 400; i++) {
+      const id = l[rnd(l.length)]!.id;
+      l = dragTo(l, id, [rnd(12), rnd(40)]);
+      assert.deepEqual(problems(l, 12), [], `step ${i}`);
+      assert.equal(l.length, 4);
+    }
+  });
+});
+
+describe('liftTile / removeTile', () => {
+  it('closes a row over the gap: the rest share its width', () => {
+    assert.deepEqual(pos(removeTile(DEFAULT, 'c2', 12)), {
+      grid: [0, 0, 12, 14], c1: [0, 14, 6, 10], c3: [6, 14, 6, 10],
+    });
+  });
+
+  it('gives the grid its width back when the chart beside it goes', () => {
+    const side = dragTo(DEFAULT, 'c3', [11, 6]);
+    assert.deepEqual(pos(liftTile(side, 'c3', 12)).grid, [0, 0, 12, 14]);
+  });
+
+  it('does not widen into space another tile needs', () => {
+    const l = beside('grid', ['c1', 'c2'], 12, 24, 7, 6);
+    // c1 goes, c2 floats up into its place: the grid stays 7
+    assert.deepEqual(pos(removeTile(l, 'c1', 12)).grid, [0, 0, 7, 24]);
   });
 });

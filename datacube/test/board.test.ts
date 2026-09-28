@@ -66,33 +66,57 @@ describe('the board', () => {
     assert.equal(t.element.textContent, 'content of a');
   });
 
-  it('shows the remove button, the resize corner and the handle only while editing', () => {
+  it('offers remove, resize and a handle on every tile, and asks the caller to remove', () => {
     const removed: string[] = [];
     const board = new Board(host, { onRemove: (id) => removed.push(id) });
     board.add(tile('grid', { removable: false }));
     board.add(tile('chart'));
     const button = (id: string) => root(id).querySelector<HTMLButtonElement>('.dc-tile-remove')!;
-    assert.equal(button('chart').hidden, true);
-    board.setEditing(true);
     assert.equal(button('chart').hidden, false);
     assert.equal(button('grid').hidden, true, 'the grid cannot be removed');
-    assert.equal(root('chart').querySelector<HTMLElement>('.dc-tile-resize')!.hidden, false);
-    assert.ok(root('chart').querySelector('.dc-tile-head')!.classList.contains('dc-tile-handle'));
+    assert.ok(root('chart').querySelector('.dc-tile-resize'));
     assert.equal(root('chart').tabIndex, 0);
     button('chart').click();
     assert.deepEqual(removed, ['chart'], 'the caller is asked; the board does not remove it itself');
-    board.setEditing(false);
-    assert.equal(button('chart').hidden, true);
-    assert.equal(root('chart').tabIndex, -1);
+    assert.equal(board.size, 2);
+  });
+
+  it('closes the gap a removed tile leaves in its row', () => {
+    const board = new Board(host);
+    board.add(tile('grid'), { x: 0, y: 0, w: 12, h: 14 });
+    board.add(tile('a'), { x: 0, y: 14, w: 4, h: 10 });
+    board.add(tile('b'), { x: 4, y: 14, w: 4, h: 10 });
+    board.add(tile('c'), { x: 8, y: 14, w: 4, h: 10 });
+    board.remove('b');
+    assert.deepEqual(board.layout.filter((t) => t.id !== 'grid').map((t) => [t.id, t.x, t.w]),
+      [['a', 0, 6], ['c', 6, 6]]);
+  });
+
+  it('renames a tile from a double click on its title', () => {
+    const renamed: string[] = [];
+    const board = new Board(host, { onRename: (id, title) => renamed.push(`${id}=${title}`) });
+    board.add(tile('chart'));
+    root('chart').querySelector('.dc-tile-head')!.dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true }));
+    const input = root('chart').querySelector<HTMLInputElement>('.dc-tile-rename')!;
+    assert.equal(input.value, 'CHART');
+    input.value = 'Notional by region';
+    input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    assert.equal(root('chart').querySelector('.dc-tile-title')!.textContent, 'Notional by region');
+    assert.equal(root('chart').getAttribute('aria-label'), 'Notional by region');
+    assert.equal(board.title('chart'), 'Notional by region');
+    assert.deepEqual(renamed, ['chart=Notional by region']);
+    // Escape keeps the old name
+    root('chart').querySelector('.dc-tile-head')!.dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true }));
+    const again = root('chart').querySelector<HTMLInputElement>('.dc-tile-rename')!;
+    again.value = 'nope';
+    again.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(board.title('chart'), 'Notional by region');
   });
 
   it('moves and resizes the focused tile with the keyboard, and says where it went', () => {
     const changes: number[] = [];
     const board = new Board(host, { onChange: () => changes.push(1) });
     board.add(tile('a'), { x: 0, y: 0, w: 4, h: 4 });
-    key(root('a'), 'ArrowRight');
-    assert.deepEqual(changes, [], 'no keyboard outside edit mode');
-    board.setEditing(true);
     key(root('a'), 'ArrowRight');
     assert.equal(board.layout[0]!.x, 1);
     assert.match(live(), /^A: column 2 of 12/);
@@ -110,12 +134,11 @@ describe('the board', () => {
     const board = new Board(host);
     const t = tile('a');
     board.add(t, { x: 0, y: 0, w: 4, h: 4 });
-    board.setEditing(true);
     key(t.element, 'ArrowRight');
     assert.equal(board.layout[0]!.x, 0);
   });
 
-  it('is one column, and not editable, when narrow; the saved layout is unchanged', () => {
+  it('is one column, and cannot be rearranged, when narrow; the saved layout is unchanged', () => {
     Object.defineProperty(host, 'clientWidth', { value: 400 });
     const board = new Board(host);
     board.add(tile('a'), { x: 0, y: 0, w: 6, h: 4 });
@@ -123,8 +146,8 @@ describe('the board', () => {
     assert.ok(host.classList.contains('dc-board-narrow'));
     assert.equal(root('b').style.gridColumn, '1 / span 1');
     assert.deepEqual(board.layout.map((t) => [t.x, t.w]), [[0, 6], [6, 6]]);
-    board.setEditing(true);
-    assert.equal(board.editing, false);
+    key(root('b'), 'ArrowLeft');
+    assert.deepEqual(board.layout.map((t) => [t.x, t.w]), [[0, 6], [6, 6]]);
   });
 
   it('refuses a second tile with the same id', () => {
