@@ -218,6 +218,32 @@ depth 1024. The tab's module gains the four JSON twins; the WASM differential pr
 shape, that planning its JSON gives the same SQL and types as planning its text and that the print
 parses back to the same JSON in both styles.
 
+**T4b step 2 design: DataCube on protocol JSON (2026-09-27, before any edit).** The user's rule:
+everything inside the product is protocol; Pure text exists only where a PERSON reads or writes
+it, and the compiler owns both edges (E1/`lambdaJsonOrError` parses what a person types, once, on
+OK; E4/`composeLambdaOrError` prints for a person to read). Every place text lives today, and what
+it becomes:
+
+| where | today | becomes |
+|---|---|---|
+| `CubeSnapshot.source` | `{expression: '#>{db.T}#'}` text | `{query: ValueSpecification}`: built by `accessor(...)` for a catalog/upload source, parsed once for a hand-written one |
+| a calculated column (`derived`, `groupDerived`) | `expression` text spliced into `extend(~[n: x|<text>])` | `lambda: Lambda`, parsed once when the editor's OK is pressed; the editor shows the compiler's print when reopened |
+| `serialize.ts`, `drill.ts`, `plan.ts`, `cube.ts`, `adhoc/*`, `treeview.ts` | Pure text glued together; `literal`/`temporalLiteral`/`escapePure`/`ident` | the same functions building `Lambda`s with `pure-protocol` (Relation API); the four text helpers deleted |
+| `json-shape.ts` Variant paths | `->get('k')` text | `fn('get', ...)` nodes (T6 then moves the shape to the database) |
+| the column editor's template | `~[name: x|` text | nothing: the editor edits the expression alone and the column's name is a field |
+| `Planner` (`WasmPlanner`, `UpstreamPlanner`) | `plan(text)`; the server plane runs E1 then E9 | `plan(lambda)`: `planJsonOrError` in the tab, E9/E5/E8 with the JSON on a server (no E1 for the cube's own queries) |
+| the SQL panel's "Generated Pure" | the built text | the compiler's print (`compose`) |
+| saved views (`persist.ts`) | `JSON.stringify` of the snapshot, text inside | `pure-protocol`'s exact `toJson`/`readLambda` (an exact decimal cannot go through `JSON.stringify`); a view saved before this carries text: on load its source and calculated columns are parsed once (the compiler), and it is saved back in the new form |
+
+Order, each its own green chain and commit: (a) the snapshot's source and calculated columns
+become protocol, parsed at the edges; (b) the query builders build `Lambda`s side by side with the
+text ones, and a test asserts, for every cube case the suites run, that lite's parse of the old
+text equals the new JSON byte for byte; (c) the planners take JSON, the SQL panel prints; (d) the
+text builders and the four text helpers are deleted, the side-by-side test with them. Proof after
+(d): the WASM differential, pivot rows, typed values (three zones), the app and Ad Hoc suites, same
+SQL and rows; a guardrail that no `src/` file builds Pure text (no `'->'`/`'~['`/`'#>{'` string
+building) and none calls a TDS function.
+
 **T5. What a type accepts, from the compiler.**
 - Filter operators, aggregates and calculated-column functions offered per type come from the
   compiler's signatures (D4); an aggregate's result type from the plan.

@@ -277,8 +277,12 @@ export function filterExpression(node: FilterNode, param = 'x', typeOf: TypeOf =
         return node.kind === 'and' ? 'true' : 'false';
       }
       const op = node.kind === 'and' ? ' && ' : ' || ';
+      // EACH PART PARENTHESIZED. Pure's grammar applies <, <=, > and >= left to right with
+      // && and || (upstream's DomainParseTreeWalker; lite's parser is byte-exact with it):
+      // `$x.qty > 10 && $x.price < 5` is `(($x.qty > 10) && $x.price) < 5`, a condition that
+      // does not compile. (T4b builds these as protocol trees, which cannot get this wrong.)
       const parts = node.children.map((c) => filterExpression(c, param, typeOf));
-      return parts.length === 1 ? parts[0]! : `(${parts.join(op)})`;
+      return parts.length === 1 ? parts[0]! : `(${parts.map((p) => `(${p})`).join(op)})`;
     }
     case 'not':
       return `!(${filterExpression(node.child, param, typeOf)})`;

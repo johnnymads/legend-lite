@@ -29,8 +29,9 @@ describe('drillQuery', () => {
     });
     assert.equal(
       sql,
-      'trades->filter(x|($x.region == \'EMEA\' && $x.desk == \'Rates\' ' +
-        "&& $x.year == '2023'))" +
+      // each condition parenthesized (the grammar applies < <= > >= left to right with && ||)
+      "trades->filter(x|(($x.region == 'EMEA') && ($x.desk == 'Rates') "
+        + "&& ($x.year == '2023')))" +
         `->limit(${DEFAULT_DRILL_LIMIT})`,
     );
     // The population, not its aggregate: drilling into a number must
@@ -51,7 +52,7 @@ describe('drillQuery', () => {
     };
     assert.match(
       drillQuery(s, { path: ['EMEA'] }),
-      /\$x\.notional > 0 && \$x\.region == 'EMEA'/,
+      /\(\$x\.notional > 0\) && \(\$x\.region == 'EMEA'\)/,
     );
   });
 

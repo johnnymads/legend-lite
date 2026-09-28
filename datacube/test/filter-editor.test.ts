@@ -95,7 +95,7 @@ describe('toFilter', () => {
     tree = updateNode(tree, tree.id, { join: 'or' });
     const f = toFilter(tree);
     assert.equal(f?.kind, 'or');
-    assert.equal(filterExpression(f!), "($x.region == 'EMEA' || $x.desk == 'Rates')");
+    assert.equal(filterExpression(f!), "(($x.region == 'EMEA') || ($x.desk == 'Rates'))");
   });
 
   it('expresses A AND NOT (B OR C), which a flat list cannot', () => {
@@ -112,7 +112,7 @@ describe('toFilter', () => {
 
     assert.equal(
       filterExpression(toFilter(root)!),
-      "($x.region == 'EMEA' && !(($x.desk == 'Rates' || $x.desk == 'Credit')))",
+      "(($x.region == 'EMEA') && (!((($x.desk == 'Rates') || ($x.desk == 'Credit')))))",
     );
   });
 

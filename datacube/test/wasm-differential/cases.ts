@@ -178,6 +178,26 @@ export const CASES: {
     }),
   },
   {
+    // two ORDER comparisons joined: the grammar applies < <= > >= left to right with && and ||,
+    // so the text must parenthesize each condition or it does not compile
+    name: 'filter-two-comparisons',
+    snapshot: snap({
+      rows: ['region'],
+      measures: SUM_NOTIONAL,
+      filter: {
+        kind: 'and',
+        children: [
+          { kind: 'condition', column: 'qty', operator: 'greaterThan', value: 10 },
+          { kind: 'condition', column: 'notional', operator: 'lessThan', value: 5000 },
+          { kind: 'or', children: [
+            { kind: 'condition', column: 'pnl', operator: 'greaterThanEqual', value: 0 },
+            { kind: 'condition', column: 'year', operator: 'lessThanEqual', value: 2021 },
+          ] },
+        ],
+      },
+    }),
+  },
+  {
     name: 'filter-not-empty',
     snapshot: snap({
       rows: ['region'],

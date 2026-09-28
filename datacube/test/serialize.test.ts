@@ -435,7 +435,7 @@ describe('serialize with a level scope', () => {
     });
     assert.match(
       serialize(s, { level: 2, parent: ['EMEA'] }),
-      /filter\(x\|\(\$x\.notional > 100 && \$x\.region == 'EMEA'\)\)/,
+      /filter\(x\|\(\(\$x\.notional > 100\) && \(\$x\.region == 'EMEA'\)\)\)/,
     );
   });
 
@@ -543,7 +543,8 @@ describe('filterExpression', () => {
           },
         ],
       }),
-      "($x.region == 'EMEA' && ($x.year == 2023 || $x.year == 2024))",
+      // each part parenthesized: the grammar applies < <= > >= left to right with && and ||
+      "(($x.region == 'EMEA') && ((($x.year == 2023) || ($x.year == 2024))))",
     );
   });
 
