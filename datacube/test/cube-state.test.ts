@@ -11,7 +11,9 @@ import type { CubeView } from '../src/cube.ts';
 import { STALE, type Stale } from '../src/epoch.ts';
 import {
   CubeStateOwner,
+  StateOwner,
   UndoStack,
+  type StateRules,
   queryKey,
   stateKey,
   type CubeState,
@@ -542,3 +544,86 @@ describe('events', () => {
     assert.equal(heard, 0);
   });
 });
+
+// The owner is not the cube's alone: Ad Hoc Analysis mode's grid runs on the same rules. Proven
+// here on a state with a query part (q), a presentation part (p), and a switch that defers
+// queries (Navigate Without Data).
+describe('the owner over any state: deferral and re-placing (StateRules)', () => {
+  interface Toy { readonly q: string; readonly p: string; readonly defer: boolean }
+  interface ToyView { readonly for: string; readonly p: string }
+  const RULES: StateRules<Toy, ToyView> = {
+    fold: (s) => s,
+    queryKey: (s) => s.q,
+    stateKey: (s) => JSON.stringify(s),
+    land: (pending) => pending,
+    represent: (state, view) => ({ ...view, p: state.p }),
+    defer: (s) => s.defer,
+  };
+  const make = () => {
+    const runs: { state: Toy; answer: (v: ToyView) => void }[] = [];
+    const o = new StateOwner<Toy, ToyView>({ q: 'a', p: 'plain', defer: false },
+      (state) => new Promise((answer) => runs.push({ state, answer })), RULES);
+    const events: string[] = [];
+    o.subscribe((e) => events.push(e.kind));
+    const land = async (out: Promise<unknown>) => {
+      const r = runs.at(-1) ?? assert.fail('no run');
+      r.answer({ for: r.state.q, p: r.state.p });
+      await out;
+    };
+    return { o, runs, events, land };
+  };
+
+  it('deferred: committed with no query, the view stays the old state\'s and says so; refresh queries it', async () => {
+    const { o, runs, events, land } = make();
+    await land(o.refresh());
+    await o.change((s) => ({ ...s, defer: true }));
+    assert.equal(events.at(-1), 'presentation', 'the switch itself changes no query');
+    const ran = runs.length;
+    assert.equal((await o.change((s) => ({ ...s, q: 'b' }))).kind, 'applied');
+    assert.equal(runs.length, ran, 'no query');
+    assert.equal(events.at(-1), 'deferred');
+    assert.equal(o.committed.q, 'b');
+    assert.equal(o.view?.for, 'a', 'the view on screen is the old state\'s');
+    assert.equal(o.stale, true);
+    await land(o.refresh());
+    assert.equal(o.view?.for, 'b');
+    assert.equal(o.stale, false);
+  });
+
+  it('deferred: undo and redo move without a query too', async () => {
+    const { o, runs, land } = make();
+    await land(o.refresh());
+    await o.change((s) => ({ ...s, defer: true }));
+    await o.change((s) => ({ ...s, q: 'b' }));
+    const ran = runs.length;
+    assert.equal((await o.undo()).kind, 'applied');
+    assert.equal(o.committed.q, 'a');
+    assert.equal(runs.length, ran, 'undo ran nothing');
+    assert.equal(o.stale, false, 'back to what is on screen');
+    await o.redo();
+    assert.equal(o.committed.q, 'b');
+    assert.equal(runs.length, ran);
+  });
+
+  it('a presentation change re-places the view it is on, never answers of another state', async () => {
+    const { o, land } = make();
+    await land(o.refresh());
+    await o.change((s) => ({ ...s, defer: true }));
+    await o.change((s) => ({ ...s, q: 'b' }));
+    await o.change((s) => ({ ...s, p: 'indented' }));
+    assert.deepEqual(o.view, { for: 'a', p: 'indented' }, 'the old answers, placed the new way, still marked stale');
+    assert.equal(o.stale, true);
+  });
+
+  it('a presentation change made while a query runs lands on the view too', async () => {
+    const { o, runs, land } = make();
+    await land(o.refresh());
+    const out = o.change((s) => ({ ...s, q: 'b' }));
+    await o.change((s) => ({ ...s, p: 'indented' }));
+    const r = runs.at(-1) ?? assert.fail('no run');
+    r.answer({ for: 'b', p: r.state.p });
+    await out;
+    assert.deepEqual(o.view, { for: 'b', p: 'indented' }, 'the answer was laid out the way the state now says');
+  });
+});
+

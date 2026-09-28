@@ -45,17 +45,20 @@ export interface CubeState {
 }
 
 /**
- * Run a state: the query side (the controller). Resolves the view, or STALE when a newer run
- * superseded this one; throws when the engine refuses.
+ * Run a state: the query side. Resolves the view, or STALE when a newer run superseded this
+ * one; throws when the engine refuses.
  */
-export type StateRunner = (state: CubeState) => Promise<CubeView | Stale>;
+export type Runner<S, V> = (state: S) => Promise<V | Stale>;
+/** The cube's runner: the controller. */
+export type StateRunner = Runner<CubeState, CubeView>;
 
-export type Outcome =
-  | { readonly kind: 'applied'; readonly view?: CubeView }
+export type StateOutcome<V> =
+  | { readonly kind: 'applied'; readonly view?: V }
   | { readonly kind: 'refused'; readonly error: unknown; readonly reverted: readonly string[] }
   | { readonly kind: 'superseded' }
   | { readonly kind: 'cancelled' }
   | { readonly kind: 'nothing' };
+export type Outcome = StateOutcome<CubeView>;
 
 export interface ChangeOptions {
   /** A user's action is an undo step (the default); a machine's re-run is not. */
@@ -66,12 +69,15 @@ export interface ChangeOptions {
   readonly force?: boolean;
 }
 
-export type OwnerEvent =
+export type StateEvent<V> =
   | { readonly kind: 'pending' }
-  | { readonly kind: 'committed'; readonly view: CubeView }
+  | { readonly kind: 'committed'; readonly view: V }
+  /** Committed WITHOUT a query (`StateRules.defer`): the view on screen is the old state's. */
+  | { readonly kind: 'deferred' }
   | { readonly kind: 'presentation' }
   | { readonly kind: 'refused'; readonly error: unknown; readonly reverted: readonly string[] }
   | { readonly kind: 'cancelled'; readonly reverted: readonly string[] };
+export type OwnerEvent = StateEvent<CubeView>;
 
 export interface OwnerOptions {
   /** How many undo steps are kept (Settings > Max History Stack Size). */
@@ -103,6 +109,35 @@ export function stateKey(state: CubeState): string {
   const { epoch: _epoch, ...query } = state.snapshot;
   return JSON.stringify([query, state.configuration, state.tree.key]);
 }
+
+/**
+ * What makes a kind of state a kind of state: the one owner (below) runs the same transaction
+ * rules over the cube and over Ad Hoc Analysis mode's grid.
+ */
+export interface StateRules<S, V> {
+  /** A state as the query sees it (the cube folds its configuration in). */
+  fold(state: S): S;
+  /** What the query of a state IS: equal keys run the same queries; a change that keeps it is presentation. */
+  queryKey(state: S): string;
+  /** A state's identity for undo, presentation included. */
+  stateKey(state: S): string;
+  /** The state to commit when `view` landed for `pending` (the engine's own facts go in here). */
+  land(pending: S, view: V): S;
+  /** The view laid out again for a presentation change: the same answers, the new settings. */
+  represent?(state: S, view: V): V;
+  /** Commit this state WITHOUT querying it (Ad Hoc's Navigate Without Data): refresh queries it. */
+  defer?(state: S): boolean;
+}
+
+/** The cube's rules. */
+export const CUBE_RULES: StateRules<CubeState, CubeView> = {
+  fold,
+  queryKey,
+  stateKey,
+  // As the ENGINE returned it (the compiler's types), but reading the source that was SENT:
+  // the plane a query ran on (a snap's table) is the query side's, never the cube's state.
+  land: (pending, view) => ({ ...pending, snapshot: { ...view.snapshot, source: pending.snapshot.source } }),
+};
 
 /** The undo and redo stacks. A move is only made once the state it moves to has landed. */
 export class UndoStack<T> {
@@ -178,54 +213,56 @@ interface Move {
   readonly steps: number;
 }
 
-interface Pending {
+interface Pending<S> {
   readonly id: number;
   /**
    * The history move this pending state includes: the move itself in flight, or a move a
    * change was made on top of (`on` is then the move's state, the change's undo step).
    */
-  readonly move?: Move & { readonly on?: CubeState };
-  readonly state: CubeState;
+  readonly move?: Move & { readonly on?: S };
+  readonly state: S;
   /** The user's changes this pending state carries, oldest first: what a refusal reverts. */
   readonly labels: readonly string[];
   /** Whether landing it is an undo step. */
   readonly record: boolean;
 }
 
-export class CubeStateOwner {
-  #committed: CubeState;
-  #rendered: CubeState;
-  #view: CubeView | null = null;
-  #pending: Pending | null = null;
+export class StateOwner<S, V> {
+  #committed: S;
+  #rendered: S;
+  #view: V | null = null;
+  #pending: Pending<S> | null = null;
   #seq = 0;
-  readonly #run: StateRunner;
-  readonly #stack: UndoStack<CubeState>;
+  readonly #run: Runner<S, V>;
+  readonly #rules: StateRules<S, V>;
+  readonly #stack: UndoStack<S>;
   readonly #abort: (() => void) | undefined;
-  readonly #listeners = new Set<(event: OwnerEvent) => void>();
+  readonly #listeners = new Set<(event: StateEvent<V>) => void>();
 
-  constructor(initial: CubeState, run: StateRunner, options: OwnerOptions = {}) {
-    this.#committed = fold(initial);
+  constructor(initial: S, run: Runner<S, V>, rules: StateRules<S, V>, options: OwnerOptions = {}) {
+    this.#rules = rules;
+    this.#committed = rules.fold(initial);
     this.#rendered = this.#committed;
     this.#run = run;
-    this.#stack = new UndoStack(stateKey, options.historyLimit);
+    this.#stack = new UndoStack((s: S) => rules.stateKey(s), options.historyLimit);
     this.#abort = options.abort;
   }
 
   /** What presentation paints: the change in flight, else the committed state. */
-  get current(): CubeState {
+  get current(): S {
     return this.#pending?.state ?? this.#committed;
   }
 
-  get committed(): CubeState {
+  get committed(): S {
     return this.#committed;
   }
 
   /** The state of the view on screen. */
-  get rendered(): CubeState {
+  get rendered(): S {
     return this.#rendered;
   }
 
-  get view(): CubeView | null {
+  get view(): V | null {
     return this.#view;
   }
 
@@ -255,13 +292,13 @@ export class CubeStateOwner {
   }
 
   /** Told of every change of state: pending, committed, presentation, refused, cancelled. */
-  subscribe(listener: (event: OwnerEvent) => void): () => void {
+  subscribe(listener: (event: StateEvent<V>) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
 
   /** Run the committed state and show it: the first load, a refresh after a snap. Not a step. */
-  async refresh(): Promise<Outcome> {
+  async refresh(): Promise<StateOutcome<V>> {
     return this.change((s) => s, { record: false, force: true, label: 'refresh' });
   }
 
@@ -270,14 +307,15 @@ export class CubeStateOwner {
    * while another is in flight builds on it). Presentation commits at once; anything else is
    * a transaction.
    */
-  async change(update: (state: CubeState) => CubeState, options: ChangeOptions = {}): Promise<Outcome> {
+  async change(update: (state: S) => S, options: ChangeOptions = {}): Promise<StateOutcome<V>> {
     const base = this.current;
-    const next = fold(update(base));
+    const next = this.#rules.fold(update(base));
     // asking for what already is changes nothing: no query, no step (P2-127's rule, everywhere)
-    if (!options.force && stateKey(next) === stateKey(base)) return { kind: 'nothing' };
-    if (!options.force && queryKey(next) === queryKey(base)) {
+    if (!options.force && this.#rules.stateKey(next) === this.#rules.stateKey(base)) return { kind: 'nothing' };
+    if (!options.force && this.#rules.queryKey(next) === this.#rules.queryKey(base)) {
       return this.#present(update, options);
     }
+    if (!options.force && this.#rules.defer?.(next)) return this.#defer(next, undefined, options.record ?? true);
     return this.#transact(next, options.label ?? 'change', options.record ?? true);
   }
 
@@ -285,7 +323,7 @@ export class CubeStateOwner {
    * Cancel the change in flight: the screen stays on the committed state, and the query is
    * stopped. Nothing when nothing is in flight.
    */
-  cancel(): Outcome {
+  cancel(): StateOutcome<V> {
     const pending = this.#pending;
     if (!pending) return { kind: 'nothing' };
     this.#pending = null;
@@ -299,18 +337,18 @@ export class CubeStateOwner {
    * last thing they did -- and nothing more. While an undo is in flight, it goes one step
    * further back (two quick presses are two steps, never a cancel).
    */
-  async undo(): Promise<Outcome> {
+  async undo(): Promise<StateOutcome<V>> {
     return this.#history('undo');
   }
 
   /** Forward one step, the same way round. */
-  async redo(): Promise<Outcome> {
+  async redo(): Promise<StateOutcome<V>> {
     return this.#history('redo');
   }
 
   // ---------------------------------------------------------------------------------
 
-  async #history(dir: 'undo' | 'redo'): Promise<Outcome> {
+  async #history(dir: 'undo' | 'redo'): Promise<StateOutcome<V>> {
     // a move in flight on its own (not a change made on top of one)
     const pendingMove = this.#pending?.move?.on === undefined ? this.#pending?.move : undefined;
     // the user's own change in flight: undo cancels it; redo continues from what landed
@@ -327,19 +365,44 @@ export class CubeStateOwner {
     const target = dir === 'undo' ? this.#stack.peekUndo(steps) : this.#stack.peekRedo(steps);
     if (target === undefined) return { kind: 'nothing' };
     const move: Move = { dir, steps };
-    if (queryKey(target) !== queryKey(this.#committed)) return this.#transact(target, dir, false, move);
-    // only presentation differs: no query (a move still in flight is dropped, its query stopped)
-    if (this.#pending) {
-      this.#pending = null;
-      this.#abort?.();
+    if (this.#rules.queryKey(target) !== this.#rules.queryKey(this.#committed)) {
+      return this.#rules.defer?.(target) ? this.#defer(target, move, false) : this.#transact(target, dir, false, move);
     }
-    this.#land(target, move);
+    // only presentation differs: no query (a move still in flight is dropped, its query stopped)
+    this.#drop();
+    this.#land(target, move, false, this.#rules.queryKey(target) === this.#rules.queryKey(this.#rendered));
+    this.#represent();
     this.#emit({ kind: 'presentation' });
     return { kind: 'applied' };
   }
 
+  /** The view on screen is not of the committed state's query (a deferred change waits for refresh). */
+  get stale(): boolean {
+    return this.#rules.queryKey(this.#committed) !== this.#rules.queryKey(this.#rendered);
+  }
+
+  /** Drop the change in flight, its query stopped. */
+  #drop(): void {
+    if (!this.#pending) return;
+    this.#pending = null;
+    this.#abort?.();
+  }
+
+  /** Commit WITHOUT a query (`StateRules.defer`): the view on screen stays the old state's. */
+  #defer(next: S, move: Pending<S>['move'], record: boolean): StateOutcome<V> {
+    this.#drop();
+    this.#land(next, move, record, false);
+    this.#emit({ kind: 'deferred' });
+    return { kind: 'applied' };
+  }
+
+  /** The view laid out again for the state on screen (a presentation change). */
+  #represent(): void {
+    if (this.#rules.represent && this.#view !== null) this.#view = this.#rules.represent(this.#rendered, this.#view);
+  }
+
   /** The one place the committed state moves with the history: stacks first, then the state. */
-  #land(state: CubeState, move: Pending['move'], record = false): void {
+  #land(state: S, move: Pending<S>['move'], record = false, rendered = true): void {
     const from = this.#committed;
     if (move) {
       if (move.dir === 'undo') this.#stack.undone(from, move.steps);
@@ -347,7 +410,7 @@ export class CubeStateOwner {
     }
     if (record) this.#stack.record(move?.on ?? from);
     this.#committed = state;
-    this.#rendered = state;
+    if (rendered) this.#rendered = state;
   }
 
   /**
@@ -356,13 +419,16 @@ export class CubeStateOwner {
    * query -- a change that is presentation only relative to the pending state -- the whole
    * change is a transaction instead.
    */
-  #present(update: (state: CubeState) => CubeState, options: ChangeOptions): Outcome | Promise<Outcome> {
+  #present(update: (state: S) => S, options: ChangeOptions): StateOutcome<V> | Promise<StateOutcome<V>> {
     // While a history move is in flight the stacks are that move's: the presentation change
     // rides the move (it is on both sides of it) rather than being a step of its own.
-    const committed = fold(update(this.#committed));
-    const rendered = fold(update(this.#rendered));
-    if (queryKey(committed) !== queryKey(this.#committed) || queryKey(rendered) !== queryKey(this.#rendered)) {
-      return this.#transact(fold(update(this.current)), options.label ?? 'change', options.record ?? true);
+    const committed = this.#rules.fold(update(this.#committed));
+    const rendered = this.#rules.fold(update(this.#rendered));
+    if (this.#rules.queryKey(committed) !== this.#rules.queryKey(this.#committed) || this.#rules.queryKey(rendered) !== this.#rules.queryKey(this.#rendered)) {
+      const next = this.#rules.fold(update(this.current));
+      return this.#rules.defer?.(next)
+        ? this.#defer(next, undefined, options.record ?? true)
+        : this.#transact(next, options.label ?? 'change', options.record ?? true);
     }
     if ((options.record ?? true) && !this.#pending?.move) this.#stack.record(this.#committed);
     this.#committed = committed;
@@ -372,15 +438,16 @@ export class CubeStateOwner {
       const on = pending.move?.on;
       this.#pending = {
         ...pending,
-        state: fold(update(pending.state)),
-        ...(pending.move && on ? { move: { ...pending.move, on: fold(update(on)) } } : {}),
+        state: this.#rules.fold(update(pending.state)),
+        ...(pending.move && on ? { move: { ...pending.move, on: this.#rules.fold(update(on)) } } : {}),
       };
     }
+    this.#represent();
     this.#emit({ kind: 'presentation' });
     return { kind: 'applied' };
   }
 
-  async #transact(next: CubeState, label: string, record: boolean, move?: Move): Promise<Outcome> {
+  async #transact(next: S, label: string, record: boolean, move?: Move): Promise<StateOutcome<V>> {
     const id = (this.#seq += 1);
     // A history move REPLACES a pending move rather than building on it; anything else is
     // carried: a change made on a pending one is reverted with it, and one made on a pending
@@ -396,7 +463,7 @@ export class CubeStateOwner {
       ...(pendingMove ? { move: pendingMove } : {}),
     };
     this.#emit({ kind: 'pending' });
-    let out: CubeView | Stale;
+    let out: V | Stale;
     try {
       out = await this.#run(next);
     } catch (error) {
@@ -408,21 +475,27 @@ export class CubeStateOwner {
     }
     const pending = this.#pending;
     if (isStale(out) || pending?.id !== id) return { kind: 'superseded' };
-    // As the ENGINE returned it (the compiler's types), but reading the source that was SENT:
-    // the plane a query ran on (a snap's table) is the query side's, never the cube's state.
-    // The pending state, not `next`: a presentation change made while it ran is laid on it.
-    const landed: CubeState = {
-      ...pending.state,
-      snapshot: { ...out.snapshot, source: pending.state.snapshot.source },
-    };
+    // The pending state, not `next`: a presentation change made while it ran is laid on it --
+    // on the state (`land`) and on the view, which was laid out for `next` (`represent`).
+    const landed = this.#rules.land(pending.state, out);
+    const view = this.#rules.represent && this.#rules.stateKey(pending.state) !== this.#rules.stateKey(next)
+      ? this.#rules.represent(landed, out)
+      : out;
     this.#land(landed, pending.move, pending.record);
-    this.#view = out;
+    this.#view = view;
     this.#pending = null;
-    this.#emit({ kind: 'committed', view: out });
-    return { kind: 'applied', view: out };
+    this.#emit({ kind: 'committed', view });
+    return { kind: 'applied', view };
   }
 
-  #emit(event: OwnerEvent): void {
+  #emit(event: StateEvent<V>): void {
     for (const listener of [...this.#listeners]) listener(event);
+  }
+}
+
+/** The owner of the cube's state: the transaction rules with the cube's own (`CUBE_RULES`). */
+export class CubeStateOwner extends StateOwner<CubeState, CubeView> {
+  constructor(initial: CubeState, run: StateRunner, options: OwnerOptions = {}) {
+    super(initial, run, CUBE_RULES, options);
   }
 }

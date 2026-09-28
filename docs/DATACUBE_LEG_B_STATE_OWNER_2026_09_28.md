@@ -56,14 +56,14 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-210 | a result arriving mid column-resize leaves the drag stuck | **closed B3**: `setColumns` ends a drag in progress, keeping the width dragged so far. `test/grid-resize.test.ts` (red before: the drag never ended and the width stuck) |
 | P2-220 | every toolbar rebuild adds a document keydown listener | **closed B1b** (pulled forward: B1b repaints the title bar on every event): `#listenForKeys`, once. "one Ctrl-Z is ONE undo step" (red with the per-rebuild listener put back) |
 | P2-221 | Escape in a text field closes the whole window and drops its draft | **closed B3**: Escape in a text field stays in the field. "Escape in a text field stays in the field" (red before) |
-| P2-259 | a failed Ad Hoc step is still committed | open |
-| P2-260 | an Ad Hoc option change re-places old answers on a changed grid | open |
-| P2-261 | an Ad Hoc option changed while a query runs is lost | open |
-| P2-268 | Navigate Without Data status inverted | open |
-| P2-269 | old view's headers laid out with the new grid's depth | open |
-| P2-270 | exiting Ad Hoc does not cancel an in-flight step | open (no destroyed flag) |
+| P2-259 | a failed Ad Hoc step is still committed | **closed B5a**: the session runs on the SAME owner as the cube (`StateOwner` + Ad Hoc's rules): a step commits only when its answers land. `test/adhoc-transactions.test.ts` (red before: the POV moved though the query failed) |
+| P2-260 | an Ad Hoc option change re-places old answers on a changed grid | **closed B5a**: an option re-places the answers ON SCREEN (`represent` of the rendered grid); turning Navigate Without Data off queries a grid that waited. `test/adhoc-transactions.test.ts` (red before: 75/35/40 under an EMEA POV) |
+| P2-261 | an Ad Hoc option changed while a query runs is lost | **closed B5a**: a presentation change made while a step runs lands on the view too (`represent` at landing). `test/adhoc-transactions.test.ts` (red before: the landed view dropped 2022) |
+| P2-268 | Navigate Without Data status inverted | **closed B5a**: "(not refreshed)" and the warning say what is TRUE (`session.stale`: the view does not answer the grid). `test/adhoc-transactions.test.ts` (red with the old status logic put back) |
+| P2-269 | old view's headers laid out with the new grid's depth | **no longer reproduces** (re-tested: with the old depth put back the headers still read right -- the column model no longer depends on it); the mode lays out with the grid the view answers (`shownGrid`) anyway; pinned by `test/adhoc-transactions.test.ts`, not claimed |
+| P2-270 | exiting Ad Hoc does not cancel an in-flight step | **closed B5a**: `destroy` cancels the step in flight (`session.dispose`) and the mode says nothing after. `test/adhoc-transactions.test.ts` (red before: an error window for a mode that was gone) |
 | P2-280 | Member Selection re-raised in its old place after the dimension moves | open |
-| P2-282 | Ad Hoc Undo/Redo always query | open |
+| P2-282 | Ad Hoc Undo/Redo always query | **closed B5a**: with Navigate Without Data on, undo and redo commit without a query (`StateRules.defer`). `test/adhoc-transactions.test.ts` (red before: 3 queries) |
 | P2-283 | Settings do not reach Ad Hoc | open |
 | P2-284 | the menu's Undo/Redo state reflects the hidden cube in Ad Hoc | open (reads `#controller.canUndo`) |
 | P2-287 | the cube's Filter button stays under the Ad Hoc grid | open |
@@ -229,6 +229,12 @@ B4 LANDED: P2-144, 150, 152, 170, 171, 187 closed.
 
 - **B5 — Ad Hoc under the same rules**, and the shell's routing while it is on. P2-259–261, 268–270,
   280, 282–284, 287–291 (and the Cubes window in Ad Hoc, P2-288's successor).
+B5a LANDED: the owner generalised (`StateOwner<S, V>` over `StateRules`: fold, queryKey, stateKey,
+land, represent, defer; `CubeStateOwner` is it with `CUBE_RULES`), deferral and re-placing proven in
+`test/cube-state.test.ts`; `AdHocSession` runs on it. P2-259, 260, 261, 268, 270, 282 closed; P2-269
+no longer reproduces (pinned). Moving a dimension between rows and columns now runs no query: the
+same questions, the answers placed again.
+
 - **B6 — the host page.** Open sequence, re-sign-in, the leave guard for any work. P2-297, 330, 334, 337.
 
 Leg B is done when every row of §2 has a test and a commit, the guardrail holds for the app AND the

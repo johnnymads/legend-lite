@@ -69,6 +69,8 @@ export class AdHocMode {
   #model: ColumnModel | null = null;
   #selection: CellRange | null = null;
   #busy = 0;
+  /** Set by `destroy`: a step answering after the mode is gone says and paints nothing (P2-270). */
+  #destroyed = false;
 
   constructor(host: HTMLElement, session: AdHocSession, options: AdHocModeOptions) {
     this.session = session;
@@ -127,6 +129,9 @@ export class AdHocMode {
   }
 
   destroy(): void {
+    this.#destroyed = true;
+    // the step in flight is stopped: its answer is never placed
+    this.session.dispose();
     this.#menu.close();
     this.#grid.destroy();
     this.#root.replaceChildren();
@@ -146,13 +151,17 @@ export class AdHocMode {
     this.#grid.setBusy(true);
     try {
       const view = await step();
+      if (this.#destroyed) return;
       if (view) this.#paint(view);
       this.#paintPov();
-      if (this.session.grid.options.navigateWithoutData && view !== this.session.view) {
+      // SAID WHEN TRUE: the grid on screen does not answer the grid as it
+      // stands. The warning never appeared after a step taken without data,
+      // and "(not refreshed)" followed a real Refresh (P2-268).
+      if (this.session.stale) {
         this.#options.status('Navigating without data -- Refresh to query', 'warn');
       }
     } catch (error) {
-      this.#options.reportFailure(error);
+      if (!this.#destroyed) this.#options.reportFailure(error);
     } finally {
       this.#busy -= 1;
       if (this.#busy === 0) this.#grid.setBusy(false);
@@ -161,7 +170,10 @@ export class AdHocMode {
   }
 
   #paint(view: AdHocView): void {
-    const columnDims = this.session.grid.columns.length;
+    // The grid the VIEW answers: while navigating without data it is older
+    // than the grid as it stands, and laying its headers out with the new
+    // grid's depth showed raw separator labels (P2-269).
+    const columnDims = this.session.shownGrid.columns.length;
     const model = buildColumnModel(
       view.table,
       view.rowDimensions,
@@ -172,7 +184,7 @@ export class AdHocMode {
     this.#model = model;
     this.#grid.setColumns(model);
     this.#grid.setRows(view.table, 0, view.table.rowCount);
-    const pending = this.session.grid.options.navigateWithoutData ? ' (not refreshed)' : '';
+    const pending = this.session.stale ? ' (not refreshed)' : '';
     this.#options.status(
       `${view.table.rowCount} rows, ${view.columnTuples.length} columns${pending}`);
   }
@@ -265,7 +277,7 @@ export class AdHocMode {
    */
   #columnTarget(path: readonly string[], level: number): Target | null {
     const view = this.session.view;
-    const columns = this.session.grid.columns;
+    const columns = this.session.shownGrid.columns;
     const dimension = columns[level]?.dimension;
     if (!view || dimension === undefined || path.length !== level + 1) return null;
     const members = path.map(memberOfSegment);
