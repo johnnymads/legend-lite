@@ -1,5 +1,7 @@
-// Typed literals, validated where they are made: a value that is not what its type says is
-// refused HERE, naming it, never sent to fail somewhere further away.
+// Typed literals. A number is checked where it is made, because it must be a JSON number to be
+// written at all; a date, a timestamp or a time of day is CARRIED AS GIVEN, and the compiler's
+// reader refuses one that is not (the user, 2026-09-28: the compiler owns a literal's rules --
+// every query is compiled before it runs, so nothing malformed reaches a database).
 //
 // A negative number is `minus(5)`, not `-5`: the shape the grammar gives `-5` (lite's parser and
 // upstream's alike), so a literal built here and the same literal parsed are the same JSON.
@@ -11,30 +13,8 @@ import type {
   CStrictTime, CString, ValueSpecification,
 } from './wire.ts';
 
-const DAY = /^(-?\d{4,})-(\d{2})-(\d{2})$/;
-const TIME = /^(\d{2}):(\d{2}):(\d{2})(\.\d+)?$/;
-
 function negate(v: ValueSpecification): AppliedFunction {
   return { _type: 'func', function: 'minus', parameters: [v] };
-}
-
-/** A real calendar day: month 1-12, the day within its month (leap years counted). */
-function checkDay(text: string, what: string): void {
-  const m = DAY.exec(text);
-  if (!m) throw new ProtocolError(`${what} '${text}' is not YYYY-MM-DD`);
-  const y = Number(m[1]);
-  const mo = Number(m[2]);
-  const d = Number(m[3]);
-  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
-  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
-  if (days === undefined || d < 1 || d > days) throw new ProtocolError(`${what} '${text}' is not a calendar day`);
-}
-
-function checkTime(text: string, what: string): void {
-  const m = TIME.exec(text);
-  if (!m || Number(m[1]) > 23 || Number(m[2]) > 59 || Number(m[3]) > 59) {
-    throw new ProtocolError(`${what} '${text}' is not HH:MM:SS[.ffffff]`);
-  }
 }
 
 export const lit = {
@@ -83,25 +63,18 @@ export const lit = {
     return exact.isNegative ? negate(node) : node;
   },
 
-  /** A calendar day, `'2024-01-02'`. */
+  /** A calendar day, `'2024-01-02'`, as given: the compiler refuses one that is not. */
   strictDate(value: string): CStrictDate {
-    checkDay(value, 'a StrictDate');
     return { _type: 'strictDate', value };
   },
 
-  /** A timestamp, `'2024-01-02T03:04:05[.ffffff]'` (a space for the `T` is accepted). */
+  /** A timestamp, `'2024-01-02T03:04:05[.ffffff]'`, as given: the compiler refuses one that is not. */
   dateTime(value: string): CDateTime {
-    const text = value.replace(' ', 'T');
-    const t = text.indexOf('T');
-    if (t < 0) throw new ProtocolError(`a DateTime '${value}' has no time; a day alone is a StrictDate`);
-    checkDay(text.slice(0, t), 'a DateTime');
-    checkTime(text.slice(t + 1), 'a DateTime');
-    return { _type: 'dateTime', value: text };
+    return { _type: 'dateTime', value };
   },
 
-  /** A time of day, `'10:11:12[.ffffff]'`. */
+  /** A time of day, `'10:11:12[.ffffff]'`, as given: the compiler refuses one that is not. */
   strictTime(value: string): CStrictTime {
-    checkTime(value, 'a StrictTime');
     return { _type: 'strictTime', value };
   },
 

@@ -64,11 +64,11 @@ describe('a typed value, by its column\'s type (never by its look)', () => {
     assert.equal(parseTyped("'10'", 'String'), '10');
   });
 
-  it('keeps a date as its day and time, never a JavaScript Date', () => {
+  it('keeps a date as the text typed, never a JavaScript Date: the compiler judges it on Apply', () => {
     assert.equal(parseTyped('2024-03-01', 'StrictDate'), '2024-03-01');
-    assert.equal(parseTyped('2024-03-01T12:58', 'DateTime'), '2024-03-01T12:58:00');
-    assert.equal(parseTyped('2024-03-01 12:58:07.123456', 'DateTime'), '2024-03-01T12:58:07.123456');
-    assert.equal(parseTyped('March 1st', 'DateTime'), null);
+    assert.equal(parseTyped(' 2024-03-01T12:58 ', 'DateTime'), '2024-03-01T12:58');
+    assert.equal(parseTyped('March 1st', 'DateTime'), 'March 1st');
+    assert.equal(parseTyped('', 'DateTime'), null, 'nothing typed yet is no value');
   });
 
   it('types booleans', () => {
@@ -667,7 +667,7 @@ describe('TODAY and NOW', () => {
   it('parse from their call spelling only, on a date column; on a text column they are text', () => {
     assert.deepEqual(parseTyped('today()', 'StrictDate'), { relative: 'today' });
     assert.deepEqual(parseTyped('now()', 'DateTime'), { relative: 'now' });
-    assert.equal(parseTyped('today', 'StrictDate'), null);
+    assert.equal(parseTyped('today', 'StrictDate'), 'today', 'text, which the compiler refuses as a date');
     assert.equal(parseTyped('today()', 'String'), 'today()');
   });
 

@@ -15,7 +15,7 @@ import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint, limitsOf } from './fake-planner.ts';
-import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 import { element } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
@@ -128,5 +128,57 @@ describe('Properties > Apply with a refused draft', () => {
     await applyRowLimit('7');
     assert.equal(planner.refusals, refusals, 'a later query repeated the refusal');
     assert.equal(app.snapshot.maxRows, 7);
+  });
+});
+
+/** Refuses a query holding a given value, as the compiler refuses a date that is not a day. */
+class ValueRefusingPlanner implements Planner {
+  planned = 0;
+  readonly refused: string;
+  readonly message: string;
+  constructor(refused: string, message: string) {
+    this.refused = refused;
+    this.message = message;
+  }
+  async plan(query: Lambda): Promise<Plan> {
+    this.planned += 1;
+    if (toJson(query).includes(JSON.stringify(this.refused))) throw new Error(this.message);
+    return { sql: 'SELECT 1', columns: [] };
+  }
+  async relationType(): Promise<PlanColumn[]> {
+    return [];
+  }
+  parse = fakeParse;
+  print = fakePrint;
+}
+
+describe('Filter > Apply with a value the compiler refuses', () => {
+  it('applies nothing, runs nothing, and the window says why in the compiler\'s words', async () => {
+    const dom = new JSDOM('<!doctype html><body><div id="r"></div></body>');
+    (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame =
+      (fn: () => void) => { fn(); return 0; };
+    const root = dom.window.document.getElementById('r') as HTMLElement;
+    const planner = new ValueRefusingPlanner('not-a-region', 'Invalid month: 13');
+    let ran = 0;
+    const engine = new (class extends Engine {
+      override async answer(sql: string, epoch: number): Promise<ResultTable> {
+        ran += 1;
+        return super.answer(sql, epoch);
+      }
+    })();
+    const app = new CubeApp(root, SNAPSHOT, { engine, planner });
+    await app.open();
+    app.openFilters();
+    const filters = root.querySelector('[data-window="Filters"]') as HTMLElement;
+    (filters.querySelector('.dc-filter-btn') as HTMLButtonElement).click();
+    const value = filters.querySelector('input.dc-filter-value') as HTMLInputElement;
+    value.value = 'not-a-region';
+    value.dispatchEvent(new dom.window.Event('change'));
+    const before = ran;
+    (filters.querySelector('.dc-filter-apply') as HTMLButtonElement).click();
+    await flush();
+    assert.equal(ran, before, 'the refused filter reached the engine');
+    assert.equal(app.snapshot.filter, undefined, 'a refused filter applied');
+    assert.match(filters.textContent ?? '', /Invalid month: 13/);
   });
 });

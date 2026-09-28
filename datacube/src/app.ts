@@ -2396,14 +2396,30 @@ export class CubeApp {
   }
 
   /**
-   * The Filter window's Apply: run it, and on a refusal put the cube
-   * back and hand the reason to the window that asked.
+   * The Filter window's Apply: COMPILED FIRST, as a calculated column is --
+   * the compiler judges each value (a date that is not a day, a time that
+   * is not a time) and a refusal applies nothing, in the compiler's words.
+   * Then run it, and on a refusal put the cube back and hand the reason to
+   * the window that asked. A plane that cannot compile without running
+   * falls to the run-and-restore.
    */
   async #applyFilter(filter: FilterNode | undefined): Promise<string | null> {
     const previous = this.#snapshot;
-    this.#snapshot = filter
+    const next = filter
       ? { ...this.#snapshot, filter }
       : (({ filter: _drop, ...rest }) => rest)(this.#snapshot);
+    try {
+      const checked = await this.#controller.compile(next);
+      if (checked && checked.refusal !== null) {
+        this.#status(checked.refusal, 'error');
+        return checked.refusal;
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.#status(message, 'error');
+      return message;
+    }
+    this.#snapshot = next;
     try {
       await this.#refresh();
       return null;

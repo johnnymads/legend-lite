@@ -313,6 +313,13 @@ from the column's compiler type; the NULL group a real null; exact filter inputs
     the twins test, so a new one fails.
 - Guardrail: no null-key sentinel and no Date on the query path.
 
+- The compiler judges a date (the user, 2026-09-28, option b): pure-protocol carries a date, a
+  timestamp and a time of day AS GIVEN (its calendar and clock checks are gone; a number is still
+  checked, since it must be a JSON number); the filter editor keeps the text as typed; Apply/OK
+  compiles the candidate cube first, as the Properties editor does, and a refusal applies nothing,
+  in the compiler's words ("Invalid month: 13", "invalid hour: 25" -- probed: lite's reader refuses
+  every malformed value, and normalizes a picker's `2024-01-02T03:04`).
+
 T4 is complete with this. **Next: T5** (what a type accepts, from the compiler: generated
 operator, aggregate and function signatures, D4).
 

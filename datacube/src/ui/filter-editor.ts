@@ -245,8 +245,6 @@ const pad = (n: number): string => String(n).padStart(2, '0');
 /** A local date as the editor writes it: YYYY-MM-DD[THH:mm:ss]. */
 /** Plain digits as a person types a number: kept exact rather than read through a double. */
 const EXACT_NUMBER_INPUT = /^-?\d+(\.\d+)?$/;
-/** A day, and optionally its time, as a date or datetime-local input writes them. */
-const DATE_INPUT = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(:\d{2})?(\.\d+)?)?$/;
 
 export function dateText(d: Date, withTime: boolean): string {
   const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -263,8 +261,9 @@ export function dateText(d: Date, withTime: boolean): string {
  * column's is text even when it looks numeric (account codes). A value
  * the person typed as plain digits stays those EXACT digits (a decimal's
  * `12.30`, an integer past 2^53); arithmetic they typed is evaluated. A
- * date is its text, `YYYY-MM-DD[THH:MM:SS]`, never a JavaScript Date (a
- * Date is in the browser's zone, and a filter is not).
+ * date or a time is the text as typed, never a JavaScript Date (a Date is
+ * in the browser's zone, and a filter is not): the COMPILER judges it when
+ * the filter is applied, as it judges a calculated column's expression.
  */
 export function parseTyped(text: string, type: string | undefined):
 FilterValue | null {
@@ -280,10 +279,7 @@ FilterValue | null {
     case 'date': {
       if (t === 'today()') return { relative: 'today' };
       if (t === 'now()') return { relative: 'now' };
-      const m = DATE_INPUT.exec(t);
-      if (!m) return null;
-      // a picker's `HH:MM` gets its seconds; the day and time are the person's, as typed
-      return m[2] === undefined ? m[1]! : `${m[1]}T${m[2]}${m[3] ?? ':00'}${m[4] ?? ''}`;
+      return t === '' ? null : t;
     }
     case 'time':
       return t === '' ? null : t;
@@ -1156,10 +1152,10 @@ export class FilterEditor {
     const mode = text === 'today()' ? 'today'
       : text === 'now()' ? 'now'
       : /T\d/.test(text) ? 'datetime' : 'date';
-    // the value's own day and time, as text; today when it has none yet
-    const typed = parseTyped(text, 'DateTime');
-    const day = typeof typed === 'string' ? typed.slice(0, 10) : dateText(new Date(), false);
-    const time = typeof typed === 'string' && typed.length > 10 ? typed.slice(11, 19) : '00:00:00';
+    // the picker shows the value's day and time; one it cannot read, it shows empty, and the
+    // compiler refuses it on Apply. Today when there is no value yet.
+    const day = text === '' ? dateText(new Date(), false) : text.slice(0, 10);
+    const time = text.length > 10 ? text.slice(11, 19) : '00:00:00';
     const valueFor = (withTime: boolean): string => (withTime ? `${day}T${time}` : day);
     const modeSelect = this.#select(
       ['date', 'datetime', 'today', 'now'], mode, 'dc-filter-date-mode',

@@ -180,12 +180,15 @@ describe('numbers are spelled as the wire spells them: byte for byte with lite\'
   });
 });
 
-describe('literals are refused where they are made', () => {
+describe('a number is refused where it is made (it must be JSON); a date is the compiler\'s to judge', () => {
+  it('carries a date, a timestamp and a time of day as given', () => {
+    // the compiler's reader refuses these when the query is compiled ("Invalid month: 13")
+    assert.deepEqual(lit.strictDate('2024-13-01'), { _type: 'strictDate', value: '2024-13-01' });
+    assert.deepEqual(lit.dateTime('2024-01-02T25:00:00'), { _type: 'dateTime', value: '2024-01-02T25:00:00' });
+    assert.deepEqual(lit.strictTime('24:00:00'), { _type: 'strictTime', value: '24:00:00' });
+  });
+
   const refused: readonly (readonly [string, () => unknown])[] = [
-    ['a day that is not a day', () => lit.strictDate('2024-02-30')],
-    ['a month 13', () => lit.strictDate('2024-13-01')],
-    ['a DateTime with no time', () => lit.dateTime('2024-01-02')],
-    ['an hour 24', () => lit.strictTime('24:00:00')],
     ['a decimal with an exponent', () => lit.decimal('1e5')],
     ['a decimal that is not a number', () => lit.decimal('12,30')],
     ['an unsafe JS integer', () => lit.integer(2 ** 53 + 2)],
@@ -196,16 +199,12 @@ describe('literals are refused where they are made', () => {
     it(what, () => assert.throws(make, ProtocolError));
   }
 
-  it('a leap day is a day', () => {
-    assert.deepEqual(lit.strictDate('2024-02-29'), { _type: 'strictDate', value: '2024-02-29' });
-  });
-
   it('a compiler type chooses the literal, and the value stays exact', () => {
     assert.equal(toJson(lit.of('Decimal', '12345678901234567.89')), '{"_type":"decimal","value":12345678901234567.89}');
     assert.equal(toJson(lit.of('Integer', 9007199254740993n)), '{"_type":"integer","value":9007199254740993}');
     assert.equal(toJson(lit.of('meta::pure::precisePrimitives::Varchar', 'a')), '{"_type":"string","value":"a"}');
     assert.equal(toJson(lit.of('StrictDate', '2024-01-02')), '{"_type":"strictDate","value":"2024-01-02"}');
-    assert.equal(toJson(lit.of('DateTime', '2024-01-02 03:04:05')), '{"_type":"dateTime","value":"2024-01-02T03:04:05"}');
+    assert.equal(toJson(lit.of('DateTime', '2024-01-02T03:04:05')), '{"_type":"dateTime","value":"2024-01-02T03:04:05"}');
   });
 });
 
