@@ -482,7 +482,7 @@ const SAMPLE_TYPES = {
  * pivot is two plain queries (values, then conditional aggregates), with no `pivot(` in it.
  */
 const pivotOf = () => page.evaluate(() => {
-  const p = window.__dataCube.controller.view?.pivot;
+  const p = window.__dataCube.view?.pivot;
   return p ? p.columns.map((c) => ({
     name: c.name, measure: c.measure.name, total: c.tuple === null, tuple: c.tuple,
   })) : [];
@@ -3014,8 +3014,9 @@ try {
       await addWindow({ name: 'run_qty', level: 'measure', fn: 'sum', of: 'quantity',
         partition: ['region'], order: [{ column: 'trade_id', direction: 'asc' }], frame: 'running' });
       const result = await page.evaluate(async () => {
-        const c = window.__dataCube.controller;
-        const raw = (await c.runQuery(await c.parse(`${(await c.print({ _type: 'lambda', parameters: [], body: [c.snapshot.source.query] })).trim()}->select(~[trade_id, region, quantity])`), c.snapshot)).rows;
+        const app = window.__dataCube;
+        const c = app.controller;
+        const raw = (await c.runQuery(await c.parse(`${(await c.print({ _type: 'lambda', parameters: [], body: [app.snapshot.source.query] })).trim()}->select(~[trade_id, region, quantity])`), app.snapshot)).rows;
         const col = (t, n) => t.columns.find((x) => x.name === n).values;
         const ids = col(raw, 'trade_id'); const regions = col(raw, 'region'); const qty = col(raw, 'quantity');
         const order = ids.map((_v, i) => i).sort((a, b) => Number(ids[a]) - Number(ids[b]));
@@ -3028,7 +3029,7 @@ try {
           acc.set(r, next);
           want.set(String(ids[i]), next);
         }
-        const t = c.view.rows;
+        const t = app.view.rows;
         const gotIds = col(t, 'trade_id'); const got = col(t, 'run_qty');
         const bad = [];
         gotIds.forEach((id, i) => {
@@ -3102,8 +3103,7 @@ try {
       await page.locator('.dc-row[aria-expanded=false] .dc-chevron').first().click();
       await settle(opened);
       const result = await page.evaluate(async () => {
-        const c = window.__dataCube.controller;
-        const v = c.view;
+        const v = window.__dataCube.view;
         const col = (t, n) => t.columns.find((x) => x.name === n)?.values ?? null;
         const notional = col(v.rows, 'notional');
         const weakest = col(v.rows, 'weakest');
@@ -3113,7 +3113,9 @@ try {
         const region = rows.find((r) => r.level === 1 && rows.some((x) => x.level === 2 && x.path[0] === r.path[0]));
         const desks = rows.filter((x) => x.level === 2 && x.path[0] === region.path[0]);
         // The trades' own minimum per desk, from the raw rows.
-        const raw = (await c.runQuery(await c.parse(`${(await c.print({ _type: 'lambda', parameters: [], body: [c.snapshot.source.query] })).trim()}->select(~[region, desk, notional])`), c.snapshot)).rows;
+        const app = window.__dataCube;
+        const c = app.controller;
+        const raw = (await c.runQuery(await c.parse(`${(await c.print({ _type: 'lambda', parameters: [], body: [app.snapshot.source.query] })).trim()}->select(~[region, desk, notional])`), app.snapshot)).rows;
         const rr = col(raw, 'region'); const rd = col(raw, 'desk'); const rn = col(raw, 'notional');
         const minTrade = new Map();
         rr.forEach((r, i) => {
@@ -4455,7 +4457,7 @@ try {
       };
       // the same rows' VALUES and the column's compiler type: whether a cell is negative is
       // a fact about its value, not about its text
-      const typed = window.__dataCube.controller.view?.rows.columns.find((c) => c.name === name);
+      const typed = window.__dataCube.view?.rows.columns.find((c) => c.name === name);
       return {
         texts: cells.map((c) => c?.textContent?.trim() ?? null),
         values: (typed?.values ?? []).slice(0, 6).map((v) => (typeof v === 'bigint' ? String(v) : v)),

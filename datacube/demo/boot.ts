@@ -404,6 +404,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       readonly snapTarget?: SnapTarget;
       /** A file's cube can be saved: the file, by identity (never its data). */
       readonly cubeSource?: CubeSource;
+      /** The groups a saved cube had open. */
+      readonly tree?: TreeState;
     } = {},
   ): CubeApp {
     // PARK THE STATUS TEXT FIRST.
@@ -436,6 +438,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       configuration: config,
       snapTarget: place.snapTarget ?? snapTarget,
       ...(place.cubeSource ? { cubeSource: place.cubeSource } : {}),
+      ...(place.tree ? { tree: place.tree } : {}),
+      // "Changed since saved" is re-read on every change of the cube's state,
+      // a presentation change (a width, a colour) included: it runs no query.
+      onChange: () => onCubeView?.(),
       showColumnZone: true,
       // THE HOST'S TEXT, IN THE STATUS BAR. Planner progress during
       // boot and errors afterwards -- the cube states its own row,
@@ -508,7 +514,6 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         status.classList.remove('warn-text');
       },
       onView: (view) => {
-        onCubeView?.();
         // For the browser harness: how many views have landed.
         const w = window as unknown as { __dataCubeViews?: number };
         w.__dataCubeViews = (w.__dataCubeViews ?? 0) + 1;
@@ -806,8 +811,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           };
         }
         app.dispose();
-        app = makeApp(snap, config, [], { cubeSource: source });
-        if (tree) app.controller.adoptTree(tree);
+        app = makeApp(snap, config, [], { cubeSource: source, ...(tree ? { tree } : {}) });
         current = {
           source,
           file,

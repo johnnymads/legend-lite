@@ -31,30 +31,30 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 
 | entry | what | status today |
 |---|---|---|
-| P2-99 | the automatic pivot-cast re-run records an undo step | **overtaken**: Leg A removed the cast re-run; group-stage types are adopted without a query (`#adoptGroupStageTypes`) — to be pinned by a test anyway |
-| P2-100 | a refusal rolls back only the app's snapshot; the controller keeps the refused one | open |
-| P2-101 | a failed expand/collapse leaves the tree flipped | open |
-| P2-102 | after a refused zone change the zones keep the refused layout | open (`#refresh` repaints before it queries) |
+| P2-99 | the automatic pivot-cast re-run records an undo step | **closed B1b**: machine re-runs (`open`, refresh after a snap, reload) record nothing; group-stage types come back IN the run's view (`withGroupStageTypes`), no second write. `test/cube-transactions.test.ts` "opening again … records nothing" (red before) |
+| P2-100 | a refusal rolls back only the app's snapshot; the controller keeps the refused one | **closed B1b**: one owner; a refusal repaints from `committed` and records no step. "leaves no undo step…" (red before) |
+| P2-101 | a failed expand/collapse leaves the tree flipped | **closed B1b**: the tree is part of the transaction. "a refused expand leaves the group closed" (red before) |
+| P2-102 | after a refused zone change the zones keep the refused layout | **closed B1b**: `#onState` repaints the zones from the state on every event. "a refused zone change puts the zones back" (red before) |
 | P2-103 | a chip move is two changes; a refused move drops the grouping | open (`pivot-panel.ts` calls `onChange` twice) |
-| P2-104 | a superseded refresh turns the busy signal off while the newer one runs | open |
+| P2-104 | a superseded refresh turns the busy signal off while the newer one runs | **closed B1b**: busy is `owner.busy`. "a superseded run ending does not turn busy off…" (red before) |
 | P2-105 | `dispose()` stops nothing: late queries, listeners, callbacks outlive the cube | open |
 | P2-106 | an action during an in-flight Undo mixes states and loses the redo | open |
 | P2-107 | overlapping Undos roll back to a state never rendered | open |
-| P2-108 | Undo restores the configuration but not appearance, zones or title bar | open (`restoreHost` refreshes formats and the tool panel only) |
+| P2-108 | Undo restores the configuration but not appearance, zones or title bar | **closed B1b**: one paint from the state (`#paintState`). "the zones and the title bar come back with the state" (red before) |
 | P2-109 | the history key ignores groups collapsed from an expand level | open (`stateKey` reads `openPaths` only) |
 | P2-110 | during a refresh the context menu pairs the old rows with the new snapshot | open |
-| P2-114 | fire-and-forget calls: unhandled rejections; failed presentation changes keep the new config | open |
-| P2-127 | the host TOGGLES instead of applying the requested expand state | open |
+| P2-114 | fire-and-forget calls: unhandled rejections; failed presentation changes keep the new config | **closed B1b**: presentation runs no query; `change` never throws (it returns an outcome). "a presentation change runs no query…" (red before) |
+| P2-127 | the host TOGGLES instead of applying the requested expand state | **closed B1b**: `tree.setOpen(path, expanded)`. "two quick clicks … leave it open" (red with the toggle put back) |
 | P2-131 | drill-through has no stale-result guard | open |
 | P2-144 | the Filters window keeps an old copy and its Apply overwrites newer changes | open |
 | P2-150 | reopening Filters rewrites '' / numeric-looking / quoted values | to re-test (T4c typed the values; the reopen path may still coerce) |
 | P2-152 | a serializer refusal throws from compile: the column editor hangs, Apply silently does nothing | open |
-| P2-169 | an Apply that also changes root aggregation / expand level loses its row, pivot and sort edits | open (`setTree` refreshes, then a second refresh) |
+| P2-169 | an Apply that also changes root aggregation / expand level loses its row, pivot and sort edits | **fixed by B1b** (the Apply is one transaction, tree included); its reproduction through the editor comes with B1c |
 | P2-170 | edits made while an Apply runs are recorded as applied | open (`#opened = this.#draft` after the await) |
 | P2-171 | the Sorts tab's direction dropdown reads a stale map | open |
 | P2-187 | the Dimensions editor loses hierarchy edits on rename/Add | open |
 | P2-210 | a result arriving mid column-resize leaves the drag stuck | open |
-| P2-220 | every toolbar rebuild adds a document keydown listener | open (added in `#buildToolbar`, removed only in `dispose`) |
+| P2-220 | every toolbar rebuild adds a document keydown listener | **closed B1b** (pulled forward: B1b repaints the title bar on every event): `#listenForKeys`, once. "one Ctrl-Z is ONE undo step" (red with the per-rebuild listener put back) |
 | P2-221 | Escape in a text field closes the whole window and drops its draft | open |
 | P2-259 | a failed Ad Hoc step is still committed | open |
 | P2-260 | an Ad Hoc option change re-places old answers on a changed grid | open |
@@ -200,6 +200,13 @@ app switches in one step.)
   owner; a guardrail test holds that nothing outside `cube-state.ts` assigns cube state (app AND
   controller). Closes, each with a red-first test through the app: P2-99 (no machine undo steps),
   P2-100, 101, 102, 104, 108, 114.
+B1b LANDED (§2's rows): also `test/state-guardrail.test.ts` (no field or assignment of cube state
+in the app or the controller; proven red by planting one); `src/history.ts` and its two tests
+deleted, every rule they pinned ported to `test/cube-state.test.ts`; hosts get `onChange` (a
+presentation change runs no query) and the `tree` option. What a person sees differently:
+presentation changes (pin, width, colour, folding the zones or title bar) run no query and are undo
+steps; a refused change made on a pending one says "N changes were undone".
+
 - **B1c — whole gestures as one transaction.** A chip move, a Properties Apply (tree settings
   included), expand/collapse as a set. The context menu, drill and value filters read `rendered`.
   Closes P2-103, 110, 127, 169.

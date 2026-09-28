@@ -106,7 +106,7 @@ export function gridInvariants(temporalTypes) {
   //    rather than an unformatted date. (It read a regex over the
   //    panel's type LABEL once: a display string is not a type.)
   const app = window.__dataCube;
-  const table = app?.adhoc ? app.adhoc.view?.table : app?.controller.view?.rows;
+  const table = app?.adhoc ? app.adhoc.view?.table : app?.view?.rows;
   if (!table) bad.push('no typed result on the page (window.__dataCube) to read types from');
   const typeOf = new Map((table?.columns ?? []).map((c) => [c.name, c.type]));
   const temporal = (name) => temporalTypes.includes(typeOf.get(name));

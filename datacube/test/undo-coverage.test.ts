@@ -105,7 +105,7 @@ describe('undo over the configuration, not just the query', () => {
 
     assert.equal(app.configuration.columns['region']?.pinned, 'left');
 
-    await app.controller.undo();
+    await app.undo();
     assert.equal(
       app.configuration.columns['region']?.pinned,
       undefined,
@@ -122,10 +122,10 @@ describe('undo over the configuration, not just the query', () => {
 
     assert.equal(app.configuration.maxRows, 17);
 
-    await app.controller.undo();
+    await app.undo();
     assert.equal(app.configuration.maxRows, original, 'config reverted');
     assert.equal(
-      app.controller.snapshot?.maxRows,
+      app.snapshot.maxRows,
       original,
       'and the snapshot agrees with it',
     );
@@ -136,10 +136,10 @@ describe('undo over the configuration, not just the query', () => {
     // did not, and the next refresh folded the stale config in again.
     await app.applyConfiguration({ maxRows: 17 });
 
-    await app.controller.undo();
-    await app.controller.refresh();
+    await app.undo();
+    await app.state.refresh();
     assert.notEqual(
-      app.controller.snapshot?.maxRows,
+      app.snapshot.maxRows,
       17,
       'the undone setting stayed undone',
     );
@@ -189,10 +189,10 @@ describe('undo over the configuration, not just the query', () => {
   it('redoes a configuration change', async () => {
     await app.applyConfiguration({ columns: { region: { pinned: 'left' } } });
 
-    await app.controller.undo();
+    await app.undo();
     assert.equal(app.configuration.columns['region']?.pinned, undefined);
 
-    await app.controller.redo();
+    await app.redo();
     assert.equal(app.configuration.columns['region']?.pinned, 'left');
   });
 });

@@ -186,7 +186,7 @@ try {
       // the group KEYS as the database returned them (each first-level row's path), not the
       // cells' rendered text: two values a format shows alike are still two groups
       const grouped = await page.evaluate(() => {
-        const view = window.__dataCube.controller.view;
+        const view = window.__dataCube.view;
         return {
           sql: document.getElementById('sql')?.textContent ?? '',
           pure: document.getElementById('pure')?.textContent ?? '',

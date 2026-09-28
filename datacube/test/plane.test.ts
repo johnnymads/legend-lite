@@ -16,6 +16,7 @@ import { CubeController, type Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { TreeState } from '../src/tree.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';
 import { toJson, type ColSpecArrayInstance, type Lambda } from '../../pure-protocol/src/index.ts';
@@ -99,6 +100,9 @@ class RecordingEngine extends FakeEngine {
   }
 }
 
+/** A state to run: the snapshot, no groups open. */
+const at = (snapshot: CubeSnapshot) => ({ snapshot, tree: TreeState.empty() });
+
 describe('snapping goes through the planner', () => {
   it('plans a select rather than building SQL by hand', async () => {
     // It used to emit `SELECT "region", "notional" FROM <source>`,
@@ -108,11 +112,12 @@ describe('snapping goes through the planner', () => {
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
     const c = new CubeController(engine, planner, { snapTarget: SNAP_TARGET });
-    await c.update(SNAPSHOT);
+    const ran: CubeSnapshot = SNAPSHOT;
+    await c.run(at(ran));
     planner.pure.length = 0;
     planner.queries.length = 0;
 
-    await c.snap('test');
+    await c.snap(ran, 'test');
 
     // A select over the LIVE source, as a query -- the columns being
     // whatever the snapshot actually references.
@@ -134,9 +139,10 @@ describe('snapping goes through the planner', () => {
     const planner = new RecordingPlanner();
     const c = new CubeController(new RecordingEngine(), planner, { snapTarget: SNAP_TARGET });
     // a measure over one column: the other is still copied
-    await c.update(SNAPSHOT);
+    const ran: CubeSnapshot = SNAPSHOT;
+    await c.run(at(ran));
     planner.queries.length = 0;
-    await c.snap('test');
+    await c.snap(ran, 'test');
     assert.ok(planner.queries.some((q) => JSON.stringify(selectOf(q)) === JSON.stringify(
       { source: toJson(accessor('trades::DB', 'TRADES')), columns: ['region', 'notional'] })),
     `planner saw: ${planner.pure.join(' ;; ')}`);
@@ -147,9 +153,10 @@ describe('snapping goes through the planner', () => {
     // freshly opened table -- and the planner refused `select(~[])`.
     const planner = new RecordingPlanner();
     const c = new CubeController(new RecordingEngine(), planner, { snapTarget: SNAP_TARGET });
-    await c.update({ ...SNAPSHOT, measures: [], columns: [...SNAPSHOT.columns, { name: 'trade date', type: 'StrictDate' }] });
+    const ran: CubeSnapshot = { ...SNAPSHOT, measures: [], columns: [...SNAPSHOT.columns, { name: 'trade date', type: 'StrictDate' }] };
+    await c.run(at(ran));
     planner.queries.length = 0;
-    await c.snap('test');
+    await c.snap(ran, 'test');
     assert.ok(planner.queries.some((q) => JSON.stringify(selectOf(q)) === JSON.stringify(
       { source: toJson(accessor('trades::DB', 'TRADES')), columns: ['region', 'notional', 'trade date'] })),
     `planner saw: ${planner.pure.join(' ;; ')}`);
@@ -160,8 +167,9 @@ describe('snapping goes through the planner', () => {
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
     const c = new CubeController(engine, planner, { snapTarget: SNAP_TARGET });
-    await c.update(SNAPSHOT);
-    await c.snap('test');
+    const ran: CubeSnapshot = SNAPSHOT;
+    await c.run(at(ran));
+    await c.snap(ran, 'test');
 
     assert.ok(
       engine.sql.some(
@@ -185,11 +193,12 @@ describe('the snapped plane actually redirects', () => {
         source: accessor('trades::DB', 'TRADES_SNAP'),
       },
     });
-    await c.update(SNAPSHOT);
-    await c.snap('test');
+    const ran: CubeSnapshot = SNAPSHOT;
+    await c.run(at(ran));
+    await c.snap(ran, 'test');
     planner.pure.length = 0;
 
-    await c.refresh();
+    await c.run(at(ran));
     assert.ok(
       planner.pure.every((p) => p.includes('TRADES_SNAP')),
       `still reading live: ${planner.pure.join(' ;; ')}`,
@@ -205,12 +214,13 @@ describe('the snapped plane actually redirects', () => {
         source: accessor('trades::DB', 'TRADES_SNAP'),
       },
     });
-    await c.update(SNAPSHOT);
-    await c.snap('test');
+    const ran: CubeSnapshot = SNAPSHOT;
+    await c.run(at(ran));
+    await c.snap(ran, 'test');
     await c.release();
     planner.pure.length = 0;
 
-    await c.refresh();
+    await c.run(at(ran));
     assert.ok(
       planner.pure.every(
         (p) => p.includes('"TRADES"') && !p.includes('TRADES_SNAP'),
@@ -223,8 +233,9 @@ describe('the snapped plane actually redirects', () => {
     // A generated table name was a bare SQL identifier: no compiler can
     // read it as a relation, so the snapped cube could not be planned.
     const c = new CubeController(new RecordingEngine(), new RecordingPlanner());
-    await c.update(SNAPSHOT);
-    await assert.rejects(() => c.snap('test'), /names no table to freeze a snapshot into/);
+    const ran: CubeSnapshot = SNAPSHOT;
+    await c.run(at(ran));
+    await assert.rejects(() => c.snap(ran, 'test'), /names no table to freeze a snapshot into/);
     assert.equal(c.snaps.isSnapped, false);
   });
 });

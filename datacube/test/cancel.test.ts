@@ -236,9 +236,9 @@ describe('the controller under a burst', () => {
 
     const flat: CubeSnapshot = { ...GROUPED, rows: [] };
     const c = new CubeController(engine, planner);
-    const first = c.update(flat);
+    const first = c.run({ snapshot: flat, tree: TreeState.empty() });
     await new Promise((r) => setTimeout(r, 5));
-    const second = c.update({ ...flat, epoch: 2 });
+    const second = c.run({ snapshot: { ...flat, epoch: 2 }, tree: TreeState.empty() });
     release?.();
 
     const secondView = await second;

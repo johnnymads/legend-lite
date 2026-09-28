@@ -6,6 +6,7 @@ import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import { PlanThenRun, RemoteRun } from '../src/runner.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { TreeState } from '../src/tree.ts';
 import type { RemoteExecutor, RemoteResult } from '../src/engine-remote.ts';
 import { isStale } from '../src/epoch.ts';
 import { FakeEngine } from './fake-engine.ts';
@@ -109,6 +110,9 @@ describe('the two arrangements', () => {
   });
 });
 
+/** A state to run: the snapshot, no groups open. */
+const at = (snapshot: CubeSnapshot) => ({ snapshot, tree: TreeState.empty() });
+
 describe('a controller on a remote engine', () => {
   const remote = () => {
     const executor = new StubExecutor();
@@ -121,8 +125,8 @@ describe('a controller on a remote engine', () => {
   it('runs its queries through the engine, with no local one', async () => {
     const { executor, controller } = remote();
     const views: number[] = [];
-    await controller.update(SNAPSHOT);
-    views.push(controller.view?.rows.rowCount ?? -1);
+    const v = await controller.run(at(SNAPSHOT));
+    views.push(isStale(v) ? -1 : v.rows.rowCount);
     assert.deepEqual(views, [1]);
     assert.equal(executor.queries.length, 1);
     assert.match(toJson(executor.queries[0]!), /"_type":"var","name":"trades"/);
@@ -145,9 +149,9 @@ describe('a controller on a remote engine', () => {
     // that on our behalf; a refusal naming the reason beats a
     // TypeError from a null engine, and beats half-working.
     const { controller } = remote();
-    await controller.update(SNAPSHOT);
+    await controller.run(at(SNAPSHOT));
     await assert.rejects(
-      () => controller.snap('frozen'),
+      () => controller.snap(SNAPSHOT, 'frozen'),
       (e: Error) => {
         assert.match(e.message, /remote engine/);
         assert.match(e.message, /local store/);
@@ -190,7 +194,7 @@ describe('Row Limit on a FLAT cube', () => {
   it('asks for one more than the limit, shows the limit, and says so', async () => {
     const executor = new ManyRows();
     const controller = new CubeController(new RemoteRun(executor));
-    const v = await controller.update({ ...SNAPSHOT, maxRows: 3 });
+    const v = await controller.run(at({ ...SNAPSHOT, maxRows: 3 }));
     if (isStale(v)) throw new Error('stale');
     assert.deepEqual(limitsOf(executor.queries.at(-1)!), [4]);
     assert.equal(v.rows.rowCount, 3);
@@ -200,7 +204,7 @@ describe('Row Limit on a FLAT cube', () => {
   it('UNSET means no limit, as upstream', async () => {
     const executor = new ManyRows();
     const controller = new CubeController(new RemoteRun(executor));
-    const v = await controller.update({ ...SNAPSHOT });
+    const v = await controller.run(at({ ...SNAPSHOT }));
     if (isStale(v)) throw new Error('stale');
     assert.deepEqual(limitsOf(executor.queries.at(-1)!), []);
     assert.equal(v.rows.rowCount, 5);
@@ -209,7 +213,7 @@ describe('Row Limit on a FLAT cube', () => {
 
   it('reports nothing when the rows fit', async () => {
     const controller = new CubeController(new RemoteRun(new ManyRows()));
-    const v = await controller.update({ ...SNAPSHOT, maxRows: 10 });
+    const v = await controller.run(at({ ...SNAPSHOT, maxRows: 10 }));
     if (isStale(v)) throw new Error('stale');
     assert.equal(v.rows.rowCount, 5);
     assert.equal(v.truncated.length, 0);

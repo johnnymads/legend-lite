@@ -11,7 +11,9 @@ import type { CubeView } from '../src/cube.ts';
 import { STALE, type Stale } from '../src/epoch.ts';
 import {
   CubeStateOwner,
+  UndoStack,
   queryKey,
+  stateKey,
   type CubeState,
   type OwnerEvent,
 } from '../src/cube-state.ts';
@@ -414,6 +416,118 @@ describe('presentation while a query runs', () => {
     e.land(e.runs.length - 1);
     await back;
     assert.deepEqual([o.committed.snapshot.rows, o.committed.configuration.reportTitle], [[], 'blue']);
+  });
+});
+
+// Carried over from the controller's history (test/history.test.ts and test/undo-failure.test.ts,
+// deleted with src/history.ts in Leg B / B1b): every rule they pinned, now on the owner.
+describe('the history, as the controller\'s pinned it', () => {
+  const s = (rows: string[]): CubeState => ({ ...INITIAL, snapshot: { ...SNAPSHOT, rows } });
+
+  it('ignores a step that changed nothing', () => {
+    const h = new UndoStack<CubeState>(stateKey);
+    h.record(s(['region']));
+    h.record(s(['region']));
+    assert.equal(h.depth.past, 1);
+  });
+
+  it('does not count the epoch as a change, and counts expansion as one', () => {
+    assert.equal(stateKey({ ...INITIAL, snapshot: { ...SNAPSHOT, epoch: 1 } }),
+      stateKey({ ...INITIAL, snapshot: { ...SNAPSHOT, epoch: 99 } }));
+    assert.notEqual(stateKey(INITIAL), stateKey({ ...INITIAL, tree: TreeState.fromPaths([['EMEA']]) }));
+  });
+
+  it('drops the oldest step past the limit', async () => {
+    const e = new Engine();
+    const o = new CubeStateOwner(INITIAL, e.run, { historyLimit: 2 });
+    for (let i = 0; i < 6; i += 1) {
+      const c = o.change(group([`c${i}`]));
+      e.land(e.runs.length - 1);
+      await c;
+    }
+    assert.equal(o.historyDepth.past, 2);
+    o.setHistoryLimit(1);
+    assert.equal(o.historyDepth.past, 1, 'Settings > Max History Stack Size takes effect at once');
+  });
+
+  it('clears the redo branch when a new step is recorded', () => {
+    const h = new UndoStack<CubeState>(stateKey);
+    h.record(s(['a']));
+    h.undone(s(['b']));
+    assert.equal(h.depth.future, 1);
+    h.record(s(['c']));
+    assert.equal(h.depth.future, 0, 'a new edit invalidates the future');
+  });
+
+  it('walks back more than one step rather than toggling', async () => {
+    const { o, e } = owner();
+    await landed(o, e);
+    for (const rows of [['region'], ['region', 'desk']]) {
+      const c = o.change(group(rows));
+      e.land(e.runs.length - 1);
+      await c;
+    }
+    for (const rows of [['region'], []]) {
+      const u = o.undo();
+      e.land(e.runs.length - 1);
+      await u;
+      assert.deepEqual(o.committed.snapshot.rows, rows);
+    }
+  });
+
+  it('does not record a refresh as a step', async () => {
+    const { o, e } = owner();
+    await landed(o, e);
+    const c = o.change(group(['region']));
+    e.land(e.runs.length - 1);
+    await c;
+    const before = o.historyDepth.past;
+    for (let i = 0; i < 2; i += 1) {
+      const r = o.refresh();
+      e.land(e.runs.length - 1);
+      await r;
+    }
+    assert.equal(o.historyDepth.past, before);
+  });
+
+  it('undoes an expand', async () => {
+    const { o, e } = owner();
+    await landed(o, e);
+    const c = o.change((st) => ({ ...st, tree: st.tree.setOpen(['EMEA'], true) }));
+    e.land(e.runs.length - 1);
+    await c;
+    const u = o.undo();
+    e.land(e.runs.length - 1);
+    await u;
+    assert.equal(o.committed.tree.isOpen(['EMEA']), false, 'collapsed again');
+  });
+
+  it('says there is nothing to undo rather than throwing', async () => {
+    const { o, e } = owner();
+    await landed(o, e);
+    assert.equal((await o.undo()).kind, 'nothing');
+    assert.equal(o.canUndo, false);
+  });
+
+  it('an undo refused: the cube, its configuration and the step all stay; it works once the engine is back', async () => {
+    const { o, e, events } = owner();
+    await landed(o, e);
+    const c = o.change((st) => ({ ...st, snapshot: { ...st.snapshot, rows: ['region'] },
+      configuration: { ...st.configuration, reportTitle: 'B' } }));
+    e.land(e.runs.length - 1);
+    await c;
+    const before = o.historyDepth;
+    const u = o.undo();
+    e.refuse(e.runs.length - 1);
+    assert.equal((await u).kind, 'refused');
+    assert.equal(events.at(-1), 'refused', 'the host heard about it');
+    assert.deepEqual(o.committed.snapshot.rows, ['region']);
+    assert.equal(o.committed.configuration.reportTitle, 'B', 'the configuration too');
+    assert.deepEqual(o.historyDepth, before, 'the step was not spent, no redo invented');
+    const again = o.undo();
+    e.land(e.runs.length - 1);
+    await again;
+    assert.deepEqual(o.committed.snapshot.rows, [], 'the retry landed');
   });
 });
 

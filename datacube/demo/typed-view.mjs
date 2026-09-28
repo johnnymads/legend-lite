@@ -19,8 +19,8 @@ import { asDecimal, exactSum } from '../src/values.ts';
 export async function readView(page) {
   const columns = await page.evaluate(() => {
     const app = window.__dataCube;
-    const table = app.adhoc ? app.adhoc.view?.table : app.controller.view?.rows;
-    const leaves = app.adhoc ? null : app.controller.view?.columns.leaves;
+    const table = app.adhoc ? app.adhoc.view?.table : app.view?.rows;
+    const leaves = app.adhoc ? null : app.view?.columns.leaves;
     const all = table?.columns ?? [];
     const shown = leaves ? leaves.map((l) => all[l.index]).filter(Boolean) : all;
     return shown.map((c) => ({

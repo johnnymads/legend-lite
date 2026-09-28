@@ -104,17 +104,16 @@ async function openApp(
   const errors: string[] = [];
   const root = dom.window.document.getElementById('r') as HTMLElement;
   const app = new CubeApp(root, snapshot, {
-    engine, planner, configuration, cubeSource: source,
+    engine, planner, configuration, cubeSource: source, ...(tree ? { tree } : {}),
     onStatus: (text, kind) => { if (kind === 'error') errors.push(text); },
   });
-  if (tree) app.controller.adoptTree(tree);
   await app.open();
   return { app, errors, root };
 }
 
 /** What the grid holds, typed: each column's name, compiler type and values. */
 function shown(app: CubeApp): { name: string; type: string; values: string[] }[] {
-  const t = app.controller.view?.rows;
+  const t = app.view?.rows;
   assert.ok(t, 'no view');
   return t.columns.map((c) => ({ name: c.name, type: c.type, values: c.values.map((v) => String(v)) }));
 }
@@ -160,7 +159,7 @@ describe('a saved cube reopens in a fresh app over its file', () => {
     assert.equal(b.app.configuration.maxRows, 500);
     assert.equal(b.app.configuration.columns['notional']?.format?.decimals, 3);
     assert.equal(b.app.configuration.reportTitle, 'Q3 review');
-    assert.equal(b.app.controller.tree.isOpen(['EMEA']), true, 'the open rows came back');
+    assert.equal(b.app.tree.isOpen(['EMEA']), true, 'the open rows came back');
   });
 
   it('opens over a file that lost a column, leaving out and naming what used it', async () => {

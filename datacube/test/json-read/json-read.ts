@@ -192,7 +192,7 @@ describe('a part of a document as a JSON column of its own', () => {
   }
 
   const valuesOf = (app: CubeApp, name: string): unknown[] => {
-    const v = app.controller.view;
+    const v = app.view;
     const leaf = v?.columns.all.find((c) => c.name === name);
     return leaf ? [...(v?.rows.columns[leaf.index]?.values ?? [])] : [];
   };
@@ -261,9 +261,11 @@ describe('a part of a document as a JSON column of its own', () => {
     assert.ok(shown.includes('{kind: billing, city: Paris}'), 'the pair, shown pretty');
 
     // grouped: each pair once
-    await app.controller.update({ ...app.snapshot, rows: [PAIR], leafCount: true });
-    await until(() => (app.controller.view?.treeRows ?? []).some((r) => r.path.length === 1), 'the pairs');
-    const groups = (app.controller.view?.treeRows ?? []).filter((r) => r.path.length === 1).map((r) => r.path[0]);
+    // the leaf count is a SETTING (General Properties), folded into the query
+    await app.change((s) => ({ ...s, snapshot: { ...s.snapshot, rows: [PAIR] },
+      configuration: { ...s.configuration, showLeafCount: true, leafCountMode: 'leaves' } }));
+    await until(() => (app.view?.treeRows ?? []).some((r) => r.path.length === 1), 'the pairs');
+    const groups = (app.view?.treeRows ?? []).filter((r) => r.path.length === 1).map((r) => r.path[0]);
     assert.deepEqual(objects(groups), ['{"kind":"billing","city":"London"}', '{"kind":"billing","city":"Paris"}',
       '{"kind":"shipping","city":"Tokyo"}']);
     // the tree's labels shown for the eye too, not as raw JSON

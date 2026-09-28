@@ -1,14 +1,17 @@
-// The controller: snapshot in, rows on screen.
+// The controller: a state in, a view out.
 //
-// Holds the single source of truth (the snapshot), asks the planner for
-// SQL, runs it under an epoch guard, and pushes the result at the grid.
-// Every user interaction goes through `update`, which is what keeps
-// "one snapshot, one query, one render" true rather than aspirational.
+// STATELESS about the cube (Leg B, docs/DATACUBE_LEG_B_STATE_OWNER_2026_09_28.md):
+// the cube's state -- snapshot, configuration, open groups, history -- has
+// ONE owner, `CubeStateOwner` (cube-state.ts). The controller runs the state
+// it is handed: asks the planner for SQL, runs it under an epoch guard (the
+// latest run wins; an older one resolves STALE), and returns the view or
+// throws the refusal. What it keeps is the query side's own: the runners,
+// the guard, and the plane (snap.ts).
 
 import { from, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
 import type { PrintStyle } from './pure-v1.ts';
-import { EpochGuard, isStale, type Stale } from './epoch.ts';
+import { EpochGuard, type Stale } from './epoch.ts';
 import {
   buildColumnModel,
   type ColumnLayout,
@@ -35,15 +38,15 @@ import {
   type RunOutcome,
 } from './runner.ts';
 import { requestKey } from './tree.ts';
-import {
-  TreeState,
-  type LevelRequest,
-  type RowPath,
-  type TreeRow,
-} from './tree.ts';
+import type { LevelRequest, TreeRow, TreeState } from './tree.ts';
 import { DEFAULT_MAX_ROWS, fetchTree, takeRows } from './treeview.ts';
-import { History, type CubeState } from './history.ts';
 import type { Plan, PlanColumn } from './relation-type.ts';
+
+/** What a run needs of the cube's state: the query and the open groups. */
+export interface RunState {
+  readonly snapshot: CubeSnapshot;
+  readonly tree: TreeState;
+}
 
 /** What compiling a cube found: the query refused (or the first), and why. */
 export interface CompileOutcome {
@@ -115,6 +118,30 @@ export interface CubeView {
   readonly schemaChanges?: readonly SchemaChange[];
 }
 
+/**
+ * The GROUP-STAGE calculated columns' types, from the level query's PLAN.
+ *
+ * A row-stage calculated column is typed by the compiler before any query
+ * (step 0). A group-stage one exists only after the groupBy, so the level
+ * query's plan types it -- and the result's column types ARE the plan's
+ * (`PlanThenRun`), never the engine's wire. Part of what the run RETURNS, so
+ * the state commits with them: adopting them afterwards was a second write
+ * of the cube's state outside its owner (P2-99's shape), and re-runs nothing.
+ */
+function withGroupStageTypes(snapshot: CubeSnapshot, rows: ResultTable): CubeSnapshot {
+  const group = snapshot.groupDerived ?? [];
+  if (group.length === 0) return snapshot;
+  const seen = new Map(rows.columns.map((c) => [c.name, c.type]));
+  let changed = false;
+  const typed = group.map((d) => {
+    const type = seen.get(d.name);
+    if (type === undefined || type === d.type) return d;
+    changed = true;
+    return { ...d, type };
+  });
+  return changed ? { ...snapshot, groupDerived: typed } : snapshot;
+}
+
 /** A pivot's columns as header paths: values, then the measure. */
 export function pivotHeaderPaths(
   columns: readonly PivotColumn[] | undefined,
@@ -129,9 +156,6 @@ export function pivotHeaderPaths(
 export interface CubeControllerOptions {
   /** Column order, visibility and widths. */
   readonly layout?: ColumnLayout;
-  readonly onView?: (view: CubeView) => void;
-  readonly onError?: (error: unknown) => void;
-  readonly onBusy?: (busy: boolean) => void;
   /**
    * Where a snap materialises: another relation the SAME model declares, so
    * the host names it. A cube without one cannot snap.
@@ -147,24 +171,6 @@ export interface CubeControllerOptions {
    * is an error, not quietly answered from a snap (snap.ts, rule 2).
    */
   readonly live?: QueryEngine & RemoteSource;
-  /** How many undo steps to keep. */
-  readonly historyLimit?: number;
-  /** Fired whenever undo/redo availability changes, for the UI. */
-  readonly onHistory?: (state: {
-    readonly canUndo: boolean;
-    readonly canRedo: boolean;
-  }) => void;
-  /**
-   * Capture and restore the host's half of the undoable state.
-   *
-   * The controller owns the query; the host owns presentation. Undo
-   * has to cover both or it reverts itself -- see CubeState.host.
-   * Whatever `captureHost` returns is handed back to `restoreHost`
-   * unchanged, so an immutable configuration object is exactly the
-   * right thing to pass.
-   */
-  readonly captureHost?: () => unknown;
-  readonly restoreHost?: (host: unknown) => void;
 }
 
 export class CubeController {
@@ -183,12 +189,6 @@ export class CubeController {
   readonly #guard = new EpochGuard();
   readonly #snaps: SnapManager;
   readonly #options: CubeControllerOptions;
-  #snapshot: CubeSnapshot | null = null;
-  #view: CubeView | null = null;
-  #tree = TreeState.empty();
-  readonly #history: History;
-  /** The last state that reached the screen. See #remember. */
-  #lastState: CubeState | null = null;
 
   /**
    * Two arrangements, and the choice is the CALL, not a flag.
@@ -230,11 +230,6 @@ export class CubeController {
       ?? (options.live ? new PlanThenRun(second as Planner, options.live) : (local as PlanThenRun));
     this.#options = options;
     this.#snaps = new SnapManager(local ? local.engine : null, options.live ?? null);
-    this.#history = new History(
-      options.historyLimit !== undefined
-        ? { limit: options.historyLimit }
-        : {},
-    );
   }
 
   get snaps(): SnapManager {
@@ -264,12 +259,15 @@ export class CubeController {
    * Limit the planner refused sailed through a cap-less compile).
    * Resolves to the first refused query and the refusal, the first
    * query and null when all compile, or undefined when this plane
-   * cannot compile without executing.
+   * cannot compile without executing. `shown` is the view on screen: a
+   * pivoted draft on the same keys compiles with its values.
    */
   async compile(
-    snapshot: CubeSnapshot,
+    state: RunState,
+    shown: CubeView | null,
     signal?: AbortSignal,
   ): Promise<CompileOutcome | undefined> {
+    const { snapshot, tree } = state;
     const runner = this.#runner;
     const s: CubeSnapshot = {
       ...snapshot,
@@ -278,7 +276,7 @@ export class CubeController {
     const scopes: (LevelScope | undefined)[] = [];
     if (s.rows.length > 0) {
       const limit = (s.maxRows ?? DEFAULT_MAX_ROWS) + 1;
-      for (let level = this.#tree.showTotals ? 0 : 1; level <= s.rows.length; level += 1) {
+      for (let level = tree.showTotals ? 0 : 1; level <= s.rows.length; level += 1) {
         scopes.push({ level, parent: [], limit });
       }
     } else {
@@ -291,7 +289,6 @@ export class CubeController {
     // otherwise -- the level still compiles its Totals and carried
     // columns, and the cell form is the same for every value.
     const valuesQuery = pivotValuesLambda(s);
-    const shown = this.#view;
     const facts: PivotFacts | undefined = s.pivotOn.length === 0
       ? undefined
       : pinnedPivotFacts(s)
@@ -358,202 +355,126 @@ export class CubeController {
     return this.#runner.print(query, style, signal);
   }
 
-  get view(): CubeView | null {
-    return this.#view;
-  }
-
-  get snapshot(): CubeSnapshot | null {
-    return this.#snapshot;
-  }
-
-  get tree(): TreeState {
-    return this.#tree;
-  }
-
   /**
-   * Open or close a group and refresh.
-   *
-   * Only the newly-opened branch is fetched; the rest of the tree is
-   * re-requested only because the level results are not yet cached
-   * across refreshes, which is a pure optimisation and not a
-   * correctness concern.
+   * Run a state: the one query path. Resolves the view (its snapshot as the
+   * engine returned it: the compiler's types for the source, the plan's for
+   * group-stage calculated columns), STALE when a newer run or `cancel`
+   * superseded it, and throws the refusal.
    */
-  async toggle(path: RowPath): Promise<void> {
-    this.#remember();
-    this.#tree = this.#tree.toggle(path);
-    await this.refresh();
-  }
+  async run(state: RunState): Promise<CubeView | Stale> {
+    const { snapshot, tree } = state;
+    return this.#guard.issue(async (epoch, signal) => {
+      // The snapshot's own epoch is advisory; the guard's is
+      // authoritative, so a stale answer cannot win a race.
+      // The PLANE decides what a query reads from. Without this
+      // the snap was cosmetic: a table was materialised and every
+      // subsequent query still went to the live source.
+      const reading: CubeSnapshot = {
+        ...snapshot,
+        epoch,
+        source: { query: this.#snaps.sourceFor(snapshot.source.query) },
+      };
+      // STEP 0: the columns' types, from the compiler, before any query
+      // reads them to choose an aggregate (plan.ts, `typeColumns`).
+      const typed = await typeColumns(reading, this.#runner, signal);
+      const withEpoch: CubeSnapshot = typed.snapshot;
+      const withChanges = typed.changes.length > 0 ? { schemaChanges: typed.changes } : {};
+      const measureNames = withEpoch.measures.map((m) => m.name);
+      // STEP 1 of a pivoted cube: its values, from their own query,
+      // on this refresh's data (plan.ts). Every level is then one
+      // groupBy written with them.
+      const pivot = await planPivot(withEpoch, this.#runner, signal);
+      const pivotPaths = pivotHeaderPaths(pivot?.columns);
+      const withPivot = pivot ? { pivot } : {};
 
-  /**
-   * Take a tree WITHOUT re-querying; the caller refreshes.
-   *
-   * `setTree` refreshes, and a refresh pushes a view at the host --
-   * which is how loading a saved view silently restored nothing.
-   * `loadView` set the app's snapshot, then called `setTree`, whose
-   * refresh ran the CONTROLLER's snapshot (still the old one) and
-   * handed that view back; the host's `onView` assigns
-   * `this.#snapshot = view.snapshot`, so the freshly loaded snapshot
-   * was overwritten by the stale one, and the refresh that followed
-   * queried the shape the user had just replaced. The status line
-   * said `loaded "..."` either way.
-   *
-   * So a caller that is about to refresh anyway adopts the tree
-   * quietly and gets ONE query with both halves in place, instead of
-   * two where the first clobbers the second.
-   */
-  adoptTree(state: TreeState): void {
-    this.#tree = state;
-  }
-
-  async setTree(state: TreeState): Promise<void> {
-    this.#remember();
-    this.#tree = state;
-    await this.refresh();
-  }
-
-  /**
-   * Apply a new snapshot and refresh.
-   *
-   * Takes the whole snapshot rather than a patch, because a partial
-   * update is how two sources of truth start: the caller derives the
-   * next snapshot from the current one and hands it over whole.
-   */
-  async update(next: CubeSnapshot): Promise<CubeView | Stale> {
-    this.#remember();
-    this.#snapshot = next;
-    return this.refresh();
-  }
-
-  /** Re-run the current snapshot, e.g. after snapping or releasing. */
-  async refresh(): Promise<CubeView | Stale> {
-    const snapshot = this.#snapshot;
-    if (!snapshot) return this.#fail(new Error('no snapshot set'));
-
-    this.#options.onBusy?.(true);
-    try {
-      const out = await this.#guard.issue(async (epoch, signal) => {
-        // The snapshot's own epoch is advisory; the guard's is
-        // authoritative, so a stale answer cannot win a race.
-        // The PLANE decides what a query reads from. Without this
-        // the snap was cosmetic: a table was materialised and every
-        // subsequent query still went to the live source.
-        const reading: CubeSnapshot = {
-          ...snapshot,
+      // A cube with row dimensions is a tree: the grand total and
+      // each open branch are separate queries, stitched in order.
+      if (withEpoch.rows.length > 0) {
+        const view = await fetchTree(withEpoch, tree, {
+          runner: this.#runner,
+          guard: this.#guard,
           epoch,
-          source: { query: this.#snaps.sourceFor(snapshot.source.query) },
-        };
-        // STEP 0: the columns' types, from the compiler, before any query
-        // reads them to choose an aggregate (plan.ts, `typeColumns`).
-        const typed = await typeColumns(reading, this.#runner, signal);
-        const withEpoch: CubeSnapshot = typed.snapshot;
-        const withChanges = typed.changes.length > 0 ? { schemaChanges: typed.changes } : {};
-        const measureNames = withEpoch.measures.map((m) => m.name);
-        // STEP 1 of a pivoted cube: its values, from their own query,
-        // on this refresh's data (plan.ts). Every level is then one
-        // groupBy written with them.
-        const pivot = await planPivot(withEpoch, this.#runner, signal);
-        const pivotPaths = pivotHeaderPaths(pivot?.columns);
-        const withPivot = pivot ? { pivot } : {};
-
-        // A cube with row dimensions is a tree: the grand total and
-        // each open branch are separate queries, stitched in order.
-        if (withEpoch.rows.length > 0) {
-          const view = await fetchTree(withEpoch, this.#tree, {
-            runner: this.#runner,
-            guard: this.#guard,
-            epoch,
-            signal,
-            ...(pivot ? { pivot: pivot.facts } : {}),
-          });
-          return {
-            snapshot: withEpoch,
-            columns: buildColumnModel(
-              view.table,
-              withEpoch.rows,
-              measureNames,
-              this.#options.layout ?? {},
-              withEpoch.pivotOn.length,
-              pivotPaths,
-            ),
-            rows: view.table,
-            treeRows: view.rows,
-            truncated: view.truncated,
-            query: levelLambda(withEpoch, { level: 1, parent: [] }, pivot?.facts),
-            // The level-1 plan is the representative one: it is the
-            // query behind the rows a user is looking at.
-            sql:
-              view.levels.get(requestKey({ level: 1, parent: [] }))?.sql ??
-              '',
-            ...withPivot,
-            ...withChanges,
-          } satisfies CubeView;
-        }
-
-        // THE ROW LIMIT, on a flat cube too. General Properties > Row
-        // Limit capped every level of a tree and nothing here: a flat
-        // cube fetched all its rows whatever the setting said (2026-09-25
-        // sweep). Upstream limits every query. One more than the cap is
-        // asked for, as the tree does, so "there is more" costs no
-        // second query and the truncation warning can say so.
-        // Only a limit the USER set: unset means none, as upstream.
-        const maxRows = withEpoch.maxRows;
-        const scope = maxRows === undefined
-          ? undefined
-          : ({ level: 1, parent: [], limit: maxRows + 1 } as const);
-        const query = levelLambda(withEpoch, scope, pivot?.facts);
-        const { rows: full, sql } = await this.#runner.run(
-          query,
-          withEpoch,
-          scope,
           signal,
-        );
-        const cut = maxRows !== undefined && full.rowCount > maxRows;
-        const rows = cut ? takeRows(full, maxRows) : full;
-        const columns = buildColumnModel(
-          rows,
-          withEpoch.rows,
-          measureNames,
-          this.#options.layout ?? {},
-          withEpoch.pivotOn.length,
-          pivotPaths,
-        );
+          ...(pivot ? { pivot: pivot.facts } : {}),
+        });
         return {
-          snapshot: withEpoch,
-          columns,
-          rows,
-          treeRows: [],
-          truncated: cut ? [{ level: 1, parent: [] }] : [],
-          query,
-          sql,
+          snapshot: withGroupStageTypes(withEpoch, view.table),
+          columns: buildColumnModel(
+            view.table,
+            withEpoch.rows,
+            measureNames,
+            this.#options.layout ?? {},
+            withEpoch.pivotOn.length,
+            pivotPaths,
+          ),
+          rows: view.table,
+          treeRows: view.rows,
+          truncated: view.truncated,
+          query: levelLambda(withEpoch, { level: 1, parent: [] }, pivot?.facts),
+          // The level-1 plan is the representative one: it is the
+          // query behind the rows a user is looking at.
+          sql:
+            view.levels.get(requestKey({ level: 1, parent: [] }))?.sql ??
+            '',
           ...withPivot,
           ...withChanges,
         } satisfies CubeView;
-      });
+      }
 
-      if (isStale(out)) return out;
-      this.#view = out;
-      // Snapshot the state that just landed, so the NEXT change has
-      // something truthful to record as its "before".
-      this.#lastState = this.#state();
-      this.#options.onView?.(out);
-      return out;
-    } catch (error) {
-      return this.#fail(error);
-    } finally {
-      this.#options.onBusy?.(false);
-    }
+      // THE ROW LIMIT, on a flat cube too. General Properties > Row
+      // Limit capped every level of a tree and nothing here: a flat
+      // cube fetched all its rows whatever the setting said (2026-09-25
+      // sweep). Upstream limits every query. One more than the cap is
+      // asked for, as the tree does, so "there is more" costs no
+      // second query and the truncation warning can say so.
+      // Only a limit the USER set: unset means none, as upstream.
+      const maxRows = withEpoch.maxRows;
+      const scope = maxRows === undefined
+        ? undefined
+        : ({ level: 1, parent: [], limit: maxRows + 1 } as const);
+      const query = levelLambda(withEpoch, scope, pivot?.facts);
+      const { rows: full, sql } = await this.#runner.run(
+        query,
+        withEpoch,
+        scope,
+        signal,
+      );
+      const cut = maxRows !== undefined && full.rowCount > maxRows;
+      const rows = cut ? takeRows(full, maxRows) : full;
+      const columns = buildColumnModel(
+        rows,
+        withEpoch.rows,
+        measureNames,
+        this.#options.layout ?? {},
+        withEpoch.pivotOn.length,
+        pivotPaths,
+      );
+      return {
+        snapshot: withGroupStageTypes(withEpoch, rows),
+        columns,
+        rows,
+        treeRows: [],
+        truncated: cut ? [{ level: 1, parent: [] }] : [],
+        query,
+        sql,
+        ...withPivot,
+        ...withChanges,
+      } satisfies CubeView;
+    });
+  }
+
+
+  /** Stop the run in flight: it resolves STALE (the owner cancelled the change). */
+  cancel(): void {
+    this.#guard.advance();
   }
 
   /**
-   * Freeze the rows behind the current view, then refresh against them.
-   *
-   * The pivot columns are captured at snap time, which is what removes
-   * the per-query discovery pass while snapped.
+   * Freeze the rows behind `snapshot`'s source into the local store. The
+   * owner of the cube's state then re-runs it (`CubeStateOwner.refresh`):
+   * the plane changed, the state did not.
    */
-  async snap(label?: string): Promise<void> {
-    const snapshot = this.#snapshot;
-    if (!snapshot) throw new Error('no snapshot set');
-
+  async snap(snapshot: CubeSnapshot, label?: string): Promise<void> {
     // Through the PLANNER, like every other query. This used to
     // build `SELECT "a", "b" FROM <source>` by hand, which worked
     // only because the demo's source happened to be a bare SQL
@@ -587,133 +508,11 @@ export class CubeController {
       ...(label !== undefined ? { label } : {}),
       target,
     });
-    await this.refresh();
   }
 
+  /** Back to live; the owner re-runs the state, as after a snap. */
   async release(): Promise<void> {
     await this.#snaps.release();
-    await this.refresh();
-  }
-
-  // -- undo / redo ----------------------------------------------------
-
-  get canUndo(): boolean {
-    return this.#history.canUndo;
-  }
-
-  get canRedo(): boolean {
-    return this.#history.canRedo;
-  }
-
-  /** Steps available each way. Diagnostics and tests. */
-  get historyDepth(): { readonly past: number; readonly future: number } {
-    return this.#history.depth;
-  }
-
-  /**
-   * Push the state about to be replaced onto the undo stack.
-   *
-   * Called by the mutators rather than by refresh(), and the
-   * distinction is the whole design: refresh re-runs the CURRENT cube
-   * (after a snap, on a retry, when the plane changes) and is not a
-   * step a user would ever want to undo. Recording there would fill
-   * the stack with entries that all undo to the same screen.
-   */
-  /**
-   * Push the last RENDERED state onto the undo stack.
-   *
-   * Not the state as it is right now. By the time a mutator runs, the
-   * host may already have changed its half -- a pin is applied to the
-   * configuration and only then does the refresh begin -- so
-   * capturing at this moment would record the new configuration as
-   * though it were the old one, and undo would restore the very thing
-   * it was meant to remove. The last state that actually reached the
-   * screen is the one a person means by "back".
-   */
-  #remember(): void {
-    if (!this.#lastState) return;
-    this.#history.record(this.#lastState);
-    this.#announceHistory();
-  }
-
-  #state(): CubeState {
-    const host = this.#options.captureHost?.();
-    return {
-      snapshot: this.#snapshot as CubeSnapshot,
-      tree: this.#tree,
-      ...(host !== undefined ? { host } : {}),
-    };
-  }
-
-  #announceHistory(): void {
-    this.#options.onHistory?.({
-      canUndo: this.#history.canUndo,
-      canRedo: this.#history.canRedo,
-    });
-  }
-
-  /**
-   * Apply a state from the history WITHOUT recording it as a new step.
-   *
-   * Going through update() here would record the undo itself, so the
-   * next undo would return to where you just came from and the stack
-   * would never advance past two entries -- undo that toggles.
-   */
-  /** Put the cube into a state without re-querying. */
-  #install(state: CubeState): void {
-    this.#snapshot = state.snapshot;
-    this.#tree = state.tree;
-    // BEFORE the refresh, not after: the host folds its configuration
-    // into the snapshot on refresh, so restoring it afterwards would
-    // let the stale config overwrite the state just restored.
-    if (state.host !== undefined) this.#options.restoreHost?.(state.host);
-  }
-
-  /**
-   * Move to a state from the history, ALL OR NOTHING.
-   *
-   * Undo mutates the cube and then re-queries, and that query can
-   * fail -- the engine is down, the planner refuses it. Without a
-   * rollback the cube had already moved, the step was already spent,
-   * and the screen still showed the old view: the model and the
-   * display disagreeing, with no way back and a redo pointing at a
-   * state that was never rendered.
-   *
-   * A SUPERSEDED refresh is not a failure and is not rolled back: the
-   * user did something else while this was in flight, and the newer
-   * interaction legitimately owns the cube from here.
-   */
-  async #applyHistory(
-    state: CubeState,
-    rollback: (current: CubeState) => void,
-  ): Promise<CubeView | Stale> {
-    const current = this.#state();
-    this.#install(state);
-    this.#announceHistory();
-    try {
-      return await this.refresh();
-    } catch (error) {
-      this.#install(current);
-      rollback(current);
-      this.#announceHistory();
-      throw error;
-    }
-  }
-
-  async undo(): Promise<CubeView | Stale | null> {
-    if (!this.#snapshot) return null;
-    const previous = this.#history.undo(this.#state());
-    if (!previous) return null;
-    return this.#applyHistory(previous, () =>
-      this.#history.rollbackUndo(previous),
-    );
-  }
-
-  async redo(): Promise<CubeView | Stale | null> {
-    if (!this.#snapshot) return null;
-    const next = this.#history.redo(this.#state());
-    if (!next) return null;
-    return this.#applyHistory(next, () => this.#history.rollbackRedo(next));
   }
 
   /**
@@ -729,22 +528,5 @@ export class CubeController {
     const query = levelLambda(snapshot, scope);
     const { rows } = await this.#runner.run(query, snapshot, scope, signal);
     return rows;
-  }
-
-  /** Settings > Max History Stack Size. */
-  setHistoryLimit(limit: number): void {
-    this.#history.setLimit(limit);
-    this.#announceHistory();
-  }
-
-  /** Drop the history, e.g. when a wholly different cube is opened. */
-  clearHistory(): void {
-    this.#history.clear();
-    this.#announceHistory();
-  }
-
-  #fail(error: unknown): Stale {
-    this.#options.onError?.(error);
-    throw error;
   }
 }

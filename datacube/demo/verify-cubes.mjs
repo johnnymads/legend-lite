@@ -103,8 +103,7 @@ async function shape() {
   const before = await statusNow();
   await page.evaluate(async () => {
     const app = window.__dataCube;
-    const s = app.controller.snapshot;
-    await app.controller.update({ ...s, rows: ['region'], measures: [{ name: 'notional', column: 'notional', fn: 'sum' }], epoch: s.epoch + 1 });
+    await app.change((s) => ({ ...s, snapshot: { ...s.snapshot, rows: ['region'], measures: [{ name: 'notional', column: 'notional', fn: 'sum' }] } }));
   });
   await landed(before);
 }
@@ -162,20 +161,29 @@ try {
   await check('changed since saved: the title marks it, and saving clears the mark', async () => {
     const title = () => page.title();
     if ((await title()).startsWith('\u2022')) throw new Error(`marked before any change: ${await title()}`);
-    const before = await statusNow();
-    await page.evaluate(async () => {
+    const out = await page.evaluate(async () => {
       const app = window.__dataCube;
-      const s = app.controller.snapshot;
-      await app.controller.update({ ...s, rows: ['desk'], epoch: s.epoch + 1 });
+      const was = app.snapshot.rows.join(',');
+      const o = await app.change((s) => ({ ...s, snapshot: { ...s.snapshot, rows: ['desk'] } }));
+      return `${o.kind} (rows ${was} -> ${app.snapshot.rows.join(',')})`;
     });
-    await landed(before);
-    if (!(await title()).startsWith('\u2022')) throw new Error(`not marked after a change: ${await title()}`);
+    // `change` resolves once the view has LANDED: no need to watch the status line (3 regions
+    // regrouped as 3 desks can read exactly as before, and the wait never ended)
+    if (!/^applied/.test(out)) throw new Error(`the change did not land: ${out}`);
+    await page.waitForFunction(() => document.title.startsWith('\u2022'), undefined, { timeout: 10_000 })
+      .catch(async () => { throw new Error(`not marked after a change (${out}): ${await title()}`); });
     await showWin('cubeswin', 'Cubes');
     if (await page.locator('#cubelib .dc-lib-unsaved').isHidden()) throw new Error('the window does not say so');
     await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
     await waitMessage(/saved/);
     if ((await title()).startsWith('\u2022')) throw new Error(`still marked after saving: ${await title()}`);
-    return 'marked, then saved and clear';
+    // A PRESENTATION change runs no query (Leg B): it is a change all the same
+    const pinned = await page.evaluate(async () => (await window.__dataCube.change((s) => ({ ...s,
+      configuration: { ...s.configuration, columns: { ...s.configuration.columns, desk: { pinned: 'left' } } } }))).kind);
+    if (pinned !== 'applied') throw new Error(`the pin did not apply: ${pinned}`);
+    await page.waitForFunction(() => document.title.startsWith('\u2022'), undefined, { timeout: 10_000 })
+      .catch(async () => { throw new Error(`a pin (no query) did not mark it: ${await title()}`); });
+    return 'marked, saved and clear, marked again by a pin that ran no query';
   });
 
   await check('opened over a file that lost a column, Save says what it would drop', async () => {

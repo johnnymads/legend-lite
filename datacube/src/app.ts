@@ -24,7 +24,6 @@ import {
   type Planner,
 } from './cube.ts';
 import {
-  DEFAULT_CONFIGURATION,
   applyToSnapshot,
   columnConfig,
   mergeColumnOrder,
@@ -89,6 +88,7 @@ import {
 import { columnRange, heatColour } from './style.ts';
 import type { HeatmapRange, HeatmapSpec } from './style.ts';
 import { TreeState, parsePathKey, pathKey, type TreeRow } from './tree.ts';
+import { CubeStateOwner, type ChangeOptions, type CubeState, type OwnerEvent, type Outcome } from './cube-state.ts';
 import { ColumnEditor, type ColumnEditorStart } from './ui/column-editor.ts';
 import {
   booleanSetting,
@@ -164,8 +164,15 @@ export interface CubeAppBaseOptions {
    */
   readonly configuration?: CubeConfiguration;
   readonly onStatus?: (text: string, kind: 'ok' | 'warn' | 'error') => void;
-  /** Every view the controller produces, for a host's own chrome. */
+  /** Every view that lands, for a host's own chrome. */
   readonly onView?: (view: CubeView) => void;
+  /**
+   * The cube's state changed: a view landed, or a presentation change (a
+   * colour, a width) that runs no query. What "changed since saved" listens to.
+   */
+  readonly onChange?: () => void;
+  /** The groups to open on (a saved cube's), instead of the configuration's expand level. */
+  readonly tree?: TreeState;
   /** Called whenever the snap state changes, for a plane badge. */
   readonly onPlane?: () => void;
   /**
@@ -272,6 +279,12 @@ function timingText(view: CubeView, cols: number): string {
   );
 }
 
+/** A change's refusal in the words the user reads, or null when it was not refused. */
+function refusal(out: Outcome): string | null {
+  if (out.kind !== 'refused') return null;
+  return out.error instanceof Error ? out.error.message : String(out.error);
+}
+
 export class CubeApp {
   readonly #doc: Document;
   readonly #options: CubeAppOptions;
@@ -342,10 +355,14 @@ export class CubeApp {
   #newColumns = 0;
   /** Alerts are many and untitled, so each gets its own window key. */
   #alerts = 0;
-  #snapshot: CubeSnapshot;
-  #config: CubeConfiguration = DEFAULT_CONFIGURATION;
-  #view: CubeView | null = null;
-  #treeRows: readonly TreeRow[] = [];
+  /**
+   * THE CUBE'S STATE -- snapshot, configuration, open groups, history -- and
+   * its one owner (cube-state.ts, Leg B). Nothing in this class holds a copy:
+   * presentation paints `current`, the grid shows the owner's view, and every
+   * change goes through `#change`. The guardrail test (state-guardrail.test.ts)
+   * holds that nothing outside cube-state.ts assigns cube state.
+   */
+  readonly #owner: CubeStateOwner;
   #selection: CellRange | null = null;
   /** Where selection statistics are written, inside the status bar. */
   #statsSlot: HTMLElement | null = null;
@@ -366,12 +383,22 @@ export class CubeApp {
     this.#progress.className = 'dc-status-progress';
     this.#progress.setAttribute('role', 'progressbar');
     this.#options = options;
-    this.#snapshot = snapshot;
-    // Read the snapshot back rather than starting from defaults: a
-    // cube can arrive from a saved view or a colleague's link, and
-    // the editor must open on what is actually running.
-    this.#config = fromSnapshot(snapshot, options.configuration);
     this.#settings = readSettings(options.settings);
+    // Read the snapshot back rather than starting from defaults: a
+    // cube can arrive from a saved cube or a colleague's link, and
+    // the editor must open on what is actually running. The tree starts
+    // as the CONFIGURATION says (the root total, the expand level) unless
+    // the host hands the groups a saved cube had open.
+    const configuration = fromSnapshot(snapshot, options.configuration);
+    this.#owner = new CubeStateOwner({
+      snapshot,
+      configuration,
+      tree: options.tree ?? TreeState.empty(configuration.showRootAggregation)
+        .withExpandTo(configuration.initialExpandToLevel ?? 0),
+    }, (state) => this.#controller.run(state), {
+      historyLimit: numericSetting(this.#settings, 'dataCube.editor.maxHistoryStackSize'),
+      abort: () => this.#controller.cancel(),
+    });
     Object.assign(this.#formats, renderFormats(this.#config, this.#snapshot));
 
     root.classList.add('dc-app');
@@ -497,17 +524,16 @@ export class CubeApp {
         // REQUEST TO SHOW IT. The grid reports the arrival because
         // it cannot know the column was hidden -- it was never in
         // the model -- and unhiding is the configuration's to do.
-        if (added !== undefined) {
-          this.#config = withColumn(this.#config, added, { hidden: false });
-        }
         // MERGED, not written over. The grid reports only what it is
         // showing, so writing its report straight in dropped every
         // grouped, pivoted and hidden column out of the order -- and
         // the panel, which sorts by it, threw them to the end of the
-        // list. One drag and the grouped columns jumped.
-        void this.applyConfiguration({
-          columnOrder: mergeColumnOrder(this.#columnOrder(), order),
-        });
+        // list. One drag and the grouped columns jumped. One change:
+        // the unhide and the order together.
+        void this.#configure((c) => withSettings(
+          added !== undefined ? withColumn(c, added, { hidden: false }) : c,
+          { columnOrder: mergeColumnOrder(this.#columnOrder(), order) },
+        ), 'reorder columns');
       },
       cellBackground: (leaf, row, value) => {
         const heat = this.#heatmaps.get(leaf.index);
@@ -520,8 +546,11 @@ export class CubeApp {
         );
       },
       rowMeta: (abs) => this.#rowMeta(abs),
-      onToggleExpand: (key) => {
-        void this.#controller.toggle(parsePathKey(key));
+      // SET, never toggled: the grid says which way the person asked, and
+      // asking for what already is changes nothing (P2-127).
+      onToggleExpand: (key, expanded) => {
+        void this.#change((s) => ({ ...s, tree: s.tree.setOpen(parsePathKey(key), expanded) }),
+          { label: expanded ? 'expand' : 'collapse' });
       },
       onSelectionChange: (range) => this.#onSelectionChange(range),
       onActivateCell: (row, column) => {
@@ -545,30 +574,6 @@ export class CubeApp {
     const deps: CubeControllerOptions = {
       ...(options.snapTarget ? { snapTarget: options.snapTarget } : {}),
       ...(options.runner === undefined && options.live ? { live: options.live } : {}),
-      historyLimit: numericSetting(this.#settings, 'dataCube.editor.maxHistoryStackSize'),
-      onView: (view) => this.#onView(view),
-      // Upstream's "Loading..." overlay while a query runs.
-      onBusy: (busy) => {
-        this.#grid.setBusy(busy);
-        // Upstream's own task, beside the readouts.
-        if (busy && !this.#endFetch) this.#endFetch = this.#startTask('Fetching data...');
-        if (!busy) {
-          this.#endFetch?.();
-          this.#endFetch = null;
-        }
-      },
-      onError: (e) => this.#reportFailure(e),
-      // The configuration is the host's half of the undoable state.
-      // Without this pair, undo reverts the query and leaves the
-      // pins, widths, colours and row cap where they were -- and for
-      // a setting that shapes the query, the stale config is folded
-      // back in on the next refresh, undoing the undo.
-      captureHost: () => this.#config,
-      restoreHost: (host) => {
-        this.#config = host as CubeConfiguration;
-        this.#refreshFormats();
-        this.#refreshToolPanel();
-      },
     };
     // NARROWED BY THE UNION, spelled out so the reader sees the two
     // forms as the type does: a runner, or a planner with a local
@@ -580,11 +585,8 @@ export class CubeApp {
         options.planner as Planner,
         deps,
       );
-    // The tree starts as the CONFIGURATION says, not as the defaults:
-    // a host that asks for the root total or an expand level got
-    // neither until the editor was applied once.
-    this.#controller.adoptTree(TreeState.empty(this.#config.showRootAggregation)
-      .withExpandTo(this.#config.initialExpandToLevel ?? 0));
+    this.#owner.subscribe((event) => this.#onState(event));
+    this.#listenForKeys();
 
     this.#wireContextMenu();
     this.#buildToolbar();
@@ -624,15 +626,148 @@ export class CubeApp {
   get controller(): CubeController {
     return this.#controller;
   }
+  /** The cube's state and its history: read it, or change it through `change`. */
+  get state(): CubeStateOwner {
+    return this.#owner;
+  }
   get configuration(): CubeConfiguration {
     return this.#config;
   }
   get snapshot(): CubeSnapshot {
     return this.#snapshot;
   }
+  /** The open groups. */
+  get tree(): TreeState {
+    return this.#owner.current.tree;
+  }
+  /** The view on screen. */
+  get view(): CubeView | null {
+    return this.#view;
+  }
+  get canUndo(): boolean {
+    return this.#owner.canUndo;
+  }
+  get canRedo(): boolean {
+    return this.#owner.canRedo;
+  }
+  /** Undo, as the menu's Undo: a refusal is said, never thrown. */
+  async undo(): Promise<void> {
+    await this.#undo();
+  }
+  async redo(): Promise<void> {
+    await this.#redo();
+  }
 
+  /** Run the cube and show it: the first query. Not an undo step. */
   async open(): Promise<void> {
-    await this.#refresh();
+    await this.#owner.refresh();
+  }
+
+  /**
+   * Change the cube: `update` derives the next state from the current one.
+   * Presentation (a colour, a width) commits at once and runs no query; a
+   * change to the query is one transaction -- it commits as the engine
+   * returned it, or is refused and everything repaints from what was on
+   * screen, the refusal said where the user reads it. Never throws.
+   */
+  change(update: (state: CubeState) => CubeState, options?: ChangeOptions): Promise<Outcome> {
+    return this.#change(update, options);
+  }
+
+  // -- the cube's state, read ----------------------------------------------
+
+  /** What presentation paints: the change in flight, else what was accepted. */
+  get #snapshot(): CubeSnapshot {
+    return this.#owner.current.snapshot;
+  }
+
+  get #config(): CubeConfiguration {
+    return this.#owner.current.configuration;
+  }
+
+  /** The view on screen, and its rows. */
+  get #view(): CubeView | null {
+    return this.#owner.view;
+  }
+
+  get #treeRows(): readonly TreeRow[] {
+    return this.#owner.view?.treeRows ?? [];
+  }
+
+  // -- the cube's state, changed -------------------------------------------
+
+  #change(update: (state: CubeState) => CubeState, options?: ChangeOptions): Promise<Outcome> {
+    return this.#owner.change(update, options);
+  }
+
+  /** A change of the configuration alone. */
+  #configure(update: (config: CubeConfiguration) => CubeConfiguration, label: string): Promise<Outcome> {
+    return this.#change((s) => ({ ...s, configuration: update(s.configuration) }), { label });
+  }
+
+  /** A change of the snapshot alone. */
+  #query(update: (snapshot: CubeSnapshot) => CubeSnapshot, label: string): Promise<Outcome> {
+    return this.#change((s) => ({ ...s, snapshot: update(s.snapshot) }), { label });
+  }
+
+  /**
+   * EVERY change of the cube's state reaches the screen HERE, and only here:
+   * pending (paint what was asked for), committed (a view landed),
+   * presentation (repaint the view with the new settings), refused or
+   * cancelled (repaint from what was on screen, and say why). One place
+   * paints from the state, so an undo, a refusal and a change all put back
+   * the same things -- zones, formats, appearance, title bar, panels
+   * (P2-102, P2-108).
+   */
+  #onState(event: OwnerEvent): void {
+    this.#setBusy(this.#owner.busy);
+    this.#paintState();
+    switch (event.kind) {
+      case 'pending':
+        return;
+      case 'committed':
+        this.#onView(event.view);
+        this.#options.onChange?.();
+        return;
+      case 'presentation':
+        if (this.#view) this.#paintView(this.#view);
+        this.#options.onChange?.();
+        return;
+      case 'refused':
+        if (this.#view) this.#paintView(this.#view);
+        this.#reportFailure(event.error);
+        if (event.reverted.length > 1) {
+          this.#status(`${event.reverted.length} changes were undone: ${event.reverted.join(', ')} -- ${
+            event.error instanceof Error ? event.error.message : String(event.error)}`, 'error');
+        }
+        return;
+      case 'cancelled':
+        if (this.#view) this.#paintView(this.#view);
+        return;
+    }
+  }
+
+  /** Upstream's "Loading..." overlay and its own task, while a change is in flight. */
+  #setBusy(busy: boolean): void {
+    this.#grid.setBusy(busy);
+    if (busy && !this.#endFetch) this.#endFetch = this.#startTask('Fetching data...');
+    if (!busy) {
+      this.#endFetch?.();
+      this.#endFetch = null;
+    }
+  }
+
+  /** What is drawn from the state alone: zones, formats, appearance, panels, chrome. */
+  #paintState(): void {
+    const s = this.#snapshot;
+    this.#pivots.setColumns(s.rows, s.pivotOn);
+    this.#sideZones.setColumns(s.rows, s.pivotOn);
+    this.#refreshFormats();
+    // Fonts, colours, grid lines and row highlights: the grid held the
+    // appearance it was built with until this existed.
+    this.#grid.setAppearance(this.#config.appearance, toColumnAppearance(this.#config));
+    this.#refreshToolPanel();
+    this.#renderChrome();
   }
 
   // -- assembly ------------------------------------------------------
@@ -667,49 +802,6 @@ export class CubeApp {
     return c.derived
       ? c.kind
       : columnConfig(this.#config, column).kind ?? c.kind;
-  }
-
-  async #refresh(): Promise<void> {
-    // Fold the configuration in HERE, once, so a setting that shapes
-    // the query cannot reach the engine through one path and not
-    // another.
-    const next = applyToSnapshot(this.#snapshot, this.#config);
-    this.#snapshot = next;
-    this.#pivots.setColumns(next.rows, next.pivotOn);
-    this.#sideZones.setColumns(next.rows, next.pivotOn);
-    this.#refreshFormats();
-    // Fonts, colours, grid lines and row highlights: the grid held the
-    // appearance it was built with until this existed.
-    this.#grid.setAppearance(this.#config.appearance, toColumnAppearance(this.#config));
-    this.#refreshToolPanel();
-    await this.#controller.update({ ...next, epoch: next.epoch + 1 });
-  }
-
-  /**
-   * Refresh, and put a failure where the user can see it.
-   *
-   * `void this.#refresh()` was a FLOATING promise at six call sites,
-   * and the query it starts can legitimately refuse -- a pivot with
-   * nothing to aggregate, a filter the type checker rejects. A
-   * refusal there became an uncaught error in the console: the grid
-   * went on showing the previous answer with no hint that the click
-   * had failed.
-   *
-   * Worse, the snapshot that caused it STAYED. Every later query
-   * carried the same bad shape and threw the same refusal, so a
-   * single click on one menu entry wedged the cube until a reload.
-   * That is why `previous` is not optional at the call sites that
-   * changed the query: rolling back is what keeps one refused action
-   * from ending the session.
-   */
-  #refreshOr(previous: CubeSnapshot | null): void {
-    this.#refresh().catch((error: unknown) => {
-      this.#status(
-        error instanceof Error ? error.message : String(error),
-        'error',
-      );
-      if (previous) this.#snapshot = previous;
-    });
   }
 
   /** Re-fill the format map in place. See `#formats`. */
@@ -847,18 +939,26 @@ export class CubeApp {
     );
   }
 
+  /** A view LANDED (the owner committed it): take it in, then paint it. */
   #onView(view: CubeView): void {
-    this.#view = view;
-    this.#treeRows = view.treeRows;
     this.#debug('query', { query: view.query, sql: view.sql, rows: view.rows.rowCount,
       ms: view.rows.elapsedMs, snapshot: view.snapshot });
-    const changed = this.#snapshot !== view.snapshot;
-    this.#snapshot = view.snapshot;
     // Open column editors compile against the cube as it is now.
-    if (changed) for (const editor of this.#columnEditors.values()) editor.recheck();
-    this.#adoptGroupStageTypes(view);
+    for (const editor of this.#columnEditors.values()) editor.recheck();
+    this.#paintView(view);
     this.#reportSchemaChanges(view);
+    // The host LAST, once the app has taken the view in: told first, it read the app one view
+    // behind (the snapshot was still the previous one), so "changed since saved" missed the
+    // change that had just landed.
+    this.#options.onView?.(view);
+  }
 
+  /**
+   * The view on screen, laid out with the CURRENT settings: after it lands,
+   * and again after a presentation change (a width, a pin, a colour), which
+   * runs no query.
+   */
+  #paintView(view: CubeView): void {
     const model = buildColumnModel(
       view.rows,
       view.snapshot.rows,
@@ -920,10 +1020,6 @@ export class CubeApp {
     } else {
       this.#status(base, 'ok');
     }
-    // The host LAST, once the app has taken the view in: told first, it read the app one view
-    // behind (the snapshot was still the previous one), so "changed since saved" missed the
-    // change that had just landed.
-    this.#options.onView?.(view);
   }
 
   /**
@@ -1090,8 +1186,9 @@ export class CubeApp {
     readonly showDragZones?: boolean;
     readonly showTitleBar?: boolean;
   }): void {
-    this.#config = { ...this.#config, ...patch };
-    this.#renderChrome();
+    // Presentation: no query, one undo step, painted by `#onState`.
+    void this.#configure((c) => ({ ...c, ...patch }),
+      patch.showTitleBar !== undefined ? 'title bar' : 'drag zones');
   }
 
   /**
@@ -1286,61 +1383,37 @@ export class CubeApp {
   // -- the drag zones -------------------------------------------------
 
   #onZoneChange(zone: Zone, columns: readonly string[]): void {
-    const previous = this.#snapshot;
-    this.#snapshot = zone === 'rows'
-      ? { ...this.#snapshot, rows: [...columns] }
-      : { ...this.#snapshot, pivotOn: [...columns] };
-    this.#refreshOr(previous);
+    void this.#query((s) => (zone === 'rows'
+      ? { ...s, rows: [...columns] }
+      : { ...s, pivotOn: [...columns] }), zone === 'rows' ? 'row groups' : 'column pivots');
   }
 
   /**
-   * Take the editor's two lists.
-   *
-   * A bad expression is not caught here -- `#refreshOr` runs the query
-   * and, if the planner refuses, shows its message and puts the
-   * previous snapshot back. So the cube never sits in a state it
-   * cannot render, and the error the user sees is the planner's own
-   * rather than a paraphrase.
+   * Take the editor's two lists, as one transaction: if the planner
+   * refuses, the cube is put back whole and the refusal is RETURNED to the
+   * editor, which keeps the form open and shows it there -- the error the
+   * user sees is the planner's own rather than a paraphrase.
    */
   async #setCalc(
     row: readonly DerivedColumn[],
     group: readonly DerivedColumn[],
     rename?: { readonly from: string; readonly to: string },
   ): Promise<string | null> {
-    const previous = this.#snapshot;
-    const previousConfig = this.#config;
-    const next: CubeSnapshot = {
-      ...this.#snapshot,
-      derived: [...row],
-      ...(group.length > 0
-        ? { groupDerived: [...group] }
-        : { groupDerived: [] }),
-    };
-    // A RENAME carries through: grouped, pivoted, sorted or filtered
-    // by the old name, and its settings (format, width, display name)
-    // follow it. Before, the rename left those naming a column that
-    // no longer existed, and the planner refused it.
-    this.#snapshot = rename
-      ? renameColumnReferences(next, rename.from, rename.to)
-      : next;
-    if (rename) {
-      this.#config = renameColumnConfig(this.#config, rename.from, rename.to);
-    }
-    // AWAITED, and the refusal RETURNED, rather than `#refreshOr`'s
-    // fire-and-forget: the editor has to know. Reverting the snapshot
-    // alone took the user's column -- and the text they typed -- with
-    // it, and put the reason on the status line, away from the form
-    // it was about. The editor keeps the form open and shows it there.
-    try {
-      await this.#refresh();
-      return null;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.#status(message, 'error');
-      this.#snapshot = previous;
-      this.#config = previousConfig;
-      return message;
-    }
+    const out = await this.#change((s) => {
+      const next: CubeSnapshot = { ...s.snapshot, derived: [...row], groupDerived: [...group] };
+      // A RENAME carries through: grouped, pivoted, sorted or filtered
+      // by the old name, and its settings (format, width, display name)
+      // follow it. Before, the rename left those naming a column that
+      // no longer existed, and the planner refused it.
+      return rename
+        ? {
+            ...s,
+            snapshot: renameColumnReferences(next, rename.from, rename.to),
+            configuration: renameColumnConfig(s.configuration, rename.from, rename.to),
+          }
+        : { ...s, snapshot: next };
+    }, { label: 'calculated columns' });
+    return refusal(out);
   }
 
   // -- the context menu ------------------------------------------------
@@ -1447,7 +1520,7 @@ export class CubeApp {
           ? this.#snapshot.rows.includes(column)
           : false,
         hasSelection: this.#selection !== null,
-        hasExpanded: this.#controller.tree.openPaths.length > 0,
+        hasExpanded: this.#owner.current.tree.openPaths.length > 0,
         hasHeatmap:
           column !== undefined && this.#heatmapFor(column) !== undefined,
         canGroup: column === undefined || this.#isDimension(column),
@@ -1483,17 +1556,14 @@ export class CubeApp {
     // The query actions go through applyMenuAction, which returns the
     // SAME snapshot when nothing changed; the rest are layout,
     // clipboard and export, which never touch the query.
-    const next = applyMenuAction(this.#snapshot, item);
-    if (next !== this.#snapshot) {
-      const previous = this.#snapshot;
-      this.#snapshot = next;
-      this.#refreshOr(previous);
+    if (applyMenuAction(this.#snapshot, item) !== this.#snapshot) {
+      void this.#query((s) => applyMenuAction(s, item), item.label ?? item.id ?? 'menu');
       return;
     }
     const column = item.column;
     switch (item.id) {
       case 'tree.collapseAll':
-        void this.#controller.setTree(this.#controller.tree.collapseAll());
+        void this.#change((s) => ({ ...s, tree: s.tree.collapseAll() }), { label: 'collapse all' });
         return;
       case 'column.autoSize':
         if (column) this.#autoSize([column]);
@@ -1519,10 +1589,8 @@ export class CubeApp {
         });
         return;
       case 'column.unpinAll':
-        for (const name of Object.keys(this.#config.columns)) {
-          this.#config = withColumn(this.#config, name, { pinned: undefined });
-        }
-        this.#refreshOr(null);
+        void this.#configure((c) => Object.keys(c.columns)
+          .reduce((next, name) => withColumn(next, name, { pinned: undefined }), c), 'unpin all');
         return;
       case 'copy.selection':
         this.#copy(this.#selectionCsv());
@@ -1655,18 +1723,21 @@ export class CubeApp {
     const measured = this.#grid.measureColumns(columns ?? undefined);
     let config = this.#config;
     let changed = 0;
+    const widths: [string, number][] = [];
     for (const [name, content] of Object.entries(measured)) {
       const width = Math.min(AUTO_SIZE_MAX,
         Math.max(AUTO_SIZE_MIN, content + AUTO_SIZE_PAD));
       const next = withColumn(config, name, { width });
       if (next !== config) changed += 1;
       config = next;
+      widths.push([name, width]);
     }
     if (changed === 0) {
       this.#status('nothing to resize', 'warn');
       return;
     }
-    void this.#setConfiguration(config);
+    void this.#configure((c) => widths.reduce((next, [name, width]) => withColumn(next, name, { width }), c),
+      'auto-size');
   }
 
   /**
@@ -1700,17 +1771,17 @@ export class CubeApp {
       });
       return;
     }
-    const sorts = this.#snapshot.sorts;
-    const at = sorts.findIndex((x) => x.column === column);
-    const now = sorts[at];
-    const next = now === undefined
-      ? [...sorts, { column, direction: 'asc' as const }]
-      : now.direction === 'asc'
-        ? sorts.map((x, i) => (i === at ? { column, direction: 'desc' as const } : x))
-        : sorts.filter((_x, i) => i !== at);
-    const previous = this.#snapshot;
-    this.#snapshot = { ...this.#snapshot, sorts: next };
-    this.#refreshOr(previous);
+    void this.#query((s) => {
+      const sorts = s.sorts;
+      const at = sorts.findIndex((x) => x.column === column);
+      const now = sorts[at];
+      const next = now === undefined
+        ? [...sorts, { column, direction: 'asc' as const }]
+        : now.direction === 'asc'
+          ? sorts.map((x, i) => (i === at ? { column, direction: 'desc' as const } : x))
+          : sorts.filter((_x, i) => i !== at);
+      return { ...s, sorts: next };
+    }, `sort ${column}`);
   }
 
   /**
@@ -1749,9 +1820,7 @@ export class CubeApp {
     column: string,
     patch: Parameters<typeof withColumn>[2],
   ): void {
-    const next = withColumn(this.#config, column, patch);
-    if (next === this.#config) return;
-    void this.#setConfiguration(next);
+    void this.#configure((c) => withColumn(c, column, patch), `column ${column}`);
   }
 
   /**
@@ -1769,19 +1838,11 @@ export class CubeApp {
     // prunes undefined keys, so handing it `columns: undefined` does
     // not mean "leave columns alone", it DELETES the column map.
     const { columns, ...settings } = patch;
-    let next = Object.keys(settings).length > 0
-      ? withSettings(this.#config, settings)
-      : this.#config;
-    for (const [name, cfg] of Object.entries(columns ?? {})) {
-      next = withColumn(next, name, cfg);
-    }
-    await this.#setConfiguration(next);
-  }
-
-  async #setConfiguration(next: CubeConfiguration): Promise<void> {
-    if (next === this.#config) return;
-    this.#config = next;
-    await this.#refresh();
+    await this.#configure((c) => {
+      let next = Object.keys(settings).length > 0 ? withSettings(c, settings) : c;
+      for (const [name, cfg] of Object.entries(columns ?? {})) next = withColumn(next, name, cfg);
+      return next;
+    }, 'settings');
   }
 
   // -- selection -------------------------------------------------------
@@ -1908,13 +1969,10 @@ export class CubeApp {
       ?? (this.#view?.columns.leaves ?? [])
         .map((l) => l.name)
         .filter((n) => n !== TREE_COLUMN);
-    let config = this.#config;
-    for (const name of names) {
-      const c = columnConfig(config, name);
-      if (c.widthMode === 'fixed') continue;
-      config = withColumn(config, name, { width: c.minWidth ?? MINIMIZED_WIDTH });
-    }
-    void this.#setConfiguration(config);
+    void this.#configure((config) => names.reduce((next, name) => {
+      const c = columnConfig(next, name);
+      return c.widthMode === 'fixed' ? next : withColumn(next, name, { width: c.minWidth ?? MINIMIZED_WIDTH });
+    }, config), 'minimize');
   }
 
   /**
@@ -1933,13 +1991,9 @@ export class CubeApp {
     const current = flexible.reduce((sum, n) => sum + (widths[n] ?? 0), 0);
     if (viewport <= 0 || current <= 0 || flexible.length === 0) return;
     const factor = Math.max(0, viewport - taken) / current;
-    let config = this.#config;
-    for (const name of flexible) {
-      config = withColumn(config, name, {
-        width: Math.max(MINIMIZED_WIDTH, Math.floor((widths[name] ?? 0) * factor)),
-      });
-    }
-    void this.#setConfiguration(config);
+    void this.#configure((config) => flexible.reduce((next, name) => withColumn(next, name, {
+      width: Math.max(MINIMIZED_WIDTH, Math.floor((widths[name] ?? 0) * factor)),
+    }), config), 'size to fit');
   }
 
   #copy(text: string): void {
@@ -2178,12 +2232,14 @@ export class CubeApp {
   cubeDocument(name: string, unknown?: Readonly<Record<string, unknown>>): CubeDocument | undefined {
     const source = this.#options.cubeSource;
     if (!source) return undefined;
+    // What was ACCEPTED, never a change still in flight.
+    const state = this.#owner.committed;
     return writeCube({
       name,
       source,
-      snapshot: this.#snapshot,
-      configuration: this.#config,
-      tree: this.#controller.tree,
+      snapshot: state.snapshot,
+      configuration: state.configuration,
+      tree: state.tree,
       ...(unknown ? { unknown } : {}),
     });
   }
@@ -2273,9 +2329,7 @@ export class CubeApp {
   // -- dimensions ----------------------------------------------------------
 
   useDimension(dimension: Dimension): void {
-    const previous = this.#snapshot;
-    this.#snapshot = useDimension(this.#snapshot, dimension);
-    this.#refreshOr(previous);
+    void this.#query((s) => useDimension(s, dimension), `dimension ${dimension.name}`);
   }
 
   // -- the dialogs ----------------------------------------------------------
@@ -2324,7 +2378,8 @@ export class CubeApp {
         start,
         parse: (text) => this.#controller.parse(text),
         print: (query) => this.#controller.print(query),
-        compile: (candidate, signal) => this.#controller.compile(candidate, signal),
+        compile: (candidate, signal) => this.#controller.compile(
+          { snapshot: candidate, tree: this.#owner.current.tree }, this.#view, signal),
         apply: (row, group, rename) => this.#setCalc(row, group, rename),
         readJson: (column) => this.#jsonReader(column),
         onClose: close,
@@ -2417,12 +2472,12 @@ export class CubeApp {
    * falls to the run-and-restore.
    */
   async #applyFilter(filter: FilterNode | undefined): Promise<string | null> {
-    const previous = this.#snapshot;
-    const next = filter
-      ? { ...this.#snapshot, filter }
-      : (({ filter: _drop, ...rest }) => rest)(this.#snapshot);
+    const withFilter = (snapshot: CubeSnapshot): CubeSnapshot => (filter
+      ? { ...snapshot, filter }
+      : (({ filter: _drop, ...rest }) => rest)(snapshot));
     try {
-      const checked = await this.#controller.compile(next);
+      const checked = await this.#controller.compile(
+        { snapshot: withFilter(this.#snapshot), tree: this.#owner.current.tree }, this.#view);
       if (checked && checked.refusal !== null) {
         this.#status(checked.refusal, 'error');
         return checked.refusal;
@@ -2432,16 +2487,7 @@ export class CubeApp {
       this.#status(message, 'error');
       return message;
     }
-    this.#snapshot = next;
-    try {
-      await this.#refresh();
-      return null;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.#status(message, 'error');
-      this.#snapshot = previous;
-      return message;
-    }
+    return refusal(await this.#query(withFilter, 'filter'));
   }
 
   async #applyDraft(edited: CubeDraft, base: CubeDraft): Promise<boolean> {
@@ -2451,79 +2497,52 @@ export class CubeApp {
     // them wholesale would silently put the cube back. So the editor's
     // edits (the difference between its draft and what it opened on)
     // land on the cube as it is NOW.
-    const draft = mergeDraft(
-      { snapshot: this.#snapshot, config: this.#config, dimensions: edited.dimensions },
-      base,
-      edited,
-    );
+    const merge = (s: CubeState): CubeState => {
+      const draft = mergeDraft(
+        { snapshot: s.snapshot, config: s.configuration, dimensions: edited.dimensions },
+        base,
+        edited,
+      );
+      // "Show root aggregation" is a SETTING in their General Properties,
+      // and it decides whether the level-0 query is issued at all;
+      // "Initially expand to level" decides which groups open as they
+      // load (upstream's isServerSideGroupOpenByDefault). Both reach the
+      // TREE in the same transaction as the rest of the draft: they used
+      // to be a refresh of their own before the draft's, which lost the
+      // draft's rows, pivots and sorts on a refusal (P2-169).
+      return {
+        snapshot: draft.snapshot,
+        configuration: draft.config,
+        tree: s.tree
+          .withTotals(draft.config.showRootAggregation)
+          .withExpandTo(draft.config.initialExpandToLevel ?? 0),
+      };
+    };
     // COMPILED FIRST, as upstream's editor does: the whole query the
     // draft makes, planned and not run. A refusal applies nothing,
     // shows the query with the place the compiler named, and leaves the
     // editor open on the draft. A plane that cannot compile without
-    // running falls to the run-and-restore below, never to a guess.
+    // running falls to the transaction's own refusal, never to a guess.
     const endValidate = this.#startTask('Validating query...');
-    const checked = await this.#controller.compile(
-      applyToSnapshot(draft.snapshot, draft.config)).finally(endValidate);
+    const target = merge(this.#owner.current);
+    const checked = await this.#controller.compile({
+      snapshot: applyToSnapshot(target.snapshot, target.configuration),
+      tree: target.tree,
+    }, this.#view).finally(endValidate);
     if (checked && checked.refusal !== null) {
-      const refusal = checked.refusal;
-      this.#status(refusal, 'error');
+      const refused = checked.refusal;
+      this.#status(refused, 'error');
       this.#codeCheckAlert(
         "Query Validation Failure: Can't safely apply changes. Check the query code below for more details.",
-        refusal, await this.#queryText(checked.query));
+        refused, await this.#queryText(checked.query));
       return false;
     }
-    const wasRoot = this.#config.showRootAggregation;
-    // A REFUSED DRAFT PUTS EVERYTHING BACK. It used to stay: the
-    // refusal went to the status line and the draft remained the
-    // cube's snapshot and configuration, so every later query repeated
-    // it -- one Apply wedged the cube until a reload. Upstream compiles
-    // the whole query before publishing; running it and restoring on
-    // refusal gives the same guarantee.
-    const previous = this.#snapshot;
-    const previousConfig = this.#config;
-    const rollback = (error: unknown): void => {
-      this.#status(error instanceof Error ? error.message : String(error), 'error');
-      this.#snapshot = previous;
-      this.#config = previousConfig;
-      this.#renderChrome();
-      this.#refreshFormats();
-      this.#grid.setAppearance(this.#config.appearance,
-        toColumnAppearance(this.#config));
-      this.#refreshToolPanel();
-    };
-    this.#snapshot = draft.snapshot;
-    this.#config = draft.config;
-    this.#renderChrome();
-    // "Show root aggregation" is a SETTING in their General
-    // Properties, and it decides whether the level-0 query is issued
-    // at all. It was never connected to the tree, so the checkbox
-    // moved and the grand total stayed exactly where it was.
-    // "Initially expand to level" decides which groups open as they
-    // load (upstream's isServerSideGroupOpenByDefault). It was written
-    // to the configuration and read by nothing (census §2).
-    const tree = this.#controller.tree;
-    const expandTo = draft.config.initialExpandToLevel ?? 0;
-    if (draft.config.showRootAggregation !== wasRoot
-      || expandTo !== tree.expandTo) {
-      try {
-        await this.#controller.setTree(tree
-          .withTotals(draft.config.showRootAggregation)
-          .withExpandTo(expandTo));
-        await this.#refresh();
-        return true;
-      } catch (error: unknown) {
-        this.#controller.adoptTree(tree);
-        rollback(error);
-        return false;
-      }
-    }
-    try {
-      await this.#refresh();
-      return true;
-    } catch (error: unknown) {
-      rollback(error);
-      return false;
-    }
+    // ONE TRANSACTION: it lands whole, or is refused and everything --
+    // snapshot, configuration, tree, chrome -- repaints from what was on
+    // screen. The draft is merged again onto the cube as it is when it is
+    // sent, not as it was before the compile.
+    const out = await this.#change(merge, { label: 'Properties' });
+    return out.kind === 'applied' || out.kind === 'nothing';
   }
 
   /**
@@ -2580,14 +2599,14 @@ export class CubeApp {
   /** The settings, in effect: each one reaches what it controls. */
   #applySettings(values: SettingValues): void {
     this.#settings = values;
-    this.#controller.setHistoryLimit(
+    this.#owner.setHistoryLimit(
       numericSetting(values, 'dataCube.editor.maxHistoryStackSize'));
     this.#grid.setOverscan(numericSetting(values, 'dataCube.grid.rowBuffer'));
     this.#options.onSettingsChanged?.(values);
   }
 
   #settingAction(key: SettingKey): void {
-    if (key === 'dataCube.debugger.action.reload') this.#refreshOr(null);
+    if (key === 'dataCube.debugger.action.reload') void this.#owner.refresh();
   }
 
   /** Settings > Debug Mode: what ran, what it made, what failed. */
@@ -2602,29 +2621,6 @@ export class CubeApp {
     this.#showOverlay('Error', (host, close) => buildCodeCheckAlert(host, {
       message, text: `Error: ${refusal}`, code,
     }, close), { key: `alert:${this.#alerts}`, size: CODE_CHECK_WINDOW });
-  }
-
-  /**
-   * The GROUP-STAGE calculated columns' types, from the level query's PLAN.
-   *
-   * A row-stage calculated column is typed by the compiler before any query
-   * (the controller's step 0), so its aggregate default is right on the first
-   * query. A group-stage one exists only after the groupBy, so the level query's
-   * plan types it -- and the result's column types ARE the plan's
-   * (`PlanThenRun`), never the engine's wire. Adopting them re-runs nothing.
-   */
-  #adoptGroupStageTypes(view: CubeView): void {
-    const group = this.#snapshot.groupDerived ?? [];
-    if (group.length === 0) return;
-    const seen = new Map(view.rows.columns.map((c) => [c.name, c.type]));
-    let changed = false;
-    const typed = group.map((d) => {
-      const type = seen.get(d.name);
-      if (type === undefined || type === d.type) return d;
-      changed = true;
-      return { ...d, type };
-    });
-    if (changed) this.#snapshot = { ...this.#snapshot, groupDerived: typed };
   }
 
   /** A schema change the compiler reports on a refresh, said where the user reads it. */
@@ -2850,9 +2846,12 @@ export class CubeApp {
         paint();
         this.#options.onPlane?.();
       };
-      const work = this.#controller.snaps.isSnapped
+      // The PLANE changes, the cube's state does not: freeze (or release)
+      // what is on screen, then the owner re-runs it -- not an undo step.
+      const work = (this.#controller.snaps.isSnapped
         ? this.#controller.release()
-        : this.#controller.snap();
+        : this.#controller.snap(this.#owner.committed.snapshot))
+        .then(() => this.#owner.refresh());
       work.then(done, (e: unknown) => {
         this.#status(e instanceof Error ? e.message : String(e), 'error');
         done();
@@ -2897,12 +2896,12 @@ export class CubeApp {
         {
           id: 'view.undo',
           label: 'Undo',
-          ...(this.#controller.canUndo ? {} : { disabled: true }),
+          ...(this.#owner.canUndo ? {} : { disabled: true }),
         },
         {
           id: 'view.redo',
           label: 'Redo',
-          ...(this.#controller.canRedo ? {} : { disabled: true }),
+          ...(this.#owner.canRedo ? {} : { disabled: true }),
         },
         // Upstream's hamburger: Undo, Redo, Settings..., then the rest.
         { id: 'view.settings', label: 'Settings...' },
@@ -2952,7 +2951,14 @@ export class CubeApp {
     // is always there but does nothing half the time is worse than one
     // that appears when it has something to do.
     if (!this.#config.showDragZones) bar.append(this.#zonesBack());
+  }
 
+  /**
+   * The cube's shortcuts, on the DOCUMENT, registered ONCE. They were added
+   * by every title bar rebuild and never removed, so after a few rebuilds one
+   * Ctrl-Z undid several steps (P2-220); `dispose` takes this one away.
+   */
+  #listenForKeys(): void {
     this.#onDocKey = (event: KeyboardEvent): void => {
       if (!(event.ctrlKey || event.metaKey)) return;
       const key = event.key.toLowerCase();
@@ -2986,31 +2992,19 @@ export class CubeApp {
   /**
    * Undo, with an answer either way.
    *
-   * Three outcomes a person can tell apart: it worked, there was
-   * nothing to undo, or it could not be applied. The last one matters
-   * most -- the controller puts the cube back exactly as it was and
-   * keeps the step, so the honest message is that nothing moved and
-   * it can be tried again, not a stack trace.
-   *
-   * The rejection is caught HERE rather than left to `void`, which
-   * does not catch and would surface an engine outage as an unhandled
-   * promise rejection in the console.
+   * Outcomes a person can tell apart: it worked, there was nothing to
+   * undo, the change still running was cancelled, or it could not be
+   * applied. The last one matters most -- the owner leaves the cube
+   * exactly as it was and keeps the step, so the honest message is that
+   * nothing moved and it can be tried again, not a stack trace. Never
+   * throws: an engine outage is a refusal, said, not an unhandled promise.
    */
   async #undo(): Promise<void> {
     if (this.#adhoc) {
       await this.#adhoc.undo();
       return;
     }
-    if (!this.#controller.canUndo) {
-      this.#status('Nothing to undo', 'warn');
-      return;
-    }
-    try {
-      await this.#controller.undo();
-    } catch {
-      // refresh() already reported the cause through onError.
-      this.#status('Could not undo — the cube is unchanged', 'error');
-    }
+    this.#sayHistory(await this.#owner.undo(), 'undo');
   }
 
   async #redo(): Promise<void> {
@@ -3018,15 +3012,13 @@ export class CubeApp {
       await this.#adhoc.redo();
       return;
     }
-    if (!this.#controller.canRedo) {
-      this.#status('Nothing to redo', 'warn');
-      return;
-    }
-    try {
-      await this.#controller.redo();
-    } catch {
-      this.#status('Could not redo — the cube is unchanged', 'error');
-    }
+    this.#sayHistory(await this.#owner.redo(), 'redo');
+  }
+
+  #sayHistory(out: Outcome, what: 'undo' | 'redo'): void {
+    if (out.kind === 'nothing') this.#status(`Nothing to ${what}`, 'warn');
+    else if (out.kind === 'cancelled') this.#status('The change still running was cancelled', 'ok');
+    else if (out.kind === 'refused') this.#status(`Could not ${what} — the cube is unchanged`, 'error');
   }
 
   /** Entries the title bar menu adds on top of the grid's own. */

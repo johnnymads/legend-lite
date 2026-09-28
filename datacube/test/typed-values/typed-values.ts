@@ -207,7 +207,7 @@ describe('step 1: types from the compiler', () => {
       epoch: 1,
     });
     assert.deepEqual(o.errors, []);
-    const view = o.app.controller.view;
+    const view = o.app.view;
     assert.ok(view);
     const typeOf = (name: string): string | undefined =>
       view.rows.columns.find((c) => c.name === name)?.type;
@@ -291,12 +291,12 @@ describe('step 2: exact cells, whatever the time zone (run under TZ lanes)', () 
   it('S2a: a DATE exports as its own calendar day, east and west of UTC', async () => {
     const o = await flat(SOURCE);
     assert.deepEqual(o.errors, []);
-    assert.deepEqual(exported(o.app.controller.view!, 'day'), ['2024-01-02', '2024-01-03', '2024-02-01']);
+    assert.deepEqual(exported(o.app.view!, 'day'), ['2024-01-02', '2024-01-03', '2024-02-01']);
   });
 
   it('S2b: a TIMESTAMP keeps its microseconds, and a filter from its cell finds exactly its row', async () => {
     const o = await flat(SOURCE);
-    const view = o.app.controller.view!;
+    const view = o.app.view!;
     assert.ok(exported(view, 'ts').includes('2024-01-02T03:04:05.123456'), exported(view, 'ts').join(' | '));
     // the right-click menu's "filter by this value": the cell's own value
     const ts = view.rows.columns.find((c) => c.name === 'ts')!;
@@ -304,12 +304,12 @@ describe('step 2: exact cells, whatever the time zone (run under TZ lanes)', () 
     const filtered = await flat(SOURCE, { kind: 'condition', column: 'ts', operator: 'equal',
       value: ts.values[at] as never });
     assert.deepEqual(filtered.errors, []);
-    assert.equal(filtered.app.controller.view?.rows.rowCount, 1, 'exactly the row the cell came from');
+    assert.equal(filtered.app.view?.rows.rowCount, 1, 'exactly the row the cell came from');
   });
 
   it('S2c: a DECIMAL(38,2) beyond 2^53 exports and sums exactly', async () => {
     const o = await flat(accessor('typed::DB', 'BIG'));
-    const view = o.app.controller.view!;
+    const view = o.app.view!;
     assert.deepEqual(exported(view, 'amount'), ['1.01', '12345678901234567.89']);
     const c = view.columns.leaves.findIndex((l) => l.name === 'amount');
     const stats = selectionStats(view.rows, view.columns.leaves, {
@@ -411,11 +411,10 @@ describe('T7: one formatter on compiler types', () => {
     // exactly what Column Properties > Column Kind writes (panel-column.ts)
     await o.app.applyConfiguration({ columns: { qty: { kind: 'dimension', excludedFromPivot: true } } });
     await quiet(o.engine);
-    const s = o.app.controller.snapshot ?? assert.fail('no snapshot');
-    await o.app.controller.update({ ...s, pivotOn: ['qty'], epoch: s.epoch + 1 });
+    await o.app.change((s) => ({ ...s, snapshot: { ...s.snapshot, pivotOn: ['qty'] } }));
     await quiet(o.engine);
     assert.deepEqual(o.errors, []);
-    const pivot = (o.app.controller.view?.pivot?.columns ?? [])
+    const pivot = (o.app.view?.pivot?.columns ?? [])
       .filter((c) => c.tuple !== null).map((c) => c.name).sort();
     assert.deepEqual(pivot, ['1__|__pnl', '2__|__pnl', '3__|__pnl'], 'the pivot happened');
   });
@@ -433,11 +432,10 @@ describe('T7: one formatter on compiler types', () => {
     } });
     await quiet(o.engine);
     const group = async (rows: string[], pivotOn: string[] = []) => {
-      const s = o.app.controller.snapshot ?? assert.fail('no snapshot');
-      await o.app.controller.update({ ...s, rows, pivotOn, epoch: s.epoch + 1 });
+      await o.app.change((s) => ({ ...s, snapshot: { ...s.snapshot, rows, pivotOn } }));
       await quiet(o.engine);
       assert.deepEqual(o.errors, []);
-      const view = o.app.controller.view ?? assert.fail('no view');
+      const view = o.app.view ?? assert.fail('no view');
       const level1 = view.treeRows.map((r, i) => ({ r, i })).filter(({ r }) => r.level === 1);
       return { view, keys: level1.map(({ r }) => r.path[0]), at: level1.map(({ i }) => i) };
     };

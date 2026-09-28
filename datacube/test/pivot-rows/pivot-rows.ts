@@ -149,7 +149,7 @@ async function quiet(engine: Watched): Promise<void> {
 }
 
 function view(o: Opened): CubeView {
-  const v = o.app.controller.view;
+  const v = o.app.view;
   assert.ok(v, 'the cube has a view');
   return v;
 }
@@ -240,7 +240,7 @@ describe('a grouped pivot, judged by rows', () => {
 
   it('R3: an expanded group\'s cells (level 2) agree with GROUP BY region, desk, year', async () => {
     const o = await openCube(CUBE);
-    await o.app.controller.toggle(['EMEA']);
+    await o.app.change((s) => ({ ...s, tree: s.tree.setOpen(['EMEA'], true) }));
     await quiet(o.engine);
     assert.deepEqual(o.errors, []);
     await checkLevel(view(o), ['region', 'desk'], { region: 'EMEA' });
@@ -262,10 +262,10 @@ describe('a grouped pivot, judged by rows', () => {
     const o = await openCube(CUBE);
     const sortOn = view(o).columns.all.find((l) => l.path.join('/') === '2021/avg_n');
     assert.ok(sortOn, 'a 2021 avg_n column');
-    await o.app.controller.update({ ...o.app.snapshot,
-      sorts: [{ column: sortOn.name, direction: 'desc' }] });
+    await o.app.change((s) => ({ ...s, snapshot: { ...s.snapshot,
+      sorts: [{ column: sortOn.name, direction: 'desc' }] } }));
     await quiet(o.engine);
-    await o.app.controller.toggle(['EMEA']);
+    await o.app.change((s) => ({ ...s, tree: s.tree.setOpen(['EMEA'], true) }));
     await quiet(o.engine);
     assert.deepEqual(o.errors, []);
     const v = view(o);
@@ -279,10 +279,10 @@ describe('a grouped pivot, judged by rows', () => {
     const o = await openCube({ ...CUBE, maxRows: 2 });
     const total = view(o).columns.all.find((l) => l.path.join('/') === 'Total/cnt_q');
     assert.ok(total, 'a Total/cnt_q column');
-    await o.app.controller.update({ ...o.app.snapshot,
-      sorts: [{ column: total.name, direction: 'desc' }] });
+    await o.app.change((s) => ({ ...s, snapshot: { ...s.snapshot,
+      sorts: [{ column: total.name, direction: 'desc' }] } }));
     await quiet(o.engine);
-    await o.app.controller.toggle(['EMEA']);
+    await o.app.change((s) => ({ ...s, tree: s.tree.setOpen(['EMEA'], true) }));
     await quiet(o.engine);
     assert.deepEqual(o.errors, []);
     const v = view(o);
@@ -295,8 +295,8 @@ describe('a grouped pivot, judged by rows', () => {
 
   it('R7: a filter that removes a pivot value', async () => {
     const o = await openCube({ ...CUBE, rows: ['region'] });
-    await o.app.controller.update({ ...o.app.snapshot,
-      filter: { kind: 'condition', column: 'region', operator: 'equal', value: 'APAC' } });
+    await o.app.change((s) => ({ ...s, snapshot: { ...s.snapshot,
+      filter: { kind: 'condition', column: 'region', operator: 'equal', value: 'APAC' } } }));
     await quiet(o.engine);
     assert.deepEqual(o.errors, []);
     const v = view(o);
@@ -330,6 +330,6 @@ describe('a grouped pivot, judged by rows', () => {
       measures: [{ name: 'cnt_q', column: 'qty', fn: 'count' }] });
     assert.equal(o.errors.some((e) => /book/.test(e) && /values/.test(e)), true,
       `refused naming the column: ${o.errors.join(' | ')}`);
-    assert.equal(o.app.controller.view, null, 'no 600-column grid was drawn');
+    assert.equal(o.app.view, null, 'no 600-column grid was drawn');
   });
 });

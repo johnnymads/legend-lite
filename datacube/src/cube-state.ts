@@ -48,7 +48,7 @@ export interface CubeState {
  * Run a state: the query side (the controller). Resolves the view, or STALE when a newer run
  * superseded this one; throws when the engine refuses.
  */
-export type RunState = (state: CubeState) => Promise<CubeView | Stale>;
+export type StateRunner = (state: CubeState) => Promise<CubeView | Stale>;
 
 export type Outcome =
   | { readonly kind: 'applied'; readonly view?: CubeView }
@@ -198,12 +198,12 @@ export class CubeStateOwner {
   #view: CubeView | null = null;
   #pending: Pending | null = null;
   #seq = 0;
-  readonly #run: RunState;
+  readonly #run: StateRunner;
   readonly #stack: UndoStack<CubeState>;
   readonly #abort: (() => void) | undefined;
   readonly #listeners = new Set<(event: OwnerEvent) => void>();
 
-  constructor(initial: CubeState, run: RunState, options: OwnerOptions = {}) {
+  constructor(initial: CubeState, run: StateRunner, options: OwnerOptions = {}) {
     this.#committed = fold(initial);
     this.#rendered = this.#committed;
     this.#run = run;
