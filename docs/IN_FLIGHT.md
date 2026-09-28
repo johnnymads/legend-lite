@@ -78,6 +78,18 @@ qualified with the pivot's alias; DuckDB refused it). New `core/src/test/java/co
 PivotJoinColumnTest.java` (red without the fix), registered in `JdbcSurfaceCensusTest`;
 `OwnCorpusParityTest` MIN_MATCHED re-pinned with a dated note.
 
+## DataCube charts and pages (branch `feature/datacube-charts`; design: `DATACUBE_DASHBOARDS_DESIGN_2026_09_28.md`)
+
+**Owns:** `datacube/src/chart-*.ts`, `datacube/src/ui/chart-panel.ts`, `datacube/src/layout/`, their
+tests, and the `echarts` dependency (`datacube/package.json`, `pnpm-lock.yaml`).
+
+**Touches outside its area:** `datacube/src/app.ts` (the chart menu entry, the board around the grid,
+the chart refresh in `#onView`), `datacube/src/app.css`, `datacube/src/ui/menu.ts`, `datacube/BUILD.bazel`.
+
+**Save/share:** a page is a NEW document kind (`datacube.page`) that embeds cube documents by value.
+It will not edit `cube-document.ts` or `cube-store.ts`; it stores through `CubeStore` as they are. The
+save session will be asked to list page records in its Load dialog.
+
 ## The rules both sides follow
 
 1. **Before pushing, `git fetch` and rebase on `origin/main`; never force-push; never bare `git stash`.**

@@ -2309,3 +2309,107 @@
 }
 
 .dc-chartpanel-status.dc-chartpanel-bad { color: var(--tw-red-600, #dc2626); }
+
+/* The board (layout/board.ts): tiles on a 12-column snap grid. */
+.dc-board-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dc-board-bar {
+  flex: none;
+  display: flex;
+  gap: var(--dc-pad-1);
+  justify-content: flex-end;
+}
+
+.dc-board-bar [aria-pressed='true'] {
+  border-color: var(--dc-active);
+  color: var(--dc-active);
+}
+
+.dc-board-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.dc-board-grid { display: grid; }
+
+.dc-board-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.dc-tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  background: var(--dc-bg);
+  border: 1px solid var(--dc-line);
+  border-radius: var(--dc-radius-sm);
+}
+
+.dc-tile:focus-visible { outline: 2px solid var(--dc-active); outline-offset: 1px; }
+
+.dc-tile-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--dc-pad-1);
+  height: var(--dc-control-height);
+  padding: 0 var(--dc-pad-1) 0 var(--dc-pad-2);
+  border-bottom: 1px solid var(--dc-line-faint);
+  font-weight: 500;
+}
+
+.dc-tile-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-tile-actions { flex: none; display: flex; gap: 2px; }
+
+.dc-tile-button,
+.dc-tile-remove {
+  font: inherit;
+  font-size: var(--dc-text-sm-size);
+  padding: 0 6px;
+  border: 1px solid var(--dc-line);
+  border-radius: var(--dc-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.dc-tile-button[aria-pressed='true'] { border-color: var(--dc-active); color: var(--dc-active); }
+
+/* In edit mode the title bar is the handle; the content keeps its own gestures. */
+.dc-board-editing .dc-tile { border-style: dashed; }
+.dc-tile-head.dc-tile-handle { cursor: grab; background: var(--dc-header-bg); touch-action: none; }
+.dc-tile-dragging { opacity: 0.85; z-index: 1; box-shadow: var(--dc-popup-shadow); }
+.dc-tile-dragging .dc-tile-head { cursor: grabbing; }
+
+.dc-tile-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.dc-tile-body > * { flex: 1 1 auto; min-width: 0; min-height: 0; }
+
+.dc-tile-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, var(--dc-line-strong) 50%);
+}
+
+.dc-chart-tile { display: flex; }
+.dc-chart-tile .dc-chartpanel { flex: 1 1 auto; min-width: 0; }
+.dc-chart-tile .dc-chartpanel-form[hidden] { display: none; }

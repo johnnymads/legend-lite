@@ -66,6 +66,7 @@ import { toPdf, toPlainText } from './export-doc.ts';
 import { toBarChart, toTreemap } from './chart.ts';
 import type { MarkKey } from './chart-option.ts';
 import { ChartPanel } from './ui/chart-panel.ts';
+import { Board } from './layout/board.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
@@ -123,6 +124,9 @@ import {
   type ColumnsPanelChild,
 } from './ui/columns-panel.ts';
 import { isVariant } from './types.ts';
+
+/** The grid's height on the board, in rows (32px each). */
+const GRID_TILE_ROWS = 16;
 
 /** Rows sampled to infer what a JSON column holds. */
 const JSON_SAMPLE_ROWS = 1000;
@@ -355,9 +359,13 @@ export class CubeApp {
   #settings: SettingValues;
   /** The open calculated-column editors, by window key. */
   readonly #columnEditors = new Map<string, ColumnEditor>();
-  /** Open chart windows, by window key: each follows the cube. */
+  /** Charts on the board, by tile id: each follows the cube. */
   readonly #charts = new Map<string, ChartPanel>();
-  #chartWindows = 0;
+  #chartCount = 0;
+  /** The board of tiles, once a chart is added; until then the grid sits alone. */
+  #board: { readonly board: Board; readonly host: HTMLElement; readonly edit: HTMLButtonElement } | null = null;
+  /** Where the grid lives when there is no board. */
+  #middle: HTMLElement | null = null;
   #newColumns = 0;
   /** Alerts are many and untitled, so each gets its own window key. */
   #alerts = 0;
@@ -445,6 +453,7 @@ export class CubeApp {
     this.#els.zoneBar = zoneBar;
     zoneBar.append(this.#zoneFold());
     const middle = this.#div(root, 'dc-app-middle');
+    this.#middle = middle;
     middle.append(this.#els.grid);
     const side = this.#doc.createElement('div');
     side.className = 'dc-app-side';
@@ -2126,26 +2135,109 @@ export class CubeApp {
   }
 
   /**
-   * A chart of the cube, in a window of its own: the cube's query regrouped
-   * by the chart's options, drawn by ECharts (`ui/chart-panel.ts`). It
-   * follows the cube -- a filter added to the grid narrows it -- and a
+   * Add a chart of the cube to the board, beside the grid: the cube's query
+   * regrouped by the chart's options, drawn by ECharts (`ui/chart-panel.ts`).
+   * It follows the cube -- a filter added to the grid narrows it -- and a
    * click on a mark filters the cube to that mark.
    */
   openChart(): void {
-    this.#chartWindows += 1;
-    const key = `chart:${this.#chartWindows}`;
-    this.#showOverlay(this.#chartWindows === 1 ? 'Chart' : `Chart ${this.#chartWindows}`, (host) => {
-      this.#charts.set(key, new ChartPanel(host, {
-        snapshot: () => this.#snapshot,
-        run: async (query, snapshot, signal) =>
-          (await this.#controller.runQuery(query, snapshot, undefined, signal)).rows,
-        label: (value, column, type) => this.#formatters.format(value, this.#formats[column], type),
-        onPick: (mark) => this.#filterToMark(mark),
-      }));
-    }, {
-      key,
-      size: { x: 80, y: 80, width: 900, height: 520, minWidth: 480, minHeight: 320, center: false },
+    const { board } = this.#ensureBoard();
+    this.#chartCount += 1;
+    const id = `chart-${this.#chartCount}`;
+    const body = this.#doc.createElement('div');
+    body.className = 'dc-chart-tile';
+    const options = this.#doc.createElement('button');
+    options.type = 'button';
+    options.className = 'dc-tile-button';
+    options.textContent = 'Options';
+    options.setAttribute('aria-pressed', 'false');
+    const panel = new ChartPanel(body, {
+      snapshot: () => this.#snapshot,
+      run: async (query, snapshot, signal) =>
+        (await this.#controller.runQuery(query, snapshot, undefined, signal)).rows,
+      label: (value, column, type) => this.#formatters.format(value, this.#formats[column], type),
+      onPick: (mark) => this.#filterToMark(mark),
+      formOpen: false,
     });
+    options.addEventListener('click', () => {
+      options.setAttribute('aria-pressed', String(panel.toggleForm()));
+    });
+    this.#charts.set(id, panel);
+    const tile = {
+      id,
+      title: `Chart ${this.#chartCount}`,
+      element: body,
+      actions: [options],
+      minW: 3,
+      minH: 6,
+    };
+    if (board.size === 1) {
+      // the first chart sits BESIDE the grid, sharing its height
+      board.resizeTile('grid', 7, GRID_TILE_ROWS);
+      board.add(tile, { x: 7, y: 0, w: 5, h: GRID_TILE_ROWS });
+    } else {
+      board.add(tile, { w: 6, h: 12 });
+    }
+  }
+
+  /**
+   * The board, made on first use: the grid moves into its first tile (once --
+   * a tile is never re-parented after), and a bar above it holds Add chart and
+   * the layout's Edit switch.
+   */
+  #ensureBoard(): { board: Board; host: HTMLElement; edit: HTMLButtonElement } {
+    if (this.#board) return this.#board;
+    const doc = this.#doc;
+    const host = doc.createElement('div');
+    host.className = 'dc-board-host';
+    const bar = doc.createElement('div');
+    bar.className = 'dc-board-bar';
+    const add = doc.createElement('button');
+    add.type = 'button';
+    add.className = 'dc-button';
+    add.textContent = 'Add chart';
+    add.addEventListener('click', () => this.openChart());
+    const edit = doc.createElement('button');
+    edit.type = 'button';
+    edit.className = 'dc-button';
+    edit.textContent = 'Edit layout';
+    edit.setAttribute('aria-pressed', 'false');
+    const area = doc.createElement('div');
+    area.className = 'dc-board-area';
+    bar.append(add, edit);
+    host.append(bar, area);
+    (this.#middle ?? this.#els.root).insertBefore(host, this.#els.grid);
+    const board = new Board(area, { onRemove: (tileId) => this.#removeTile(tileId) });
+    board.add({
+      id: 'grid',
+      title: this.#config.reportTitle ?? 'Grid',
+      element: this.#els.grid,
+      removable: false,
+      minW: 3,
+      minH: 6,
+    }, { x: 0, y: 0, w: 12, h: GRID_TILE_ROWS });
+    edit.addEventListener('click', () => {
+      board.setEditing(!board.editing);
+      edit.setAttribute('aria-pressed', String(board.editing));
+      edit.textContent = board.editing ? 'Done' : 'Edit layout';
+    });
+    this.#board = { board, host, edit };
+    return this.#board;
+  }
+
+  /** Take a chart off the board; the last one gone, the grid goes back where it was. */
+  #removeTile(id: string): void {
+    const b = this.#board;
+    if (!b) return;
+    this.#charts.get(id)?.dispose();
+    this.#charts.delete(id);
+    b.board.remove(id);
+    if (b.board.size > 1) return;
+    b.board.remove('grid');
+    (this.#middle ?? this.#els.root).insertBefore(this.#els.grid, b.host);
+    b.board.dispose();
+    b.host.remove();
+    this.#board = null;
   }
 
   /**

@@ -37,6 +37,8 @@ export interface ChartPanelOptions {
   readonly initial?: ChartSpec;
   /** Upstream-style debounce between an edit and the query; a test passes 0. */
   readonly debounceMs?: number;
+  /** Whether the options start open (a chart tile starts with the chart alone). */
+  readonly formOpen?: boolean;
 }
 
 export class ChartPanel {
@@ -72,6 +74,12 @@ export class ChartPanel {
     this.#timer = setTimeout(() => void this.#draw(), delay);
   }
 
+  /** Show or hide the options; answers whether they are now shown. */
+  toggleForm(): boolean {
+    this.#form.hidden = !this.#form.hidden;
+    return !this.#form.hidden;
+  }
+
   dispose(): void {
     this.#disposed = true;
     clearTimeout(this.#timer);
@@ -98,6 +106,7 @@ export class ChartPanel {
     this.#status.setAttribute('role', 'status');
     right.append(this.#canvas, this.#status);
     this.#root.append(this.#form, right);
+    this.#form.hidden = this.#options.formOpen === false;
     this.#paintForm();
   }
 
