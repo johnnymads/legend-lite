@@ -3,12 +3,12 @@ import { beforeEach, describe, it } from 'node:test';
 import { JSDOM } from 'jsdom';
 
 import { CubeApp } from '../src/app.ts';
-import { pivotTotalColumn } from '../src/query.ts';
 import type { Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { pivotTotalColumn } from '../src/snapshot.ts';
 import { setHeaderDrag } from '../src/ui/pivot-panel.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';

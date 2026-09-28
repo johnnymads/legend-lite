@@ -16,8 +16,10 @@ import {
 import {
   CubeRefusal,
   columnType,
+  effectivePivotOn,
+  excludedFromPivot,
   LEAF_COUNT_COLUMN,
-  PIVOT_TOTAL_KEY,
+  pivotTotalColumn,
   isJsonValue,
   isRelativeDate,
   referencedColumns,
@@ -674,29 +676,9 @@ export interface PivotColumn {
   readonly tuple: readonly GroupKey[] | null;
 }
 
-/** The name of one measure's pivot total column. */
-export function pivotTotalColumn(measure: string): string {
-  return `${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}${measure}`;
-}
-
-/** Whether a column is a pivot total (see `PivotTotal`). */
-export function isPivotTotalColumn(name: string): boolean {
-  return name.startsWith(`${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}`);
-}
-
 /** A pivot value as its column's header shows it. */
 export function pivotLabel(key: GroupKey): string {
   return key === null ? EMPTY_PIVOT_LABEL : key;
-}
-
-/** The pivot keys that pivot: those not excluded from the pivot. */
-export function effectivePivotOn(s: CubeSnapshot): string[] {
-  const excluded = excludedFromPivot(s);
-  return s.pivotOn.filter((c) => !excluded.has(c));
-}
-
-function excludedFromPivot(s: CubeSnapshot): Set<string> {
-  return new Set(rowColumns(s).filter((c) => c.excludedFromPivot).map((c) => c.name));
 }
 
 /**

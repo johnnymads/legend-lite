@@ -17,7 +17,6 @@ import {
 import type { CubeSnapshot } from './snapshot.ts';
 import { CubeRefusal } from './snapshot.ts';
 import {
-  effectivePivotOn,
   pinnedPivotFacts,
   pivotLabel,
   type LevelScope,
@@ -27,6 +26,7 @@ import {
   levelLambda,
   pivotValuesLambda,
 } from './query.ts';
+import { effectivePivotOn } from './snapshot.ts';
 import { planPivot, typeColumns, type PivotPlan, type SchemaChange } from './plan.ts';
 import type { ResultTable } from './result.ts';
 import { SnapManager, type RemoteSource, type SnapTarget } from './snap.ts';

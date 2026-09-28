@@ -270,6 +270,26 @@ describe('a grouped pivot, judged by rows', () => {
     await checkLevel(v, ['region', 'desk'], { region: 'EMEA' });
   });
 
+  it('R10: sort by a pivot Total, top-N under the row cap at both levels', async () => {
+    // Total > cnt_q descending, two rows a level: EMEA (5), AMER (3) of four regions; under
+    // EMEA, FX and Rates (2 each, the tie broken by desk) of three desks
+    const o = await openCube({ ...CUBE, maxRows: 2 });
+    const total = view(o).columns.all.find((l) => l.path.join('/') === 'Total/cnt_q');
+    assert.ok(total, 'a Total/cnt_q column');
+    await o.app.controller.update({ ...o.app.snapshot,
+      sorts: [{ column: total.name, direction: 'desc' }] });
+    await quiet(o.engine);
+    await o.app.controller.toggle(['EMEA']);
+    await quiet(o.engine);
+    assert.deepEqual(o.errors, []);
+    const v = view(o);
+    assert.deepEqual(v.treeRows.filter((r) => r.path.length === 1).map((r) => r.path[0]), ['EMEA', 'AMER']);
+    assert.deepEqual(v.treeRows.filter((r) => r.path.length === 2).map((r) => r.path[1]), ['FX', 'Rates']);
+    for (const r of await truth(`SELECT desk, COUNT(*) AS n FROM TRADES WHERE region = 'EMEA' AND desk IN ('FX', 'Rates') GROUP BY desk`)) {
+      near(cell(v, ['EMEA', String(r['desk'])], ['Total', 'cnt_q']), r['n'], `EMEA/${String(r['desk'])} Total cnt_q`);
+    }
+  });
+
   it('R7: a filter that removes a pivot value', async () => {
     const o = await openCube({ ...CUBE, rows: ['region'] });
     await o.app.controller.update({ ...o.app.snapshot,

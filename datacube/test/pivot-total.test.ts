@@ -18,11 +18,10 @@ import {
 import { buildColumnModel } from '../src/grid/columns.ts';
 import type { ResultTable } from '../src/result.ts';
 import {
-  isPivotTotalColumn,
   pivotColumns,
-  pivotTotalColumn,
   type PivotFacts,
 } from '../src/query.ts';
+import { isPivotTotalColumn, pivotTotalColumn } from '../src/snapshot.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
 import { printLevel } from './lite-compiler.ts';

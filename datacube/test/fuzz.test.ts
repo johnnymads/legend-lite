@@ -17,11 +17,11 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  effectivePivotOn,
   levelLambda,
   pivotColumns,
   type PivotFacts,
 } from '../src/query.ts';
+import { effectivePivotOn } from '../src/snapshot.ts';
 import { buildColumnModel, PIVOT_SEPARATOR } from '../src/grid/columns.ts';
 import {
   CubeRefusal,

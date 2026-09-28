@@ -8,14 +8,13 @@ import type {
 import { totalOrderSorts } from '../src/snapshot.ts';
 import {
   detailSnapshot,
-  effectivePivotOn,
   literalNode,
   pinnedPivotFacts,
-  pivotTotalColumn,
   type LevelScope,
   type PivotFacts,
   type TypeOf,
 } from '../src/query.ts';
+import { effectivePivotOn, pivotTotalColumn } from '../src/snapshot.ts';
 import { accessor, col, element, lambda, variable } from '../../pure-protocol/src/index.ts';
 import type { FilterNode } from '../src/snapshot.ts';
 import { print, printFilter, printLevel, printValues, row } from './lite-compiler.ts';
@@ -362,6 +361,21 @@ describe('a level query', () => {
       level(s),
       /sort\(\[~notional->descending\(\), ~region->ascending\(\), ~country->ascending\(\)\]\)/,
     );
+  });
+
+  it('sorts by a pivot total while it exists, and drops the sort once totals or the pivot are off', () => {
+    // a total is a real column of the level's query; turned off, a sort left on it would
+    // order by a column no query produces
+    const total = pivotTotalColumn('total');
+    const on = snap({ pivotTotal: { placement: 'right' }, sorts: [{ column: total, direction: 'desc' }] });
+    assert.deepEqual(totalOrderSorts(on)[0], { column: total, direction: 'desc' });
+    assert.ok(level(on).includes(`~'${total}'->descending()`), level(on));
+    const { pivotTotal: _off, ...noTotals } = on;
+    const unpivoted = snap({ pivotOn: [], pivotTotal: { placement: 'right' }, sorts: on.sorts });
+    for (const s of [noTotals, unpivoted]) {
+      assert.ok(!totalOrderSorts(s).some((x) => x.column === total));
+      assert.ok(!level(s).includes(total), level(s));
+    }
   });
 
   it('does not duplicate a row dimension already sorted on', () => {

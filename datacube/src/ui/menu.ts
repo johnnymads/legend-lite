@@ -357,17 +357,20 @@ function filterItem(
  */
 export function buildMenu(ctx: MenuContext): MenuGroup[] {
   const { snapshot: s } = ctx;
-  // A pivot total offers the column-free entries only: nothing the
-  // query can do is ABOUT a column no query produces.
+  // A pivot total is a real column of the level's query (a conditional
+  // aggregate), so it SORTS like any measure; everything else about it is
+  // column-free: a filter applies to source rows, before any total exists,
+  // and a total is not a dimension to pivot, hide or rename.
   const column = ctx.pivotTotal ? undefined : ctx.column;
+  const sortColumn = ctx.column;
   const groups: MenuGroup[] = [];
   const push = (label: string, items: (MenuItem | null)[]): void => {
     const present = items.filter((i): i is MenuItem => i !== null);
     if (present.length > 0) groups.push({ label, items: present });
   };
 
-  const sorted = column
-    ? s.sorts.find((x) => x.column === column)
+  const sorted = sortColumn
+    ? s.sorts.find((x) => x.column === sortColumn)
     : undefined;
   const isVertical = column ? s.rows.includes(column) : false;
   const isHorizontal = column ? s.pivotOn.includes(column) : false;
@@ -432,33 +435,33 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
         {
           id: 'sort.asc',
           label: 'Ascending',
-          disabled: !column,
-          ...(column ? { column, direction: 'asc' as const } : {}),
+          disabled: !sortColumn,
+          ...(sortColumn ? { column: sortColumn, direction: 'asc' as const } : {}),
         },
         {
           id: 'sort.desc',
           label: 'Descending',
-          disabled: !column,
-          ...(column ? { column, direction: 'desc' as const } : {}),
+          disabled: !sortColumn,
+          ...(sortColumn ? { column: sortColumn, direction: 'desc' as const } : {}),
         },
         // Upstream disables an Add that would change nothing.
         {
           id: 'sort.addAsc',
           label: 'Add Ascending',
-          disabled: !column || sorted?.direction === 'asc',
-          ...(column ? { column, direction: 'asc' as const } : {}),
+          disabled: !sortColumn || sorted?.direction === 'asc',
+          ...(sortColumn ? { column: sortColumn, direction: 'asc' as const } : {}),
         },
         {
           id: 'sort.addDesc',
           label: 'Add Descending',
-          disabled: !column || sorted?.direction === 'desc',
-          ...(column ? { column, direction: 'desc' as const } : {}),
+          disabled: !sortColumn || sorted?.direction === 'desc',
+          ...(sortColumn ? { column: sortColumn, direction: 'desc' as const } : {}),
         },
         {
           id: 'sort.clearColumn',
           label: 'Clear Sort',
           disabled: !sorted,
-          ...(column ? { column } : {}),
+          ...(sortColumn ? { column: sortColumn } : {}),
         },
         {
           id: 'sort.clearAll',

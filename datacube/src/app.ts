@@ -47,6 +47,7 @@ import { AdHocMode } from './adhoc/mode.ts';
 import { carryOver } from './adhoc/outline.ts';
 import { AdHocSession } from './adhoc/session.ts';
 import { drillLambda, levelLambda } from './query.ts';
+import { isPivotTotalColumn } from './snapshot.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
 import type { RemoteSource, SnapTarget } from './snap.ts';
@@ -60,7 +61,7 @@ import {
   buildExecutionErrorAlert,
   type AlertOptions,
 } from './ui/alert.ts';
-import { isPivotTotalColumn, pivotLabel, type PivotColumn } from './query.ts';
+import { pivotLabel, type PivotColumn } from './query.ts';
 import { toHtml, toSpreadsheetML } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
 import { toBarChart, toTreemap } from './chart.ts';

@@ -13,6 +13,7 @@
 // if it is stale (see `epoch` below).
 
 import type { Lambda, ValueSpecification } from '../../pure-protocol/src/index.ts';
+import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
 import { defaultKind } from './types.ts';
 
 /**
@@ -60,6 +61,16 @@ export const LEAF_COUNT_COLUMN = '__leafCount';
  * happens to be spelled "Total" cannot be mistaken for the total.
  */
 export const PIVOT_TOTAL_KEY = '__pivot_total__';
+
+/** The name of one measure's pivot total column. */
+export function pivotTotalColumn(measure: string): string {
+  return `${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}${measure}`;
+}
+
+/** Whether a column is a pivot total (see `PivotTotal`). */
+export function isPivotTotalColumn(name: string): boolean {
+  return name.startsWith(`${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}`);
+}
 
 /**
  * The pivot total column (upstream's pivot statistic column).
@@ -152,6 +163,17 @@ export function rowColumns(s: CubeSnapshot): RowColumn[] {
       derived: true,
     })),
   ];
+}
+
+/** The pivot keys that pivot: those not excluded from the pivot. */
+export function effectivePivotOn(s: CubeSnapshot): string[] {
+  const excluded = excludedFromPivot(s);
+  return s.pivotOn.filter((c) => !excluded.has(c));
+}
+
+/** The columns kept out of the pivot (Column Properties > Exclude from pivot). */
+export function excludedFromPivot(s: CubeSnapshot): Set<string> {
+  return new Set(rowColumns(s).filter((c) => c.excludedFromPivot).map((c) => c.name));
 }
 
 /** Columns a cube may group or pivot by. */
@@ -683,8 +705,12 @@ export function totalOrderSorts(
   // A child-group aggregate arrives from its own query, beside the
   // level's; the level's query has no such column to order by.
   const apart = new Set((s.groupDerived ?? []).filter((d) => d.childAggregate).map((d) => d.name));
+  // A pivot total exists only while the cube pivots with totals on: a sort left on one
+  // after either is turned off would order by a column no query produces.
+  const totals = s.pivotTotal !== undefined && effectivePivotOn(s).length > 0;
   const applicable = s.sorts.filter(
-    (x) => (present.has(x.column) || !s.rows.includes(x.column)) && !apart.has(x.column),
+    (x) => (present.has(x.column) || !s.rows.includes(x.column)) && !apart.has(x.column)
+      && (totals || !isPivotTotalColumn(x.column)),
   );
 
   // FIRST WINS, and each column appears once. A column sorted twice

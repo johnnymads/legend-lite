@@ -8,7 +8,7 @@ import {
   valueLabel,
   type MenuActionId,
 } from '../src/ui/menu.ts';
-import type { CubeSnapshot } from '../src/snapshot.ts';
+import { pivotTotalColumn, type CubeSnapshot } from '../src/snapshot.ts';
 import { element } from '../../pure-protocol/src/index.ts';
 
 const CUBE: CubeSnapshot = {
@@ -488,6 +488,29 @@ describe('valueLabel', () => {
     assert.equal(valueLabel('EMEA'), "'EMEA'");
     assert.equal(valueLabel(12), '12');
     assert.equal(valueLabel(true), 'true');
+  });
+});
+
+describe('a pivot Total column', () => {
+  // A total is a real column of the level's query (a conditional aggregate), so it sorts;
+  // filters apply to source rows, before any total exists, so it offers none.
+  const total = pivotTotalColumn('total');
+  const ctx = { snapshot: { ...CUBE, pivotTotal: { placement: 'right' as const } }, column: total, pivotTotal: true };
+
+  it('offers Sort on the total', () => {
+    const on = enabled(ctx);
+    for (const id of ['sort.asc', 'sort.desc', 'sort.addAsc', 'sort.addDesc'] as const) {
+      assert.ok(on.includes(id), `${id}: ${on.join(' ')}`);
+    }
+    const next = applyMenuAction(ctx.snapshot,
+      menuItems(buildMenu(ctx)).find((i) => i.id === 'sort.desc')!);
+    assert.deepEqual(next.sorts, [{ column: total, direction: 'desc' }]);
+  });
+
+  it('offers no filter on it, and nothing about it as a dimension', () => {
+    const items = menuItems(buildMenu(ctx));
+    assert.ok(!items.some((i) => i.id === 'filter.add'));
+    assert.ok(!enabled(ctx).includes('pivot.vertical'));
   });
 });
 

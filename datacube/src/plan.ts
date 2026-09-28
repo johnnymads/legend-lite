@@ -21,13 +21,13 @@ import {
   pivotValuesLambda,
   sourceWithDerived,
   MAX_PIVOT_VALUES,
-  effectivePivotOn,
   pinnedPivotFacts,
   pivotColumns,
   type LevelScope,
   type PivotColumn,
   type PivotFacts,
 } from './query.ts';
+import { effectivePivotOn } from './snapshot.ts';
 import { CubeRefusal, type CubeSnapshot } from './snapshot.ts';
 import { groupValue } from './treeview.ts';
 import type { GroupKey } from './tree.ts';
