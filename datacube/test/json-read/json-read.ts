@@ -266,6 +266,11 @@ describe('a part of a document as a JSON column of its own', () => {
     const groups = (app.controller.view?.treeRows ?? []).filter((r) => r.path.length === 1).map((r) => r.path[0]);
     assert.deepEqual(objects(groups), ['{"kind":"billing","city":"London"}', '{"kind":"billing","city":"Paris"}',
       '{"kind":"shipping","city":"Tokyo"}']);
+    // the tree's labels shown for the eye too, not as raw JSON
+    await until(() => (doc.querySelector('.dc-grid')?.textContent ?? doc.body.textContent ?? '')
+      .includes('{kind: billing, city: London}'), 'the pretty tree labels');
+    assert.ok(!(doc.querySelector('.dc-grid')?.textContent ?? doc.body.textContent ?? '').includes('"kind"'),
+      'no raw JSON in the grid');
     assert.deepEqual(errors, []);
   });
 });

@@ -192,9 +192,11 @@ describe('prettyJson', () => {
   });
 
   it('quotes what could be misread: punctuation, spaces at the ends, empty, number- or keyword-like', () => {
+    assert.equal(prettyJson('{"city":"New York"}'), '{city: New York}');
     assert.equal(prettyJson('{"city":"Paris, France"}'), '{city: "Paris, France"}');
     assert.equal(prettyJson('["", " x", "12", "true", "null", "a:b"]'), '["", " x", "12", "true", "null", "a:b"]');
-    assert.equal(prettyJson('{"New York":"New York"}'), '{"New York": "New York"}');
+    // a space inside is plain
+    assert.equal(prettyJson('{"New York":"New York"}'), '{New York: New York}');
   });
 
   it('shows text that is not JSON as it is', () => {

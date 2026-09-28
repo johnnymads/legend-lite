@@ -23,9 +23,12 @@ import {
 } from './query.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
 import {
+  columnType,
   LEAF_COUNT_COLUMN,
   type CubeSnapshot,
 } from './snapshot.ts';
+import { prettyJson } from './json-shape.ts';
+import { isVariant } from './types.ts';
 import {
   DETAIL_ROW,
   type LevelRequest,
@@ -382,13 +385,21 @@ export function assemble(
     return n === null || label === null ? label : `${String(label)} (${String(n)})`;
   };
 
+  /**
+   * A group key as its label shows it: a JSON key (a Variant dimension's) for the eye, as a JSON
+   * cell is (`prettyJson`); any other key as it is. The key itself stays in the row's path.
+   */
+  const jsonDims = new Set(dims.filter((d) => isVariant(columnType(snapshot, d))));
+  const shown = (d: number, key: Scalar): Scalar =>
+    key !== null && typeof key === 'string' && jsonDims.has(dims[d] ?? '') ? prettyJson(key) : key;
+
   const labelOf = (row: TreeRow, i: number): Scalar => {
     if (row.level === 0) return totalsLabel;
     // A detail row is a source row: nothing to name in the tree.
     if (row.isDetail) return null;
     const own = row.path[row.path.length - 1];
     // A group whose key is SQL NULL has no label of its own.
-    return counted(own ?? null, i);
+    return counted(shown(row.path.length - 1, own ?? null), i);
   };
 
   /**
@@ -414,7 +425,7 @@ export function assemble(
           // the group key's TEXT (paths are text until T4 types them), so a String
           type: 'String',
           values: rows.map((row) => (row.level > d
-            ? (row.path[d] ?? null)
+            ? shown(d, row.path[d] ?? null)
             : null)),
         }))
       : [];
@@ -444,7 +455,7 @@ export function assemble(
           // blank row of numbers.
           values: rows.map((row, i) => {
             if (row.level === 0) return d === 0 ? totalsLabel : null;
-            return row.level === d + 1 ? counted(row.path[d] ?? null, i) : null;
+            return row.level === d + 1 ? counted(shown(d, row.path[d] ?? null), i) : null;
           }),
         }));
 

@@ -246,9 +246,10 @@ export function scalarTypeOf(shape: Shape): ScalarKind | undefined {
 // ---- showing ----------------------------------------------------------
 
 /**
- * A JSON document for the eye: `{kind: billing, city: Paris}`, `[S, M]`. A key or a string is
- * bare when it cannot be mistaken for anything else -- not empty, no punctuation of the notation,
- * not a number, `true`, `false` or `null` -- and JSON-quoted otherwise; numbers as written. Display
+ * A JSON document for the eye: `{kind: billing, city: New York}`, `[S, M]`. A key or a string is
+ * bare when it cannot be mistaken for anything else -- not empty, no punctuation of the notation
+ * or line break, no space at either end, not a number, `true`, `false` or `null` -- and
+ * JSON-quoted otherwise; numbers as written. Display
  * only: the value itself stays JSON (it groups, filters and exports as JSON). Text that is not JSON
  * is shown as it is.
  */
@@ -259,8 +260,10 @@ export function prettyJson(text: string): string {
   } catch {
     return text;
   }
+  // a space INSIDE is plain ("New York"); the notation's punctuation, a line break or a space at
+  // either end is not
   const bare = (t: string): string =>
-    t !== '' && !/[,:{}[\]"\s]/.test(t.trim()) && t === t.trim()
+    t !== '' && !/[,:{}[\]"\n\r\t]/.test(t) && t === t.trim()
       && !/^(true|false|null|-?\d.*)$/.test(t) ? t : JSON.stringify(t);
   const show = (n: JsonNode): string => {
     switch (n.t) {
