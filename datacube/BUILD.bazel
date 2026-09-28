@@ -67,6 +67,7 @@ _EXTRA_DATA = {
 # own WASM module, loaded by test/catalog-builder.ts
 _WASM_TESTS = [
     "infer",
+    "offer-facts",
     "upload",
     "treeview",
     "type-columns",
@@ -129,7 +130,7 @@ test_suite(
 )
 
 # THE TYPECHECK: tsc over everything tsconfig.json includes (src, test, bench,
-# demo), types only — the tests run the same files with types stripped, so
+# demo, tools), types only — the tests run the same files with types stripped, so
 # without this a type error ships unnoticed.
 typescript.tsc_test(
     name = "typecheck_test",
@@ -140,6 +141,7 @@ typescript.tsc_test(
         "src/**/*.ts",
         "test/**/*.ts",
         "demo/**/*.ts",
+        "tools/**/*.ts",
     ]) + [
         "package.json",
         "tsconfig.json",
@@ -171,10 +173,63 @@ java_run(
     deps = [":type_facts_main"],
 )
 
+# WHAT A TYPE ACCEPTS (T5): DataCube's own queries -- each aggregate as a level's
+# measure, each filter operator as a condition, over a column of every type -- written
+# by the product's query builder (tools/offer-facts/emit.ts) and compiled by legend-lite
+# (OfferFacts.java): the measure's type, or the functions a condition resolved to.
+js_binary(
+    name = "emit_offer_queries",
+    data = [":src"],
+    entry_point = "tools/offer-facts/emit.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--disable-warning=ExperimentalWarning",
+    ],
+)
+
+js_run_binary(
+    name = "offer_queries",
+    srcs = ["tools/offer-facts/emit.ts"],
+    outs = [
+        "offer_model.pure",
+        "offer_queries.tsv",
+    ],
+    args = [
+        package_name() + "/offer_model.pure",
+        package_name() + "/offer_queries.tsv",
+    ],
+    tool = ":emit_offer_queries",
+)
+
+java_library(
+    name = "offer_facts_main",
+    srcs = ["tools/offer-facts/OfferFacts.java"],
+    deps = ["//core"],
+)
+
+java_run(
+    name = "offer_facts",
+    srcs = [
+        "offer_model.pure",
+        "offer_queries.tsv",
+    ],
+    outs = ["generated/offer-facts.gen.ts"],
+    arguments = [
+        "$(execpath offer_model.pure)",
+        "$(execpath offer_queries.tsv)",
+        "{OUT}",
+    ],
+    main_class = "offerfacts.OfferFacts",
+    deps = [":offer_facts_main"],
+)
+
 write_source_files(
     name = "update_generated",
-    diff_test_failure_message = "{{DEFAULT_MESSAGE}}\nlegend-lite changed a fact this cube mirrors — regenerate: bazel run //datacube:update_generated, then read the diff (a changed Pure kind or pivot separator changes what the grid shows)",
-    files = {"src/generated/lite-facts.ts": ":lite_facts"},
+    diff_test_failure_message = "{{DEFAULT_MESSAGE}}\nlegend-lite changed a fact this cube mirrors — regenerate: bazel run //datacube:update_generated, then read the diff (a changed Pure kind or pivot separator changes what the grid shows; a changed offer fact changes what a column is offered)",
+    files = {
+        "src/generated/lite-facts.ts": ":lite_facts",
+        "src/generated/offer-facts.ts": ":offer_facts",
+    },
     visibility = ["//:__pkg__"],
 )
 

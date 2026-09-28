@@ -55,6 +55,17 @@ h2-fail-roster.txt`.
 - `wasm/src/main/java/planner/{Wasm,JvmMain}.java` (already on main, 149e771b4): the catalog answer's
   source as protocol; JvmMain's `json` mode.
 
+**T5 (2026-09-28): no edit outside `datacube/` and `docs/`.** `datacube/tools/offer-facts/OfferFacts.java`
+is a build tool over `//core` (like `tools/typefacts`): it reads `Compiler`, `NameResolver`,
+`ModelContext.findFunction` and `TypedNativeCall.callee()`; a rename there shows up as its build failing.
+
+**Asked of the untangle (its area, not edited here):** register legend-engine's
+`meta::pure::functions::string::contains(source:String[0..1], val:String[1]):Boolean[1]`
+(core/pure/corefunctions/stringExtension.pure:21) beside `STARTS_WITH__STRING_0_1__STRING_1`, in
+`AT_STRING_CONTAINS`. Today a nullable text column's `contains` resolves to the COLLECTION contains
+(its SQL is right only by a lowering compensation); DataCube's filter-operator offers (T5's second
+half) wait on it.
+
 ## The rules both sides follow
 
 1. **Before pushing, `git fetch` and rebase on `origin/main`; never force-push; never bare `git stash`.**

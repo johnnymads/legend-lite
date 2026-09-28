@@ -199,6 +199,14 @@ export type AggregateFn =
    */
   | 'unique';
 
+/** Every aggregate, once: exhaustive by construction (a Record over the union). */
+const EVERY_AGGREGATE: Readonly<Record<AggregateFn, true>> = {
+  sum: true, average: true, count: true, min: true, max: true, median: true,
+  stdDevPopulation: true, stdDevSample: true, variancePopulation: true, varianceSample: true,
+  joinStrings: true, wavg: true, unique: true,
+};
+export const AGGREGATE_FNS: readonly AggregateFn[] = Object.keys(EVERY_AGGREGATE) as AggregateFn[];
+
 /** One value column in the cube: an aggregate over a source column. */
 export interface Measure {
   /** Output column name. */

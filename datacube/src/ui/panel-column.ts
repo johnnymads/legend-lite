@@ -29,11 +29,14 @@ import {
 } from '../config.ts';
 import { numberDefaults, withColumn } from '../config.ts';
 import {
+  AGGREGATE_FNS,
   kindOf,
   rowColumns,
   type AggregateFn,
   type ColumnKind,
 } from '../snapshot.ts';
+import { OFFER_FACTS } from '../generated/offer-facts.ts';
+import { defaultKind, familyOf, plainType } from '../types.ts';
 import type { CellAppearance, ColourSet } from '../style.ts';
 import type { PinPlacement } from '../grid/columns.ts';
 import {
@@ -47,7 +50,7 @@ import {
   textInput,
 } from './form.ts';
 import { colourGrid, fontControls } from './panel-general.ts';
-import { dataTypeOf, type DataType } from './filter-editor.ts';
+import { dataTypeOf } from './filter-editor.ts';
 import { docHint } from './docs.ts';
 import {
   SORT_DIRECTIONS,
@@ -55,85 +58,59 @@ import {
   panelShell,
   type PanelBuilder,
 } from './panel-kit.ts';
-import { defaultKind } from '../types.ts';
 
 export const KINDS: readonly { value: ColumnKind; label: string }[] = [
   { value: 'dimension', label: 'Dimension' },
   { value: 'measure', label: 'Measure' },
 ];
 
-/**
- * Every aggregate the snapshot can express, with DataCube's labels.
- *
- * Exhaustive by construction: the type below fails to compile if an
- * aggregate is added to the snapshot and not offered here, which is
- * the failure mode worth catching -- a measure the query supports
- * and the UI cannot reach.
- */
-export const AGGREGATES: readonly { value: AggregateFn; label: string }[] = [
-  { value: 'sum', label: 'sum' },
-  { value: 'average', label: 'average' },
-  { value: 'count', label: 'count' },
-  { value: 'min', label: 'min' },
-  { value: 'max', label: 'max' },
-  { value: 'median', label: 'median' },
-  { value: 'stdDevPopulation', label: 'std deviation (population)' },
-  { value: 'stdDevSample', label: 'std deviation (sample)' },
-  { value: 'variancePopulation', label: 'variance (population)' },
-  { value: 'varianceSample', label: 'variance (sample)' },
-  { value: 'joinStrings', label: 'join strings' },
-  { value: 'wavg', label: 'weighted average' },
+/** DataCube's label for each aggregate: a Record, so an aggregate cannot go unlabelled. */
+const AGGREGATE_LABELS: Readonly<Record<AggregateFn, string>> = {
+  sum: 'sum',
+  average: 'average',
+  count: 'count',
+  min: 'min',
+  max: 'max',
+  median: 'median',
+  stdDevPopulation: 'std deviation (population)',
+  stdDevSample: 'std deviation (sample)',
+  variancePopulation: 'variance (population)',
+  varianceSample: 'variance (sample)',
+  joinStrings: 'join strings',
+  wavg: 'weighted average',
   // DataCube's default for every non-numeric column: the value when
   // the group has exactly one, otherwise blank.
-  { value: 'unique', label: 'unique value' },
-];
+  unique: 'unique value',
+};
+
+/** Every aggregate the snapshot can express, with DataCube's labels. */
+export const AGGREGATES: readonly { value: AggregateFn; label: string }[] =
+  AGGREGATE_FNS.map((value) => ({ value, label: AGGREGATE_LABELS[value] }));
 
 /**
- * The aggregates a column of this type can take, as upstream's
- * `isCompatibleWithColumn` decides them, plus min and max on dates and
- * text (the database keeps their type, and "the latest trade date" is
- * a question people ask). An aggregate must keep the column's type,
- * which is why count and joinStrings are not offered everywhere they
- * would run. Unknown type (a calculated column not yet run): all.
+ * The aggregates a column of this type can take, as the COMPILER answers them (T5,
+ * src/generated/offer-facts.ts: DataCube's own level query, compiled per type): one the
+ * compiler accepts whose result stays in the column's family -- upstream's "an aggregate
+ * keeps the column's type", decided by the compiler's answer rather than a table. So
+ * count, whose result is an Integer, is offered on numbers and not on text, and
+ * joinStrings on any column the compiler types as text, a calculated one included. By
+ * FAMILY, never the exact type: sum over an Integer stays an Integer, an average of one
+ * is a Float, and a precise `BigInt` column's sum is an `Integer`. A type with no facts
+ * (Pure's Any) takes none; an untyped column (a calculated one not yet typed): all, the
+ * compiler judging it on Apply.
  */
 export function aggregatesFor(
   type: string | undefined,
 ): readonly { value: AggregateFn; label: string }[] {
   if (type === undefined) return AGGREGATES;
-  const allowed: ReadonlySet<AggregateFn> = new Set<AggregateFn>(
-    ({
-      number: ['sum', 'average', 'count', 'min', 'max', 'median',
-        'stdDevPopulation', 'stdDevSample', 'variancePopulation',
-        'varianceSample', 'wavg', 'unique'],
-      text: ['joinStrings', 'min', 'max', 'unique'],
-      date: ['min', 'max', 'unique'],
-      time: ['min', 'max', 'unique'],
-      boolean: ['unique'],
-      // A JSON document has no order and no sum; its one aggregate is
-      // "the value, when the group has only one".
-      variant: ['unique'],
-    } satisfies Record<DataType, AggregateFn[]>)[dataTypeOf(type)],
-  );
-  return AGGREGATES.filter((a) => allowed.has(a.value));
+  const facts = OFFER_FACTS[plainType(type)];
+  if (facts === undefined) return [];
+  const family = familyOf(type);
+  return AGGREGATES.filter((a) => {
+    const result = facts.aggregates[a.value];
+    return result !== null && familyOf(result) === family;
+  });
 }
-
-/** Fails to compile when an aggregate is added and not offered above. */
-const _EVERY_AGGREGATE: Record<AggregateFn, true> = {
-  sum: true,
-  average: true,
-  count: true,
-  min: true,
-  max: true,
-  median: true,
-  stdDevPopulation: true,
-  stdDevSample: true,
-  variancePopulation: true,
-  varianceSample: true,
-  joinStrings: true,
-  unique: true,
-  wavg: true,
-};
-void _EVERY_AGGREGATE;
 
 const FORMAT_KINDS: readonly { value: FormatKind; label: string }[] = [
   { value: 'auto', label: 'Auto' },

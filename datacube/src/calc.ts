@@ -27,6 +27,7 @@
 // "all columns" -- the completion has to be as honest as the query.
 
 import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
+import { CALC_FACTS } from './generated/offer-facts.ts';
 import { pivotLabel, type PivotColumn } from './query.ts';
 import { rowColumns, type CubeSnapshot } from './snapshot.ts';
 
@@ -47,21 +48,18 @@ export interface Completion {
 /**
  * A scalar function a calculated column may call.
  *
- * `example` is not documentation -- it is the PROOF. Every entry's
- * example is compiled through a real planner by
- * `demo/verify-calc-vocabulary.mjs`, so the catalogue cannot offer a
- * function that does not lower. A hand-written list nobody executes is
- * how you end up suggesting `median` to someone whose backend has no
- * spelling for it.
+ * `example` is not documentation -- it is the PROOF. The build compiles every
+ * entry's example as a calculated column (tools/offer-facts: an example the compiler
+ * refuses fails generation), and reads the function's declarations from the compiler
+ * (src/generated/offer-facts.ts `CALC_FACTS`): what the editor shows as its signature
+ * is what legend-lite declares, never a copy. `demo/verify-calc-vocabulary.mjs` runs the
+ * same examples through a live legend-engine too.
  */
 export interface CalcFunction {
   readonly name: string;
-  /** Signature, for the completion detail: `toUpper(String):String`. */
-  readonly signature: string;
-  readonly category: 'string' | 'number' | 'date' | 'logic';
   /**
    * A complete expression body using it, over the demo's own columns,
-   * that the verifier compiles. `$x` is the row.
+   * that the build compiles. `$x` is the row.
    */
   readonly example: string;
 }
@@ -69,67 +67,46 @@ export interface CalcFunction {
 /**
  * The scalar vocabulary.
  *
- * Curated rather than generated, and that is a considered choice.
- * legend-lite's `Scalars` lowering table looked like the generatable
- * source, but its 3500 lines dispatch through a mix of `family(...)`
- * calls, `Map.entry` lists and case arms whose string literals are
- * often ARGUMENTS rather than function names (`case "MD5"` is a hash
- * kind, not a function). A regex over that would offer suggestions
- * that do not exist. A curated list whose every entry is compiled by a
- * test is the stronger guarantee -- the test is what makes it true,
- * not the authoring.
+ * Curated rather than generated, and that is a considered choice: WHICH functions
+ * a person is offered first is an editorial decision, and each needs an example a
+ * person can read. What a function accepts and returns is not: the compiler's
+ * declarations, generated beside its offer facts.
  */
 export const CALC_FUNCTIONS: readonly CalcFunction[] = [
   // -- strings -------------------------------------------------------
-  { name: 'toUpper', signature: 'toUpper(String):String',
-    category: 'string', example: '$x.region->toOne()->toUpper()' },
-  { name: 'toLower', signature: 'toLower(String):String',
-    category: 'string', example: '$x.region->toOne()->toLower()' },
-  { name: 'length', signature: 'length(String):Integer',
-    category: 'string', example: '$x.region->toOne()->length()' },
-  { name: 'trim', signature: 'trim(String):String',
-    category: 'string', example: '$x.region->toOne()->trim()' },
-  { name: 'startsWith', signature: 'startsWith(String, String):Boolean',
-    category: 'string', example: "$x.region->toOne()->startsWith('E')" },
-  { name: 'endsWith', signature: 'endsWith(String, String):Boolean',
-    category: 'string', example: "$x.region->toOne()->endsWith('A')" },
-  { name: 'contains', signature: 'contains(String, String):Boolean',
-    category: 'string', example: "$x.region->toOne()->contains('ME')" },
-  { name: 'substring', signature: 'substring(String, Integer, Integer):String',
-    category: 'string', example: '$x.region->toOne()->substring(0, 2)' },
-  { name: 'replace', signature: 'replace(String, String, String):String',
-    category: 'string',
-    example: "$x.region->toOne()->replace('E', 'e')" },
+  { name: 'toUpper', example: '$x.region->toOne()->toUpper()' },
+  { name: 'toLower', example: '$x.region->toOne()->toLower()' },
+  { name: 'length', example: '$x.region->toOne()->length()' },
+  { name: 'trim', example: '$x.region->toOne()->trim()' },
+  { name: 'startsWith', example: "$x.region->toOne()->startsWith('E')" },
+  { name: 'endsWith', example: "$x.region->toOne()->endsWith('A')" },
+  { name: 'contains', example: "$x.region->toOne()->contains('ME')" },
+  { name: 'substring', example: '$x.region->toOne()->substring(0, 2)' },
+  { name: 'replace', example: "$x.region->toOne()->replace('E', 'e')" },
 
   // -- numbers -------------------------------------------------------
-  { name: 'abs', signature: 'abs(Number):Number',
-    category: 'number', example: '$x.pnl->toOne()->abs()' },
-  { name: 'round', signature: 'round(Number):Integer',
-    category: 'number', example: '$x.notional->toOne()->round()' },
-  { name: 'floor', signature: 'floor(Number):Integer',
-    category: 'number', example: '$x.notional->toOne()->floor()' },
-  { name: 'ceiling', signature: 'ceiling(Number):Integer',
-    category: 'number', example: '$x.notional->toOne()->ceiling()' },
-  { name: 'sqrt', signature: 'sqrt(Number):Float',
-    category: 'number', example: '$x.notional->toOne()->sqrt()' },
-  { name: 'exp', signature: 'exp(Number):Float',
-    category: 'number', example: '$x.qty->toOne()->exp()' },
-  { name: 'log', signature: 'log(Number):Float',
-    category: 'number', example: '$x.qty->toOne()->log()' },
-  { name: 'mod', signature: 'mod(Integer, Integer):Integer',
-    category: 'number', example: '$x.qty->toOne()->mod(2)' },
+  { name: 'abs', example: '$x.pnl->toOne()->abs()' },
+  { name: 'round', example: '$x.notional->toOne()->round()' },
+  { name: 'floor', example: '$x.notional->toOne()->floor()' },
+  { name: 'ceiling', example: '$x.notional->toOne()->ceiling()' },
+  { name: 'sqrt', example: '$x.notional->toOne()->sqrt()' },
+  { name: 'exp', example: '$x.qty->toOne()->exp()' },
+  { name: 'log', example: '$x.qty->toOne()->log()' },
+  { name: 'mod', example: '$x.qty->toOne()->mod(2)' },
 
   // -- logic ---------------------------------------------------------
-  { name: 'if', signature: 'if(Boolean, a, b):a',
-    category: 'logic',
-    example: "if($x.pnl->toOne() > 0, |'up', |'down')" },
-  { name: 'isEmpty', signature: 'isEmpty(any):Boolean',
-    category: 'logic', example: '$x.desk->isEmpty()' },
-  { name: 'isNotEmpty', signature: 'isNotEmpty(any):Boolean',
-    category: 'logic', example: '$x.desk->isNotEmpty()' },
-  { name: 'toOne', signature: 'toOne(T[0..1]):T[1]',
-    category: 'logic', example: '$x.notional->toOne()' },
+  { name: 'if', example: "if($x.pnl->toOne() > 0, |'up', |'down')" },
+  { name: 'isEmpty', example: '$x.desk->isEmpty()' },
+  { name: 'isNotEmpty', example: '$x.desk->isNotEmpty()' },
+  { name: 'toOne', example: '$x.notional->toOne()' },
 ];
+
+/** A curated function's compiler facts; generation guarantees one per entry. */
+function calcFact(name: string): { readonly path: string; readonly signatures: readonly string[] } {
+  const fact = CALC_FACTS[name];
+  if (fact === undefined) throw new Error(`no compiler facts for '${name}': bazel run //datacube:update_generated`);
+  return fact;
+}
 
 /** The operators, which have no function spelling to complete. */
 export const CALC_OPERATORS: readonly Completion[] = [
@@ -252,7 +229,8 @@ export function completionsFor(
     ...CALC_FUNCTIONS.map((f) => ({
       insert: `->${f.name}(`,
       label: f.name,
-      detail: `${f.signature} — ${f.category}`,
+      // the compiler's declarations of it (CALC_FACTS), every overload
+      detail: calcFact(f.name).signatures.join('  |  '),
       kind: 'function' as const,
     })),
     ...CALC_OPERATORS,

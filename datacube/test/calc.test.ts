@@ -18,6 +18,7 @@ import {
   nameProblem,
 } from '../src/calc.ts';
 import { PIVOT_SEPARATOR } from '../src/generated/lite-facts.ts';
+import { CALC_FACTS } from '../src/generated/offer-facts.ts';
 import { pivotColumns } from '../src/query.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
@@ -164,15 +165,29 @@ describe('the offered vocabulary', () => {
   });
 
   it('every function carries an example, which is what proves it', () => {
-    // `demo/verify-calc-vocabulary.mjs` compiles each one. An entry
-    // with no example would be offered without ever being checked.
+    // The build compiles each one (tools/offer-facts). An entry with no
+    // example would be offered without ever being checked.
     for (const f of CALC_FUNCTIONS) {
       assert.ok(f.example.length > 0, `${f.name} has no example`);
       assert.ok(f.example.includes(f.name),
         `${f.name}'s example does not use it: ${f.example}`);
-      assert.ok(f.signature.startsWith(f.name),
-        `${f.name}'s signature does not name it: ${f.signature}`);
     }
+  });
+
+  it('shows what the compiler declares, not a copy', () => {
+    // CALC_FACTS: the function the compiler resolves the name to, and each overload
+    for (const f of CALC_FUNCTIONS) {
+      const fact = CALC_FACTS[f.name];
+      assert.ok(fact, `${f.name} has no compiler facts`);
+      assert.ok(fact.signatures.every((s) => s.startsWith(`${f.name}(`) || s.startsWith(`${f.name}<`)),
+        `${f.name}: ${fact.signatures.join(', ')}`);
+    }
+    const upper = completionsFor(snap(), 'row').find((c) => c.label === 'toUpper');
+    assert.equal(upper?.detail, 'toUpper(source:String[1]):String[1]');
+    // several overloads, all shown: a number's abs keeps its own type
+    const abs = completionsFor(snap(), 'row').find((c) => c.label === 'abs');
+    assert.match(abs?.detail ?? '', /abs\(int:Integer\[1\]\):Integer\[1\]/);
+    assert.match(abs?.detail ?? '', /abs\(float:Float\[1\]\):Float\[1\]/);
   });
 
   it('has no duplicate function names', () => {
