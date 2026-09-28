@@ -14,6 +14,13 @@ load("@npm//datacube:typescript/package_json.bzl", typescript = "bin")
 
 npm_link_all_packages(name = "node_modules")
 
+# the exit-code reporter, shared with the pure-protocol package's tests
+js_library(
+    name = "strict_reporter",
+    srcs = ["test/strict-reporter.mjs"],
+    visibility = ["//pure-protocol:__pkg__"],
+)
+
 # the app's sources as the tests read them; package.json carries
 # "type": "module" (the sources are ES modules)
 js_library(
@@ -113,6 +120,7 @@ typescript.tsc_test(
     ]) + [
         "package.json",
         "tsconfig.json",
+        "//pure-protocol:typescript_sources",
         ":node_modules/@duckdb/duckdb-wasm",
         ":node_modules/@types/jsdom",
         ":node_modules/apache-arrow",

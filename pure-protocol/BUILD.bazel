@@ -1,0 +1,43 @@
+# The protocol library (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T4b): Pure queries as
+# legend-engine's V1 lambda JSON, built typed (the Relation API only) and written exactly. Plain
+# TypeScript with no npm dependency, for every UI that talks to legend-lite or legend-engine.
+load("@aspect_rules_js//js:defs.bzl", "js_library", "js_test")
+
+js_library(
+    name = "pure_protocol",
+    srcs = glob(["src/**/*.ts"]) + ["package.json"],
+    visibility = ["//visibility:public"],
+)
+
+# Each builder against legend-lite's own parser and printer (the tab's WASM module): the JSON a
+# builder makes is byte-identical to what the grammar gives the same query.
+js_test(
+    name = "twins_test",
+    size = "small",
+    chdir = package_name(),
+    data = [
+        ":pure_protocol",
+        "test/lite.ts",
+        "test/twins.test.ts",
+        "//datacube:strict_reporter",
+        "//wasm:planner",
+    ],
+    entry_point = "test/twins.test.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--experimental-wasm-exnref",
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=../datacube/test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+)
+
+# Every TypeScript file here, for DataCube's typecheck (strict tsc covers this package: it has no
+# npm dependency of its own, so it borrows DataCube's TypeScript rather than a second lock).
+js_library(
+    name = "typescript_sources",
+    srcs = glob(["src/**/*.ts", "test/**/*.ts"]) + ["package.json"],
+    visibility = ["//datacube:__pkg__"],
+)

@@ -73,6 +73,9 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **T4b step 1 pushing: `pure-protocol/`, a new top-level TypeScript package** (the
+  protocol library: typed builders, Relation API only, exact JSON, a validating reader). No npm deps;
+  typechecked by DataCube's tsc (datacube/tsconfig.json includes it); nothing in `core/` changes.
 - 2026-09-27 warehouse: **T4a pushing: the Pure composer + E4 + protocol-JSON entries**. Cross-area, core:
   NEW `protocol/PureComposer` (protocol JSON -> Pure text, upstream's printer ported; parity pinned by
   `parser-equivalence` ComposerParityTest, 56,990/56,990) and `protocol/ProtocolUpgrade` (upstream's
