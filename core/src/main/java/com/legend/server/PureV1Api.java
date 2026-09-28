@@ -11,6 +11,7 @@ import com.legend.plan.QueryPlan;
 import com.legend.plan.UpstreamRelationType;
 import com.legend.protocol.ProtocolEmitter;
 import com.legend.protocol.ProtocolReader;
+import com.legend.protocol.PureComposer;
 import com.legend.protocol.spec.LambdaFunction;
 
 import java.util.ArrayList;
@@ -31,6 +32,8 @@ import java.util.function.Supplier;
  *       records through {@link ProtocolEmitter}, byte-exact).</li>
  *   <li>E2 {@code grammar/grammarToJson/model}: model text to PMCD JSON
  *       ({@link PmcdParser}, byte-exact).</li>
+ *   <li>E4 {@code grammar/jsonToGrammar/lambda} (and {@code /batch}): lambda JSON to Pure
+ *       text ({@link PureComposer}, byte parity with upstream's printer).</li>
  *   <li>E5 {@code compilation/lambdaRelationType}: a query's result columns as the
  *       compiler types them ({@link UpstreamRelationType}).</li>
  *   <li>E9 {@code execution/generatePlan}: the relational TDS execution plan.</li>
@@ -46,8 +49,26 @@ public final class PureV1Api {
     private PureV1Api() {
     }
 
-    /** An answer: HTTP status and a JSON body. */
-    public record Answer(int status, String json) {
+    /** An answer: HTTP status, a body, and its media type ({@code application/json} unless said). */
+    public record Answer(int status, String json, String contentType) {
+        public Answer(int status, String json) {
+            this(status, json, "application/json");
+        }
+    }
+
+    /**
+     * A request body's JSON. A query built as protocol JSON nests a few levels per chained
+     * function, so the default limit (64, sized for configuration files) would refuse a long
+     * cube query; 1024 still bounds a hostile body.
+     */
+    static final Json.Config REQUEST = new Json.Config(1024);
+
+    private static Json.Obj request(String body) {
+        Json.Node n = Json.parse(body, REQUEST);
+        if (n instanceof Json.Obj o) {
+            return o;
+        }
+        throw new IllegalArgumentException("the request body is not a JSON object");
     }
 
     // ---------------------------------------------------------------------
@@ -72,13 +93,54 @@ public final class PureV1Api {
     }
 
     // ---------------------------------------------------------------------
+    // E4: JSON to grammar
+    // ---------------------------------------------------------------------
+
+    /**
+     * E4 {@code grammar/jsonToGrammar/lambda}: a lambda's protocol JSON to its Pure text, as
+     * upstream prints it ({@link PureComposer}; byte parity pinned by ComposerParityTest).
+     * {@code text/plain}; {@code renderStyle} is {@code PRETTY} (upstream's default) or
+     * {@code STANDARD}.
+     */
+    public static Answer jsonToGrammarLambda(String body, @com.legend.base.Nullable String renderStyle) {
+        Answer a = answer(500, null, () -> PureComposer.lambda(request(body), style(renderStyle)));
+        return a.status() == 200 ? new Answer(200, a.json(), "text/plain") : a;
+    }
+
+    /** E4 {@code grammar/jsonToGrammar/lambda/batch}: {@code {key: lambda}} to {@code {key: text}}. */
+    public static Answer jsonToGrammarLambdaBatch(String body, @com.legend.base.Nullable String renderStyle) {
+        return answer(500, null, () -> {
+            PureComposer.Style style = style(renderStyle);
+            Map<String, Object> out = new LinkedHashMap<>();
+            for (Map.Entry<String, Json.Node> e : request(body).fields().entrySet()) {
+                if (!(e.getValue() instanceof Json.Obj lambda)) {
+                    throw new IllegalArgumentException("the batch entry '" + e.getKey() + "' is not a lambda");
+                }
+                out.put(e.getKey(), PureComposer.lambda(lambda, style));
+            }
+            return Json.toCompact(out);
+        });
+    }
+
+    private static PureComposer.Style style(@com.legend.base.Nullable String renderStyle) {
+        if (renderStyle == null || renderStyle.isEmpty() || "PRETTY".equals(renderStyle)) {
+            return PureComposer.Style.PRETTY;
+        }
+        if ("STANDARD".equals(renderStyle)) {
+            return PureComposer.Style.STANDARD;
+        }
+        throw new IllegalArgumentException("renderStyle '" + renderStyle
+                + "' is not served by legend-lite (PRETTY or STANDARD)");
+    }
+
+    // ---------------------------------------------------------------------
     // E5: relation type
     // ---------------------------------------------------------------------
 
     /** E5: {@code {model, lambda}} to the query's {@code RelationType}. */
     public static Answer lambdaRelationType(String body) {
         return answer(400, "COMPILATION", () -> {
-            Json.Obj request = Json.parseObject(body);
+            Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
             LambdaFunction lambda = ProtocolReader.lambda(request.getObj("lambda"));
             return Json.toCompact(UpstreamRelationType.of(
@@ -94,7 +156,7 @@ public final class PureV1Api {
     public static Answer generatePlan(String body) {
         // the engine answers generatePlan's and execute's compile errors 500 (measured)
         return answer(500, "COMPILATION", () -> {
-            Json.Obj request = Json.parseObject(body);
+            Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
             LambdaFunction lambda = ProtocolReader.lambda(request.getObj("function"));
             com.legend.Compiler.Target target = com.legend.Compiler.target(model, lambda);
@@ -116,7 +178,7 @@ public final class PureV1Api {
      */
     public static Answer execute(String body) {
         return answer(500, "COMPILATION", () -> {
-            Json.Obj request = Json.parseObject(body);
+            Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
             LambdaFunction lambda = ProtocolReader.lambda(request.getObj("function"));
             String runtime = runtimeOf(request, com.legend.Compiler.target(model, lambda));
@@ -319,27 +381,11 @@ public final class PureV1Api {
     }
 
     private static String withoutSourceInformation(String json) {
-        return Json.toCompact(withoutSourceInformation(Json.parse(json)));
+        return com.legend.protocol.SourceInformation.strip(json);
     }
 
     private static Object withoutSourceInformation(Json.Node n) {
-        if (n instanceof Json.Obj o) {
-            Map<String, Object> out = new LinkedHashMap<>();
-            for (Map.Entry<String, Json.Node> e : o.fields().entrySet()) {
-                if (!e.getKey().equals("sourceInformation")) {
-                    out.put(e.getKey(), withoutSourceInformation(e.getValue()));
-                }
-            }
-            return out;
-        }
-        if (n instanceof Json.Arr a) {
-            List<Object> out = new ArrayList<>();
-            for (Json.Node x : a.items()) {
-                out.add(withoutSourceInformation(x));
-            }
-            return out;
-        }
-        return n;
+        return com.legend.protocol.SourceInformation.strip(n);
     }
 
     /**
@@ -355,7 +401,7 @@ public final class PureV1Api {
      *       dropped connection.</li>
      * </ul>
      */
-    private static Answer answer(int status, String errorType, Supplier<String> call) {
+    private static Answer answer(int status, @com.legend.base.Nullable String errorType, Supplier<String> call) {
         try {
             return new Answer(200, call.get());
         } catch (com.legend.error.LegendCompileException

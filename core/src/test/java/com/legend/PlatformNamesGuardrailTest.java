@@ -185,7 +185,7 @@ class PlatformNamesGuardrailTest {
     /** Pins, MEASURED at their introduction (2026-09-11) — set from the
      *  first run's count, never from a guess. */
     static final int FUNCTION_FQN_LITERALS_MAX = 324;
-    static final int BARE_NAME_ARMS_MAX = 116;
+    static final int BARE_NAME_ARMS_MAX = 145;   // 116 -> 145 (2026-09-27, T4a): protocol/PureComposer, the WIRE PRINTER (jsonToGrammar) -- its arms are protocol _type tags and upstream's printer's own special names (cast, new, not, if ...), the mirror of ProtocolReader's 19 wire-tag arms already counted; not function dispatch in the compiler
 
     @Test
     void runtimeShapesAreReadByTheOneReaderOnly() throws IOException {

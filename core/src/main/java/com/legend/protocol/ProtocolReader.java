@@ -55,8 +55,15 @@ public final class ProtocolReader {
         return lambda(Json.parseObject(json));
     }
 
-    /** A {@code {"_type":"lambda",...}} object. */
+    /**
+     * A {@code {"_type":"lambda",...}} object. Older protocol shapes are brought current first,
+     * as upstream reads them ({@link ProtocolUpgrade}).
+     */
     public static LambdaFunction lambda(Json.Obj o) {
+        return readLambda(ProtocolUpgrade.upgrade(o));
+    }
+
+    private static LambdaFunction readLambda(Json.Obj o) {
         String type = o.getStringOr("_type", "");
         if (!"lambda".equals(type)) {
             throw refused("expected a lambda, got _type '" + type + "'");
@@ -85,7 +92,7 @@ public final class ProtocolReader {
         }
         @com.legend.base.Nullable SourceInfo pos = pos(o);
         return switch (type) {
-            case "lambda" -> lambda(o);
+            case "lambda" -> readLambda(o);
             case "var" -> variable(o);
             case "func" -> func(o, pos);
             case "property" -> property(o, pos);
@@ -188,8 +195,8 @@ public final class ProtocolReader {
     }
 
     private static ColSpec colSpec(Json.Obj v) {
-        LambdaFunction f1 = v.has("function1") ? lambda(v.getObj("function1")) : null;
-        LambdaFunction f2 = v.has("function2") ? lambda(v.getObj("function2")) : null;
+        LambdaFunction f1 = v.has("function1") ? readLambda(v.getObj("function1")) : null;
+        LambdaFunction f2 = v.has("function2") ? readLambda(v.getObj("function2")) : null;
         TypeExpression colType = v.has("genericType") ? genericType(v.getObj("genericType")) : null;
         Multiplicity colMult = v.has("multiplicity") ? multiplicity(v.getObj("multiplicity")) : null;
         if (v.has("stereotypes") || v.has("taggedValues")) {

@@ -139,9 +139,9 @@ class IdentityGuardrailTest {
             // Retired when the surface is a declaration fact (step 3, Bindings).
             Map.entry("NAME_COMPARE", 208),
             Map.entry("NAME_COMPARE_REVERSED", 81),
-            Map.entry("LITERAL_NAME_COMPARE", 64),
+            Map.entry("LITERAL_NAME_COMPARE", 65),   // 64 -> 65 (2026-09-27, T4a): protocol/ProtocolUpgrade, upstream's protocol converter for a Result variable ("meta::pure::mapping::Result" on the WIRE, before any resolution)
             Map.entry("NAME_AFFIX_TEST", 51),
-            Map.entry("NAME_CUTTING", 104),   // 105 -> 104 (2026-09-26, step 2: the unroller's bare-name cut retired with its by-name fold test)
+            Map.entry("NAME_CUTTING", 106),   // 104 -> 106 (2026-09-27, T4a): protocol/PureComposer prints as upstream's printer does -- it strips a wire function name's package to match its special forms and splits a path to quote each segment; 105 -> 104 (2026-09-26, step 2: the unroller's bare-name cut retired with its by-name fold test)
             Map.entry("SIGNATURE_ID_CUTTING", 1),
             Map.entry("CATALOG_LOOKUP_BY_NAME", 10),   // 170 -> 10 (2026-09-26, execution plan step 2: every rule table registers the catalog's generated overload groups and is keyed by FunctionId; nativeKeysAt/nativeNamed/registeredAt and the bare index are deleted; the 10 left are QUALIFIED lookups, nativeFunctionsAt(fqn), which step 3 turns into declaration-table reads)
             Map.entry("FAMILY_LOOKUP_BY_NAME", 33),   // 87 -> 33 (2026-09-26, execution plan step 2: every implementer family is asked by the callee's FunctionId — 54 sites — and the by-name lookups those sites used are deleted from NativeFn; the 33 left are CoreFn.of(spelling) and RowGetter.of(spelling) in the typer, step 3/5)

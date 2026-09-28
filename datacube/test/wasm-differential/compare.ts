@@ -84,3 +84,33 @@ it('DataCube\'s own grammar plans the same in WASM and on the JVM', async () => 
   // builds that refuse alike agree perfectly while the cube is broken.
   assert.equal(planned, queries.length, 'a cube shape a user reaches was refused');
 });
+
+it('the same queries as protocol JSON: the same plan, and the printer round-trips them (T4a)', async () => {
+  const planner = new WasmPlanner({
+    model: MODEL,
+    runtime: RUNTIME,
+    assetBaseUrl: MODULE_DIR,
+    cache: false,
+  });
+  const differ: string[] = [];
+  for (const [i, { name, grammar }] of grammars().entries()) {
+    const c = CASES[i]!;
+    // E1's twin: the text as the wire carries it
+    const json = await planner.lambdaJson(grammar);
+    // E9's twin on the JSON plans exactly what the text plans
+    const fromText = await planner.plan(grammar, c.snapshot, c.scope);
+    const fromJson = await planner.planJson(json);
+    if (fromJson.sql !== fromText.sql || JSON.stringify(fromJson.columns) !== JSON.stringify(fromText.columns)) {
+      differ.push(`${name}: planJson differs from plan\n  text: ${fromText.sql}\n  json: ${fromJson.sql}`);
+    }
+    // E4's twin prints it; the print parses back to the same JSON, in both styles
+    for (const style of ['STANDARD', 'PRETTY'] as const) {
+      const text = await planner.compose(json, style);
+      const again = await planner.lambdaJson(text);
+      if (JSON.stringify(again) !== JSON.stringify(json)) {
+        differ.push(`${name} (${style}): the print does not parse back to the same JSON\n  print: ${text}`);
+      }
+    }
+  }
+  assert.deepEqual(differ, [], differ.join('\n'));
+});

@@ -145,6 +145,77 @@ public final class Wasm {
         }
     }
 
+    // ---- the protocol-JSON entries: each the in-tab twin of a pure/v1 endpoint, the same
+    // ---- core call behind it (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T4a)
+
+    /** A request's lambda JSON: the depth pure/v1 allows ({@code PureV1Api.REQUEST}). */
+    private static com.legend.protocol.spec.LambdaFunction lambdaOf(String lambdaJson) {
+        com.legend.json.Json.Node n = com.legend.json.Json.parse(lambdaJson, new com.legend.json.Json.Config(1024));
+        if (!(n instanceof com.legend.json.Json.Obj o)) {
+            throw new IllegalArgumentException("lambda JSON: not a JSON object");
+        }
+        return com.legend.protocol.ProtocolReader.lambda(o);
+    }
+
+    private static String folded(Throwable e) {
+        return "ERR\n" + e.getClass().getName() + "\n" + (e.getMessage() == null ? "" : e.getMessage());
+    }
+
+    /** E9's twin: a lambda's protocol JSON planned -- {@code {"sql","type"}}, as {@link #planOrError}. */
+    @org.teavm.jso.JSExport
+    public static String planJsonOrError(String model, String lambdaJson, String runtime) {
+        try {
+            com.legend.plan.QueryPlan p = com.legend.Compiler.plan(model, lambdaOf(lambdaJson), runtime);
+            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+            out.put("sql", p.sql());
+            out.put("type", com.legend.plan.UpstreamRelationType.of(p.rootType()));
+            return "OK\n" + com.legend.json.Json.toCompact(out);
+        } catch (RuntimeException | StackOverflowError e) {
+            return folded(e);
+        }
+    }
+
+    /** E5's twin: a lambda's protocol JSON typed, compile-only -- the {@code RelationType}. */
+    @org.teavm.jso.JSExport
+    public static String relationTypeJsonOrError(String model, String lambdaJson) {
+        try {
+            return "OK\n" + com.legend.json.Json.toCompact(com.legend.plan.UpstreamRelationType.of(
+                    com.legend.Compiler.resultType(model, lambdaOf(lambdaJson))));
+        } catch (RuntimeException | StackOverflowError e) {
+            return folded(e);
+        }
+    }
+
+    /** E4's twin: a lambda's protocol JSON as Pure text, {@code STANDARD} or {@code PRETTY}. */
+    @org.teavm.jso.JSExport
+    public static String composeLambdaOrError(String lambdaJson, String style) {
+        try {
+            com.legend.json.Json.Node n = com.legend.json.Json.parse(lambdaJson, new com.legend.json.Json.Config(1024));
+            if (!(n instanceof com.legend.json.Json.Obj o)) {
+                throw new IllegalArgumentException("lambda JSON: not a JSON object");
+            }
+            return "OK\n" + com.legend.protocol.PureComposer.lambda(o, "STANDARD".equals(style)
+                    ? com.legend.protocol.PureComposer.Style.STANDARD : com.legend.protocol.PureComposer.Style.PRETTY);
+        } catch (RuntimeException | StackOverflowError e) {
+            return folded(e);
+        }
+    }
+
+    /**
+     * E1's twin: Pure text to its lambda JSON, without source information (text without a
+     * leading {@code |} is wrapped in a parameterless lambda, as the engine does). How a
+     * user-typed fragment -- a calculated column, a custom filter -- joins a query built as JSON.
+     */
+    @org.teavm.jso.JSExport
+    public static String lambdaJsonOrError(String text) {
+        try {
+            return "OK\n" + com.legend.protocol.SourceInformation.strip(
+                    com.legend.protocol.ProtocolEmitter.emitLambda(com.legend.parser.SpecParser.parseLambda(text)));
+        } catch (RuntimeException | StackOverflowError e) {
+            return folded(e);
+        }
+    }
+
     /**
      * A Pure Database from a DuckDB table's CATALOG (T2): the rows {@code DESCRIBE} reports,
      * read by legend-lite's DuckDB dialect -- the declared types, and the conversions the

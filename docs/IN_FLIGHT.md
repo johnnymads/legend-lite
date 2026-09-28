@@ -73,6 +73,15 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **T4a pushing: the Pure composer + E4 + protocol-JSON entries**. Cross-area, core:
+  NEW `protocol/PureComposer` (protocol JSON -> Pure text, upstream's printer ported; parity pinned by
+  `parser-equivalence` ComposerParityTest, 56,990/56,990) and `protocol/ProtocolUpgrade` (upstream's
+  protocol converters: Result<Any|1..*>, ^BasicColumnSpecification/TdsOlapRank/AggregateValue/Pair);
+  `protocol/ProtocolReader.lambda` now applies the upgrade; `ProtocolEmitter.withoutSourceInformation`
+  (moved from PureV1Api); `server/PureV1Api` + `LegendHttpServer` serve E4 `jsonToGrammar/lambda[/batch]`
+  and parse request bodies to depth 1024 (was 64, which refused a long query). WASM gains
+  `planJsonOrError`, `relationTypeJsonOrError`, `composeLambdaOrError`, `lambdaJsonOrError`; the text
+  exports stay (the user: other callers send grammar).
 - 2026-09-27 warehouse: **Variant over native nested storage (V1-V3,
   docs/VARIANT_STORAGE_CENSUS_2026_09_27.md, user "go"), pushing**. Cross-area, core:
   `sql/dialect/DuckDb` (an integer Variant key renders `->`, never a subscript; a stored Variant column

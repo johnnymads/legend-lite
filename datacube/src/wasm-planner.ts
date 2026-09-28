@@ -37,6 +37,10 @@ interface TeavmModule {
     planOrError(model: string, query: string, runtime: string): string;
     relationTypeOrError(model: string, query: string): string;
     databaseFromCatalogOrError(catalog: string): string;
+    planJsonOrError(model: string, lambdaJson: string, runtime: string): string;
+    relationTypeJsonOrError(model: string, lambdaJson: string): string;
+    composeLambdaOrError(lambdaJson: string, style: string): string;
+    lambdaJsonOrError(text: string): string;
     warmModel(model: string): number;
   };
 }
@@ -366,6 +370,59 @@ export class WasmPlanner implements Planner {
     const columns = relationColumns(JSON.parse(decode(answer, pureGrammar)));
     if (useCache) this.#types.set(pureGrammar, columns);
     return columns;
+  }
+
+  // ---- protocol JSON: each the in-tab twin of a pure/v1 endpoint (T4a) ----
+
+  /** E9's twin: a lambda's protocol JSON planned: its SQL and the compiler's result type. */
+  async planJson(lambda: unknown, signal?: AbortSignal): Promise<Plan> {
+    const json = JSON.stringify(lambda);
+    const useCache = this.#options.cache !== false;
+    const key = `json:${json}`;
+    const hit = useCache ? this.#cache.get(key) : undefined;
+    if (hit !== undefined) return hit;
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const answer = this.#useWorker()
+      ? await this.#ask({ kind: 'planJson', model: this.#options.model, lambda: json, runtime: this.#options.runtime })
+      : (await this.#load()).exports.planJsonOrError(this.#options.model, json, this.#options.runtime);
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const body = JSON.parse(decode(answer, json)) as { sql: string; type: unknown };
+    const plan: Plan = { sql: body.sql, columns: relationColumns(body.type) };
+    if (useCache) this.#cache.set(key, plan);
+    return plan;
+  }
+
+  /** E5's twin: a lambda's protocol JSON typed, compile-only. */
+  async relationTypeJson(lambda: unknown, signal?: AbortSignal): Promise<PlanColumn[]> {
+    const json = JSON.stringify(lambda);
+    const useCache = this.#options.cache !== false;
+    const hit = useCache ? this.#types.get(`json:${json}`) : undefined;
+    if (hit !== undefined) return hit;
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const answer = this.#useWorker()
+      ? await this.#ask({ kind: 'relationTypeJson', model: this.#options.model, lambda: json })
+      : (await this.#load()).exports.relationTypeJsonOrError(this.#options.model, json);
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    const columns = relationColumns(JSON.parse(decode(answer, json)));
+    if (useCache) this.#types.set(`json:${json}`, columns);
+    return columns;
+  }
+
+  /** E4's twin: a lambda's protocol JSON as Pure text, as upstream prints it. */
+  async compose(lambda: unknown, style: 'PRETTY' | 'STANDARD' = 'PRETTY'): Promise<string> {
+    const json = JSON.stringify(lambda);
+    const answer = this.#useWorker()
+      ? await this.#ask({ kind: 'compose', lambda: json, style })
+      : (await this.#load()).exports.composeLambdaOrError(json, style);
+    return decode(answer, json);
+  }
+
+  /** E1's twin: Pure text as its lambda's protocol JSON, without source information. */
+  async lambdaJson(text: string): Promise<unknown> {
+    const answer = this.#useWorker()
+      ? await this.#ask({ kind: 'lambdaJson', text })
+      : (await this.#load()).exports.lambdaJsonOrError(text);
+    return JSON.parse(decode(answer, text));
   }
 
   /**

@@ -23,6 +23,10 @@ interface TeavmModule {
     planOrError(model: string, query: string, runtime: string): string;
     relationTypeOrError(model: string, query: string): string;
     databaseFromCatalogOrError(catalog: string): string;
+    planJsonOrError(model: string, lambdaJson: string, runtime: string): string;
+    relationTypeJsonOrError(model: string, lambdaJson: string): string;
+    composeLambdaOrError(lambdaJson: string, style: string): string;
+    lambdaJsonOrError(text: string): string;
     warmModel(model: string): number;
   };
 }
@@ -38,7 +42,17 @@ export type Request =
     readonly runtime: string;
   }
   | { readonly id: number; readonly kind: 'relationType'; readonly model: string; readonly query: string }
-  | { readonly id: number; readonly kind: 'databaseFromCatalog'; readonly catalog: string };
+  | { readonly id: number; readonly kind: 'databaseFromCatalog'; readonly catalog: string }
+  | {
+    readonly id: number;
+    readonly kind: 'planJson';
+    readonly model: string;
+    readonly lambda: string;
+    readonly runtime: string;
+  }
+  | { readonly id: number; readonly kind: 'relationTypeJson'; readonly model: string; readonly lambda: string }
+  | { readonly id: number; readonly kind: 'compose'; readonly lambda: string; readonly style: string }
+  | { readonly id: number; readonly kind: 'lambdaJson'; readonly text: string };
 
 /** What it gets back. `answer` is the export's raw tagged string. */
 export type Response =
@@ -63,6 +77,20 @@ async function load(base: string): Promise<TeavmModule> {
   });
 }
 
+/** One request, answered by the module's export of the same name: no logic of its own. */
+function answerOf(module: TeavmModule, msg: Request): string {
+  switch (msg.kind) {
+    case 'warm': module.exports.warmModel(msg.model); return 'OK\n';
+    case 'relationType': return module.exports.relationTypeOrError(msg.model, msg.query);
+    case 'databaseFromCatalog': return module.exports.databaseFromCatalogOrError(msg.catalog);
+    case 'planJson': return module.exports.planJsonOrError(msg.model, msg.lambda, msg.runtime);
+    case 'relationTypeJson': return module.exports.relationTypeJsonOrError(msg.model, msg.lambda);
+    case 'compose': return module.exports.composeLambdaOrError(msg.lambda, msg.style);
+    case 'lambdaJson': return module.exports.lambdaJsonOrError(msg.text);
+    case 'plan': return module.exports.planOrError(msg.model, msg.query, msg.runtime);
+  }
+}
+
 self.onmessage = async (e: MessageEvent<Request & { base?: string }>) => {
   const msg = e.data;
   try {
@@ -72,13 +100,7 @@ self.onmessage = async (e: MessageEvent<Request & { base?: string }>) => {
       modulePromise.catch(() => { modulePromise = undefined; });
     }
     const module = await modulePromise;
-    const answer = msg.kind === 'warm'
-      ? (module.exports.warmModel(msg.model), 'OK\n')
-      : msg.kind === 'relationType'
-        ? module.exports.relationTypeOrError(msg.model, msg.query)
-        : msg.kind === 'databaseFromCatalog'
-          ? module.exports.databaseFromCatalogOrError(msg.catalog)
-          : module.exports.planOrError(msg.model, msg.query, msg.runtime);
+    const answer = answerOf(module, msg);
     const ok: Response = { id: msg.id, ok: true, answer };
     self.postMessage(ok);
   } catch (cause) {

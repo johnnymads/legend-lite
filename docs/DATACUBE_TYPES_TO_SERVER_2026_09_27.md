@@ -198,6 +198,26 @@ and local-clock bugs).
 - Proof: a timestamp with microseconds filters, drills and groups to exactly its rows; a saved date
   filter survives reload; a NULL group reopens.
 
+**T4 as planned (2026-09-27, D2 affirmed after a second look).** Keeping Pure text would keep a
+TypeScript copy of the lexer's literal, escape and identifier rules -- already drifted once (a Decimal
+value spelled `12.30`, a Float literal to the lexer). Query builders across a language boundary build
+the tree and let the language print it (Spark Connect, Substrait, Ibis, jOOQ). Three steps:
+T4a the composer and the JSON entries; T4b a reusable TypeScript protocol library (Relation API only;
+the user: old TDS is accepted and printed for compatibility, never built) and DataCube built on it;
+T4c typed keys, members, filter values and saved views. The text entries stay beside the JSON ones
+(the user: upstream accepts grammar, other callers may send it).
+
+**T4a as landed (2026-09-27).** `PureComposer` prints protocol JSON as upstream's
+`jsonToGrammar/lambda` does (its composer ported rule for rule, STANDARD and PRETTY), after
+`ProtocolUpgrade` brings older shapes current as upstream's protocol converters do. Proof:
+`parser-equivalence` ComposerParityTest composes every lambda of every oracle-accepted corpus
+source (28,183) and of upstream's lambda round-trip tests (313) with both printers: 56,990 of
+56,990 prints byte-identical, 0 refused (upstream's own printer throws on 2). Served as E4
+(`lambda`, `lambda/batch`; `text/plain`, `renderStyle` PRETTY by default); request bodies parse to
+depth 1024. The tab's module gains the four JSON twins; the WASM differential proves, for every cube
+shape, that planning its JSON gives the same SQL and types as planning its text and that the print
+parses back to the same JSON in both styles.
+
 **T5. What a type accepts, from the compiler.**
 - Filter operators, aggregates and calculated-column functions offered per type come from the
   compiler's signatures (D4); an aggregate's result type from the plan.

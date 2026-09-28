@@ -18,6 +18,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * legend-lite's {@code pure/v1} answers against legend-engine 4.145.0's OWN answers to the
@@ -286,5 +287,64 @@ class PureV1ApiTest {
             }
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    // ---- E4: jsonToGrammar/lambda (byte parity with upstream's printer: ComposerParityTest) ----
+
+    @Test
+    void e4_jsonToGrammarLambda_printsWhatE1Parsed_plainText_prettyByDefault() {
+        String json = PureV1Api.grammarToJsonLambda(query, false).json();
+        PureV1Api.Answer standard = PureV1Api.jsonToGrammarLambda(json, "STANDARD");
+        assertEquals(200, standard.status(), standard.json());
+        assertEquals("text/plain", standard.contentType());
+        // the print parses back to the same lambda
+        assertEquals(Json.toCompact(Json.parse(json)),
+                Json.toCompact(Json.parse(PureV1Api.grammarToJsonLambda(standard.json(), false).json())));
+        PureV1Api.Answer pretty = PureV1Api.jsonToGrammarLambda(json, null);
+        assertEquals(PureV1Api.jsonToGrammarLambda(json, "PRETTY").json(), pretty.json(), "PRETTY is the default");
+        assertTrue(pretty.json().contains("\n"), pretty.json());
+    }
+
+    @Test
+    void e4_batch_answersEachKey_andAnUnservedStyleIsRefused() {
+        String a = PureV1Api.grammarToJsonLambda("|1 + 2", false).json();
+        String b = PureV1Api.grammarToJsonLambda("x: String[1]|$x->toUpper()", false).json();
+        PureV1Api.Answer batch = PureV1Api.jsonToGrammarLambdaBatch("{\"a\":" + a + ",\"b\":" + b + "}", "STANDARD");
+        assertEquals(200, batch.status(), batch.json());
+        assertEquals("{\"a\":\"|1 + 2\",\"b\":\"x: String[1]|$x->toUpper()\"}", batch.json());
+        PureV1Api.Answer html = PureV1Api.jsonToGrammarLambda(a, "PRETTY_HTML");
+        assertEquals(500, html.status());
+        assertTrue(html.json().contains("PRETTY_HTML"), html.json());
+    }
+
+    @Test
+    void aQueryDeeperThanAConfigFile_isReadAndPrinted() {
+        // 80 chained calls nest ~160 JSON levels: past the 64 a configuration file is held to
+        String text = "|'a'" + "->toUpper()".repeat(80);
+        String json = PureV1Api.grammarToJsonLambda(text, false).json();
+        PureV1Api.Answer printed = PureV1Api.jsonToGrammarLambda(json, "STANDARD");
+        assertEquals(200, printed.status(), printed.json());
+        assertEquals(Json.toCompact(Json.parse(json, new Json.Config(4096))), Json.toCompact(Json.parse(
+                PureV1Api.grammarToJsonLambda(printed.json(), false).json(), new Json.Config(4096))));
+    }
+
+    @Test
+    void olderProtocolShapes_areBroughtCurrent_asUpstreamReadsThem() {
+        // a Result variable with no type argument is Result<Any|1..*>; ^Pair(...) is pair(...),
+        // named by its full path as upstream's converter names it (so upstream prints it so too)
+        String old = """
+                {"_type":"lambda","parameters":[{"_type":"var","name":"res","multiplicity":{"lowerBound":1,"upperBound":1},
+                  "genericType":{"rawType":{"_type":"packageableType","fullPath":"meta::pure::mapping::Result"},"typeArguments":[],"multiplicityArguments":[],"typeVariableValues":[]}}],
+                 "body":[{"_type":"func","function":"new","parameters":[
+                   {"_type":"packageableElementPtr","fullPath":"meta::pure::functions::collection::Pair"},
+                   {"_type":"string","value":""},
+                   {"_type":"collection","values":[
+                     {"_type":"keyExpression","key":{"_type":"string","value":"first"},"expression":{"_type":"integer","value":1}},
+                     {"_type":"keyExpression","key":{"_type":"string","value":"second"},"expression":{"_type":"string","value":"a"}}]}]}]}
+                """;
+        PureV1Api.Answer a = PureV1Api.jsonToGrammarLambda(old, "STANDARD");
+        assertEquals(200, a.status(), a.json());
+        assertEquals("res: meta::pure::mapping::Result<meta::pure::metamodel::type::Any|1..*>[1]"
+                + "|1->meta::pure::functions::collection::pair('a')", a.json());
     }
 }

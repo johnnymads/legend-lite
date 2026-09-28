@@ -49,6 +49,10 @@ function fakeRuntime(
           planOrError: (m: string, q: string, r: string) => answer(m, q, r),
           relationTypeOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
           databaseFromCatalogOrError: () => 'ERR\nfake\nnot in this fake',
+          planJsonOrError: () => 'ERR\nfake\nnot in this fake',
+          relationTypeJsonOrError: () => 'ERR\nfake\nnot in this fake',
+          composeLambdaOrError: () => 'ERR\nfake\nnot in this fake',
+          lambdaJsonOrError: () => 'ERR\nfake\nnot in this fake',
           warmModel: (m: string) => { onWarm?.(m); return 1; },
         },
       };
@@ -287,6 +291,10 @@ describe('WasmPlanner', () => {
                 planOrError: () => ok('SELECT 1'),
                 relationTypeOrError: () => 'OK\n{"_type":"relationType","columns":[]}',
                 databaseFromCatalogOrError: () => 'ERR\nfake\nnot in this fake',
+          planJsonOrError: () => 'ERR\nfake\nnot in this fake',
+          relationTypeJsonOrError: () => 'ERR\nfake\nnot in this fake',
+          composeLambdaOrError: () => 'ERR\nfake\nnot in this fake',
+          lambdaJsonOrError: () => 'ERR\nfake\nnot in this fake',
                 warmModel: () => 1,
               },
             };

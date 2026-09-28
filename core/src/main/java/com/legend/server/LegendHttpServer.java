@@ -137,6 +137,10 @@ public class LegendHttpServer {
                         PureV1Api.grammarToJsonLambda(body, sourceInformation);
                 case "/api/pure/v1/grammar/grammarToJson/model" ->
                         PureV1Api.grammarToJsonModel(body, sourceInformation);
+                case "/api/pure/v1/grammar/jsonToGrammar/lambda" ->
+                        PureV1Api.jsonToGrammarLambda(body, queryParam(query, "renderStyle"));
+                case "/api/pure/v1/grammar/jsonToGrammar/lambda/batch" ->
+                        PureV1Api.jsonToGrammarLambdaBatch(body, queryParam(query, "renderStyle"));
                 case "/api/pure/v1/compilation/lambdaRelationType" ->
                         PureV1Api.lambdaRelationType(body);
                 case "/api/pure/v1/execution/generatePlan" ->
@@ -147,8 +151,23 @@ public class LegendHttpServer {
                         "{\"code\":-1,\"message\":\"no such legend-engine API in legend-lite: "
                                 + exchange.getRequestURI().getPath() + "\",\"status\":\"error\"}");
             };
-            sendResponse(exchange, answer.status(), answer.json());
+            sendResponse(exchange, answer.status(), answer.json(), answer.contentType());
         }
+    }
+
+    /** One query parameter's (decoded) value, or null. */
+    private static @com.legend.base.Nullable String queryParam(@com.legend.base.Nullable String rawQuery, String name) {
+        if (rawQuery == null) {
+            return null;
+        }
+        for (String pair : rawQuery.split("&")) {
+            int eq = pair.indexOf('=');
+            String k = eq < 0 ? pair : pair.substring(0, eq);
+            if (k.equals(name)) {
+                return eq < 0 ? "" : java.net.URLDecoder.decode(pair.substring(eq + 1), StandardCharsets.UTF_8);
+            }
+        }
+        return null;
     }
 
     private class ExecuteSqlHandler implements HttpHandler {
@@ -244,8 +263,12 @@ public class LegendHttpServer {
     }
 
     public static void sendResponse(HttpExchange exchange, int status, String body) throws IOException {
+        sendResponse(exchange, status, body, "application/json");
+    }
+
+    static void sendResponse(HttpExchange exchange, int status, String body, String contentType) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().add("Content-Type", "application/json");
+        exchange.getResponseHeaders().add("Content-Type", contentType);
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
