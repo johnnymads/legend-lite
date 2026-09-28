@@ -16,7 +16,7 @@ import {
   type PivotFacts,
   type TypeOf,
 } from '../src/query.ts';
-import { accessor, col, element, lambda, toJson as protocolJson, variable } from '../../pure-protocol/src/index.ts';
+import { accessor, col, element, lambda, variable } from '../../pure-protocol/src/index.ts';
 import type { FilterNode } from '../src/snapshot.ts';
 import { print, printFilter, printLevel, printValues, row } from './lite-compiler.ts';
 
@@ -789,8 +789,8 @@ describe('names and literals, as the compiler prints them', () => {
     assert.equal(value("O'Hara", 'String'), "|'O\\'Hara'");
     assert.equal(value('42', 'Integer'), '|42');
     assert.equal(value('9007199254740993', 'Integer'), '|9007199254740993');
-    // a decimal keeps its digits in the tree; the printer, as upstream's does, reads it through a double
-    assert.match(protocolJson(lambda([], literalNode('12.30', 'Decimal'))), /"value":12\.30\b/);
+    // a decimal keeps its digits, in the tree and in the print
+    assert.equal(value('12.30', 'Decimal'), '|12.30D');
     assert.equal(value('2.5', 'Float'), '|2.5');
     assert.equal(value(true, 'Boolean'), '|true');
     assert.equal(value('true', 'Boolean'), '|true');

@@ -5,6 +5,7 @@
 // upstream's alike), so a literal built here and the same literal parsed are the same JSON.
 
 import { ExactNumber, ProtocolError } from './exact.ts';
+import { javaBigDecimal, javaDouble } from './spelling.ts';
 import type {
   AppliedFunction, CBoolean, CDateTime, CDecimal, CFloat, CInteger, CLatestDate, CStrictDate,
   CStrictTime, CString, ValueSpecification,
@@ -58,22 +59,27 @@ export const lit = {
     return exact.isNegative ? negate(node) : node;
   },
 
-  /** A float: a finite number (or its exact digits). */
+  /**
+   * A float: a finite number, or its digits. A Float IS a double, so its value is the double's,
+   * written as the wire writes a double (spelling.ts: `5000` is `5000.0`, `1e7` is `1.0E7`).
+   */
   float(value: number | string): CFloat | AppliedFunction {
     const exact = typeof value === 'string' ? ExactNumber.of(value) : null;
     const n = exact ? Number(exact.text) : value as number;
     if (!Number.isFinite(n)) throw new ProtocolError(`a float must be finite, got ${value}`);
     const negative = exact ? exact.isNegative : n < 0 || Object.is(n, -0);
-    const magnitude: number | ExactNumber = exact ? exact.abs() : Math.abs(n);
-    const node: CFloat = { _type: 'float', value: magnitude };
+    const node: CFloat = { _type: 'float', value: ExactNumber.of(javaDouble(Math.abs(n))) };
     return negative ? negate(node) : node;
   },
 
-  /** A decimal as its exact digits, `'12.30'`: never through a double. */
+  /**
+   * A decimal as its exact digits, `'12.30'`: never through a double. Written as the wire writes a
+   * BigDecimal of that value and scale (spelling.ts: `0.0000001` is `1E-7`).
+   */
   decimal(value: string | bigint): CDecimal | AppliedFunction {
     const exact = typeof value === 'bigint' ? ExactNumber.ofInteger(value) : ExactNumber.of(value);
     if (!exact.isPlain) throw new ProtocolError(`a decimal is written as plain digits, got '${value}'`);
-    const node: CDecimal = { _type: 'decimal', value: exact.abs() };
+    const node: CDecimal = { _type: 'decimal', value: ExactNumber.of(javaBigDecimal(exact.abs().text)) };
     return exact.isNegative ? negate(node) : node;
   },
 

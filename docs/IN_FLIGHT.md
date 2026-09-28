@@ -44,6 +44,17 @@ h2-fail-roster.txt`.
 **Next slice:** W2 docs/owed items and D1 (DataCube Direct mode over the HTTP SQL API), all inside
 `warehouse/` and `datacube/`; nothing planned in `core/`, `spec/` or `tools/`.
 
+## DataCube T4 (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md)
+
+**Cross-area edits in its next push (2026-09-28):**
+- `json/src/main/java/com/legend/json/Json.java` (+ `JsonTest`): a number parsed from text keeps its
+  token and is written back byte for byte (`1e5` was re-spelled `1E+5`). The token takes no part in
+  equality. Full chain run with it first: every corpus and PCT gate passed.
+- `core/src/main/java/com/legend/protocol/PureComposer.java` (+ `parser-equivalence`
+  ComposerParityTest): a decimal prints its exact digits (`10.10D`); 2 of 56,990 parity prints named.
+- `wasm/src/main/java/planner/{Wasm,JvmMain}.java` (already on main, 149e771b4): the catalog answer's
+  source as protocol; JvmMain's `json` mode.
+
 ## The rules both sides follow
 
 1. **Before pushing, `git fetch` and rebase on `origin/main`; never force-push; never bare `git stash`.**

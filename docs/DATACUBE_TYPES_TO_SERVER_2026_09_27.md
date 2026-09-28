@@ -295,9 +295,22 @@ from the column's compiler type; the NULL group a real null; exact filter inputs
 - Found by typing, fixed: an Ad Hoc POV filter's column was dropped from its query's typed
   columns (a guessed literal hid it).
 - Saved views are format 3 (the path keys changed); older are refused, as the user ruled for 2.
-- The WASM differential's print round trip checks a FIXED POINT (print, parse, print is the same
-  text): a Float built from `5000` and the parse of its print `5000.0` are one value spelled two
-  ways, and copying Java's double spelling into TypeScript is what T4 removed.
+- ONE QUERY, ONE BYTE STRING (the user, 2026-09-28). The round trip -- the tree DataCube builds,
+  printed by the compiler, parsed back -- is byte-identical JSON. What that took, measured first:
+  - the printer keeps a decimal's digits (`10.10D`). Upstream's printer drops them, and not by
+    design: its reader (`CDecimal.CDecimalDeserializer`) reads the value through a Jackson tree node,
+    where a JSON fraction is a double -- so `10.10` is `10.1` and `12345678901234567.89` is
+    `12345678901234568`, on EXECUTE and generatePlan too (matters once DataCube talks to a real
+    legend-engine). Cost: 2 of 56,990 parity prints, one lambda whose own upstream test expects
+    `new BigDecimal("10.10")`; named in ComposerParityTest (EXACT_DECIMAL).
+  - lite's JSON library writes a number back as the token it read (it re-spelled `1e5` as `1E+5`);
+    measured with the full chain first -- every corpus and PCT gate passed.
+  - pure-protocol writes numbers as the wire does (spelling.ts): a Float as JDK `Double.toString`, a
+    Decimal as `BigDecimal.toString`. Not Pure's grammar: the reference writer's number layout. 0 of
+    21,845 doubles differ from lite's JVM (JDK 25); all 1,012 fuzzed decimals match.
+  - the tab's build (TeaVM) spells 30 of those doubles differently (17-digit ties, subnormals) and
+    reads/writes 2 one ulp off. Accepted by the user as a 17th-digit divergence; pinned exactly in
+    the twins test, so a new one fails.
 - Guardrail: no null-key sentinel and no Date on the query path.
 
 T4 is complete with this. **Next: T5** (what a type accepts, from the compiler: generated
@@ -328,6 +341,11 @@ operator, aggregate and function signatures, D4).
 comes from its catalog (T2) and whose types come from the compiler (T1):
 - files: CSV, Parquet, JSON, and Excel workbooks; pasted clipboard data;
 - a REST API at a user-given URL (JSON as Variant or a table, by its shape);
+- a WEB PAGE at a user-given URL whose embedded table becomes the source (the user, 2026-09-28; as
+  Excel/Power BI "Get Data from Web" and pandas `read_html`): fetched SERVER side (a tab cannot read
+  another site's page), its `<table>`s listed for the user to pick one, then ingested like an
+  upload -- DuckDB reads it, the compiler declares and types it. A table a page builds with script
+  needs a headless browser: a second tier. Refresh re-fetches; a snap freezes it;
 - a remote database's table or query, live or snapped;
 - files in object storage (S3, GCS, Azure; Parquet, Iceberg, Delta), credentials held server side;
 - legend-engine's own sources: a saved Legend Query, a Pure function or service, a data product;

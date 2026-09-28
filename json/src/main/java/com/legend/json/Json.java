@@ -199,12 +199,32 @@ public final class Json {
         public Str { Objects.requireNonNull(value, "String node value cannot be null"); }
     }
 
-    /** Number node — stored as long if integral, else double. */
+    /**
+     * Number node — stored as long if integral, else double; a fraction or exponent read from text
+     * also keeps its exact value ({@code decimalValue}) and the TOKEN it was written as, so reading
+     * and writing a document changes no byte of it ({@code 1.0E10} stays {@code 1.0E10}, not
+     * {@code 1.0E+10}). The token is spelling, not value: it takes no part in equality.
+     */
     public record Num(long longValue, double doubleValue, boolean isInteger,
-            java.math.@com.legend.base.Nullable BigDecimal decimalValue) implements Node {
+            java.math.@com.legend.base.Nullable BigDecimal decimalValue,
+            @com.legend.base.Nullable String token) implements Node {
         /** Pre-F3.1a arity — no exact decimal available. */
         public Num(long longValue, double doubleValue, boolean isInteger) {
-            this(longValue, doubleValue, isInteger, null);
+            this(longValue, doubleValue, isInteger, null, null);
+        }
+        public Num(long longValue, double doubleValue, boolean isInteger,
+                java.math.@com.legend.base.Nullable BigDecimal decimalValue) {
+            this(longValue, doubleValue, isInteger, decimalValue, null);
+        }
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Num n && n.longValue == longValue
+                    && Double.compare(n.doubleValue, doubleValue) == 0 && n.isInteger == isInteger
+                    && Objects.equals(n.decimalValue, decimalValue);
+        }
+        @Override
+        public int hashCode() {
+            return Objects.hash(longValue, doubleValue, isInteger, decimalValue);
         }
         public static Num ofLong(long v) { return new Num(v, (double) v, true); }
         public static Num ofDouble(double v) {
@@ -415,7 +435,9 @@ public final class Json {
             case Str s -> w.writeString(s.value());
             case Num num -> {
                 if (num.isInteger()) w.writeLong(num.longValue());
-                else if (num.decimalValue() != null) {
+                else if (num.token() != null) {
+                    w.writeToken(num.token());   // as it was read: a JSON number lexeme, byte for byte
+                } else if (num.decimalValue() != null) {
                     w.writeDecimal(num.decimalValue());
                 } else {
                     w.writeDouble(num.doubleValue());
@@ -574,6 +596,13 @@ public final class Json {
         public Writer writeDecimal(java.math.BigDecimal v) {
             preWrite();
             append(v.toString());
+            return this;
+        }
+
+        /** A number token already in JSON's number grammar (one this library parsed), written as is. */
+        public Writer writeToken(String token) {
+            preWrite();
+            append(token);
             return this;
         }
 
@@ -960,7 +989,10 @@ public final class Json {
             }
 
             String num = src.substring(start, pos);
-            if (isFloat) return Num.ofDecimal(new java.math.BigDecimal(num));
+            if (isFloat) {
+                java.math.BigDecimal exact = new java.math.BigDecimal(num);
+                return new Num(exact.longValue(), exact.doubleValue(), false, exact, num);
+            }
             // an integer past a long (DuckDB writes UINT64's max) is still a JSON number: kept exact
             if (num.length() >= 19) {
                 java.math.BigInteger big = new java.math.BigInteger(num);

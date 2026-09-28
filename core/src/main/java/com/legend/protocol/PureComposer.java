@@ -581,10 +581,13 @@ public final class PureComposer {
     }
 
     /**
-     * A decimal as upstream reads it off the wire ({@code CDecimal.CDecimalDeserializer}: the value's
-     * Jackson TREE node, {@code new BigDecimal(node.asText())}). A JSON fraction is a double in that
-     * tree, so {@code 10.10} prints {@code 10.1D} -- upstream's printing, matched; lite's planner reads
-     * the same value exactly ({@code ProtocolReader}).
+     * A decimal as its EXACT digits: {@code 10.10} prints {@code 10.10D}, so a print parses back to the
+     * same tree. Deliberately NOT upstream's: its reader ({@code CDecimal.CDecimalDeserializer}) takes
+     * the value's Jackson TREE node, where a JSON fraction is a double, then
+     * {@code new BigDecimal(node.asText())} -- so {@code 10.10} comes back {@code 10.1} and
+     * {@code 12345678901234567.89} comes back {@code 12345678901234568}. Upstream's own test of that
+     * lambda expects {@code new BigDecimal("10.10")} (mathLibraryTests.pure); the user chose exactness,
+     * 2026-09-28. ComposerParityTest names the prints this changes.
      */
     private static BigDecimal decimal(Json.Node v) {
         if (v instanceof Json.Str s) {
@@ -594,9 +597,8 @@ public final class PureComposer {
         if (n.isInteger()) {
             return BigDecimal.valueOf(n.longValue());
         }
-        if (n.decimalValue() != null && n.decimalValue().stripTrailingZeros().scale() <= 0
-                && n.decimalValue().scale() <= 0) {
-            return new BigDecimal(n.decimalValue().toBigIntegerExact());
+        if (n.decimalValue() != null) {
+            return n.decimalValue();
         }
         return new BigDecimal(Double.toString(n.doubleValue()));
     }

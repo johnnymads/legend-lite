@@ -1013,17 +1013,16 @@ class JsonTest {
         @Test void integerValuedExponentPreservesExactToken() {
             // F3.1a: 1e5 parses as Num carrying the EXACT BigDecimal (the
             // old double channel collapsed it to "100000", losing the
-            // float flavor — the previous name of this pin documented
-            // that loss as intentional). With the exact-decimal channel
-            // the token round-trips value-identically as 1E+5
-            // (BigDecimal.toString), and the flavor survives too.
+            // float flavor). 2026-09-28: the TOKEN round-trips byte for
+            // byte too -- it was re-spelled 1E+5 (BigDecimal.toString),
+            // so a document read and written back changed.
             Json.Arr first = (Json.Arr) Json.parse("[1e5]");
             Json.Num firstNum = (Json.Num) first.items().get(0);
             assertEquals(100000.0, firstNum.doubleValue(), 0.0);
             assertFalse(firstNum.isInteger());
 
             String compact = Json.toCompact(first);
-            assertEquals("[1E+5]", compact);
+            assertEquals("[1e5]", compact);
 
             Json.Arr second = (Json.Arr) Json.parse(compact);
             Json.Num secondNum = (Json.Num) second.items().get(0);
@@ -1031,6 +1030,7 @@ class JsonTest {
             assertFalse(secondNum.isInteger());
             assertEquals(new java.math.BigDecimal("1E+5"),
                     secondNum.decimalValue());
+            assertEquals("[1e5]", Json.toCompact(second), "and again: no byte changes");
         }
         @Test void deepNesting() {
             assertRoundTrip("{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":1}}}}}");

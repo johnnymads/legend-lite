@@ -10,7 +10,7 @@ import {
   lambda, lit, minus, ne, not, or, over, parameter, plus, relationType, times, to, toMany, type, variable,
   ExactNumber, ONE, MANY, ProtocolError, readLambda, toJson, type Lambda,
 } from '../src/index.ts';
-import { compose, parse } from './lite.ts';
+import { compose, parse, ready } from './lite.ts';
 
 const T = accessor('a::DB', 's', 'T');
 const x = (c: string) => col('x', c);
@@ -83,11 +83,100 @@ describe('why queries are built as trees, not text', () => {
     assert.notEqual(await parse('|$x.a <= 2 && $x.b >= 3'), intended);
   });
 
-  it('a decimal is exact on the wire; the printer shows it as upstream does (through a double)', async () => {
-    const json = toJson(lambda([], lit.decimal('12.30')));
-    assert.equal(json, '{"_type":"lambda","body":[{"_type":"decimal","value":12.30}],"parameters":[]}');
-    assert.equal(json, await parse('|12.30D'));
-    assert.equal(await compose(json), '|12.3D');
+  it('a decimal is exact on the wire, and the printer keeps its digits (not upstream\'s read through a double)', async () => {
+    for (const [digits, printed] of [['12.30', '12.30D'], ['12345678901234567.89', '12345678901234567.89D'],
+      ['0.0000001', '1E-7D'], ['-100.500', '-100.500D']] as const) {
+      const json = toJson(lambda([], lit.decimal(digits)));
+      assert.equal(json, await parse(`|${digits}D`));
+      // printed as the wire spells its value (BigDecimal's layout), and back to the same bytes
+      assert.equal(await compose(json), `|${printed}`);
+      assert.equal(await parse(await compose(json)), json, `${digits} round-trips byte for byte`);
+    }
+  });
+});
+
+describe('numbers are spelled as the wire spells them: byte for byte with lite\'s parse', () => {
+  // A deterministic spread (no Math.random: a failure must reproduce): every decade the double
+  // range reaches, the plain/exponent boundaries (1e-3, 1e7), repeating fractions, the largest and
+  // smallest (subnormal) doubles; decimals of every scale around BigDecimal's -6 boundary.
+  let seed = 20260928;
+  const next = (): number => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const floats: number[] = [5000, 0.1, 0.5, 1 / 3, 2 / 3, 1e-3, 0.00099999, 1e7, 9999999.999, 1234567.0,
+    123456789012345678, Number.MAX_VALUE, Number.MIN_VALUE, 2 ** 53, 2 ** 53 + 2, 1e21, 1e-7, 100, 0.001, 1];
+  for (let decade = -300; decade <= 300; decade += 7) {
+    for (let i = 0; i < 4; i++) floats.push(Number(`${(next() * 9 + 1).toPrecision(1 + i * 5)}e${decade}`));
+  }
+  for (let i = 0; i < 1500; i++) floats.push(next() * 10 ** Math.floor(next() * 24 - 8));
+  // and 20,000 doubles by their bits: every exponent, subnormals included
+  for (let i = 0; i < 20000; i++) {
+    const bits = BigInt(Math.floor(next() * 2 ** 31)) << 32n | BigInt(Math.floor(next() * 2 ** 31));
+    floats.push(Math.abs(new Float64Array(new BigUint64Array([bits]).buffer)[0]!));
+  }
+  const decimals: string[] = ['0.0000001', '0.000001', '1.5', '12.30', '100', '0.00', '0', '123456789.000000001',
+    '0.10', '10.10', '99999999999999999999.99', '0.0000000000001234'];
+  for (let i = 0; i < 1000; i++) {
+    const whole = Math.floor(next() * 3) === 0 ? '0' : String(Math.floor(next() * 10 ** Math.floor(next() * 12)));
+    const scale = Math.floor(next() * 14);
+    const fraction = Array.from({ length: scale }, () => String(Math.floor(next() * 10))).join('');
+    decimals.push(scale === 0 ? whole : `${whole}.${fraction}`);
+  }
+
+  /**
+   * The tab's build of lite spells a double with TeaVM's `Double.toString`, which is not the JDK's:
+   * at an exact 17-digit tie it rounds the last digit up (`…313` where the JDK, and this library,
+   * write `…312`), and it writes a subnormal's full digits. lite's JVM agrees with this library on
+   * every one of these values (JDK 25, checked 2026-09-28: 0 of 21,845 differ). Accepted by the user,
+   * 2026-09-28: the SAME double, spelled differently at its last digit. Pinned exactly: a new one, or
+   * one that is not the same double, fails.
+   */
+  const TEAVM_SPELLING = 30;
+
+  /**
+   * Two doubles the tab's build reads or writes ONE ULP off (the 17th digit: `1.9043925686624381E-264`
+   * comes back `1.904392568662438E-264`, a neighbouring double) -- TeaVM's float parsing or printing,
+   * not the JDK's. Accepted by the user, 2026-09-28, as a 17th-digit divergence; pinned by value.
+   */
+  const TEAVM_ONE_ULP = new Set([1.9043925686624381e-264, 5.5512325242606664e+137]);
+
+  /** The distance from v to the next double up. */
+  const ulp = (v: number): number => {
+    const b = new BigUint64Array(new Float64Array([v]).buffer);
+    b[0] = b[0]! + 1n;
+    return new Float64Array(b.buffer)[0]! - v;
+  };
+
+  it(`${floats.length} floats`, async () => {
+    const lite = await ready();
+    const differ: string[] = [];
+    let spelling = 0;
+    const oneUlp = new Set<number>();
+    for (const v of floats) {
+      if (!Number.isFinite(v) || v <= 0) continue;
+      const ours = toJson(lambda([], lit.float(v)));
+      const theirs = lite.parse(`|${v.toExponential()}`.replace('e+', 'e'));
+      if (ours === theirs) continue;
+      const value = (json: string): number => Number((JSON.parse(json) as { body: [{ value: number }] }).body[0].value);
+      if (value(ours) === value(theirs) && value(ours) === v) spelling++;
+      else if (TEAVM_ONE_ULP.has(v) && Math.abs(value(theirs) - v) <= ulp(v)) oneUlp.add(v);
+      else differ.push(`${v}: ours ${ours} lite ${theirs}`);
+    }
+    assert.deepEqual(differ.slice(0, 20), [], `${differ.length} of ${floats.length} differ in VALUE:\n${differ.slice(0, 20).join("\n")}`);
+    assert.equal(spelling, TEAVM_SPELLING, 'doubles spelled differently by the tab\'s build (TeaVM): the pin moved');
+    assert.deepEqual([...oneUlp].sort(), [...TEAVM_ONE_ULP].sort(), 'the tab\'s one-ulp doubles: the pin moved');
+  });
+
+  it(`${decimals.length} decimals`, async () => {
+    const lite = await ready();
+    const differ: string[] = [];
+    for (const d of decimals) {
+      const ours = toJson(lambda([], lit.decimal(d)));
+      const theirs = lite.parse(`|${d}D`);
+      if (ours !== theirs) differ.push(`${d}: ours ${ours} lite ${theirs}`);
+    }
+    assert.deepEqual(differ.slice(0, 20), [], `${differ.length} of ${decimals.length} differ`);
   });
 });
 

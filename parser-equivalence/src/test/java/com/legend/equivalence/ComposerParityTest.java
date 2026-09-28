@@ -34,7 +34,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ComposerParityTest {
 
     /** Lambdas both printers print, byte-equal, summed over both styles. Up-only. */
-    private static final int MIN_MATCHED = 56990;   // 2026-09-27: every lambda upstream prints -- 28,183 corpus + 313 round-trip, both styles; upstream threw on 2
+    private static final int MIN_MATCHED = 56988;   // 2026-09-28: 56,990 less the 2 prints of EXACT_DECIMAL below (the user chose exact decimals); upstream threw on 2
+
+    /**
+     * Where lite DELIBERATELY prints differently: a decimal's exact digits. Upstream's reader
+     * ({@code CDecimal.CDecimalDeserializer}) reads the value through a Jackson tree node, where a JSON
+     * fraction is a double, so {@code 10.10} comes back {@code 10.1} -- while upstream's own test of this
+     * very lambda (javaPlatformBinding mathLibraryTests.pure:65) expects {@code new BigDecimal("10.10")}.
+     * Upstream's print on the left, lite's on the right. Pinned both ways: each must still occur, and
+     * nothing else may differ.
+     */
+    private static final Map<String, String> EXACT_DECIMAL = Map.of(
+            "|10.1D->divide(2.1D, 1)", "|10.10D->divide(2.1D, 1)",
+            "|10.1D->divide(\n  2.1D,\n  1\n)", "|10.10D->divide(\n  2.1D,\n  1\n)");
 
     /** A whole model's JSON nests far deeper than one request's default limit. */
     private static final Json.Config DEEP = new Json.Config(4096);
@@ -76,6 +88,7 @@ class ComposerParityTest {
 
         int matched = 0;
         int upstreamThrew = 0;
+        java.util.Set<String> deliberate = new java.util.TreeSet<>();
         List<String> diffs = new ArrayList<>();
         Map<String, Integer> refusals = new TreeMap<>();
         for (Json.Obj lambda : lambdas) {
@@ -99,6 +112,8 @@ class ComposerParityTest {
                 }
                 if (expected.equals(actual)) {
                     matched++;
+                } else if (actual.equals(EXACT_DECIMAL.get(expected))) {
+                    deliberate.add(expected);
                 } else if (diffs.size() < 40) {
                     diffs.add(style + "\n  upstream: " + expected + "\n  lite:     " + actual
                             + "\n  wire:     " + (wire.length() > 1500 ? wire.substring(0, 1500) : wire));
@@ -107,11 +122,13 @@ class ComposerParityTest {
         }
         System.out.println("[composer-parity] sources=" + sources + " corpusLambdas=" + corpusLambdas
                 + " roundtripLambdas=" + (lambdas.size() - corpusLambdas) + " matched=" + matched
-                + " diffs=" + diffs.size() + " refused=" + refusals.values().stream().mapToInt(Integer::intValue).sum()
+                + " deliberate=" + deliberate.size() + " diffs=" + diffs.size() + " refused=" + refusals.values().stream().mapToInt(Integer::intValue).sum()
                 + " upstreamThrew=" + upstreamThrew);
         refusals.forEach((m, n) -> System.out.println("[composer-parity] refused " + n + " x " + m));
         diffs.forEach(d -> System.out.println("[composer-parity] DIFF " + d));
         assertEquals(List.of(), diffs, "lite printed a lambda differently from upstream");
+        assertEquals(new java.util.TreeSet<>(EXACT_DECIMAL.keySet()), deliberate,
+                "a deliberate exact-decimal difference no longer occurs: take it off EXACT_DECIMAL");
         assertEquals(Map.of(), refusals, "lite refused a lambda upstream prints");
         assertTrue(matched >= MIN_MATCHED, "matched " + matched + " < " + MIN_MATCHED);
     }
