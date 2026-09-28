@@ -239,6 +239,8 @@ export class DataGrid {
   #sorts: readonly HeaderSort[] = [];
   /** Live widths while a column edge is being dragged. */
   readonly #dragWidths = new Map<string, number>();
+  /** Ends the resize drag in progress, if any: its column, where it started, where it got to. */
+  #endDrag: (() => { column: string; from: number; width: number } | null) | null = null;
   /** Widths fitted to content, for columns with none of their own. */
   readonly #fitWidths = new Map<string, number>();
   /** The query (epoch) whose rows were last fitted. */
@@ -355,10 +357,16 @@ export class DataGrid {
 
   /** Replace the column model. Resets the header. */
   setColumns(model: ColumnModel): void {
+    // A resize drag in progress ENDS here: the header is rebuilt, the grip
+    // the pointer was captured by goes with it, and its pointerup never
+    // comes -- the dragged width stuck to the column for good (P2-210).
+    // What was dragged is kept, reported once the new header is in place.
+    const ended = this.#endDrag?.() ?? null;
     this.#model = model;
     this.#renderHeader();
     this.#announceRowCount();
     this.#rendered = null;
+    if (ended && ended.width !== ended.from) this.#options.onResizeColumn?.(ended.column, ended.width);
   }
 
   /**
@@ -899,15 +907,21 @@ export class DataGrid {
         this.#dragWidths.set(leaf.name, width(e));
         this.#applyTemplate();
       };
-      const up = (e: PointerEvent): void => {
+      const stop = (): number | undefined => {
         grip.removeEventListener('pointermove', move);
         grip.removeEventListener('pointerup', up);
         grip.removeEventListener('pointercancel', up);
-        const final = this.#dragWidths.get(leaf.name) ?? width(e);
+        this.#endDrag = null;
+        const reached = this.#dragWidths.get(leaf.name);
         this.#dragWidths.delete(leaf.name);
+        return reached;
+      };
+      const up = (e: PointerEvent): void => {
+        const final = stop() ?? width(e);
         if (final !== from) onResize(leaf.name, final);
         else this.#applyTemplate();
       };
+      this.#endDrag = () => ({ column: leaf.name, from, width: stop() ?? from });
       grip.setPointerCapture?.(event.pointerId);
       grip.addEventListener('pointermove', move);
       grip.addEventListener('pointerup', up);

@@ -37,7 +37,7 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-102 | after a refused zone change the zones keep the refused layout | **closed B1b**: `#onState` repaints the zones from the state on every event. "a refused zone change puts the zones back" (red before) |
 | P2-103 | a chip move is two changes; a refused move drops the grouping | **closed B1c**: the panel reports one `ZoneLayout` per gesture. `test/cube-transactions.test.ts` "a chip dragged … is ONE change" (red before: "2 changes were undone") |
 | P2-104 | a superseded refresh turns the busy signal off while the newer one runs | **closed B1b**: busy is `owner.busy`. "a superseded run ending does not turn busy off…" (red before) |
-| P2-105 | `dispose()` stops nothing: late queries, listeners, callbacks outlive the cube | open |
+| P2-105 | `dispose()` stops nothing: late queries, listeners, callbacks outlive the cube | **closed B3**: `dispose` unsubscribes from the owner, cancels the change in flight (its query stopped), silences the host, removes the shortcuts, closes the windows. `test/cube-transactions.test.ts` "a disposed cube stops" (red before: a late answer reached the host) |
 | P2-106 | an action during an in-flight Undo mixes states and loses the redo | **fixed by B1b** (the owner lands the undo AND the change; undo returns to where the change was made); pinned in B2 by `test/cube-transactions.test.ts` "a change made while an Undo runs" — passed on first run |
 | P2-107 | overlapping Undos roll back to a state never rendered | **fixed by B1b** (two presses are two steps over the stack); pinned in B2 by "two quick Ctrl-Z …" — passed on first run |
 | P2-108 | Undo restores the configuration but not appearance, zones or title bar | **closed B1b**: one paint from the state (`#paintState`). "the zones and the title bar come back with the state" (red before) |
@@ -45,7 +45,7 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-110 | during a refresh the context menu pairs the old rows with the new snapshot | **closed B1c**: the menu reads `rendered` (`#shown`). "a right-click while a regroup runs names the column…" (red before: it offered `desk = 'EMEA'` on a region row) |
 | P2-114 | fire-and-forget calls: unhandled rejections; failed presentation changes keep the new config | **closed B1b**: presentation runs no query; `change` never throws (it returns an outcome). "a presentation change runs no query…" (red before) |
 | P2-127 | the host TOGGLES instead of applying the requested expand state | **closed B1b**: `tree.setOpen(path, expanded)`. "two quick clicks … leave it open" (red with the toggle put back) |
-| P2-131 | drill-through has no stale-result guard | open |
+| P2-131 | drill-through has no stale-result guard | **closed B3**: drills are latest-wins. "two drill-throughs: the LATER one is shown" (red before: the earlier answer, arriving last, took the window) |
 | P2-144 | the Filters window keeps an old copy and its Apply overwrites newer changes | open |
 | P2-150 | reopening Filters rewrites '' / numeric-looking / quoted values | to re-test (T4c typed the values; the reopen path may still coerce) |
 | P2-152 | a serializer refusal throws from compile: the column editor hangs, Apply silently does nothing | open |
@@ -53,9 +53,9 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-170 | edits made while an Apply runs are recorded as applied | open (`#opened = this.#draft` after the await) |
 | P2-171 | the Sorts tab's direction dropdown reads a stale map | open |
 | P2-187 | the Dimensions editor loses hierarchy edits on rename/Add | open |
-| P2-210 | a result arriving mid column-resize leaves the drag stuck | open |
+| P2-210 | a result arriving mid column-resize leaves the drag stuck | **closed B3**: `setColumns` ends a drag in progress, keeping the width dragged so far. `test/grid-resize.test.ts` (red before: the drag never ended and the width stuck) |
 | P2-220 | every toolbar rebuild adds a document keydown listener | **closed B1b** (pulled forward: B1b repaints the title bar on every event): `#listenForKeys`, once. "one Ctrl-Z is ONE undo step" (red with the per-rebuild listener put back) |
-| P2-221 | Escape in a text field closes the whole window and drops its draft | open |
+| P2-221 | Escape in a text field closes the whole window and drops its draft | **closed B3**: Escape in a text field stays in the field. "Escape in a text field stays in the field" (red before) |
 | P2-259 | a failed Ad Hoc step is still committed | open |
 | P2-260 | an Ad Hoc option change re-places old answers on a changed grid | open |
 | P2-261 | an Ad Hoc option changed while a query runs is lost | open |
@@ -221,6 +221,8 @@ once, and the menu offers Redo only when there is one.
 
 - **B3 — lifecycle and supersession.** Dispose, listeners, drill sequence, resize drag, Escape.
   P2-105, 131, 210, 220, 221.
+B3 LANDED: P2-105, 131, 210, 221 closed (P2-220 went with B1b).
+
 - **B4 — editors on live state.** Filters, Sorts, Dimensions, Apply re-entry, compile refusals.
   P2-144, 150 (after its re-test), 152, 170, 171, 187.
 - **B5 — Ad Hoc under the same rules**, and the shell's routing while it is on. P2-259–261, 268–270,

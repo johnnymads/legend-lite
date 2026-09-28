@@ -364,6 +364,12 @@ export class CubeApp {
    * holds that nothing outside cube-state.ts assigns cube state.
    */
   readonly #owner: CubeStateOwner;
+  /** Stops the owner's events reaching this app: see `dispose`. */
+  readonly #unsubscribe: () => void;
+  /** Set by `dispose`: nothing reaches the host, the screen or a window after it. */
+  #disposed = false;
+  /** Drill-throughs, latest wins: an earlier one answering late is dropped (P2-131). */
+  #drills = 0;
   #selection: CellRange | null = null;
   /** Where selection statistics are written, inside the status bar. */
   #statsSlot: HTMLElement | null = null;
@@ -586,7 +592,7 @@ export class CubeApp {
         options.planner as Planner,
         deps,
       );
-    this.#owner.subscribe((event) => this.#onState(event));
+    this.#unsubscribe = this.#owner.subscribe((event) => this.#onState(event));
     this.#listenForKeys();
 
     this.#wireContextMenu();
@@ -791,6 +797,7 @@ export class CubeApp {
   }
 
   #status(text: string, kind: 'ok' | 'warn' | 'error' = 'ok'): void {
+    if (this.#disposed) return;
     this.#options.onStatus?.(text, kind);
   }
 
@@ -2029,6 +2036,7 @@ export class CubeApp {
    * engine needs the key.
    */
   async #drillThrough(row: number, column?: number): Promise<void> {
+    const drill = (this.#drills += 1);
     const view = this.#view;
     const meta = this.#treeRows[row];
     if (!view || !meta) return;
@@ -2048,10 +2056,16 @@ export class CubeApp {
     // its own: on the plane where a remote engine executes there is
     // no local engine here to call, and a drill-through that works on
     // two planes out of three is a broken feature on the third.
-    const { rows: table } = await this.#controller.runQuery(
-      query,
-      view.snapshot,
-    );
+    let table: ResultTable;
+    try {
+      ({ rows: table } = await this.#controller.runQuery(query, view.snapshot));
+    } catch (error: unknown) {
+      if (drill === this.#drills && !this.#disposed) this.#reportFailure(error);
+      return;
+    }
+    // LATEST WINS: two drills in quick succession answered in either
+    // order, and whichever answered last took the window (P2-131).
+    if (drill !== this.#drills || this.#disposed) return;
     this.#showOverlay('Drill-through', (host) => {
       const pre = this.#doc.createElement('pre');
       pre.className = 'dc-drill';
@@ -2267,10 +2281,21 @@ export class CubeApp {
    * undo" over the one that was (2026-09-25 harness).
    */
   dispose(): void {
+    if (this.#disposed) return;
+    // FIRST, so nothing below -- and nothing that answers late -- reaches
+    // the host: a cube it no longer has kept calling onView, onChange and
+    // onStatus, and a late answer painted into a page that had moved on
+    // (P2-105).
+    this.#disposed = true;
+    this.#unsubscribe();
+    // The change in flight is cancelled and its query stopped.
+    this.#owner.cancel();
+    this.#setBusy(false);
     if (this.#onDocKey) this.#doc.removeEventListener('keydown', this.#onDocKey);
     this.#onDocKey = null;
     this.exitAdHoc();
     this.#menu.close();
+    for (const key of [...this.#open.keys()]) this.#closeWindow(key);
   }
 
   // -- Ad Hoc Analysis mode -------------------------------------------------
@@ -2700,8 +2725,11 @@ export class CubeApp {
       // Escape closes the window it is pressed in, because a window a
       // keyboard user cannot dismiss is a trap; the panels inside stop
       // their own Escape from reaching here.
+      // Escape closes the window -- except in a text field, where it
+      // belongs to the field: it closed the whole window and dropped the
+      // draft being typed (P2-221).
       win.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') this.#closeWindow(key);
+        if (event.key === 'Escape' && !isTextEntry(event.target)) this.#closeWindow(key);
       });
     }
     win.hidden = false;

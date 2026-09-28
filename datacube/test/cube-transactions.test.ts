@@ -38,9 +38,13 @@ class GateEngine extends FakeEngine {
   queries = 0;
   refuse: string | null = null;
   hold = false;
+  /** Answer with an extra column `n`: which query this was, so two answers can be told apart. */
+  tag = false;
   readonly held: (() => void)[] = [];
   async answer(_sql: string, epoch: number): Promise<ResultTable> {
     this.queries += 1;
+    const n = this.queries;
+    const tagged = this.tag;
     if (this.hold) await new Promise<void>((r) => this.held.push(r));
     if (this.refuse !== null) throw new Error(this.refuse);
     return {
@@ -48,6 +52,7 @@ class GateEngine extends FakeEngine {
         { name: 'region', type: 'String', values: ['EMEA', 'AMER'] },
         { name: 'desk', type: 'String', values: ['A', 'B'] },
         { name: 'total', type: 'Float', values: [600, 400] },
+        ...(tagged ? [{ name: 'n', type: 'Integer', values: [n, n] }] : []),
       ],
       rowCount: 2,
       epoch,
@@ -447,6 +452,76 @@ describe('history through the app (B2)', () => {
     assert.notEqual(redo()?.getAttribute('aria-disabled'), 'true', 'one to redo');
     await sort('Descending');
     assert.equal(redo()?.getAttribute('aria-disabled'), 'true', 'a new change ended it');
+  });
+});
+
+describe('lifecycle (B3)', () => {
+  it('a disposed cube stops: its query is cancelled and nothing reaches the host after (P2-105)', async () => {
+    const heard: string[] = [];
+    app.dispose();
+    root.replaceChildren();
+    app = new CubeApp(root, SNAPSHOT, { engine, planner: new StubPlanner(),
+      onView: () => heard.push('view'), onChange: () => heard.push('change'),
+      onStatus: (text) => heard.push(`status ${text}`) });
+    await app.open();
+    await settle();
+    engine.hold = true;
+    menu('EMEA', 'Ascending');
+    await settle();
+    heard.length = 0;
+    app.dispose();
+    engine.hold = false;
+    engine.releaseAll();
+    await settle();
+    assert.deepEqual(heard, [], 'a late answer reached the host of a cube it no longer has');
+    assert.equal(app.state.busy, false, 'the change in flight was cancelled');
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+    await settle();
+    assert.deepEqual(heard, [], 'and its shortcuts are gone');
+  });
+
+  it('two drill-throughs: the LATER one is shown, however the answers arrive (P2-131)', async () => {
+    const cell = (text: string): HTMLElement => [...root.querySelectorAll<HTMLElement>('.dc-cell')]
+      .find((c) => c.textContent?.trim().replace(/^[▸▾]/, '').startsWith(text)) ?? assert.fail(`no cell ${text}`);
+    // a cell is focused by a click and ACTIVATED by Enter: that is the drill
+    const drill = (text: string): void => {
+      cell(text).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, detail: 1 }));
+      (root.querySelector('.dc-app-grid .dc-grid') ?? root.querySelector('.dc-app-grid') as Element)
+        .dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    };
+    engine.hold = true;
+    engine.tag = true;
+    const before = engine.queries;
+    drill('EMEA');
+    await settle();
+    drill('AMER');
+    await settle();
+    assert.equal(engine.held.length, 2, `two drills asked (${engine.queries - before} queries)`);
+    const second = engine.queries;
+    engine.release(1);
+    await settle();
+    engine.release(0);
+    await settle();
+    engine.hold = false;
+    engine.tag = false;
+    const shown = root.querySelector('.dc-drill')?.textContent ?? '';
+    assert.match(shown, new RegExp(`\\b${second}\\b`), `the later drill's rows: ${shown}`);
+  });
+
+  it('Escape in a text field stays in the field: the window and its draft stay (P2-221)', async () => {
+    app.openEditor();
+    const win = root.querySelector('[data-window="Properties"]') as HTMLElement;
+    assert.ok(win, 'the Properties window');
+    ([...win.querySelectorAll<HTMLElement>('.dc-editor-tab')].find((t) => t.textContent === 'General Properties')
+      ?? assert.fail('no General tab')).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    const field = win.querySelector<HTMLInputElement>('input[type="text"], input:not([type])')
+      ?? assert.fail('no text field in the Properties window');
+    field.value = 'a draft';
+    field.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.ok(root.querySelector('[data-window="Properties"]:not([hidden])'), 'the window is still open');
+    assert.equal(field.value, 'a draft', 'and the draft with it');
+    win.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assert.equal(root.querySelector('[data-window="Properties"]:not([hidden])'), null, 'Escape on the window itself closes it');
   });
 });
 
