@@ -57,7 +57,11 @@ after(async () => {
 
 const BASE: CubeSnapshot = {
   source: { query: element('deals') },
-  columns: [],
+  columns: [
+    { name: 'region', type: 'String' },
+    { name: 'revenue', type: 'Float' },
+    { name: 'profit', type: 'Float' },
+  ],
   derived: [],
   rows: ['region'],
   pivotOn: [],

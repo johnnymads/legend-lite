@@ -105,18 +105,18 @@ describe('TreeState', () => {
 describe('requiredLevels', () => {
   it('asks only for the top level when everything is closed', () => {
     const reqs = requiredLevels(TreeState.empty(true), 2, childrenOf);
-    assert.deepEqual(reqs.map(requestKey), ['0:', '1:']);
+    assert.deepEqual(reqs.map(requestKey), ['0:[]', '1:[]']);
   });
 
   it('omits the grand total when totals are off', () => {
     const s = TreeState.empty(true).withTotals(false);
-    assert.deepEqual(requiredLevels(s, 2, childrenOf).map(requestKey), ['1:']);
+    assert.deepEqual(requiredLevels(s, 2, childrenOf).map(requestKey), ['1:[]']);
   });
 
   it('asks for children only of open groups', () => {
     const s = TreeState.empty(true).expand(['EMEA']);
     const keys = requiredLevels(s, 2, childrenOf).map(requestKey);
-    assert.deepEqual(keys, ['0:', '1:', '2:EMEA']);
+    assert.deepEqual(keys, ['0:[]', '1:[]', '2:["EMEA"]']);
     // AMER is closed, so its children are never fetched -- a collapsed
     // cube costs one query, not one per group.
     assert.equal(keys.some((k) => k.includes('AMER')), false);
@@ -127,7 +127,7 @@ describe('requiredLevels', () => {
     // opens onto its rows. Level depth+1 is that, and it is the floor.
     const s = TreeState.empty(true).expand(['EMEA']).expand(['EMEA', 'Rates']);
     const keys = requiredLevels(s, 2, childrenOf).map(requestKey);
-    assert.ok(keys.includes(`3:EMEA\u0000Rates`), keys.join(' | '));
+    assert.ok(keys.includes('3:["EMEA","Rates"]'), keys.join(' | '));
     assert.equal(keys.some((k) => k.startsWith('4:')), false);
   });
 

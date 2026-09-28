@@ -14,11 +14,15 @@ import {
   operandKind,
   operatorsFor,
   parseList,
-  parseValue,
+  parseTyped,
   toFilter,
   updateNode,
 } from '../src/ui/filter-editor.ts';
 import { printFilter } from './lite-compiler.ts';
+
+/** The compiler's types for the columns these filters name, as a cube has them. */
+const TYPES: Record<string, string> = { region: 'String', desk: 'String', trade_date: 'StrictDate' };
+const typed = (c: string): string | undefined => TYPES[c];
 import type { FilterNode } from '../src/snapshot.ts';
 
 const COLUMNS = [
@@ -45,27 +49,36 @@ describe('operator table', () => {
   });
 });
 
-describe('parseValue', () => {
-  it('types numbers as numbers, so comparisons are numeric', () => {
-    // '9' > '10' as text; 9 < 10 as numbers.
-    assert.equal(parseValue('10'), 10);
-    assert.equal(parseValue('-2.5'), -2.5);
+describe('a typed value, by its column\'s type (never by its look)', () => {
+  it('keeps a number column\'s plain digits exact, and evaluates arithmetic', () => {
+    // '12.30' and an integer past 2^53 would not survive a double
+    assert.equal(parseTyped('12.30', 'Decimal'), '12.30');
+    assert.equal(parseTyped('9007199254740993', 'Integer'), '9007199254740993');
+    assert.equal(parseTyped('-2.5', 'Float'), '-2.5');
+    assert.equal(parseTyped('2 * 3', 'Integer'), 6);
+    assert.equal(parseTyped('abc', 'Integer'), null);
   });
 
-  it('honours quotes as the escape hatch for numeric-looking text', () => {
-    // An account code like 00123 must stay text.
-    assert.equal(parseValue("'00123'"), '00123');
-    assert.equal(parseValue('"10"'), '10');
+  it('keeps text text, however numeric it looks (account codes)', () => {
+    assert.equal(parseTyped('00123', 'String'), '00123');
+    assert.equal(parseTyped("'10'", 'String'), '10');
+  });
+
+  it('keeps a date as its day and time, never a JavaScript Date', () => {
+    assert.equal(parseTyped('2024-03-01', 'StrictDate'), '2024-03-01');
+    assert.equal(parseTyped('2024-03-01T12:58', 'DateTime'), '2024-03-01T12:58:00');
+    assert.equal(parseTyped('2024-03-01 12:58:07.123456', 'DateTime'), '2024-03-01T12:58:07.123456');
+    assert.equal(parseTyped('March 1st', 'DateTime'), null);
   });
 
   it('types booleans', () => {
-    assert.equal(parseValue('true'), true);
-    assert.equal(parseValue('false'), false);
+    assert.equal(parseTyped('true', 'Boolean'), true);
+    assert.equal(parseTyped('false', 'Boolean'), false);
   });
 
   it('drops empty entries from a list rather than sending them', () => {
-    assert.deepEqual(parseList('a, ,b,'), ['a', 'b']);
-    assert.deepEqual(parseList('1, 2'), [1, 2]);
+    assert.deepEqual(parseList('a, ,b,', 'String'), ['a', 'b']);
+    assert.deepEqual(parseList('1, 2', 'Integer'), ['1', '2']);
   });
 });
 
@@ -95,7 +108,7 @@ describe('toFilter', () => {
     tree = updateNode(tree, tree.id, { join: 'or' });
     const f = toFilter(tree);
     assert.equal(f?.kind, 'or');
-    assert.equal(printFilter(f!), "x|($x.region == 'EMEA') || ($x.desk == 'Rates')");
+    assert.equal(printFilter(f!, typed), "x|($x.region == 'EMEA') || ($x.desk == 'Rates')");
   });
 
   it('expresses A AND NOT (B OR C), which a flat list cannot', () => {
@@ -111,7 +124,7 @@ describe('toFilter', () => {
     root = addTo(root, root.id, inner);
 
     assert.equal(
-      printFilter(toFilter(root)!),
+      printFilter(toFilter(root)!, typed),
       "x|($x.region == 'EMEA') && !(($x.desk == 'Rates') || ($x.desk == 'Credit'))",
     );
   });
@@ -120,7 +133,7 @@ describe('toFilter', () => {
     let tree = newGroup([newCondition('region')]);
     tree = updateNode(tree, tree.children[0]!.id, { text: 'EMEA', not: true });
     // the compiler prints `not(equal(...))` as upstream's printer does: `!=`
-    assert.equal(printFilter(toFilter(tree)!), "x|$x.region != 'EMEA'");
+    assert.equal(printFilter(toFilter(tree)!, typed), "x|$x.region != 'EMEA'");
   });
 
   it('drops a group whose children are all incomplete', () => {
@@ -131,7 +144,7 @@ describe('toFilter', () => {
   it('needs no value for a nullary operator', () => {
     let tree = newGroup([newCondition('region')]);
     tree = updateNode(tree, tree.children[0]!.id, { operator: 'isEmpty' });
-    assert.equal(printFilter(toFilter(tree)!), 'x|$x.region->isEmpty()');
+    assert.equal(printFilter(toFilter(tree)!, typed), 'x|$x.region->isEmpty()');
   });
 
   it('needs a second column for a column operator', () => {
@@ -139,7 +152,7 @@ describe('toFilter', () => {
     tree = updateNode(tree, tree.children[0]!.id, { operator: 'equalColumn' });
     assert.equal(toFilter(tree), undefined, 'incomplete until a column is picked');
     tree = updateNode(tree, tree.children[0]!.id, { rightColumn: 'desk' });
-    assert.equal(printFilter(toFilter(tree)!), 'x|$x.region == $x.desk');
+    assert.equal(printFilter(toFilter(tree)!, typed), 'x|$x.region == $x.desk');
   });
 });
 
@@ -455,7 +468,8 @@ describe('the editor follows the column TYPE', () => {
     const input = host.querySelector('.dc-filter-number') as HTMLInputElement;
     input.value = '1e6 * 3';
     input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter' }));
-    assert.deepEqual((editor.filter as { value: unknown }).value, 3_000_000);
+    // evaluated, then kept as the exact digits it came to
+    assert.deepEqual((editor.filter as { value: unknown }).value, '3000000');
   });
 
   it('a boolean is a checkbox', () => {
@@ -472,8 +486,8 @@ describe('the editor follows the column TYPE', () => {
     const mode = host.querySelector('.dc-filter-date-mode') as HTMLSelectElement;
     assert.deepEqual([...mode.options].map((o) => o.textContent),
       ['Date', 'Date Time', 'Today', 'Now']);
-    assert.ok((editor.filter as { value: unknown }).value instanceof Date,
-      'an absolute date is a Date, so it is written as a date literal');
+    assert.match(String((editor.filter as { value: unknown }).value), /^\d{4}-\d{2}-\d{2}$/,
+      'an absolute date is its day as text; the column\'s type writes it as a date literal');
     mode.value = 'today';
     mode.dispatchEvent(new dom.window.Event('change'));
     assert.deepEqual((editor.filter as { value: unknown }).value, { relative: 'today' });
@@ -563,7 +577,8 @@ describe('opening on a filter that already exists', () => {
     const f: FilterNode = {
       kind: 'and',
       children: [
-        { kind: 'condition', column: 'a', operator: 'greaterThan', value: 5 },
+        // a number the editor holds is its exact text
+        { kind: 'condition', column: 'a', operator: 'greaterThan', value: '5' },
         {
           kind: 'or',
           children: [
@@ -597,7 +612,7 @@ describe('opening on a filter that already exists', () => {
       kind: 'condition',
       column: 'a',
       operator: 'equal',
-      value: 1,
+      value: '1',
     };
     const f: FilterNode = { kind: 'not', child: { kind: 'not', child: inner } };
     assert.deepEqual(roundTrip(f), inner);
@@ -638,8 +653,8 @@ describe('opening on a filter that already exists', () => {
     const f: FilterNode = {
       kind: 'and',
       children: [
-        { kind: 'condition', column: 'a', operator: 'equal', value: 1 },
-        { kind: 'condition', column: 'b', operator: 'equal', value: 2 },
+        { kind: 'condition', column: 'a', operator: 'equal', value: '1' },
+        { kind: 'condition', column: 'b', operator: 'equal', value: '2' },
       ],
     };
     assert.deepEqual(roundTrip(roundTrip(f) as FilterNode), f);
@@ -649,17 +664,17 @@ describe('opening on a filter that already exists', () => {
 describe('TODAY and NOW', () => {
   // Upstream's advanced values (DataCubeOperationAdvancedValueType):
   // a date relative to when the query runs.
-  it('parse from their call spelling only', () => {
-    assert.deepEqual(parseValue('today()'), { relative: 'today' });
-    assert.deepEqual(parseValue('now()'), { relative: 'now' });
-    assert.equal(parseValue('today'), 'today');
-    assert.equal(parseValue("'today()'"), 'today()');
+  it('parse from their call spelling only, on a date column; on a text column they are text', () => {
+    assert.deepEqual(parseTyped('today()', 'StrictDate'), { relative: 'today' });
+    assert.deepEqual(parseTyped('now()', 'DateTime'), { relative: 'now' });
+    assert.equal(parseTyped('today', 'StrictDate'), null);
+    assert.equal(parseTyped('today()', 'String'), 'today()');
   });
 
   it('render as the Pure functions, so the date moves with the day', () => {
     assert.equal(
       printFilter({ kind: 'condition', column: 'trade_date',
-        operator: 'lessThan', value: { relative: 'today' } }),
+        operator: 'lessThan', value: { relative: 'today' } }, typed),
       'x|$x.trade_date < today()',
     );
   });

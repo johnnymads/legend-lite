@@ -434,15 +434,19 @@ export interface JsonValue {
 }
 
 export function isJsonValue(v: unknown): v is JsonValue {
-  return typeof v === 'object' && v !== null && !(v instanceof Date)
+  return typeof v === 'object' && v !== null
     && typeof (v as { json?: unknown }).json === 'string';
 }
 
-export type FilterValue = string | number | boolean | Date | RelativeDate
-  | JsonValue;
+/**
+ * A value a filter compares with: the cell's or the person's EXACT text (a day, a
+ * timestamp, a decimal's digits), a number or a boolean as typed, today()/now(), or
+ * a JSON document. Its literal is written by the column's compiler type (query.ts).
+ */
+export type FilterValue = string | number | boolean | RelativeDate | JsonValue;
 
 export function isRelativeDate(v: unknown): v is RelativeDate {
-  return typeof v === 'object' && v !== null && !(v instanceof Date)
+  return typeof v === 'object' && v !== null
     && ((v as { relative?: unknown }).relative === 'today'
       || (v as { relative?: unknown }).relative === 'now');
 }

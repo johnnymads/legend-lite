@@ -14,8 +14,10 @@
 // descendants, its bottom level -- are looked up by the caller (a query
 // against the source) and handed in; nothing here reads data.
 
+import type { GroupKey } from '../tree.ts';
+
 /** A member: its values from the first generation down. [] is the top. */
-export type MemberPath = readonly string[];
+export type MemberPath = readonly GroupKey[];
 
 /** The Measures dimension's name, and its members' generation. */
 export const MEASURES = 'Measures';

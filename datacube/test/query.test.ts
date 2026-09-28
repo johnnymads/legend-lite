@@ -7,7 +7,6 @@ import type {
 } from '../src/snapshot.ts';
 import { totalOrderSorts } from '../src/snapshot.ts';
 import {
-  NULL_GROUP,
   detailSnapshot,
   effectivePivotOn,
   literalNode,
@@ -17,7 +16,7 @@ import {
   type PivotFacts,
   type TypeOf,
 } from '../src/query.ts';
-import { accessor, col, element, lambda, variable } from '../../pure-protocol/src/index.ts';
+import { accessor, col, element, lambda, toJson as protocolJson, variable } from '../../pure-protocol/src/index.ts';
 import type { FilterNode } from '../src/snapshot.ts';
 import { print, printFilter, printLevel, printValues, row } from './lite-compiler.ts';
 
@@ -25,7 +24,13 @@ import { print, printFilter, printLevel, printValues, row } from './lite-compile
 // them (lite's printer, STANDARD: one line), the text a person would see.
 
 /** A filter's condition as the compiler prints it, as the lambda `x|<condition>`. */
-function filterText(node: FilterNode, _param = 'x', typeOf?: TypeOf): string {
+/** The compiler's types for the columns these filter tests name, as a cube has them. */
+const FILTER_TYPES: Record<string, string> = {
+  region: 'String', country: 'String', desk: 'String', 'odd name': 'String',
+  year: 'Integer', qty: 'Integer', notional: 'Float', trade_date: 'StrictDate', payload: 'Variant',
+};
+
+function filterText(node: FilterNode, _param = 'x', typeOf: TypeOf = (c) => FILTER_TYPES[c]): string {
   return printFilter(node, typeOf);
 }
 
@@ -94,7 +99,7 @@ describe('a level query', () => {
   });
 
   it('a NULL value has its own column, pinned by isEmpty', () => {
-    const s = level(snap(), { level: 1, parent: [] }, { tuples: [['2023'], [NULL_GROUP]] });
+    const s = level(snap(), { level: 1, parent: [] }, { tuples: [['2023'], [null]] });
     assert.match(s, /'\(empty\)__\|__total':x\|if\(\$x\.year->isEmpty\(\), \|\$x\.notional, \|\[\]\)/);
   });
 
@@ -445,7 +450,7 @@ describe('a level query at a level scope', () => {
     });
     assert.match(
       level(s, { level: 2, parent: ['EMEA'] }),
-      /filter\(x\|\(\$x\.notional > 100\) && \(\$x\.region == 'EMEA'\)\)/,
+      /filter\(x\|\(\$x\.notional > 100\.0\) && \(\$x\.region == 'EMEA'\)\)/,
     );
   });
 
@@ -453,7 +458,7 @@ describe('a level query at a level scope', () => {
     // '== null' matches nothing in SQL, so expanding a null group
     // would silently return no children.
     assert.match(
-      level(snap(), { level: 2, parent: [NULL_GROUP] }),
+      level(snap(), { level: 2, parent: [null] }),
       /filter\(x\|\$x\.region->isEmpty\(\)\)/,
     );
   });
@@ -778,19 +783,26 @@ describe('names and literals, as the compiler prints them', () => {
     assert.equal(name("it's"), "x|$x.'it\\'s'");
   });
 
-  it('escapes string literals and writes dates', () => {
-    const value = (v: Parameters<typeof literalNode>[0]): string => print(lambda([], literalNode(v)));
-    assert.equal(value("O'Hara"), "|'O\\'Hara'");
-    assert.equal(value(42), '|42');
-    assert.equal(value(true), '|true');
-    // A TIMESTAMP keeps its time: truncating one made a group key for one
-    // minute of trading match the whole day. Read in LOCAL terms, the frame
-    // these Dates are built and displayed in; midnight is a plain date.
-    const noon = new Date('2024-03-01T12:00:00Z');
-    const p = (n: number): string => String(n).padStart(2, '0');
-    assert.equal(value(noon), `|%2024-03-01T${p(noon.getHours())}:${p(noon.getMinutes())}:00`);
-    const midnight = new Date(2024, 2, 1);
-    assert.equal(value(midnight), '|%2024-03-01', 'midnight is a date');
+  it('writes a value as its COLUMN\'s type writes it, exactly', () => {
+    const value = (v: Parameters<typeof literalNode>[0], type: string): string =>
+      print(lambda([], literalNode(v, type)));
+    assert.equal(value("O'Hara", 'String'), "|'O\\'Hara'");
+    assert.equal(value('42', 'Integer'), '|42');
+    assert.equal(value('9007199254740993', 'Integer'), '|9007199254740993');
+    // a decimal keeps its digits in the tree; the printer, as upstream's does, reads it through a double
+    assert.match(protocolJson(lambda([], literalNode('12.30', 'Decimal'))), /"value":12\.30\b/);
+    assert.equal(value('2.5', 'Float'), '|2.5');
+    assert.equal(value(true, 'Boolean'), '|true');
+    assert.equal(value('true', 'Boolean'), '|true');
+    // A TIMESTAMP keeps its time to the microsecond; a day is a day.
+    assert.equal(value('2024-03-01T12:58:07.123456', 'DateTime'), '|%2024-03-01T12:58:07.123456');
+    assert.equal(value('2024-03-01', 'StrictDate'), '|%2024-03-01');
+    // the same text, a different column type: a different literal
+    assert.equal(value('2021', 'String'), "|'2021'");
+  });
+
+  it('refuses a value whose column the compiler has not typed, rather than guess', () => {
+    assert.throws(() => literalNode('2021'), /has not typed the column/);
   });
 });
 
@@ -839,13 +851,11 @@ describe('drilling into a TEMPORAL group', () => {
   });
 
   it('keeps a date-only group on its own day', () => {
-    // The fourth timezone fault in this area would be here: a date
-    // built at LOCAL midnight read back through UTC names the day
-    // before in any zone ahead of it.
-    const day = new Date(2021, 0, 1);
+    // A StrictDate cell's key is its calendar day as the database gave it
+    // (values.ts): no zone to slip through, and a day literal back.
     const out = level(
       { ...TEMPORAL, rows: ['trade_date'] },
-      { level: 2, parent: [key(day)] },
+      { level: 2, parent: ['2021-01-01'] },
     );
     assert.match(out, /%2021-01-01/);
     assert.equal(out.includes('2020-12-31'), false, 'it slipped a day');

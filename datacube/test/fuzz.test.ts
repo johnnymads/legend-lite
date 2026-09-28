@@ -17,7 +17,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  NULL_GROUP,
   effectivePivotOn,
   levelLambda,
   pivotColumns,
@@ -190,7 +189,7 @@ const CASES = 400;
  */
 function factsFor(s: CubeSnapshot): PivotFacts | undefined {
   const on = effectivePivotOn(s);
-  return on.length === 0 ? undefined : { tuples: [on.map(() => 'v'), on.map(() => NULL_GROUP)] };
+  return on.length === 0 ? undefined : { tuples: [on.map(() => 'v'), on.map(() => null)] };
 }
 
 function trySerialize(

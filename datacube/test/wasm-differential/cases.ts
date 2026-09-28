@@ -9,7 +9,7 @@
 
 import { accessor, col, lambda, lit, times, type Lambda } from '../../../pure-protocol/src/index.ts';
 import {
-  NULL_GROUP, childAggregateLambda, detailSnapshot, levelLambda, pivotValuesLambda, type PivotFacts,
+  childAggregateLambda, detailSnapshot, levelLambda, pivotValuesLambda, type PivotFacts,
 } from '../../src/query.ts';
 import { planQueries, type AdHocCube } from '../../src/adhoc/query.ts';
 import { initialGrid, setPov, zoomIn } from '../../src/adhoc/state.ts';
@@ -87,9 +87,9 @@ const SUM_NOTIONAL: CubeSnapshot['measures'] = [
  * A pivot's values, as its values query would find them in the corpus's
  * data: every year the rows hold, and a NULL (its own column).
  */
-const YEARS: PivotFacts = { tuples: [['2022'], ['2023'], ['2024'], [NULL_GROUP]] };
+const YEARS: PivotFacts = { tuples: [['2022'], ['2023'], ['2024'], [null]] };
 const YEAR_QTRS: PivotFacts = {
-  tuples: [['2022', 'Q1'], ['2023', 'Q3'], ['2024', 'Q2'], [NULL_GROUP, NULL_GROUP]],
+  tuples: [['2022', 'Q1'], ['2023', 'Q3'], ['2024', 'Q2'], [null, null]],
 };
 
 export const CASES: {

@@ -30,6 +30,7 @@ import {
 } from './query.ts';
 import { CubeRefusal, type CubeSnapshot } from './snapshot.ts';
 import { groupValue } from './treeview.ts';
+import type { GroupKey } from './tree.ts';
 
 /** A source column whose declared type is not what the compiler says it is now. */
 export interface SchemaChange {
@@ -127,7 +128,7 @@ export function pivotFacts(rows: ResultTable, snapshot: CubeSnapshot): PivotFact
       + 'on a column with fewer values',
     );
   }
-  const tuples: string[][] = [];
+  const tuples: GroupKey[][] = [];
   for (let i = 0; i < rows.rowCount; i++) {
     tuples.push(on.map((_, k) => groupValue(rows.columns[k]?.values[i] ?? null)));
   }

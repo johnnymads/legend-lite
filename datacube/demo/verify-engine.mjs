@@ -18,8 +18,8 @@
 import { readFile } from 'node:fs/promises';
 
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
-import { pivotValuesQuery, serialize } from '../src/query.ts';
-import { levelLambda, parseSnapshot } from '../src/query.ts';
+import { levelLambda, pivotValuesLambda } from '../src/query.ts';
+import { accessor, element, fn, lambda, toJson } from '../../pure-protocol/src/index.ts';
 
 const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
   .replace(/\/$/, '');
@@ -30,13 +30,14 @@ const RUNTIME = 'trades::RT';
 /** The demo model's table, as the cube sees it. */
 import { ENGINE_COLUMNS, casesFor } from './engine-cases.mjs';
 
-const CASES = casesFor('#>{trades::DB.TRADES}#');
+const CASES = casesFor(accessor('trades::DB', 'TRADES'));
 
 async function post(path, body, text = false) {
   const response = await fetch(`${API}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': text ? 'text/plain' : 'application/json' },
-    body: text ? body : JSON.stringify(body),
+    // a string is already JSON (the protocol library's, exact) unless it is grammar text
+    body: text || typeof body === 'string' ? body : JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   });
   const raw = await response.text();
@@ -86,7 +87,7 @@ try {
 
 const COMPILED = CASES.flatMap((c) => {
   // A pivoted case is two queries: its values query compiles too.
-  const values = pivotValuesQuery(c.snapshot);
+  const values = pivotValuesLambda(c.snapshot);
   return values === null ? [c] : [{ ...c, name: `${c.name} (its values)`, values }, c];
 });
 
@@ -96,29 +97,29 @@ for (const { name, snapshot, scope, pivot, values } of COMPILED) {
   try {
     // THE RUNTIME NAMED IN THE QUERY. Our planners take it
     // out-of-band; a relation query sent to the engine carries it.
-    pure = `${values ?? serialize(snapshot, scope, pivot)}->from(${RUNTIME})`;
+    const query = values ?? levelLambda(snapshot, scope, pivot);
+    pure = lambda([], fn('from', query.body[0], element(RUNTIME)));
   } catch (e) {
-    results.push({ name, ok: false, where: 'our serialiser',
+    results.push({ name, ok: false, where: 'our query builder',
       detail: String(e.message ?? e).slice(0, 200) });
     continue;
   }
   try {
-    const lambda = await post('/grammar/grammarToJson/lambda', pure, true);
-    const plan = await post('/execution/generatePlan', {
+    const plan = await post('/execution/generatePlan', toJson({
       clientVersion: 'vX_X_X',
-      function: lambda,
+      function: pure,
       model,
       context: CONTEXT,
-    });
+    }));
     const sql = sqlOf(plan);
     if (sql.length === 0) {
-      results.push({ name, ok: false, where: 'the plan', pure,
+      results.push({ name, ok: false, where: 'the plan', pure: toJson(pure),
         detail: 'the plan carries no SQL' });
     } else {
-      results.push({ name, ok: true, pure, sql: sql.at(-1) });
+      results.push({ name, ok: true, pure: toJson(pure), sql: sql.at(-1) });
     }
   } catch (e) {
-    results.push({ name, ok: false, where: 'the engine', pure,
+    results.push({ name, ok: false, where: 'the engine', pure: toJson(pure),
       detail: String(e.message ?? e) });
   }
 }
@@ -143,7 +144,7 @@ if (!ONLY || 'server mode'.includes(ONLY.toLowerCase())) {
       runtime: 'trades::h2::RT',
     });
     const snapshot = {
-      source: { expression: '#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#' },
+      source: { query: accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES') },
       columns: ENGINE_COLUMNS,
       derived: [],
       rows: ['region'],
@@ -153,7 +154,7 @@ if (!ONLY || 'server mode'.includes(ONLY.toLowerCase())) {
       epoch: 3,
     };
     const out = await executor.execute(
-      levelLambda(snapshot, await parseSnapshot(snapshot, (t) => executor.parse(t))), snapshot);
+      levelLambda(snapshot), snapshot);
     const by = Object.fromEntries(out.rows.columns.map((c) => [c.name, c]));
     // Derived from the seed's own shape (notional counts 1..N),
     // not copied from a run -- see tools that generate

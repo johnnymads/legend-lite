@@ -145,6 +145,31 @@ describe('queries are protocol, never Pure text (docs/DATACUBE_TYPES_TO_SERVER_2
   });
 });
 
+describe('keys and values are typed, never text sentinels or local Dates (T4c)', () => {
+  // A group key is the cell's exact text or a real null (src/tree.ts GroupKey), and a value's
+  // literal is written by its column's compiler type (src/query.ts literalNode). A text
+  // sentinel for null collided with nothing only by luck; a JavaScript Date carried the
+  // browser's time zone into a filter that has none.
+  const QUERY_PATH = FILES.filter((f) => f === join('src', 'query.ts') || f === join('src', 'tree.ts')
+    || f === join('src', 'treeview.ts') || f === join('src', 'plan.ts') || f.includes(join('src', 'adhoc')));
+
+  it('reads the query path at all', () => {
+    assert.ok(QUERY_PATH.length >= 6, QUERY_PATH.join(', '));
+  });
+
+  it('has no null-key sentinel and no Date on the query path', () => {
+    const hits: string[] = [];
+    for (const f of QUERY_PATH) {
+      readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+        if (!isComment(line) && /\\u0000null|instanceof Date|new Date\(/.test(line)) {
+          hits.push(`${f}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    assert.deepEqual(hits, [], hits.join('\n'));
+  });
+});
+
 describe('there is exactly one planner, and no way to fall back to another', () => {
   // A shim planner cost three real bugs: snap building SQL by hand,
   // the snapped plane never redirecting, and the SQL panel showing

@@ -19,8 +19,7 @@ import { EpochGuard } from '../src/epoch.ts';
 import type { QueryRunner } from '../src/runner.ts';
 import { liteParse, litePrint } from './lite-compiler.ts';
 import {
-  NULL_GROUP,
-} from '../src/query.ts';
+  } from '../src/query.ts';
 import { element } from '../../pure-protocol/src/index.ts';
 import { printLevel } from './lite-compiler.ts';
 
@@ -234,7 +233,7 @@ describe('assemble', () => {
         { name: 'region', values: [null, 'EMEA'] },
         { name: '2023__|__total', values: [100, 500] },
       ]),
-      paths: [[NULL_GROUP], ['EMEA']],
+      paths: [[null], ['EMEA']],
       truncated: false,
     });
     const rows = flattenTree(TreeState.empty(true), 2, childrenOf(levels) as never);

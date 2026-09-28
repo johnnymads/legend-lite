@@ -482,9 +482,7 @@ describe("upstream's remaining entries", () => {
 });
 
 describe('valueLabel', () => {
-  it('names a date as its day, and TODAY/NOW by name', () => {
-    assert.equal(valueLabel(new Date(2021, 1, 9)), '2021-02-09');
-    assert.equal(valueLabel(new Date(2021, 1, 9, 12, 58)), '2021-02-09 12:58:00');
+  it('names a date as its text, and TODAY/NOW by name', () => {
     assert.equal(valueLabel({ relative: 'today' }), 'TODAY');
     // Text quoted, as upstream's labels are; numbers and booleans bare.
     assert.equal(valueLabel('EMEA'), "'EMEA'");

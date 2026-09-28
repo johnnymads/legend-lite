@@ -243,6 +243,11 @@ export function evaluateArithmetic(text: string): number {
 const pad = (n: number): string => String(n).padStart(2, '0');
 
 /** A local date as the editor writes it: YYYY-MM-DD[THH:mm:ss]. */
+/** Plain digits as a person types a number: kept exact rather than read through a double. */
+const EXACT_NUMBER_INPUT = /^-?\d+(\.\d+)?$/;
+/** A day, and optionally its time, as a date or datetime-local input writes them. */
+const DATE_INPUT = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(:\d{2})?(\.\d+)?)?$/;
+
 export function dateText(d: Date, withTime: boolean): string {
   const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   return withTime
@@ -254,15 +259,19 @@ export function dateText(d: Date, withTime: boolean): string {
  * Parse a value against its COLUMN's type, or null when it is not a
  * value of that type yet (a half-typed number, an empty date).
  *
- * Typed rather than guessed: `parseValue` turns anything numeric into
- * a number, which is right for a number column and wrong for a text
- * column holding account codes.
+ * Typed, never guessed: a number column's value is a number, a text
+ * column's is text even when it looks numeric (account codes). A value
+ * the person typed as plain digits stays those EXACT digits (a decimal's
+ * `12.30`, an integer past 2^53); arithmetic they typed is evaluated. A
+ * date is its text, `YYYY-MM-DD[THH:MM:SS]`, never a JavaScript Date (a
+ * Date is in the browser's zone, and a filter is not).
  */
 export function parseTyped(text: string, type: string | undefined):
 FilterValue | null {
   const t = text.trim();
   switch (dataTypeOf(type)) {
     case 'number': {
+      if (EXACT_NUMBER_INPUT.test(t)) return t;
       const n = evaluateArithmetic(t);
       return Number.isFinite(n) ? n : null;
     }
@@ -271,12 +280,10 @@ FilterValue | null {
     case 'date': {
       if (t === 'today()') return { relative: 'today' };
       if (t === 'now()') return { relative: 'now' };
-      const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/
-        .exec(t);
+      const m = DATE_INPUT.exec(t);
       if (!m) return null;
-      const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]),
-        Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0));
-      return Number.isNaN(at.getTime()) ? null : at;
+      // a picker's `HH:MM` gets its seconds; the day and time are the person's, as typed
+      return m[2] === undefined ? m[1]! : `${m[1]}T${m[2]}${m[3] ?? ':00'}${m[4] ?? ''}`;
     }
     case 'time':
       return t === '' ? null : t;
@@ -363,39 +370,26 @@ export function newGroup(children: readonly DraftNode[] = []): DraftGroup {
   return { kind: 'group', id: nextId(), not: false, join: 'and', children };
 }
 
-/**
- * Parse a typed value.
- *
- * A numeric column must compare numerically -- '9' against '10' as
- * text puts 9 after 10 -- so a value that looks like a number becomes
- * one. Quoting forces text, which is the escape hatch for an
- * identifier that merely looks numeric, like an account code.
- */
-export function parseValue(text: string): FilterValue {
-  const t = text.trim();
-  if (
-    (t.startsWith("'") && t.endsWith("'") && t.length > 1) ||
-    (t.startsWith('"') && t.endsWith('"') && t.length > 1)
-  ) {
-    return t.slice(1, -1);
-  }
-  if (t === 'true') return true;
-  if (t === 'false') return false;
-  // Upstream's TODAY / NOW: a date relative to when the query runs.
-  // Only the exact call spelling, so a text value "today" is still text.
-  if (t === 'today()') return { relative: 'today' };
-  if (t === 'now()') return { relative: 'now' };
-  if (t !== '' && Number.isFinite(Number(t))) return Number(t);
-  return t;
-}
-
-/** Split a list operand. Empty entries are dropped, not sent as ''. */
-export function parseList(text: string): FilterValue[] {
+/** Split a list operand, each entry typed by the column. Empty entries are dropped, not sent as ''. */
+export function parseList(text: string, type: string | undefined): FilterValue[] {
   return text
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s !== '')
-    .map(parseValue);
+    .flatMap((s) => {
+      const v = typedOrText(s, type);
+      return v === null ? [] : [v];
+    });
+}
+
+/**
+ * A value by its column's type; with no type yet (the compiler has not typed the
+ * column), the text as typed -- the query refuses it, rather than this guessing.
+ */
+function typedOrText(text: string, type: string | undefined): FilterValue | null {
+  if (type !== undefined) return parseTyped(text, type);
+  const t = text.trim();
+  return t === '' ? null : t;
 }
 
 /** Column types, by name, for the conversion below. Absent: untyped. */
@@ -406,9 +400,7 @@ FilterCondition | null {
   if (!d.column) return null;
   const kind = operandKind(d.operator);
   const type = typeOf?.(d.column);
-  const one = (text: string): FilterValue | null => (type === undefined
-    ? (text.trim() === '' ? null : parseValue(text))
-    : parseTyped(text, type));
+  const one = (text: string): FilterValue | null => typedOrText(text, type);
 
   if (kind === 'none') {
     return { kind: 'condition', column: d.column, operator: d.operator };
@@ -426,7 +418,7 @@ FilterCondition | null {
   if (kind === 'list') {
     const values = d.items !== undefined
       ? d.items.map(one).filter((v): v is FilterValue => v !== null)
-      : parseList(d.text);
+      : parseList(d.text, type);
     return values.length > 0
       ? { kind: 'condition', column: d.column, operator: d.operator, value: values }
       : null;
@@ -671,10 +663,6 @@ function textOf(value: FilterValue | readonly FilterValue[] | undefined): string
 
 /** One list entry as its item editor shows it: no quoting needed. */
 function itemText(value: FilterValue): string {
-  if (value instanceof Date) {
-    return dateText(value, value.getHours() + value.getMinutes()
-      + value.getSeconds() > 0);
-  }
   if (isJsonValue(value)) return value.json;
   return isRelativeDate(value) ? `${value.relative}()` : String(value);
 }
@@ -682,13 +670,6 @@ function itemText(value: FilterValue): string {
 function scalarText(value: FilterValue): string {
   if (isRelativeDate(value)) return `${value.relative}()`;
   if (isJsonValue(value)) return value.json;
-  if (value instanceof Date) {
-    return dateText(value, value.getHours() + value.getMinutes()
-      + value.getSeconds() > 0);
-  }
-  if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
-    return `"${value}"`;
-  }
   return String(value);
 }
 
@@ -1175,14 +1156,17 @@ export class FilterEditor {
     const mode = text === 'today()' ? 'today'
       : text === 'now()' ? 'now'
       : /T\d/.test(text) ? 'datetime' : 'date';
-    const moment = parseTyped(text, 'DateTime');
-    const at = moment instanceof Date ? moment : new Date();
+    // the value's own day and time, as text; today when it has none yet
+    const typed = parseTyped(text, 'DateTime');
+    const day = typeof typed === 'string' ? typed.slice(0, 10) : dateText(new Date(), false);
+    const time = typeof typed === 'string' && typed.length > 10 ? typed.slice(11, 19) : '00:00:00';
+    const valueFor = (withTime: boolean): string => (withTime ? `${day}T${time}` : day);
     const modeSelect = this.#select(
       ['date', 'datetime', 'today', 'now'], mode, 'dc-filter-date-mode',
       (v) => this.update(c.id, {
         text: v === 'today' ? 'today()'
           : v === 'now' ? 'now()'
-          : dateText(at, v === 'datetime'),
+          : valueFor(v === 'datetime'),
       }),
       ['Date', 'Date Time', 'Today', 'Now'],
     );
@@ -1192,7 +1176,7 @@ export class FilterEditor {
     picker.className = 'dc-filter-value dc-filter-date';
     picker.type = mode === 'datetime' ? 'datetime-local' : 'date';
     if (mode === 'datetime') picker.step = '1';
-    picker.value = dateText(at, mode === 'datetime');
+    picker.value = valueFor(mode === 'datetime');
     picker.addEventListener('click', (e) => e.stopPropagation());
     picker.addEventListener('change', () => {
       if (picker.value !== '') this.update(c.id, { text: picker.value });

@@ -16,45 +16,52 @@
 //    pivot defect, structurally impossible rather than merely tested
 //    against.
 
-/** Values of the row dimensions from the root down. Empty = grand total. */
-export type RowPath = readonly string[];
-
 /**
- * The path separator.
- *
- * NUL, because it cannot occur in a SQL identifier or in a value
- * DuckDB would return as text, so no dimension value can forge a
- * different group's key -- a comma or a slash can. Written as an
- * escape rather than as a literal control character, since an
- * invisible byte in source survives no reformat and no code review.
+ * A group's key: its cell's EXACT text as the database gave it (values.ts:
+ * a day, a timestamp to the microsecond, a decimal's digits, an integer
+ * past 2^53), or a real null for the group of rows where the key is null.
+ * Read back into a query by the column's compiler type (query.ts), never
+ * by guessing at the text.
  */
-const PATH_SEP = '\u0000';
+export type GroupKey = string | null;
+
+/** Values of the row dimensions from the root down. Empty = grand total. */
+export type RowPath = readonly GroupKey[];
 
 /**
  * The last segment of a DETAIL row's path: its position under its
  * group. A detail row has no key of its own -- it is a source row, not
  * a group -- so its identity is its parent and its place. A control
- * character, like PATH_SEP, so no value can forge one.
+ * character, so no value a database returns can forge one.
  */
 export const DETAIL_ROW = '\u0001';
 
 /** Whether a path names a detail row rather than a group. */
 export function isDetailPath(path: RowPath): boolean {
-  return (path[path.length - 1] ?? '').startsWith(DETAIL_ROW);
-}
-
-/** Stable key for a path. */
-export function pathKey(path: RowPath): string {
-  return path.join(PATH_SEP);
+  const last = path[path.length - 1];
+  return typeof last === 'string' && last.startsWith(DETAIL_ROW);
 }
 
 /**
- * Inverse of {@link pathKey}, so a saved view can restore expansion
- * without any caller hardcoding the separator. The empty key is the
- * root, not a one-element path containing an empty string.
+ * Stable key for a path: its JSON, so a null key and the text 'null' are
+ * different groups and no value, whatever it holds, can forge another's key.
  */
+export function pathKey(path: RowPath): string {
+  return JSON.stringify(path);
+}
+
+/** Inverse of {@link pathKey}, so a saved view can restore expansion. */
 export function parsePathKey(key: string): RowPath {
-  return key === '' ? [] : key.split(PATH_SEP);
+  const path: unknown = JSON.parse(key);
+  if (!Array.isArray(path) || !path.every((k) => k === null || typeof k === 'string')) {
+    throw new Error(`not a path key: ${key}`);
+  }
+  return path as RowPath;
+}
+
+/** Whether `path` lies beneath `ancestor` (strictly). */
+function isBeneath(path: RowPath, ancestor: RowPath): boolean {
+  return path.length > ancestor.length && ancestor.every((k, i) => path[i] === k);
 }
 
 export interface TreeRow {
@@ -187,7 +194,7 @@ export class TreeState {
       // Closing a group closes everything beneath it, so reopening does
       // not surprise the user with a tree they left open three levels
       // down.
-      if (k !== key && !k.startsWith(key + PATH_SEP)) next.add(k);
+      if (k !== key && !isBeneath(parsePathKey(k), path)) next.add(k);
     }
     // A group the expand level opens stays shut once the user shuts it.
     const closed = new Set(this.#closed);

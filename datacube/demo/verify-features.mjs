@@ -975,7 +975,7 @@ try {
       { col: await needCol(second) });
     // NOT the Pure pane. A tree issues one query per LEVEL, and the
     // pane deliberately shows the representative level-1 plan
-    // (`serialize(snapshot, { level: 1, parent: [] })`), which groups
+    // (`levelLambda(snapshot, { level: 1, parent: [] })`), which groups
     // by the FIRST dimension alone. Two keys can never appear in it,
     // so asserting on it reported a fault in a feature that works --
     // twice, once blamed on staleness and once on a column index.

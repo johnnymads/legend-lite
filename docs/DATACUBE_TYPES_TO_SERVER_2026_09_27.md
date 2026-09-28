@@ -281,6 +281,28 @@ Checked against upstream first: its snapshot holds a calculated column as protoc
 T4b is complete with this. **Next: T4c** (typed keys, members and filter values; a literal's type
 from the column's compiler type; the NULL group a real null; exact filter inputs).
 
+**T4c as landed (2026-09-27): keys and values typed end to end.**
+- A group key (`GroupKey`, src/tree.ts) is the cell's EXACT text or a real `null`; a path's key is
+  its JSON. The `NULL_GROUP` text sentinel and `keyValue` are deleted; a null key is `isEmpty`.
+  Ad Hoc members are paths of the same keys (their header segments and indexes are JSON).
+- A literal's type is ALWAYS the column's compiler type (its plain primitive from the generated
+  facts, `lit.of`): the `TEMPORAL_TEXT`/`EXACT_NUMBER` regexes, the `.`-means-float rule and the
+  typeof dispatch are deleted; a value whose column the compiler has not typed is REFUSED. Text
+  operators (contains, the case-insensitive ones) take text operands by their nature.
+- `FilterValue` has no JavaScript `Date`: a date is its day and time as text, validated from the
+  person's input; a number typed as plain digits stays those exact digits. `parseValue`'s guessing
+  is deleted (`parseTyped` by the column's type); `localDateText`/`dateNode` are gone.
+- Found by typing, fixed: an Ad Hoc POV filter's column was dropped from its query's typed
+  columns (a guessed literal hid it).
+- Saved views are format 3 (the path keys changed); older are refused, as the user ruled for 2.
+- The WASM differential's print round trip checks a FIXED POINT (print, parse, print is the same
+  text): a Float built from `5000` and the parse of its print `5000.0` are one value spelled two
+  ways, and copying Java's double spelling into TypeScript is what T4 removed.
+- Guardrail: no null-key sentinel and no Date on the query path.
+
+T4 is complete with this. **Next: T5** (what a type accepts, from the compiler: generated
+operator, aggregate and function signatures, D4).
+
 **T5. What a type accepts, from the compiler.**
 - Filter operators, aggregates and calculated-column functions offered per type come from the
   compiler's signatures (D4); an aggregate's result type from the plan.

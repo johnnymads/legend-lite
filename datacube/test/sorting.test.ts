@@ -52,7 +52,12 @@ after(async () => {
 
 const CUBE: CubeSnapshot = {
   source: { query: element('t') },
-  columns: [],
+  // as the compiler types the table above
+  columns: [
+    { name: 'region', type: 'String' },
+    { name: 'yr', type: 'Integer' },
+    { name: 'amt', type: 'Decimal' },
+  ],
   derived: [],
   rows: ['region'],
   pivotOn: ['yr'],

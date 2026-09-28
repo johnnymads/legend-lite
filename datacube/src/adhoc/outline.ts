@@ -14,7 +14,6 @@
 import type { Dimension } from '../dimensions.ts';
 import type { ResultTable } from '../result.ts';
 import { memberConditions, type LevelScope } from '../query.ts';
-import type { Scalar } from '../result.ts';
 import {
   rowColumns,
   type CubeSnapshot,
@@ -23,6 +22,7 @@ import {
   type Measure,
 } from '../snapshot.ts';
 import { groupValue } from '../treeview.ts';
+import type { GroupKey } from '../tree.ts';
 import type { AdHocCube } from './query.ts';
 import {
   DEFAULT_OPTIONS,
@@ -112,7 +112,7 @@ export function memberQuery(
 export function membersFrom(result: ResultTable, depth: number): MemberPath[] {
   const out: MemberPath[] = [];
   for (let r = 0; r < result.rowCount; r++) {
-    const path: string[] = [];
+    const path: GroupKey[] = [];
     for (let g = 0; g < depth; g++) path.push(groupValue(result.columns[g]?.values[r] ?? null));
     out.push(path);
   }
@@ -186,14 +186,15 @@ export function carryOver(
   const used = new Set<FilterNode>();
   const pinned = new Map<string, MemberPath>();
   for (const d of outline.dimensions) {
-    const path: string[] = [];
+    const path: GroupKey[] = [];
     for (const column of d.generations) {
       const c = (all ?? []).find((x): x is FilterCondition => x.kind === 'condition'
         && x.column === column && x.operator === 'equal' && !used.has(x)
         && (typeof x.value === 'string' || typeof x.value === 'number'
-          || typeof x.value === 'boolean' || x.value instanceof Date));
+          || typeof x.value === 'boolean'));
       if (!c) break;
-      path.push(groupValue(c.value as Scalar));
+      // a pinned member is the filter's value as a key: its text
+      path.push(String(c.value));
       used.add(c);
     }
     if (path.length > 0) pinned.set(d.name, path);

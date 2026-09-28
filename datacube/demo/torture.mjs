@@ -14,7 +14,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { PlanError, UpstreamPlanner } from '../src/planner.ts';
-import { NULL_GROUP, pivotValuesQuery, serialize } from '../src/query.ts';
+import { levelLambda, pivotValuesLambda } from '../src/query.ts';
+import { accessor, col, lambda, lit, times } from '../../pure-protocol/src/index.ts';
 
 /**
  * A pivoted shape's values, for a harness that only PLANS: one typed
@@ -24,13 +25,13 @@ import { NULL_GROUP, pivotValuesQuery, serialize } from '../src/query.ts';
  */
 const SAMPLE = {
   String: 'a', Integer: '1', Float: '1.5', Decimal: '1.5', Number: '1',
-  Boolean: 'true', StrictDate: '2021-01-02T00:00:00', Date: '2021-01-02T00:00:00',
+  Boolean: 'true', StrictDate: '2021-01-02', Date: '2021-01-02T00:00:00',
   DateTime: '2021-01-02T03:04:05',
 };
 function sampled(snap) {
   if ((snap.pivotOn ?? []).length === 0) return undefined;
   const types = new Map([...snap.columns, ...(snap.derived ?? [])].map((c) => [c.name, c.type]));
-  return { tuples: [snap.pivotOn.map((k) => SAMPLE[types.get(k)] ?? 'a'), snap.pivotOn.map(() => NULL_GROUP)] };
+  return { tuples: [snap.pivotOn.map((k) => SAMPLE[types.get(k)] ?? 'a'), snap.pivotOn.map(() => null)] };
 }
 import { buildColumnModel } from '../src/grid/columns.ts';
 import { CubeRefusal } from '../src/snapshot.ts';
@@ -81,10 +82,13 @@ const check = (name, ok, detail = '') => {
 // legend-engine's own API, the same client the product ships
 const PLANNER = new UpstreamPlanner({ baseUrl: ENGINE, model: MODEL, runtime: 'torture::RT', cache: false });
 
-async function plan(pure) {
+/** A query as the engine prints it, for a failure's message. */
+const shown = async (query) => (await PLANNER.print(query, 'STANDARD')).slice(0, 110);
+
+async function plan(query) {
   try {
-    // the query as text (a harness writes it): the engine parses it (E1), then plans it (E9)
-    return { sql: await PLANNER.plan(await PLANNER.parse(`|${pure}`)), error: undefined };
+    // the query is protocol, as the product sends it (E9)
+    return { sql: await PLANNER.plan(query), error: undefined };
   } catch (e) {
     if (e instanceof PlanError) return { sql: undefined, error: e.message };
     throw e;
@@ -106,9 +110,9 @@ const COLUMNS = [
   { name: 'flag', type: 'Boolean' },
 ];
 
-const SRC = '#>{torture::DB.WEIRD}#';
+const SRC = accessor('torture::DB', 'WEIRD');
 const base = {
-  source: { expression: SRC },
+  source: { query: SRC },
   columns: COLUMNS,
   derived: [],
   rows: [],
@@ -238,7 +242,7 @@ const cases = [
     {
       ...base,
       rows: ['plain'],
-      derived: [{ name: 'doubled', expression: '$x.n_float * 2' }],
+      derived: [{ name: 'doubled', lambda: lambda(['x'], times(col('x', 'n_float'), lit.integer(2))) }],
       measures: [sum('m', 'doubled')],
     },
   ],
@@ -248,17 +252,17 @@ console.log('--- shapes ---');
 for (const [name, snap] of cases) {
   let pure;
   try {
-    pure = serialize(snap, { level: Math.max(1, snap.rows.length), parent: [], limit: 50 }, sampled(snap));
+    pure = levelLambda(snap, { level: Math.max(1, snap.rows.length), parent: [], limit: 50 }, sampled(snap));
   } catch (e) {
     check(name, e instanceof CubeRefusal, `refused: ${e.message}`);
     continue;
   }
   const { sql, error } = await plan(pure);
-  check(name, Boolean(sql), error ?? pure.slice(0, 110));
-  const values = pivotValuesQuery(snap);
+  check(name, Boolean(sql), error ?? await shown(pure));
+  const values = pivotValuesLambda(snap);
   if (values !== null) {
     const found = await plan(values);
-    check(`${name}: its values query`, Boolean(found.sql), found.error ?? values.slice(0, 110));
+    check(`${name}: its values query`, Boolean(found.sql), found.error ?? await shown(values));
   }
 }
 
@@ -272,7 +276,7 @@ const deep = {
 };
 for (let level = 0; level <= deep.rows.length; level++) {
   const parent = ['a', 'b', 'c', 'd'].slice(0, Math.max(0, level - 1));
-  const pure = serialize(deep, { level, parent, limit: 50 }, sampled(deep));
+  const pure = levelLambda(deep, { level, parent, limit: 50 }, sampled(deep));
   const { sql, error } = await plan(pure);
   check(`level ${level} of ${deep.rows.length}`, Boolean(sql), error ?? '');
 }
@@ -282,7 +286,7 @@ console.log('\n--- wide ---');
 for (const n of [1, 10, 40]) {
   const measures = Array.from({ length: n }, (_, i) => sum(`m${i}`, 'n_float'));
   const wide = { ...base, rows: ['plain'], pivotOn: ['flag'], measures };
-  const pure = serialize(wide, { level: 1, parent: [], limit: 50 }, sampled(wide));
+  const pure = levelLambda(wide, { level: 1, parent: [], limit: 50 }, sampled(wide));
   const { sql, error } = await plan(pure);
   check(`${n} measures under a pivot`, Boolean(sql), error ?? `${sql?.length} chars of SQL`);
 }
@@ -323,7 +327,7 @@ console.log('\n--- scale ---');
       rows: ['plain'],
       derived: Array.from({ length: 60 }, (_, i) => ({
         name: `d${i}`,
-        expression: `$x.n_float * ${i + 1}`,
+        lambda: lambda(['x'], times(col('x', 'n_float'), lit.integer(i + 1))),
       })),
       measures: Array.from({ length: 60 }, (_, i) => sum(`dm${i}`, `d${i}`)),
     }],
@@ -332,7 +336,7 @@ console.log('\n--- scale ---');
     const t0 = process.hrtime.bigint();
     let pure;
     try {
-      pure = serialize(snap, {
+      pure = levelLambda(snap, {
         level: Math.max(1, snap.rows.length),
         parent: [],
         limit: 50,

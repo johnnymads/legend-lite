@@ -16,11 +16,11 @@ import { PIVOT_SEPARATOR } from '../generated/lite-facts.ts';
 import type { ResultColumn, ResultTable, Scalar } from '../result.ts';
 import {
   memberConditions,
-  NULL_GROUP,
   type LevelScope,
 } from '../query.ts';
 import type { CubeSnapshot, FilterNode, Measure } from '../snapshot.ts';
 import { groupValue } from '../treeview.ts';
+import type { GroupKey } from '../tree.ts';
 import {
   MEASURES,
   tuples,
@@ -52,7 +52,8 @@ export interface AdHocQuery {
   readonly scope?: LevelScope;
 }
 
-const KEY_SEP = '\u0000';
+/** A list of group keys as one map key: its JSON, so null and 'null' stay apart. */
+const keyOf = (keys: readonly GroupKey[]): string => JSON.stringify(keys);
 
 function regularOnGrid(grid: AdHocGrid): AxisDimension[] {
   return [...grid.rows, ...grid.columns].filter((a) => a.dimension !== MEASURES);
@@ -103,7 +104,7 @@ export function coveringMembers(shown: readonly MemberPath[]): MemberPath[] {
     const up: MemberPath[] = [];
     for (const m of cover) {
       const parent = m.slice(0, -1);
-      const k = parent.join(KEY_SEP);
+      const k = keyOf(parent);
       if (!seen.has(k)) {
         seen.add(k);
         up.push(parent);
@@ -160,9 +161,10 @@ export function planQueries(cube: AdHocCube, grid: AdHocGrid): AdHocQuery[] {
         filters.push(each.length === 1 ? each[0] as FilterNode : { kind: 'or', children: each });
       }
     });
-    const needed = new Set([...groupColumns, ...specs.map((m) => m.column),
-      ...specs.flatMap((m) => (m.weight ? [m.weight] : []))]);
     const filter = and(filters);
+    // the filter's columns too: a POV member's value is written by its column's compiler type
+    const needed = new Set([...groupColumns, ...specs.map((m) => m.column),
+      ...specs.flatMap((m) => (m.weight ? [m.weight] : [])), ...filterColumns(filter)]);
     const snapshot: CubeSnapshot = {
       ...cube.snapshot,
       columns: cube.snapshot.columns.filter((c) => needed.has(c.name)),
@@ -182,31 +184,43 @@ export function planQueries(cube: AdHocCube, grid: AdHocGrid): AdHocQuery[] {
   });
 }
 
+/** Every column a filter reads. */
+function filterColumns(node: FilterNode | undefined): string[] {
+  if (!node) return [];
+  switch (node.kind) {
+    case 'condition': return node.rightColumn === undefined ? [node.column] : [node.column, node.rightColumn];
+    case 'and': case 'or': return node.children.flatMap(filterColumns);
+    case 'not': return filterColumns(node.child);
+  }
+}
+
 // -- the grid the answers make ----------------------------------------------
 
 /** A member's own label: its last value, or its dimension's name at the top. */
 export function memberLabel(dimension: string, path: MemberPath): string {
   if (path.length === 0) return dimension;
-  const last = path[path.length - 1] as string;
-  return last === NULL_GROUP ? '(blank)' : last;
+  const last = path[path.length - 1];
+  return last === null || last === undefined ? '(blank)' : last;
 }
 
 /** A header segment: unique per member, so two Q1s never merge. */
 const TOP = '\u0002';
 function segment(dimension: string, path: MemberPath): string {
-  return path.length === 0 ? `${TOP}${dimension}` : path.join('\u0001');
+  return path.length === 0 ? `${TOP}${dimension}` : JSON.stringify(path);
 }
 
 /** The member a header segment names (the top member: no values). */
 export function memberOfSegment(s: string): MemberPath {
-  return s.startsWith(TOP) ? [] : s.split('\u0001');
+  return s.startsWith(TOP) ? [] : JSON.parse(s) as MemberPath;
 }
 
 /** What a header segment shows. */
 export function segmentLabel(s: string): string {
   if (s.startsWith(TOP)) return s.slice(TOP.length);
-  const last = s.split('\u0001').pop() ?? s;
-  return last === NULL_GROUP ? '(blank)' : last;
+  // a member's segment is its path's JSON; anything else (a row header's name) is itself
+  if (!s.startsWith('[')) return s;
+  const last = (JSON.parse(s) as MemberPath).at(-1);
+  return last === null || last === undefined ? '(blank)' : last;
 }
 
 export interface AdHocView {
@@ -244,7 +258,7 @@ export function assembleGrid(
     if (!t) continue;
     const at = new Map<string, number>();
     for (let r = 0; r < t.rowCount; r++) {
-      at.set(q.groupColumns.map((_c, i) => groupValue(t.columns[i]?.values[r] ?? null)).join(KEY_SEP), r);
+      at.set(keyOf(q.groupColumns.map((_c, i) => groupValue(t.columns[i]?.values[r] ?? null))), r);
     }
     index.set(q.key, at);
   }
@@ -261,7 +275,9 @@ export function assembleGrid(
     };
     const measurePath = [...grid.rows, ...grid.columns].some((a) => a.dimension === MEASURES)
       ? member(MEASURES) : povMeasure === undefined ? [] : [povMeasure];
-    return measurePath[0];
+    // the Measures dimension's members are measure names
+    const measure = measurePath[0];
+    return typeof measure === 'string' ? measure : undefined;
   };
   // A measure's type: the plan's, from any query that returned it.
   const measureType = (measure: string): string | undefined => {
@@ -286,7 +302,7 @@ export function assembleGrid(
     const shape = paths.map((p) => p.length).join(',');
     const q = byKey.get(shape);
     const t = results.get(shape);
-    const r = index.get(shape)?.get(paths.flat().join(KEY_SEP));
+    const r = index.get(shape)?.get(keyOf(paths.flat()));
     if (!q || !t || r === undefined) return null;
     const column = t.columns.find((c) => c.name === measure);
     return column?.values[r] ?? null;
@@ -320,7 +336,7 @@ export function assembleGrid(
         const prev = rowTuples[rowsKept[k - 1] as number] as readonly MemberPath[];
         const here = rowTuples[ri] as readonly MemberPath[];
         const sameOuter = here.slice(0, d + 1).every((p, j) =>
-          (p as MemberPath).join(KEY_SEP) === (prev[j] as MemberPath).join(KEY_SEP));
+          keyOf(p as MemberPath) === keyOf(prev[j] as MemberPath));
         if (sameOuter) return null;
       }
       const depth = o.indentation === 'none' ? 0

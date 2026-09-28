@@ -157,9 +157,9 @@ unknown {
   const leaf = v.columns.all.find((l) => l.path.length === header.length
     && l.path.every((s, i) => s === header[i]));
   if (!leaf) return 'NO COLUMN';
-  const want = group.map((g) => g ?? '\u0000null').join('\u0001');
-  const i = v.treeRows.findIndex((r) => r.path.join('\u0001') === want
-    && r.path.length === group.length);
+  // a null key is a null group (the tree's keys are values, not text)
+  const i = v.treeRows.findIndex((r) => r.path.length === group.length
+    && r.path.every((k, j) => k === group[j]));
   if (i < 0) return 'NO ROW';
   return v.rows.columns[leaf.index]?.values[i] ?? null;
 }

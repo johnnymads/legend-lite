@@ -34,64 +34,29 @@ import {
   type SortSpec,
   type WindowSpec,
 } from './snapshot.ts';
-import type { RowPath } from './tree.ts';
+import type { GroupKey, RowPath } from './tree.ts';
 import { ROOT_COLUMN } from './grid/columns.ts';
 import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
-import { isBoolean, isNumeric, isTemporal, isVariant } from './types.ts';
+import { isBoolean, isNumeric, isVariant, plainType } from './types.ts';
 import { columnRef } from './calc.ts';
 
-// ---- literals: the types the queries' text gave them before T4b (see the header) ----
-
-const TEMPORAL_TEXT = /^(-?\d{4,}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2}(\.\d+)?)?|\d{2}:\d{2}:\d{2}(\.\d+)?)$/;
-const EXACT_NUMBER = /^-?\d+(\.\d+)?$/;
-
-/** A number's literal as its text is lexed: digits alone an integer, with a fraction a float. */
-function numberText(text: string): ValueSpecification {
-  return text.includes('.') ? lit.float(text) : lit.integer(text);
-}
+// ---- literals: typed by the column's COMPILER type, never by the value ----
 
 /**
- * A Decimal column's exact value is a DECIMAL literal. The text builders wrote it bare, the grammar
- * lexed that as a Float, and a Float is read through a double -- `12345678901234567.89` compared as
- * `12345678901234568`. (T4c moves this choice to the compiler's column type.)
+ * A filter value as a literal node. `type` is its column's compiler type, and it alone decides
+ * the literal (its plain primitive, from the generated type facts): a key or a filter value is
+ * the cell's EXACT text (a day, a timestamp to the microsecond, a decimal's digits, an integer
+ * past 2^53), written as the column's type writes it. A value whose column the compiler has not
+ * typed is refused: the text's look (a `.`, a `-`) or JavaScript's type of it is a guess.
  */
-function exactNumber(text: string, type: string | undefined): ValueSpecification {
-  return type !== undefined && /(^|::)(Decimal|Numeric)$/.test(type) ? lit.decimal(text) : numberText(text);
-}
-
-/** A temporal text's literal: a time of day, a day, or a timestamp. */
-function temporalText(text: string): ValueSpecification {
-  const t = text.replace(' ', 'T');
-  if (!t.includes('-')) return lit.strictTime(t);
-  return t.includes('T') ? lit.dateTime(t) : lit.strictDate(t);
-}
-
-/**
- * A `Date` (the filter editor's, until T4c) in local terms, to the second: the day alone at
- * midnight, else the day and time. The filter sends it and the menu names it this way.
- */
-export function localDateText(v: Date): string {
-  const p = (n: number): string => String(n).padStart(2, '0');
-  const day = `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`;
-  return v.getHours() === 0 && v.getMinutes() === 0 && v.getSeconds() === 0
-    ? day : `${day}T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`;
-}
-
-function dateNode(v: Date): ValueSpecification {
-  const text = localDateText(v);
-  return text.includes('T') ? lit.dateTime(text) : lit.strictDate(text);
-}
-
-/** A filter value as a literal node; `type` is its column's compiler type. */
 export function literalNode(v: FilterValue, type?: string): ValueSpecification {
   if (isRelativeDate(v)) return fn(v.relative === 'today' ? 'today' : 'now');
   if (isJsonValue(v)) return fn('fromJson', lit.string(v.json));
-  if (typeof v === 'string' && isTemporal(type) && TEMPORAL_TEXT.test(v)) return temporalText(v);
-  if (typeof v === 'string' && isNumeric(type) && EXACT_NUMBER.test(v)) return exactNumber(v, type);
-  if (typeof v === 'string') return lit.string(v);
-  if (typeof v === 'boolean') return lit.boolean(v);
-  if (v instanceof Date) return dateNode(v);
-  return numberText(String(v));
+  if (type === undefined) {
+    throw new CubeRefusal(`the compiler has not typed the column this value ${JSON.stringify(v)} is compared with`);
+  }
+  if (isBoolean(type)) return lit.boolean(v === true || v === 'true');
+  return lit.of(plainType(type), typeof v === 'boolean' ? String(v) : v);
 }
 
 // ---- filters ----
@@ -140,8 +105,8 @@ export function filterNode(node: FilterNode, param = 'x', typeOf: TypeOf = () =>
       const type = typeOf(node.column);
       const one = (): ValueSpecification => literalNode(node.value as FilterValue, type);
       const many = (): readonly FilterValue[] => (node.value as readonly FilterValue[]) ?? [];
-      const preLowered = (v: FilterValue): ValueSpecification =>
-        typeof v === 'string' ? literalNode(v.toLowerCase()) : literalNode(v);
+      // a text operator's operand is text, whatever the column: lowered here for the case-insensitive ones
+      const preLowered = (v: FilterValue): ValueSpecification => lit.string(String(v).toLowerCase());
 
       const cmp = COMPARISON[node.operator];
       if (cmp) return compare(cmp, node.operator === 'notEqual', r, one());
@@ -172,8 +137,7 @@ export function filterNode(node: FilterNode, param = 'x', typeOf: TypeOf = () =>
         case 'notIn': return not(fn('in', r, collection(many().map((v) => literalNode(v, type)))));
         case 'equalCaseInsensitive':
         case 'notEqualCaseInsensitive': {
-          const v = node.value as FilterValue;
-          const value = typeof v === 'string' ? fn('toLower', literalNode(v)) : literalNode(v);
+          const value = fn('toLower', lit.string(String(node.value as FilterValue)));
           return compare('equal', node.operator === 'notEqualCaseInsensitive', lowered(r), value);
         }
         case 'containsCaseInsensitive': return fn('contains', lowered(r), preLowered(node.value as FilterValue));
@@ -336,7 +300,7 @@ export function pivotValuesLambda(s: CubeSnapshot): Lambda | null {
 }
 
 /** The condition a pivot cell's rows meet. */
-function tupleCondition(s: CubeSnapshot, tuple: readonly string[]): ValueSpecification {
+function tupleCondition(s: CubeSnapshot, tuple: readonly GroupKey[]): ValueSpecification {
   const conditions = memberConditions(s, effectivePivotOn(s), tuple);
   return filterNode(conditions.length === 1 ? conditions[0]! : { kind: 'and', children: conditions },
     'x', (c) => columnType(s, c));
@@ -580,49 +544,12 @@ export interface LevelScope {
 }
 
 /**
- * Sentinel for a group whose key is SQL NULL.
- *
- * A group label is a rendered string, so any printable sentinel could
- * collide with a real value; this one cannot be produced by
- * formatting.
+ * Conditions pinning a branch: region == 'EMEA', and so on -- each key as the value it is, its
+ * literal written by the column's compiler type (`literalNode`). A NULL key cannot be matched
+ * with `==`, so it becomes an isEmpty test; without that, expanding a group whose key is null
+ * silently returns no children. A Variant key is its document's JSON text, as the database
+ * printed it, so it matches as a document.
  */
-export const NULL_GROUP = '\u0000null';
-
-/**
- * Conditions pinning a branch: region == 'EMEA', and so on.
- *
- * A NULL group key cannot be matched with `==`, so it becomes an
- * isEmpty test. Without that, expanding a group whose key is null
- * silently returns no children.
- */
-/**
- * A group key, turned back into the value it came from.
- *
- * Paths are TEXT -- one string per level -- so a temporal key
- * arrives here as the ISO form `groupValue` wrote. Comparing that
- * string against a timestamp column is what produced `Conversion
- * Error: invalid timestamp field format`, so the declared type of
- * the dimension decides how to read it back.
- *
- * A value that does not parse is left as text rather than turned
- * into `Invalid Date`: a filter that cannot be built is better than
- * one that silently matches nothing.
- */
-function keyValue(type: string | undefined, value: string): FilterValue {
-  // A Variant key is the document's JSON text, exactly as the database
-  // printed it -- so it matches as a document (DuckDB compares JSON as
-  // text, and this is that text).
-  if (isVariant(type)) return { json: value };
-  // A NUMBER or a BOOLEAN key compares as one. As text it was
-  // `$x.year == '2021'`, which one engine casts and another refuses.
-  // Only when the text round-trips exactly: an integer past 2^53 stays
-  // text rather than becoming a neighbouring number.
-  // A number or a date keeps its EXACT text; `literal` spells it by the column's type
-  // (an integer past 2^53, a decimal's digits, a timestamp's microseconds all survive).
-  if (isBoolean(type) && (value === 'true' || value === 'false')) return value === 'true';
-  return value;
-}
-
 /**
  * The conditions pinning a member of a hierarchy -- `columns[i] ==
  * path[i]` down its path, typed as the tree's keys are. Ad Hoc Analysis mode's
@@ -647,13 +574,13 @@ export function parentConditions(
     const column = snapshot.rows[i];
     if (column === undefined) return;
     out.push(
-      value === NULL_GROUP
+      value === null
         ? { kind: 'condition', column, operator: 'isEmpty' }
         : {
             kind: 'condition',
             column,
             operator: 'equal',
-            value: keyValue(typeOf.get(column), value),
+            value: isVariant(typeOf.get(column)) ? { json: value } : value,
           },
     );
   });
@@ -718,12 +645,11 @@ export const EMPTY_PIVOT_LABEL = '(empty)';
 /**
  * Step 1's answer: the value combinations present, in header order.
  *
- * Each value is a group-key text -- what a tree path holds, NULL_GROUP
- * for a missing value -- so a pivot value and a group key become a
- * literal by one rule (`keyValue`).
+ * Each value is a group key -- a cell's exact text, or null -- so a pivot
+ * value and a tree key become a literal by one rule (`parentConditions`).
  */
 export interface PivotFacts {
-  readonly tuples: readonly (readonly string[])[];
+  readonly tuples: readonly (readonly GroupKey[])[];
 }
 
 /**
@@ -735,7 +661,7 @@ export interface PivotFacts {
 export interface PivotColumn {
   readonly name: string;
   readonly measure: Measure;
-  readonly tuple: readonly string[] | null;
+  readonly tuple: readonly GroupKey[] | null;
 }
 
 /** The name of one measure's pivot total column. */
@@ -749,8 +675,8 @@ export function isPivotTotalColumn(name: string): boolean {
 }
 
 /** A pivot value as its column's header shows it. */
-export function pivotLabel(key: string): string {
-  return key === NULL_GROUP ? EMPTY_PIVOT_LABEL : key;
+export function pivotLabel(key: GroupKey): string {
+  return key === null ? EMPTY_PIVOT_LABEL : key;
 }
 
 /** The pivot keys that pivot: those not excluded from the pivot. */
@@ -853,14 +779,9 @@ export function refuseUnpivotable(s: CubeSnapshot): void {
 /** Pinned values as step 1's answer (`pivotValues`, one key). */
 export function pinnedPivotFacts(s: CubeSnapshot): PivotFacts | null {
   if (s.pivotValues === undefined || s.pivotValues.length === 0) return null;
-  // A key as `groupValue` writes a tree key: a cell's exact text (a filter editor's Date,
-  // until T4 types the editor's values, keeps its old local spelling)
-  const p = (n: number): string => String(n).padStart(2, '0');
-  const key = (v: FilterValue): string => (v instanceof Date
-    ? `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`
-      + `T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
-    : isJsonValue(v) ? v.json
-      : isRelativeDate(v) ? v.relative : String(v));
+  // A key as a tree key is: the value's exact text (a JSON value its document's text)
+  const key = (v: FilterValue): GroupKey => (isJsonValue(v) ? v.json
+    : isRelativeDate(v) ? v.relative : String(v));
   return { tuples: s.pivotValues.map((v) => [key(v)]) };
 }
 
@@ -1016,7 +937,7 @@ export interface DrillRequest {
    * The clicked column's pivot values, outermost first. Absent for a
    * row-dimension cell or an unpivoted cube.
    */
-  readonly pivotPath?: readonly string[];
+  readonly pivotPath?: readonly GroupKey[];
   /** Safety valve: drill-through is a peek, not an export. */
   readonly limit?: number;
 }
@@ -1035,7 +956,7 @@ export function drillConditions(
 ): FilterNode[] {
   const out: FilterNode[] = [];
   if (snapshot.filter) out.push(snapshot.filter);
-  // TYPED, by the rule a tree level and a pivot cell use (`keyValue`): a
+  // TYPED, by the rule a tree level and a pivot cell use (`parentConditions`): a
   // year is `== 2021`, not `== '2021'`, and a NULL key is `isEmpty`. So
   // the drill pins exactly the rows its cell aggregated.
   out.push(...memberConditions(snapshot, snapshot.rows.slice(0, request.path.length), request.path));

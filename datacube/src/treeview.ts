@@ -17,7 +17,6 @@ import type { Lambda } from '../../pure-protocol/src/index.ts';
 import {
   childAggregateLambda,
   levelLambda,
-  NULL_GROUP,
   detailSnapshot,
   type LevelScope,
   type PivotFacts,
@@ -37,6 +36,7 @@ import {
   pathKey,
   requestKey,
   requiredLevels,
+  type GroupKey,
 } from './tree.ts';
 
 /**
@@ -91,23 +91,14 @@ export interface TreeView {
 }
 
 /**
- * A group key rendered as text, with SQL NULL kept distinguishable.
- *
- * A temporal key is written as ISO 8601 rather than by `String()`,
- * and that is not cosmetic: the path segment is fed BACK into the
- * next level's query as a filter value, so it has to round-trip.
- * `String(date)` gives the locale form -- "Fri Jan 01 2021 03:58:00
- * GMT-0500 (Eastern Standard Time)" -- which went into the SQL as a
- * string and came back as `Conversion Error: invalid timestamp field
- * format`. Grouping by any date or timestamp column simply failed,
- * and the grid kept the previous answer.
+ * A cell as a group key: its EXACT text (values.ts: a date its calendar day, a timestamp its
+ * stored text to the microsecond, a big integer its digits -- the same in every time zone), or
+ * null for the group whose key is null. Read back by the column's compiler type (query.ts), so
+ * a key round-trips into the next level's filter exactly. (`String(date)` once sent the locale
+ * form, "Fri Jan 01 2021 03:58:00 GMT-0500", and every temporal group failed.)
  */
-/** A group key as the tree's paths spell it (ad hoc members too). */
-export function groupValue(v: Scalar): string {
-  if (v === null) return NULL_GROUP;
-  // A cell is exact (values.ts): a date its calendar day, a timestamp its stored text to
-  // the microsecond, a big integer its digits -- so the key is that text, the same in
-  // every time zone, and `literal` writes it back by the column's type.
+export function groupValue(v: Scalar): GroupKey {
+  if (v === null) return null;
   return String(v);
 }
 
@@ -396,9 +387,8 @@ export function assemble(
     // A detail row is a source row: nothing to name in the tree.
     if (row.isDetail) return null;
     const own = row.path[row.path.length - 1];
-    // A group whose key is SQL NULL has no label of its own; showing
-    // the sentinel would leak an internal string into the grid.
-    return counted(own === undefined || own === NULL_GROUP ? null : own, i);
+    // A group whose key is SQL NULL has no label of its own.
+    return counted(own ?? null, i);
   };
 
   /**

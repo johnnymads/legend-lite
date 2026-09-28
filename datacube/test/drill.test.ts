@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DEFAULT_DRILL_LIMIT, NULL_GROUP, drillConditions } from '../src/query.ts';
+import { DEFAULT_DRILL_LIMIT, drillConditions } from '../src/query.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { element } from '../../pure-protocol/src/index.ts';
 import { printDrill, row } from './lite-compiler.ts';
 
 const SNAPSHOT: CubeSnapshot = {
   source: { query: element('trades') },
-  columns: [],
+  columns: [
+    { name: 'region', type: 'String' },
+    { name: 'desk', type: 'String' },
+    { name: 'year', type: 'Integer' },
+    { name: 'notional', type: 'Float' },
+  ],
   derived: [],
   rows: ['region', 'desk'],
   pivotOn: ['year'],
@@ -27,7 +32,7 @@ describe('the drill query', () => {
       sql,
       // each condition parenthesized (the grammar applies < <= > >= left to right with && ||)
       "|trades->filter(x|(($x.region == 'EMEA') && ($x.desk == 'Rates')) "
-        + "&& ($x.year == '2023'))" +
+        + "&& ($x.year == 2023))" +
         `->limit(${DEFAULT_DRILL_LIMIT})`,
     );
     // The population, not its aggregate: drilling into a number must
@@ -48,7 +53,7 @@ describe('the drill query', () => {
     };
     assert.match(
       printDrill(s, { path: ['EMEA'] }),
-      /\(\$x\.notional > 0\) && \(\$x\.region == 'EMEA'\)/,
+      /\(\$x\.notional > 0\.0\) && \(\$x\.region == 'EMEA'\)/,
     );
   });
 
@@ -61,7 +66,7 @@ describe('the drill query', () => {
 
   it('matches a NULL group with isEmpty', () => {
     assert.match(
-      printDrill(SNAPSHOT, { path: [NULL_GROUP] }),
+      printDrill(SNAPSHOT, { path: [null] }),
       /\$x\.region->isEmpty\(\)/,
     );
   });

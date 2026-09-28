@@ -11,7 +11,9 @@
 // different stores per plane: a DuckDB table on the local plane, an H2
 // schema on the engine plane.
 
-/** Every case, over `source`. */
+import { col, gt, lambda, lit } from '../../pure-protocol/src/index.ts';
+
+/** Every case, over `source` (a relation, as protocol). */
 export function casesFor(SOURCE) {
   const COLUMNS = [
     { name: 'region', type: 'String' },
@@ -25,7 +27,7 @@ export function casesFor(SOURCE) {
   ];
 
   const BASE = {
-    source: { expression: SOURCE },
+    source: { query: SOURCE },
     columns: COLUMNS,
     derived: [],
     rows: [],
@@ -111,7 +113,7 @@ export function casesFor(SOURCE) {
       snapshot: cube({
         rows: ['region'],
         measures: [SUM],
-        derived: [{ name: 'big', expression: '$x.notional > 100' }],
+        derived: [{ name: 'big', lambda: lambda(['x'], gt(col('x', 'notional'), lit.float(100))) }],
       }),
     },
     {

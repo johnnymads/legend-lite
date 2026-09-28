@@ -31,7 +31,7 @@
 //    type one level down. This is the single most useful thing in
 //    their menu and it is the part a labels-only reading misses.
 
-import { localDateText } from '../query.ts';
+import type { MemberPath } from '../adhoc/state.ts';
 import type {
   CubeSnapshot,
   FilterNode,
@@ -266,9 +266,9 @@ export interface MenuItem {
   /** Ad Hoc Analysis mode: the member (or dimension) the entry acts on. */
   readonly adhoc?: {
     readonly dimension: string;
-    readonly member?: readonly string[];
+    readonly member?: MemberPath;
     /** Members selected with it, for Keep Only / Remove Only. */
-    readonly selected?: readonly (readonly string[])[];
+    readonly selected?: readonly MemberPath[];
   };
   readonly submenu?: readonly MenuItem[];
 }
@@ -355,7 +355,6 @@ const OPERATOR_LABEL: Readonly<Partial<Record<FilterOperator, string>>> = {
 export function valueLabel(value: FilterValue): string {
   if (isRelativeDate(value)) return value.relative === 'today' ? 'TODAY' : 'NOW';
   if (isJsonValue(value)) return value.json;
-  if (value instanceof Date) return localDateText(value).replace('T', ' ');
   // Text QUOTED, as upstream's: "region = 'EMEA'", so a value that
   // looks like a number or is blank still reads as the text it is.
   if (typeof value === 'string') return `'${value}'`;

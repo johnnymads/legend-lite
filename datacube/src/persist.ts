@@ -31,8 +31,9 @@ import { TreeState, parsePathKey } from './tree.ts';
 /**
  * Bumped whenever the shape changes in a way a reader must handle. 2: the
  * source and each calculated column are protocol (T4b), written exactly.
+ * 3: group keys are exact text or null, and an open path is its JSON (T4c).
  */
-export const CURRENT_VERSION = 2;
+export const CURRENT_VERSION = 3;
 
 
 export interface ColumnSettings {
@@ -148,10 +149,11 @@ export function load(input: string | unknown): SavedView {
   const version = obj['version'] instanceof ExactNumber || typeof obj['version'] === 'number'
     ? Number(String(obj['version'])) : 0;
   if (version < CURRENT_VERSION) {
-    // Its source and calculated columns are Pure text. Upstream's saved
-    // specification (#21) replaces this format; until then, say so plainly.
+    // Its queries were text (before 2), or its group keys a text sentinel (2).
+    // Upstream's saved specification (#21) replaces this format; until then,
+    // say so plainly rather than migrate.
     throw new SavedViewError(
-      `saved by an earlier version (${version}), whose queries were text; ` +
+      `saved by an earlier version (${version}), in a form this one no longer reads; ` +
         `open the cube again and save it`,
     );
   }

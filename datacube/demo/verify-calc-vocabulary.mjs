@@ -23,7 +23,8 @@ import { readFile } from 'node:fs/promises';
 
 import { CALC_FUNCTIONS } from '../src/calc.ts';
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
-import { levelLambda, parseSnapshot } from '../src/query.ts';
+import { levelLambda } from '../src/query.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
 import { ENGINE_COLUMNS } from './engine-cases.mjs';
 
@@ -31,12 +32,15 @@ const HERE = new URL('.', import.meta.url);
 const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
   .replace(/\/$/, '');
 
-/** The example as a snapshot: one derived column, nothing else. */
-function snapshotFor(fn, source) {
+/**
+ * The example as a snapshot: one derived column, nothing else. The example is
+ * text a person types, so the plane's compiler parses it (`parse`).
+ */
+async function snapshotFor(fn, source, parse) {
   return {
-    source: { expression: source },
+    source: { query: source },
     columns: ENGINE_COLUMNS,
-    derived: [{ name: 'calc', expression: fn.example }],
+    derived: [{ name: 'calc', lambda: await parse(`x|${fn.example}`) }],
     rows: [],
     pivotOn: [],
     measures: [],
@@ -82,22 +86,21 @@ try {
 for (const fn of CALC_FUNCTIONS) {
   const row = { name: fn.name, local: null, engine: null };
 
-  const localSnap = snapshotFor(fn, '#>{trades::DB.TRADES}#');
   try {
-    await planner.plan(levelLambda(localSnap, await parseSnapshot(localSnap, (t) => planner.parse(t))));
+    const localSnap = await snapshotFor(fn, accessor('trades::DB', 'TRADES'), (t) => planner.parse(t));
+    await planner.plan(levelLambda(localSnap));
   } catch (e) {
     row.local = String(e.message ?? e).replace(/\s+/g, ' ').slice(0, 150);
   }
 
   if (executor) {
-    const engineSnap = snapshotFor(
-      fn, '#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#');
     try {
+      const engineSnap = await snapshotFor(
+        fn, accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES'), (t) => executor.parse(t));
       // EXECUTED, not just planned: the case-insensitive filters
       // compiled on the engine and then failed to render, so planning
       // alone is not the question.
-      await executor.execute(
-        levelLambda(engineSnap, await parseSnapshot(engineSnap, (t) => executor.parse(t))), engineSnap);
+      await executor.execute(levelLambda(engineSnap), engineSnap);
     } catch (e) {
       row.engine = String(e.message ?? e).replace(/\s+/g, ' ').slice(0, 150);
     }

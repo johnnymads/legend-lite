@@ -106,7 +106,7 @@ describe('the row cap travels with the view', () => {
   it('ignores a non-numeric maxRows from a hand-edited file', () => {
     const back = load(
       JSON.stringify({
-        version: 2,
+        version: 3,
         snapshot: { source: { query: element('trades') }, maxRows: 'lots' },
       }),
     );
@@ -138,13 +138,13 @@ describe('forward and backward compatibility', () => {
     ]);
   });
 
-  it('refuses a view saved before its queries were protocol, and says so', () => {
+  it('refuses a view saved in an earlier form, and says so', () => {
     const v1 = {
       version: 1,
       name: 'legacy',
       snapshot: { source: { expression: 'trades' }, rows: ['region'], pivotOn: [], measures: [] },
     };
-    assert.throws(() => load(JSON.stringify(v1)), /saved by an earlier version \(1\), whose queries were text/);
+    assert.throws(() => load(JSON.stringify(v1)), /saved by an earlier version \(1\), in a form this one no longer reads/);
     assert.throws(() => load(JSON.stringify({ ...v1, version: undefined })), /earlier version \(0\)/);
   });
 
@@ -164,7 +164,7 @@ describe('forward and backward compatibility', () => {
       () => load(JSON.stringify({ version: 99, snapshot: SNAPSHOT })),
       (e: unknown) => {
         assert.ok(e instanceof SavedViewError);
-        assert.match((e as Error).message, /newer version \(99 > 2\)/);
+        assert.match((e as Error).message, /newer version \(99 > 3\)/);
         assert.match((e as Error).message, /upgrade to open it/);
         return true;
       },
@@ -180,12 +180,12 @@ describe('failures are loud', () => {
   });
 
   it('reports a missing snapshot', () => {
-    assert.throws(() => load(JSON.stringify({ version: 2 })), /missing 'snapshot'/);
+    assert.throws(() => load(JSON.stringify({ version: 3 })), /missing 'snapshot'/);
   });
 
   it('reports a snapshot with no source', () => {
     assert.throws(
-      () => load(JSON.stringify({ version: 2, snapshot: { rows: [] } })),
+      () => load(JSON.stringify({ version: 3, snapshot: { rows: [] } })),
       /missing 'snapshot.source'/,
     );
   });

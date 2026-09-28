@@ -48,7 +48,7 @@ import { readFile } from 'node:fs/promises';
 import { DuckDbEngine } from '../src/duckdb.ts';
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
 import { levelWithValues } from '../src/plan.ts';
-import { parseSnapshot } from '../src/query.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
 import { casesFor } from './engine-cases.mjs';
 
@@ -57,8 +57,8 @@ const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
 const ONLY = process.env.ONLY;
 
 const HERE = new URL('.', import.meta.url);
-const LOCAL_SOURCE = '#>{trades::DB.TRADES}#';
-const ENGINE_SOURCE = '#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#';
+const LOCAL_SOURCE = accessor('trades::DB', 'TRADES');
+const ENGINE_SOURCE = accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES');
 
 // ---- the data, read from the engine plane's own seed ----------------
 
@@ -271,8 +271,7 @@ for (let i = 0; i < localCases.length; i += 1) {
   let localRows;
   try {
     const run = async (query) => local.engine.execute(await local.planner.plan(query), ls.epoch);
-    const parsed = await parseSnapshot(ls, (t) => local.planner.parse(t));
-    const plan = await local.planner.plan(await levelWithValues(ls, parsed, scope, run));
+    const plan = await local.planner.plan(await levelWithValues(ls, scope, run));
     localRows = normalise(await local.engine.execute(plan, ls.epoch));
   } catch (e) {
     skipped.push({ name, where: 'the local plane',
@@ -282,8 +281,7 @@ for (let i = 0; i < localCases.length; i += 1) {
 
   let engineRows;
   try {
-    const parsed = await parseSnapshot(es, (t) => executor.parse(t));
-    const query = await levelWithValues(es, parsed, scope,
+    const query = await levelWithValues(es, scope,
       async (values) => (await executor.execute(values, es)).rows);
     const out = await executor.execute(query, es);
     engineRows = normalise(out.rows);
