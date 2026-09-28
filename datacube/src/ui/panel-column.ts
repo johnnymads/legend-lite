@@ -368,7 +368,7 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
   const format = c.format ?? { kind: 'auto' };
   // What an unset field SHOWS is what the grid renders: the type's
   // defaults (upstream's), not a blank that reads as "none".
-  const defaults = numberDefaults(type);
+  const defaults = numberDefaults(type, kind);
   // Upstream shows these for EVERY column: a text column has a
   // missing value and a case too. Only the number section is by type.
   const formatting = section(

@@ -8,7 +8,9 @@ import {
   columnConfig,
   fromSnapshot,
   labelFor,
+  leafFormats,
   mergeColumnOrder,
+  numberDefaults,
   renameColumnConfig,
   resolvedWidths,
   toColumnAppearance,
@@ -421,5 +423,28 @@ describe('what the count counts', () => {
     const s = applyToSnapshot(base, { ...DEFAULT_CONFIGURATION, showLeafCount: false });
     assert.equal(s.leafCount, false);
     assert.equal(s.childCount, false);
+  });
+});
+
+describe('number defaults follow the column KIND (the user, 2026-09-28)', () => {
+  it('a measure: grouped digits, negatives in parentheses, an Integer at 0 places', () => {
+    assert.deepEqual(numberDefaults('Integer'), { decimals: 0, negativeParens: true });
+    assert.deepEqual(numberDefaults('Float', 'measure'), { decimals: 2, negativeParens: true });
+  });
+  it('a dimension is a label: no thousands separators, no parentheses', () => {
+    assert.deepEqual(numberDefaults('Integer', 'dimension'), { decimals: 0, displayCommas: false });
+    assert.deepEqual(numberDefaults('Float', 'dimension'), { displayCommas: false });
+    assert.equal(numberDefaults('String', 'dimension'), undefined);
+  });
+  it('a leaf takes its column\'s kind; what the user set still wins', () => {
+    const config = { ...DEFAULT_CONFIGURATION, columns: { id: { format: { kind: 'number' as const, displayCommas: true } } } };
+    const out = leafFormats(config, [
+      { name: 'year', path: ['year'], isDimension: false, type: 'Integer', kind: 'dimension' },
+      { name: 'qty', path: ['qty'], isDimension: false, type: 'Integer', kind: 'measure' },
+      { name: 'id', path: ['id'], isDimension: false, type: 'Integer', kind: 'dimension' },
+    ]);
+    assert.equal(out['year']?.displayCommas, false);
+    assert.equal(out['qty']?.displayCommas, undefined);
+    assert.equal(out['id']?.displayCommas, true, 'a user\'s own setting wins over the default');
   });
 });

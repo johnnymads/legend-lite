@@ -16,7 +16,6 @@ import {
 import {
   CubeRefusal,
   columnType,
-  effectivePivotOn,
   excludedFromPivot,
   LEAF_COUNT_COLUMN,
   pivotTotalColumn,
@@ -304,7 +303,7 @@ export function sourceWithDerived(s: CubeSnapshot): Relation {
 
 /** Step 1 of a pivot: its value combinations, in the pivot's order, one past the cap. */
 export function pivotValuesLambda(s: CubeSnapshot): Lambda | null {
-  const on = effectivePivotOn(s);
+  const on = s.pivotOn;
   if (on.length === 0 || (s.pivotValues !== undefined && s.pivotValues.length > 0)) return null;
   refuseUnpivotable(s);
   let rel = sourceWithDerived(s);
@@ -321,7 +320,7 @@ export function pivotValuesLambda(s: CubeSnapshot): Lambda | null {
 
 /** The condition a pivot cell's rows meet. */
 function tupleCondition(s: CubeSnapshot, tuple: readonly GroupKey[]): ValueSpecification {
-  const conditions = memberConditions(s, effectivePivotOn(s), tuple);
+  const conditions = memberConditions(s, s.pivotOn, tuple);
   return filterNode(conditions.length === 1 ? conditions[0]! : { kind: 'and', children: conditions },
     'x', (c) => columnType(s, c));
 }
@@ -348,7 +347,7 @@ function levelRelation(snapshot: CubeSnapshot, scope?: LevelScope, pivot?: Pivot
     rel = rel.filter(lambda(['x'], filterNode({ kind: 'and', children: conditions }, 'x', typeOf)));
   }
 
-  const on = effectivePivotOn(snapshot);
+  const on = snapshot.pivotOn;
   const pivoting = on.length > 0;
   const grouping = !pivoting && (groupCols.length > 0 || snapshot.measures.length > 0 || grandTotal);
 
@@ -701,7 +700,7 @@ export function pivotLabel(key: GroupKey): string {
  */
 export function spreadMeasures(s: CubeSnapshot): Measure[] {
   const excluded = excludedFromPivot(s);
-  const on = effectivePivotOn(s);
+  const on = s.pivotOn;
   if (s.measures.length > 0) {
     const kept = s.measures.filter((m) => !excluded.has(m.column));
     if (kept.length > 0) return kept;
@@ -765,7 +764,7 @@ export function pivotColumns(s: CubeSnapshot, facts: PivotFacts): PivotColumn[] 
  */
 export function refuseUnpivotable(s: CubeSnapshot): void {
   const specOf = columnSpecs(s);
-  for (const name of effectivePivotOn(s)) {
+  for (const name of s.pivotOn) {
     if (isVariant(specOf.get(name)?.type)) {
       throw new CubeRefusal(
         `cannot pivot on '${name}': it holds JSON. Pivot on a value `
@@ -795,7 +794,7 @@ export function pinnedPivotFacts(s: CubeSnapshot): PivotFacts | null {
  */
 export function carriedMeasures(s: CubeSnapshot, groupCols: readonly string[]): Measure[] {
   const excluded = excludedFromPivot(s);
-  const isKey = new Set([...groupCols, ...effectivePivotOn(s)]);
+  const isKey = new Set([...groupCols, ...s.pivotOn]);
   const spread = spreadMeasures(s);
   const excludedConfigured = s.measures.filter((m) => excluded.has(m.column));
   const handled = new Set([
@@ -962,7 +961,7 @@ export function drillConditions(
   out.push(...memberConditions(snapshot, snapshot.rows.slice(0, request.path.length), request.path));
   const pivot = request.pivotPath ?? [];
   if (pivot.length > 0) {
-    out.push(...memberConditions(snapshot, effectivePivotOn(snapshot).slice(0, pivot.length), pivot));
+    out.push(...memberConditions(snapshot, snapshot.pivotOn.slice(0, pivot.length), pivot));
   }
   return out;
 }

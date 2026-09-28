@@ -58,34 +58,32 @@ describe('column kind', () => {
 });
 
 describe('excludedFromPivot', () => {
-  it('keeps the column out of the pivot even when listed there', () => {
-    // The exclusion must not be defeatable by the order the user
-    // configured things in.
+  // A MEASURE setting: which measures are spread across the pivot's values. It never touches
+  // a pivot KEY -- upstream marks every dimension excluded (its validator requires it) and a
+  // pivot key is a dimension. The rule these tests replace dropped a marked key from the query,
+  // so an Integer made a dimension went into the pivot zone and pivoted nothing (the user,
+  // 2026-09-28).
+  it('a pivot KEY pivots even when marked excluded, as every dimension is', () => {
     const s: CubeSnapshot = {
       ...CUBE,
       columns: CUBE.columns.map((c) =>
         c.name === 'year' ? { ...c, excludedFromPivot: true } : c,
       ),
     };
-    // No values are needed: nothing pivots.
-    const out = printLevel(s);
-    assert.equal(out.includes('__|__'), false, 'no pivot cell remains');
-    assert.match(out, /groupBy\(~\[region\]/, 'it falls back to a plain group');
-    assert.equal(/\$x\.year ==/.test(out), false, 'and nothing is split by year');
+    const out = printLevel(s, undefined, { tuples: [['2023']] });
+    assert.match(out, /if\(\$x\.year == 2023, /, 'split by year');
+    assert.match(out, /2023__\|__total/);
   });
 
-  it('leaves other pivot dimensions alone', () => {
+  it('keeps a MEASURE marked excluded out of the spread', () => {
     const s: CubeSnapshot = {
       ...CUBE,
-      columns: [
-        ...CUBE.columns,
-        { name: 'qtr', type: 'String', excludedFromPivot: true },
-      ],
-      pivotOn: ['year', 'qtr'],
+      columns: CUBE.columns.map((c) =>
+        c.name === 'notional' ? { ...c, excludedFromPivot: true } : c,
+      ),
     };
     const out = printLevel(s, undefined, { tuples: [['2023']] });
-    assert.match(out, /if\(\$x\.year == 2023, /);
-    assert.equal(/\$x\.qtr ==/.test(out), false, 'qtr splits nothing');
+    assert.equal(out.includes('2023__|__total'), false, 'total is not spread by year');
   });
 });
 

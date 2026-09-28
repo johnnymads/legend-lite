@@ -21,7 +21,6 @@ import {
   pivotColumns,
   type PivotFacts,
 } from '../src/query.ts';
-import { effectivePivotOn } from '../src/snapshot.ts';
 import { buildColumnModel, PIVOT_SEPARATOR } from '../src/grid/columns.ts';
 import {
   CubeRefusal,
@@ -188,7 +187,7 @@ const CASES = 400;
  * each key gets a value and a NULL -- both forms a cell's condition takes.
  */
 function factsFor(s: CubeSnapshot): PivotFacts | undefined {
-  const on = effectivePivotOn(s);
+  const on = s.pivotOn;
   return on.length === 0 ? undefined : { tuples: [on.map(() => 'v'), on.map(() => null)] };
 }
 

@@ -27,7 +27,6 @@ import {
   type PivotColumn,
   type PivotFacts,
 } from './query.ts';
-import { effectivePivotOn } from './snapshot.ts';
 import { CubeRefusal, type CubeSnapshot } from './snapshot.ts';
 import { groupValue } from './treeview.ts';
 import type { GroupKey } from './tree.ts';
@@ -101,7 +100,7 @@ export async function planPivot(
   runner: QueryRunner,
   signal?: AbortSignal,
 ): Promise<PivotPlan | undefined> {
-  if (effectivePivotOn(snapshot).length === 0) return undefined;
+  if (snapshot.pivotOn.length === 0) return undefined;
   const pinned = pinnedPivotFacts(snapshot);
   if (pinned) {
     return { facts: pinned, columns: pivotColumns(snapshot, pinned), query: null, sql: null };
@@ -120,7 +119,7 @@ export async function planPivot(
  * would show a table with values missing and nothing saying so.
  */
 export function pivotFacts(rows: ResultTable, snapshot: CubeSnapshot): PivotFacts {
-  const on = effectivePivotOn(snapshot);
+  const on = snapshot.pivotOn;
   if (rows.rowCount > MAX_PIVOT_VALUES) {
     throw new CubeRefusal(
       `pivoting on ${on.join(', ')} finds more than ${MAX_PIVOT_VALUES} values, `
@@ -145,7 +144,7 @@ export async function levelWithValues(
   scope: LevelScope | undefined,
   runValues: (query: Lambda) => Promise<ResultTable>,
 ): Promise<Lambda> {
-  if (effectivePivotOn(snapshot).length === 0) return levelLambda(snapshot, scope);
+  if (snapshot.pivotOn.length === 0) return levelLambda(snapshot, scope);
   const pinned = pinnedPivotFacts(snapshot);
   const values = pivotValuesLambda(snapshot);
   const facts = pinned ?? (values === null ? { tuples: [] } : pivotFacts(await runValues(values), snapshot));

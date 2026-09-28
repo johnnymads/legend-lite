@@ -63,7 +63,6 @@ import {
 import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import type { TreeState } from '../src/tree.ts';
-import { isNumeric } from '../src/types.ts';
 import { sourceColumns } from '../src/source-columns.ts';
 import { accessor, type ValueSpecification } from '../../pure-protocol/src/index.ts';
 import type { SnapTarget } from '../src/snap.ts';
@@ -595,19 +594,6 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     pick.addEventListener('change', showPick);
     showPick();
 
-    // A numeric column the inference judged key-like -- a year, an id, a
-    // postcode -- must not get thousands separators. "2,019" is the kind of
-    // wrong that reads as a bug in the data rather than in the formatting.
-    // One rule for every inferred source: a file, or a warehouse table.
-    const keyLikeFormats = (columns: readonly { name: string; type: string; kind?: string }[]) =>
-      Object.fromEntries(
-        columns
-          .filter((c) => c.kind === 'dimension' && isNumeric(c.type))
-          .map((c) => [c.name, {
-            format: { kind: 'number' as const, displayCommas: false, maximumFractionDigits: 0 },
-          }]),
-      );
-
     // Narrowed once: the check above does not reach into a function.
     const local = models;
 
@@ -697,8 +683,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
               {
                 ...DEFAULT_CONFIGURATION,
                 reportTitle: `${chosen.schema}.${chosen.name}`,
-                columns: keyLikeFormats(columns),
-              },
+                  },
               [],
               {
                 live: new WarehouseEngine(session as WarehouseSession),
@@ -783,7 +768,6 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           config = {
             ...DEFAULT_CONFIGURATION,
             reportTitle: opened.fileName,
-            columns: keyLikeFormats(columns),
           };
         }
         app.dispose();

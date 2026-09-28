@@ -518,15 +518,28 @@ export function toFormats(
 }
 
 /**
- * What a NUMERIC column shows before anyone configures it: upstream's
- * DataCubeConfigurationBuilder -- an Integer at 0 decimals, any other
- * number at 2 fixed, negatives in parentheses. Undefined for anything
- * else. Commas are already the formatter's default.
+ * What a NUMERIC column shows before anyone configures it.
+ *
+ * A MEASURE: upstream's DataCubeConfigurationBuilder -- an Integer at 0
+ * decimals, any other number at 2 fixed, negatives in parentheses (commas
+ * are the formatter's default).
+ *
+ * A DIMENSION is a label -- a year, an id, a code: it reads as written
+ * (the user, 2026-09-28), so no thousands separators ("2,019" reads as a
+ * bug in the data) and no parentheses; an Integer at 0 places. A column
+ * made a dimension later gets this too: the rule is the kind's, not a
+ * format written in when a file opened.
+ *
+ * Undefined for anything not numeric.
  */
 export function numberDefaults(
   type: string | undefined,
-): Pick<ColumnFormat, 'decimals' | 'negativeParens'> | undefined {
+  kind: ColumnKind | undefined = undefined,
+): Pick<ColumnFormat, 'decimals' | 'negativeParens' | 'displayCommas'> | undefined {
   if (!isNumeric(type)) return undefined;
+  if (kind === 'dimension') {
+    return isFractional(type) ? { displayCommas: false } : { decimals: 0, displayCommas: false };
+  }
   return { decimals: isFractional(type) ? 2 : 0, negativeParens: true };
 }
 
@@ -546,8 +559,9 @@ export function renderFormats(
     ...rowColumns(snapshot),
     ...(snapshot.groupDerived ?? []),
   ];
-  for (const { name, type } of typed) {
-    const defaults = numberDefaults(type);
+  for (const c of typed) {
+    const { name, type } = c;
+    const defaults = numberDefaults(type, 'kind' in c ? c.kind : undefined);
     if (!defaults) continue;
     out[name] = { kind: 'auto', ...defaults, ...out[name] };
   }
@@ -563,14 +577,18 @@ export function renderFormats(
  */
 export function leafFormats(
   config: CubeConfiguration,
-  leaves: readonly { name: string; path: readonly string[]; isDimension: boolean; type: string | undefined }[],
+  leaves: readonly {
+    name: string; path: readonly string[]; isDimension: boolean; type: string | undefined;
+    /** The column's kind (declared, else its type's default); absent for a pivot or group-stage leaf. */
+    kind?: ColumnKind | undefined;
+  }[],
 ): Record<string, ColumnFormat | undefined> {
   const own = toFormats(config);
   const out: Record<string, ColumnFormat | undefined> = {};
   for (const leaf of leaves) {
     const measure = leaf.isDimension ? undefined : leaf.path[leaf.path.length - 1];
     const set = own[leaf.name] ?? (measure === undefined ? undefined : own[measure]);
-    const defaults = numberDefaults(leaf.type);
+    const defaults = numberDefaults(leaf.type, leaf.kind);
     out[leaf.name] = set || defaults ? { kind: 'auto', ...defaults, ...set } : undefined;
   }
   return out;

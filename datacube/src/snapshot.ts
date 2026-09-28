@@ -166,12 +166,13 @@ export function rowColumns(s: CubeSnapshot): RowColumn[] {
 }
 
 /** The pivot keys that pivot: those not excluded from the pivot. */
-export function effectivePivotOn(s: CubeSnapshot): string[] {
-  const excluded = excludedFromPivot(s);
-  return s.pivotOn.filter((c) => !excluded.has(c));
-}
-
-/** The columns kept out of the pivot (Column Properties > Exclude from pivot). */
+/**
+ * The columns kept out of the pivot (Column Properties > Exclude from pivot): MEASURES carried
+ * through the pivot unspread. It never touches a pivot KEY: upstream sets it on every
+ * dimension (its validator requires a dimension to carry it), and a pivot key is a dimension
+ * -- dropping keys that carried it made an Integer turned dimension (`year`) go into the pivot
+ * zone and silently out of the query (the user, 2026-09-28).
+ */
 export function excludedFromPivot(s: CubeSnapshot): Set<string> {
   return new Set(rowColumns(s).filter((c) => c.excludedFromPivot).map((c) => c.name));
 }
@@ -651,13 +652,7 @@ export function referencedColumns(
     if (!out.includes(n)) out.push(n);
   };
   groupCols.forEach(push);
-  // A column marked excludedFromPivot stays out of the pivot key even
-  // if it was listed there, so the exclusion cannot be defeated by
-  // the order the user configured things in.
-  const excluded = new Set(
-    s.columns.filter((c) => c.excludedFromPivot).map((c) => c.name),
-  );
-  s.pivotOn.filter((c) => !excluded.has(c)).forEach(push);
+  s.pivotOn.forEach(push);
   for (const m of s.measures) {
     if (m.fn !== 'count') push(m.column);
     if (m.weight) push(m.weight);
@@ -714,7 +709,7 @@ export function totalOrderSorts(
   const apart = new Set((s.groupDerived ?? []).filter((d) => d.childAggregate).map((d) => d.name));
   // A pivot total exists only while the cube pivots with totals on: a sort left on one
   // after either is turned off would order by a column no query produces.
-  const totals = s.pivotTotal !== undefined && effectivePivotOn(s).length > 0;
+  const totals = s.pivotTotal !== undefined && s.pivotOn.length > 0;
   const applicable = s.sorts.filter(
     (x) => (present.has(x.column) || !s.rows.includes(x.column)) && !apart.has(x.column)
       && (totals || !isPivotTotalColumn(x.column)),

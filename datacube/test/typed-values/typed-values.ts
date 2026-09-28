@@ -387,6 +387,81 @@ describe('T7: one formatter on compiler types', () => {
     assert.equal(stats, 'sum 1,222.06 · avg 407.35 · min (12.50) · max 1,234.56 · 3 of 3 numeric');
   });
 
+  it('T7f: an Integer made a DIMENSION reads as written: no thousands separators, no parentheses', async () => {
+    const o = await flat(P);
+    assert.deepEqual(cells(o.root, 'big').map(([t]) => t).sort(),
+      ['(9,007,199,254,740,993)', '1', '2'].sort(), 'a measure, by its type: grouped digits, negatives in parentheses');
+    await o.app.applyConfiguration({ columns: { big: { kind: 'dimension' } } });
+    await quiet(o.engine);
+    assert.deepEqual(cells(o.root, 'big').map(([t]) => t).sort(), ['-9007199254740993', '1', '2'].sort(),
+      'a dimension is a label: the value as written');
+  });
+
+  it('an Integer that STARTED as a measure, made a dimension, pivots', async () => {
+    // The user's path (2026-09-28): `qty` opens as a measure (every Integer does), Column
+    // Properties makes it a dimension -- which also marks it excluded from pivot, as upstream --
+    // and it is dragged to the column pivot. A pivot key carrying that mark was dropped from
+    // the query, so nothing pivoted.
+    const o = await openCube({
+      source: { query: P }, columns: await sourceColumns(planner, P), derived: [],
+      rows: ['region'], pivotOn: [], measures: [{ name: 'pnl', column: 'pnl', fn: 'sum' }],
+      sorts: [], epoch: 1,
+    });
+    assert.equal(o.app.snapshot.columns.find((c) => c.name === 'qty')?.kind ?? 'measure', 'measure');
+    // exactly what Column Properties > Column Kind writes (panel-column.ts)
+    await o.app.applyConfiguration({ columns: { qty: { kind: 'dimension', excludedFromPivot: true } } });
+    await quiet(o.engine);
+    const s = o.app.controller.snapshot ?? assert.fail('no snapshot');
+    await o.app.controller.update({ ...s, pivotOn: ['qty'], epoch: s.epoch + 1 });
+    await quiet(o.engine);
+    assert.deepEqual(o.errors, []);
+    const pivot = (o.app.controller.view?.pivot?.columns ?? [])
+      .filter((c) => c.tuple !== null).map((c) => c.name).sort();
+    assert.deepEqual(pivot, ['1__|__pnl', '2__|__pnl', '3__|__pnl'], 'the pivot happened');
+  });
+
+  it('an Integer that STARTED as a measure, made a dimension, GROUPS -- alone, and beside a pivot', async () => {
+    // The same path as the pivot case: opens as a measure, Column Properties makes it a
+    // dimension (marking it excluded from pivot), then it goes to Row Groups.
+    const o = await openCube({
+      source: { query: P }, columns: await sourceColumns(planner, P), derived: [],
+      rows: [], pivotOn: [], measures: [{ name: 'pnl', column: 'pnl', fn: 'sum' }], sorts: [], epoch: 1,
+    });
+    await o.app.applyConfiguration({ columns: {
+      qty: { kind: 'dimension', excludedFromPivot: true },
+      big: { kind: 'dimension', excludedFromPivot: true },
+    } });
+    await quiet(o.engine);
+    const group = async (rows: string[], pivotOn: string[] = []) => {
+      const s = o.app.controller.snapshot ?? assert.fail('no snapshot');
+      await o.app.controller.update({ ...s, rows, pivotOn, epoch: s.epoch + 1 });
+      await quiet(o.engine);
+      assert.deepEqual(o.errors, []);
+      const view = o.app.controller.view ?? assert.fail('no view');
+      const level1 = view.treeRows.map((r, i) => ({ r, i })).filter(({ r }) => r.level === 1);
+      return { view, keys: level1.map(({ r }) => r.path[0]), at: level1.map(({ i }) => i) };
+    };
+
+    // grouped by it alone: one group per value, each summing its own row
+    const byQty = await group(['qty']);
+    assert.deepEqual([...byQty.keys].sort(), ['1', '2', '3']);
+    const pnl = byQty.view.rows.columns.find((c) => c.name === 'pnl') ?? assert.fail('no pnl');
+    const sums = Object.fromEntries(byQty.keys.map((k, n) => [k, String(pnl.values[byQty.at[n] as number])]));
+    assert.deepEqual(sums, { 1: '-12.50', 2: '0.00', 3: '1234.56' });
+
+    // grouped by it AND pivoted on another column
+    const beside = await group(['qty'], ['region']);
+    assert.deepEqual([...beside.keys].sort(), ['1', '2', '3']);
+    const cells = (beside.view.pivot?.columns ?? []).filter((c) => c.tuple !== null).map((c) => c.name).sort();
+    assert.deepEqual(cells, ['AMER__|__pnl', 'EMEA__|__pnl']);
+
+    // a big Integer grouped: its label is the value as written
+    await group(['big']);
+    const labels = [...o.root.querySelectorAll<HTMLElement>('.dc-row .dc-cell.dc-tree')]
+      .map((c) => c.textContent?.replace(/^[▸▾]\s*/, '').replace(/\s*\(\d+\)$/, '').trim());
+    assert.ok(labels.includes('-9007199254740993'), labels.join(' | '));
+  });
+
   it('T7e: a treemap\'s tooltip says what the grid says', async () => {
     // the region and its P&L alone: a treemap draws the first numeric column on screen
     const o = await grouped([{ name: 'pnl', column: 'pnl', fn: 'sum' }], 'pnl');

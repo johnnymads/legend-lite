@@ -14,7 +14,7 @@ import {
   type PivotFacts,
   type TypeOf,
 } from '../src/query.ts';
-import { effectivePivotOn, pivotTotalColumn } from '../src/snapshot.ts';
+import { pivotTotalColumn } from '../src/snapshot.ts';
 import { accessor, col, element, lambda, variable } from '../../pure-protocol/src/index.ts';
 import type { FilterNode } from '../src/snapshot.ts';
 import { print, printFilter, printLevel, printValues, row } from './lite-compiler.ts';
@@ -44,7 +44,7 @@ const YEARS: PivotFacts = { tuples: [['2023'], ['2024']] };
  * year). The one test of the refusal calls `printLevel` itself.
  */
 function level(s: CubeSnapshot, scope?: LevelScope, facts?: PivotFacts): string {
-  return printLevel(s, scope, facts ?? (effectivePivotOn(s).length > 0 ? YEARS : undefined));
+  return printLevel(s, scope, facts ?? (s.pivotOn.length > 0 ? YEARS : undefined));
 }
 
 /** A minimal trades cube, overridable per test. */

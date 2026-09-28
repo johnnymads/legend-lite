@@ -720,8 +720,10 @@ export class CubeApp {
     // aggregation changes (the average of an Integer is a Float), never its source's.
     const view = this.#view;
     if (!view) return;
+    // and by its KIND: a numeric dimension reads as written (no thousands separators)
+    const kinds = new Map(rowColumns(this.#snapshot).map((c) => [c.name, c.kind]));
     const byLeaf = leafFormats(this.#config, view.columns.leaves.map((leaf) => ({
-      ...leaf, type: view.rows.columns[leaf.index]?.type,
+      ...leaf, type: view.rows.columns[leaf.index]?.type, kind: kinds.get(leaf.name),
     })));
     for (const [name, format] of Object.entries(byLeaf)) {
       if (format) this.#formats[name] = format;

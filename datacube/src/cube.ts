@@ -26,7 +26,6 @@ import {
   levelLambda,
   pivotValuesLambda,
 } from './query.ts';
-import { effectivePivotOn } from './snapshot.ts';
 import { planPivot, typeColumns, type PivotPlan, type SchemaChange } from './plan.ts';
 import type { ResultTable } from './result.ts';
 import { SnapManager, type RemoteSource, type SnapTarget } from './snap.ts';
@@ -293,11 +292,11 @@ export class CubeController {
     // columns, and the cell form is the same for every value.
     const valuesQuery = pivotValuesLambda(s);
     const shown = this.#view;
-    const facts: PivotFacts | undefined = effectivePivotOn(s).length === 0
+    const facts: PivotFacts | undefined = s.pivotOn.length === 0
       ? undefined
       : pinnedPivotFacts(s)
-        ?? (shown?.pivot && effectivePivotOn(shown.snapshot).join('\u0000')
-          === effectivePivotOn(s).join('\u0000') ? shown.pivot.facts : { tuples: [] });
+        ?? (shown?.pivot && shown.snapshot.pivotOn.join('\u0000')
+          === s.pivotOn.join('\u0000') ? shown.pivot.facts : { tuples: [] });
     // Each level's own query, then its child-group aggregates' -- a
     // column whose own query the planner refuses must not pass.
     const queries = [
