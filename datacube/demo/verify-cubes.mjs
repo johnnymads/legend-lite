@@ -40,6 +40,9 @@ const URL_BASE = `http://127.0.0.1:${port}`;
 
 const dir = await mkdtemp(join(tmpdir(), 'dc-cubes-'));
 const csv = join(dir, 'trades.csv');
+const lossy = join(dir, 'trades-no-notional.csv');
+await writeFile(lossy, 'region,desk,qty\n'
+  + Array.from({ length: 60 }, (_, i) => `${['EMEA', 'AMER', 'APAC'][i % 3]},${['Rates', 'Credit', 'FX'][i % 5 % 3]},${i}`).join('\n') + '\n');
 await writeFile(csv, 'region,desk,notional,qty\n'
   + Array.from({ length: 60 }, (_, i) =>
     `${['EMEA', 'AMER', 'APAC'][i % 3]},${['Rates', 'Credit', 'FX'][i % 5 % 3]},${(i * 12.5).toFixed(2)},${i}`).join('\n') + '\n');
@@ -156,13 +159,54 @@ try {
     return `${message.trim()} — ${now.length} columns, ${now[0]?.values.length} rows, identical`;
   });
 
+  await check('changed since saved: the title marks it, and saving clears the mark', async () => {
+    const title = () => page.title();
+    if ((await title()).startsWith('\u2022')) throw new Error(`marked before any change: ${await title()}`);
+    const before = await statusNow();
+    await page.evaluate(async () => {
+      const app = window.__dataCube;
+      const s = app.controller.snapshot;
+      await app.controller.update({ ...s, rows: ['desk'], epoch: s.epoch + 1 });
+    });
+    await landed(before);
+    if (!(await title()).startsWith('\u2022')) throw new Error(`not marked after a change: ${await title()}`);
+    await showWin('cubeswin', 'Cubes');
+    if (await page.locator('#cubelib .dc-lib-unsaved').isHidden()) throw new Error('the window does not say so');
+    await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
+    await waitMessage(/saved/);
+    if ((await title()).startsWith('\u2022')) throw new Error(`still marked after saving: ${await title()}`);
+    return 'marked, then saved and clear';
+  });
+
+  await check('opened over a file that lost a column, Save says what it would drop', async () => {
+    await load();
+    const before = await openSaved('Trades by region');
+    await page.waitForSelector('#cubelib .dc-lib-ask:not([hidden])', { timeout: 10_000 });
+    await page.setInputFiles('#cubelib .dc-lib-choose', lossy);
+    await landed(before);
+    const message = await waitMessage(/changes since it was saved/);
+    if (!/notional/.test(message)) throw new Error(`the changes do not name notional: ${message}`);
+    if (!(await page.title()).startsWith('\u2022')) throw new Error('not marked as changed');
+    await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
+    await page.waitForSelector('#cubelib .dc-lib-ask:not([hidden])', { timeout: 5_000 });
+    const warning = await page.locator('#cubelib .dc-lib-ask').textContent();
+    if (!/cannot show/.test(warning ?? '')) throw new Error(`no warning: ${warning}`);
+    await page.locator('#cubelib .dc-lib-ask .dc-lib-button', { hasText: 'Cancel' }).click();
+    return 'warned before saving over it';
+  });
+
   await check('a cube over a SAMPLE reopens with no question', async () => {
     await showWin('datawin', 'Data');
     await page.selectOption('#samplepick', 'trades');
     await page.fill('#samplerows', '500');
     let before = await statusNow();
+    // the cube on screen has unsaved changes (the check above cancelled its save): opening a
+    // sample over it asks first -- answered yes here, and the question checked
+    let asked = '';
+    page.once('dialog', (d) => { asked = d.message(); void d.accept(); });
     await page.click('#sampleopen');
     await landed(before);
+    if (!/unsaved changes/.test(asked)) throw new Error(`it did not ask before replacing: "${asked}"`);
     await shape();
     await saveAs('Sample trades');
     const want = await typed();

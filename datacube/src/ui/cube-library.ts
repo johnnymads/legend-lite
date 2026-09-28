@@ -18,6 +18,13 @@ export interface CubeLibraryHost {
   openText(text: string, fileName: string): Promise<void>;
   /** Forget what the host keeps for a deleted cube (its file handle). */
   forget(id: string): Promise<void>;
+  /** Whether the cube on screen differs from what was saved (or first opened). */
+  dirty?(): boolean;
+  /**
+   * Why saving over the saved copy loses something (a cube opened over a file that changed:
+   * the parts left out); undefined when it does not.
+   */
+  saveWarning?(): string | undefined;
 }
 
 const SORTS: readonly [QuerySearchSortBy, string][] = [
@@ -39,6 +46,7 @@ export class CubeLibrary {
   readonly #list: HTMLElement;
   readonly #message: HTMLElement;
   readonly #ask: HTMLElement;
+  readonly #unsaved: HTMLElement;
   #searching = 0;
 
   constructor(root: HTMLElement, store: CubeStore, host: CubeLibraryHost) {
@@ -60,7 +68,10 @@ export class CubeLibrary {
     this.#name.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') void this.#save(this.#host.currentId() === undefined);
     });
-    saveRow.append(this.#name, this.#saveButton, this.#saveNew);
+    this.#unsaved = this.#el('span', 'dc-lib-unsaved');
+    this.#unsaved.textContent = 'unsaved changes';
+    this.#unsaved.hidden = true;
+    saveRow.append(this.#name, this.#saveButton, this.#saveNew, this.#unsaved);
 
     // -- the ask for a file (the host's, when opening needs one)
     this.#ask = this.#el('div', 'dc-lib-ask');
@@ -115,6 +126,7 @@ export class CubeLibrary {
     this.#name.disabled = !can;
     this.#saveButton.disabled = !can;
     this.#saveNew.disabled = !can || this.#host.currentId() === undefined;
+    this.#unsaved.hidden = !can || this.#host.dirty?.() !== true;
     this.#saveButton.title = !can
       ? 'This cube cannot be saved yet: only cubes over a file are (a model-backed cube waits for the model home)'
       : this.#host.currentId() === undefined ? 'Save as a new cube' : 'Save over the cube this was opened from';
@@ -170,10 +182,25 @@ export class CubeLibrary {
     name.title = `id ${q.id}`;
     const when = this.#el('span', 'dc-lib-row-when');
     when.textContent = q.lastUpdatedAt !== undefined ? `saved ${ago(q.lastUpdatedAt)}` : '';
-    const open = this.#button('Open', () => void this.#run(`opening ${q.name}`, () => this.#host.open(q.id)));
+    const open = this.#button('Open', () => this.#openOver(row, q));
     const del = this.#button('Delete', () => this.#confirmDelete(row, q));
     row.append(name, when, open, del);
     return row;
+  }
+
+  /** Opening another cube over unsaved changes asks first, in place. */
+  #openOver(row: HTMLElement, q: LightDataCubeQuery): void {
+    const go = (): void => void this.#run(`opening ${q.name}`, () => this.#host.open(q.id));
+    if (this.#host.dirty?.() !== true) {
+      go();
+      return;
+    }
+    const ask = this.#el('span', 'dc-lib-confirm');
+    ask.textContent = `The cube on screen has unsaved changes. Open "${q.name}" anyway?`;
+    const yes = this.#button('Open anyway', go);
+    const no = this.#button('Cancel', () => void this.refresh());
+    ask.append(yes, no);
+    row.replaceChildren(ask);
   }
 
   /** Delete asks once, in place: typing is for irreversible acts on shared things. */
@@ -192,11 +219,20 @@ export class CubeLibrary {
     row.replaceChildren(ask);
   }
 
-  async #save(asNew: boolean): Promise<void> {
+  async #save(asNew: boolean, confirmed = false): Promise<void> {
     const name = this.#name.value.trim();
     if (!name) {
       this.say('give the cube a name', 'warn');
       this.#name.focus();
+      return;
+    }
+    // Saving over a copy this file cannot fully show replaces what it held: say what first.
+    const warning = asNew || confirmed ? undefined : this.#host.saveWarning?.();
+    if (warning !== undefined && this.#host.currentId() !== undefined) {
+      const saveAnyway = this.#button('Save anyway', () => { this.ask(undefined); void this.#save(false, true); });
+      const saveNew = this.#button('Save as new', () => { this.ask(undefined); void this.#save(true); });
+      const cancel = this.#button('Cancel', () => this.ask(undefined));
+      this.ask([warning, saveAnyway, saveNew, cancel]);
       return;
     }
     await this.#run(`saving ${name}`, async () => {

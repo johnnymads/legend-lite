@@ -131,6 +131,14 @@ export function cubeToJson(doc: CubeDocument): string {
   return protocolJson({ ...unknown, ...rest });
 }
 
+/**
+ * What makes two cubes "the same" for "changed since saved": the definition and the settings.
+ * Not the name (renaming is saving), not the open rows (looking is not changing).
+ */
+export function definitionText(doc: CubeDocument): string {
+  return protocolJson({ query: doc.query, configuration: doc.configuration });
+}
+
 // ---------------------------------------------------------------- reading
 
 export function readCube(input: string | unknown): CubeDocument {

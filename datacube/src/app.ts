@@ -849,7 +849,6 @@ export class CubeApp {
 
   #onView(view: CubeView): void {
     this.#view = view;
-    this.#options.onView?.(view);
     this.#treeRows = view.treeRows;
     this.#debug('query', { query: view.query, sql: view.sql, rows: view.rows.rowCount,
       ms: view.rows.elapsedMs, snapshot: view.snapshot });
@@ -921,6 +920,10 @@ export class CubeApp {
     } else {
       this.#status(base, 'ok');
     }
+    // The host LAST, once the app has taken the view in: told first, it read the app one view
+    // behind (the snapshot was still the previous one), so "changed since saved" missed the
+    // change that had just landed.
+    this.#options.onView?.(view);
   }
 
   /**

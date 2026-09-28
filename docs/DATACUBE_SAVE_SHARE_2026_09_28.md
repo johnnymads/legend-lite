@@ -189,7 +189,15 @@ version, an unknown source kind or file format.
   same values; a sample cube reopens with no question; delete) 5/5; `verify_features` 170/170.
 - Not yet: the file handle path cannot be driven by the harness (Playwright hands files to an
   `<input>`, which keeps no handle) — covered by reading only; Ad Hoc Analysis state and named
-  dimensions are not saved yet; the Save dialog names but does not yet warn on "changed since saved".
+  dimensions are not saved yet.
+- "Changed since saved" (2026-09-28): the cube's definition and settings against the baseline it was
+  saved or first opened with (not its name, not its open rows): a `•` in the page title and "unsaved
+  changes" in the Cubes window, refreshed as each view lands; the browser's leave-page guard; opening
+  another cube or file over unsaved changes asks; a cube opened with parts left out is changed from
+  the start, and Save over it first says what the saved copy would lose (save anyway / save as new).
+  Found on the way: the app told its host about a view BEFORE taking it in, so a host read it one
+  view behind -- the host is now told last. Proof: `test/cube-library.test.ts`, `verify_cubes` 7/7.
+  A single "cube changed" event is Leg B's (one state owner); until then the check runs per view.
 
 ## Next
 

@@ -20,6 +20,7 @@ import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { mountRemote } from '../src/remote.ts';
 import { formatOf, ingestFile } from '../src/upload.ts';
 import {
+  definitionText,
   fileSource,
   openCube,
   readCube,
@@ -507,6 +508,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         status.classList.remove('warn-text');
       },
       onView: (view) => {
+        onCubeView?.();
         // For the browser harness: how many views have landed.
         const w = window as unknown as { __dataCubeViews?: number };
         w.__dataCubeViews = (w.__dataCubeViews ?? 0) + 1;
@@ -548,6 +550,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   /** Opens the saved cubes' window; set once the page can open files. */
   let showCubes: (() => void) | undefined;
+  /** Told when a view lands: "changed since saved" is re-read then. */
+  let onCubeView: (() => void) | undefined;
   let app = makeApp(snapshot, configuration, DEMO_DIMENSIONS);
 
   await app.open();
@@ -713,7 +717,33 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       cubeId?: string;
       name?: string;
       unknown?: Readonly<Record<string, unknown>>;
+      /** The definition as saved, or as first opened: "changed since saved" compares to it. */
+      baseline?: string;
+      /** What opening left out of the saved copy (its file changed): saving over it loses them. */
+      lost?: readonly string[];
     } = {};
+
+    /** The cube on screen differs from what was saved (or first opened). */
+    const dirty = (): boolean => {
+      if (!current.source || current.baseline === undefined) return false;
+      if ((current.lost?.length ?? 0) > 0) return true;
+      const doc = app.cubeDocument(current.name ?? 'cube', current.unknown);
+      return doc !== undefined && definitionText(doc) !== current.baseline;
+    };
+    const baseTitle = document.title;
+    onCubeView = () => {
+      const changed = dirty();
+      document.title = current.source
+        ? `${changed ? '\u2022 ' : ''}${current.name ?? current.source.name} \u2013 ${baseTitle}`
+        : baseTitle;
+      library?.sync();
+    };
+    // Leaving the page with unsaved changes asks, the browser's way.
+    window.addEventListener('beforeunload', (event) => {
+      if (!dirty()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
 
     /**
      * Read a file into this tab and build a cube over it: a fresh one, or -- `saved` -- a
@@ -727,6 +757,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         readonly saved?: { readonly doc: CubeDocument; readonly id?: string };
       } = {},
     ): Promise<readonly string[]> {
+      // Replacing a cube with unsaved changes asks first (opening a saved one asked already).
+      if (!how.saved && dirty()
+        && !window.confirm(`The cube on screen has unsaved changes. Open ${file.name} anyway?`)) {
+        return [];
+      }
       note.classList.remove('bad');
       note.textContent = `reading ${file.name}…`;
       try {
@@ -784,6 +819,15 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // open() is what runs the first query; without it the
         // chrome renders and the grid stays empty.
         await app.open();
+        // The baseline is the cube as it LANDED (normalized by its first refresh); a cube
+        // opened with parts left out is changed from the start.
+        const landed = app.cubeDocument(current.name ?? 'cube', current.unknown);
+        current = {
+          ...current,
+          ...(landed ? { baseline: definitionText(landed) } : {}),
+          lost: notes.filter((n) => n.startsWith('left out')),
+        };
+        onCubeView?.();
         note.textContent = `${opened.fileName}: `
           + `${opened.rowCount.toLocaleString()} rows, `
           + `${columns.length} columns`;
@@ -918,6 +962,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     library = new CubeLibrary(must('cubelib'), store, {
       saveName: () => (current.source ? current.name ?? app.configuration.reportTitle ?? current.source.name : undefined),
       currentId: () => current.cubeId,
+      dirty,
+      saveWarning: () => (current.lost?.length
+        ? `The saved "${current.name ?? 'cube'}" has parts this file cannot show; saving over it drops them:\n`
+          + current.lost.map((n) => `- ${n}`).join('\n')
+        : undefined),
       save: async (name, asNew) => {
         const doc = app.cubeDocument(name, current.unknown);
         if (!doc) throw new Error('this cube cannot be saved yet: only cubes over a file are');
@@ -926,7 +975,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         if (id === current.cubeId) await store.update(id, record);
         else await store.create(record);
         if (current.handle) await handles?.put(id, current.handle);
-        current = { ...current, cubeId: id, name };
+        current = { ...current, cubeId: id, name, baseline: definitionText(doc), lost: [] };
+        onCubeView?.();
         if (!persistent) persistent = await persistStorage();
       },
       open: async (id) => openDocument(readCube((await store.get(id)).content), id),
