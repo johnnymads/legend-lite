@@ -379,18 +379,31 @@ describe('picking a JSON field', () => {
       "x|$x.customer->get('contact')");
   });
 
-  it('explodes: the checkbox is set by the pick, and the column is applied as an explode', async () => {
-    openJson({ json: 'customer' }, [], false, ['{"addresses":[{"city":"Paris"}]}']);
+  it('explodes to ONE column: the fields ticked, a tuple; untick to a field, or to the element', async () => {
+    openJson({ json: 'customer' }, [], false, ['{"addresses":[{"kind":"billing","city":"Paris"}]}']);
     await settle();
     const explode = $<HTMLInputElement>('.dc-calc-input-explode');
     assert.equal(explode.checked, false);
     button('one row per element (explode)').click();
     await settle();
     assert.equal(explode.checked, true);
+    const nameOf = (): string => $<HTMLInputElement>('.dc-calc-input-name').value;
+    const exprOf = (): string => $<HTMLTextAreaElement>('.dc-calc-input-expr').value;
+    // every field ticked to start, in the data's order: one (kind, city) column
+    assert.equal(nameOf(), 'addresses_kind_city');
+    assert.match(exprOf(), /\['kind'->pair\(.*'city'->pair\(.*\]->newMap\(\)->toVariant\(\)/);
+    const tick = (key: string): HTMLInputElement =>
+      [...root.querySelectorAll<HTMLInputElement>('.dc-calc-explode-tick')].find((t) => t.value === key)!;
+    tick('city').click();
+    await settle();
+    assert.equal(nameOf(), 'addresses_kind');
+    assert.equal(exprOf(), "x|$x.customer->get('addresses')->toMany(@Variant)->map(e|$e->get('kind')->to(@String))");
+    tick('city').click();
+    await settle();
     $<HTMLButtonElement>('.dc-calc-ok').click();
     await settle();
     const added = applied.at(-1)?.row.at(-1);
-    assert.equal(added?.name, 'customer_addresses_element');
+    assert.equal(added?.name, 'addresses_kind_city');
     assert.equal(added?.unnest, true);
   });
 

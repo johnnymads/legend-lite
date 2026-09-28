@@ -19,7 +19,8 @@
 // format, while the measure underneath stays one numeric value.
 
 import type { Scalar } from './result.ts';
-import { hasTimeOfDay, isNumeric, isTemporal, isTimeOfDay } from './types.ts';
+import { prettyJson } from './json-shape.ts';
+import { hasTimeOfDay, isNumeric, isTemporal, isTimeOfDay, isVariant } from './types.ts';
 
 export type FormatKind =
   | 'auto'
@@ -273,6 +274,8 @@ export class FormatterCache {
       if (format.kind === 'auto' && (isNumeric(type) || typeof value === 'number' || typeof value === 'bigint')) {
         return this.format(value, { ...format, kind: 'number' }, type);
       }
+      // a JSON document, shown for the eye (`{kind: billing, city: Paris}`); its value stays JSON
+      if (format.kind === 'auto' && isVariant(type)) return prettyJson(String(value));
       return applyCase(String(value), format.fontCase);
     }
 

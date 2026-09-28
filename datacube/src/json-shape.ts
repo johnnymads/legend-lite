@@ -15,7 +15,7 @@
 // float. The reader below keeps each number's own spelling.
 
 import {
-  col, fn, lambda, lit, to, toMany, type, variable, type Lambda, type ValueSpecification,
+  col, collection, fn, lambda, lit, to, toMany, type, variable, type Lambda, type ValueSpecification,
 } from '../../pure-protocol/src/index.ts';
 
 // ---- reading -------------------------------------------------------
@@ -243,6 +243,38 @@ export function scalarTypeOf(shape: Shape): ScalarKind | undefined {
   return 'text';
 }
 
+// ---- showing ----------------------------------------------------------
+
+/**
+ * A JSON document for the eye: `{kind: billing, city: Paris}`, `[S, M]`. A key or a string is
+ * bare when it cannot be mistaken for anything else -- not empty, no punctuation of the notation,
+ * not a number, `true`, `false` or `null` -- and JSON-quoted otherwise; numbers as written. Display
+ * only: the value itself stays JSON (it groups, filters and exports as JSON). Text that is not JSON
+ * is shown as it is.
+ */
+export function prettyJson(text: string): string {
+  let node: JsonNode;
+  try {
+    node = parseJson(text);
+  } catch {
+    return text;
+  }
+  const bare = (t: string): string =>
+    t !== '' && !/[,:{}[\]"\s]/.test(t.trim()) && t === t.trim()
+      && !/^(true|false|null|-?\d.*)$/.test(t) ? t : JSON.stringify(t);
+  const show = (n: JsonNode): string => {
+    switch (n.t) {
+      case 'object': return `{${n.entries.map(([k, v]) => `${bare(k)}: ${show(v)}`).join(', ')}}`;
+      case 'array': return `[${n.items.map(show).join(', ')}]`;
+      case 'string': return bare(n.value);
+      case 'number': return n.text;
+      case 'boolean': return String(n.value);
+      case 'null': return 'null';
+    }
+  };
+  return show(node);
+}
+
 // ---- what can be extracted -----------------------------------------
 
 const PURE_TYPE: Record<ScalarKind, string> = {
@@ -263,6 +295,45 @@ export interface Extraction {
   readonly kind: 'dimension' | 'measure';
   /** Each row once per element of the collection `lambda` yields (`DerivedColumn.unnest`). */
   readonly unnest?: boolean;
+  /**
+   * An explode of objects: the array, and its elements' scalar fields -- the column the editor
+   * builds from the ones ticked (`explodeLambda`): one field its value, several one tuple.
+   */
+  readonly explode?: { readonly array: ValueSpecification; readonly fields: readonly ElementField[]; readonly base: readonly string[] };
+}
+
+/** One scalar field of an array's elements, as the explode offers it. */
+export interface ElementField {
+  readonly key: string;
+  /** The Pure type its `to(@T)` writes -- a suggestion; the compiler types the column. */
+  readonly type: string;
+  readonly kind: 'dimension' | 'measure';
+}
+
+/**
+ * An explode's column, from the element fields ticked: none, the element itself as JSON; one,
+ * that field's value, typed; several, ONE JSON object holding just them, `{"kind":"billing",
+ * "city":"Paris"}` -- each element mapped before the flatten, so the exploded column IS the tuple;
+ * a field an element lacks is `null` in it, its values keep their JSON types.
+ */
+export function explodeLambda(array: ValueSpecification, fields: readonly ElementField[]): Lambda {
+  const many = toMany(array, type('Variant'));
+  const field = (f: ElementField): ValueSpecification => fn('get', variable('e'), lit.string(f.key));
+  const [only] = fields;
+  if (only === undefined) return ofRow(many);
+  if (fields.length === 1) return ofRow(fn('map', many, lambda(['e'], to(field(only), type(only.type)))));
+  return ofRow(fn('map', many, lambda(['e'], fn('toVariant', fn('newMap', collection(
+    fields.map((f) => fn('pair', lit.string(f.key), fn('toVariant', field(f))))))))));
+}
+
+/** The explode's column name: the array and the fields ticked, `addresses_kind_city`. */
+export function explodeName(base: readonly string[], fields: readonly ElementField[]): string {
+  return fields.length === 0 ? nameOf([...base, 'element']) : nameOf([base[base.length - 1] ?? 'value', ...fields.map((f) => f.key)]);
+}
+
+/** The explode's Pure type: JSON, or the one field's. */
+export function explodeType(fields: readonly ElementField[]): string {
+  return fields.length === 1 ? fields[0]!.type : 'Variant';
 }
 
 /** A position in the documents, with what can be made of it. */
@@ -371,10 +442,31 @@ export function fieldsOf(column: string, sample: Sample): Field[] {
 function arrayExtractions(shape: Shape, expr: ValueSpecification, names: readonly string[]): Extraction[] {
   const out: Extraction[] = [];
   const many = toMany(expr, type('Variant'));
-  // EXPLODE: each row once per element -- the element a JSON column of its own, extracted from
-  // again (its fields side by side give the tuples, e.g. an address's kind and city)
-  out.push({ name: nameOf([...names, 'element']), label: 'one row per element (explode)',
-    lambda: ofRow(many), type: 'Variant', kind: 'dimension', unnest: true });
+  const el0 = shape.element;
+  const elScalar0 = el0 ? scalarTypeOf(el0) : undefined;
+  const key = names[names.length - 1] ?? 'value';
+  if (el0 && elScalar0 && el0.objects === 0 && el0.arrays === 0) {
+    // EXPLODE values: each row once per element, the element's value typed directly
+    const t = PURE_TYPE[elScalar0];
+    out.push({ name: nameOf([key, 'value']), label: 'one row per element (explode)',
+      lambda: ofRow(toMany(expr, type(t))), type: t,
+      kind: elScalar0 === 'float' ? 'measure' : 'dimension', unnest: true });
+  } else {
+    // EXPLODE objects: each row once per element; the element's scalar fields, in the order
+    // the data has them, offered to tick -- every one ticked to start: one tuple column
+    const fields: ElementField[] = el0 && el0.objects > 0
+      ? [...el0.fields.entries()].flatMap(([k, f]) => {
+        const s = scalarTypeOf(f);
+        return s && f.objects === 0 && f.arrays === 0
+          ? [{ key: k, type: PURE_TYPE[s], kind: s === 'float' ? 'measure' as const : 'dimension' as const }]
+          : [];
+      })
+      : [];
+    out.push({ name: explodeName(names, fields), label: 'one row per element (explode)',
+      lambda: explodeLambda(expr, fields), type: explodeType(fields),
+      kind: fields.length === 1 ? fields[0]!.kind : 'dimension', unnest: true,
+      ...(fields.length > 0 ? { explode: { array: expr, fields, base: names } } : {}) });
+  }
   out.push({ name: nameOf([...names, 'count']), label: 'number of elements',
     lambda: ofRow(fn('size', many)), type: 'Integer', kind: 'measure' });
   const el = shape.element;

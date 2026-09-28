@@ -2,13 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  fieldsOf,
-  inferShape,
-  parseJson,
-  scalarTypeOf,
-  type Field,
+  explodeType, explodeName, explodeLambda, prettyJson, fieldsOf, inferShape, parseJson, scalarTypeOf, type Field,
 } from '../src/json-shape.ts';
 import { print } from './lite-compiler.ts';
+import { col, fn, lit } from '../../pure-protocol/src/index.ts';
 
 /** Every extraction under a field, by default column name: its lambda as the compiler prints it. */
 function byName(fields: readonly Field[]): Map<string, { expression: string; type: string; unnest?: boolean }> {
@@ -143,10 +140,10 @@ describe('as JSON', () => {
       "x|$x.d->get('items')->toMany(@Variant)->map(e|$e->get('sku'))->toVariant()");
     // An array inside each element: its values from every element.
     assert.equal(f.get('d_items_tags')?.type, 'Variant');
-    // one row per element (explode): the element a JSON column of its own
-    const each = f.get('d_items_element');
+    // one row per element (explode): each element's one scalar field, sku, typed
+    const each = f.get('items_sku');
     assert.deepEqual([each?.expression, each?.type, each?.unnest],
-      ["x|$x.d->get('items')->toMany(@Variant)", 'Variant', true]);
+      ["x|$x.d->get('items')->toMany(@Variant)->map(e|$e->get('sku')->to(@String))", 'String', true]);
     // one element, whole (T10): a JSON column of its own
     assert.deepEqual([f.get('d_items_first')?.expression, f.get('d_items_first')?.type],
       ["x|$x.d->get('items')->get(0)", 'Variant']);
@@ -158,3 +155,49 @@ describe('as JSON', () => {
   });
 });
 
+
+describe('explode: one column from the fields ticked', () => {
+  const address = [{ key: 'kind', type: 'String', kind: 'dimension' as const },
+    { key: 'city', type: 'String', kind: 'dimension' as const }];
+  const array = fn('get', col('x', 'customer'), lit.string('addresses'));
+
+  it('several fields: ONE JSON object holding just them, (kind, city)', () => {
+    assert.equal(print(explodeLambda(array, address)),
+      "x|$x.customer->get('addresses')->toMany(@Variant)->map(e|['kind'->pair($e->get('kind')->toVariant()), "
+      + "'city'->pair($e->get('city')->toVariant())]->newMap()->toVariant())");
+    assert.equal(explodeName(['customer', 'addresses'], address), 'addresses_kind_city');
+    assert.equal(explodeType(address), 'Variant');
+  });
+
+  it('one field: its value, typed; none: the element as JSON', () => {
+    assert.equal(print(explodeLambda(array, [address[1]!])),
+      "x|$x.customer->get('addresses')->toMany(@Variant)->map(e|$e->get('city')->to(@String))");
+    assert.equal(print(explodeLambda(array, [])), "x|$x.customer->get('addresses')->toMany(@Variant)");
+    assert.equal(explodeName(['customer', 'addresses'], []), 'customer_addresses_element');
+    assert.equal(explodeType([]), 'Variant');
+  });
+
+  it('an array of plain values explodes to its values, typed', () => {
+    const f = byName(fieldsOf('d', inferShape(['{"tags":["a","b"]}'])));
+    assert.deepEqual([f.get('tags_value')?.expression, f.get('tags_value')?.unnest],
+      ["x|$x.d->get('tags')->toMany(@String)", true]);
+  });
+});
+
+describe('prettyJson', () => {
+  it('shows a document for the eye: bare keys and plain strings, numbers as written', () => {
+    assert.equal(prettyJson('{"kind":"billing","city":"Paris"}'), '{kind: billing, city: Paris}');
+    assert.equal(prettyJson('{"sizes":["S","M"],"qty":2,"price":1.50,"ok":true,"gone":null}'),
+      '{sizes: [S, M], qty: 2, price: 1.50, ok: true, gone: null}');
+  });
+
+  it('quotes what could be misread: punctuation, spaces at the ends, empty, number- or keyword-like', () => {
+    assert.equal(prettyJson('{"city":"Paris, France"}'), '{city: "Paris, France"}');
+    assert.equal(prettyJson('["", " x", "12", "true", "null", "a:b"]'), '["", " x", "12", "true", "null", "a:b"]');
+    assert.equal(prettyJson('{"New York":"New York"}'), '{"New York": "New York"}');
+  });
+
+  it('shows text that is not JSON as it is', () => {
+    assert.equal(prettyJson('not json'), 'not json');
+  });
+});

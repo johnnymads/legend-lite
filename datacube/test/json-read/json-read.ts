@@ -230,42 +230,42 @@ describe('a part of a document as a JSON column of its own', () => {
     assert.deepEqual(errors, []);
   });
 
-  it('explode: one row per address, its kind and city side by side, the id hidden, then the distinct pairs', async () => {
+  it('explode: one (kind, city) JSON column, one row per address; shown pretty; the id hidden; grouped, each pair once', async () => {
     const { app, doc, errors } = await openApp(ORDERS);
-    await extract(app, doc, 'doc', 'doc_customer_addresses_element');
-    const element = app.snapshot.derived.find((d) => d.name === 'doc_customer_addresses_element');
-    assert.equal(element?.unnest, true, 'an explode');
-    assert.equal(element?.type, 'Variant', 'each element a JSON column, typed by the compiler');
-    await extract(app, doc, 'doc_customer_addresses_element', 'doc_customer_addresses_element_kind');
-    await extract(app, doc, 'doc_customer_addresses_element', 'doc_customer_addresses_element_city');
-    const KIND = 'doc_customer_addresses_element_kind';
-    const CITY = 'doc_customer_addresses_element_city';
+    // every field of an address ticked to start: ONE JSON object holding just them
+    await extract(app, doc, 'doc', 'addresses_kind_city');
+    const PAIR = 'addresses_kind_city';
+    const column = app.snapshot.derived.find((d) => d.name === PAIR);
+    assert.equal(column?.unnest, true, 'an explode');
+    assert.equal(column?.type, 'Variant', 'the tuple is JSON, typed by the compiler');
 
-    // the database's own unnest is the truth
-    const truth = await new DuckDbEngine(conn).run(`SELECT a->>'kind' AS kind, a->>'city' AS city
+    // the database's own unnest is the truth; a missing field is null
+    const truth = await new DuckDbEngine(conn).run(`SELECT json_object('kind', a->'kind', 'city', a->'city') AS pair
       FROM O, UNNEST(CAST(doc->'customer'->'addresses' AS JSON[])) AS u(a)`, 0);
-    const pairs = (kinds: readonly unknown[], cities: readonly unknown[]): string[] =>
-      kinds.map((k, i) => `${String(k)}/${String(cities[i])}`).sort();
-    const expected = pairs(truth.columns[0]!.values, truth.columns[1]!.values);
-    assert.deepEqual(expected, ['billing/London', 'billing/Paris', 'billing/Paris', 'shipping/Tokyo']);
-    await until(() => valuesOf(app, KIND).length === 4, 'one row per address');
-    assert.deepEqual(pairs(valuesOf(app, KIND), valuesOf(app, CITY)), expected);
+    const objects = (values: readonly unknown[]): string[] =>
+      values.map((v) => JSON.stringify(JSON.parse(String(v)))).sort();
+    const expected = objects(truth.columns[0]!.values);
+    assert.deepEqual(expected, ['{"kind":"billing","city":"London"}', '{"kind":"billing","city":"Paris"}',
+      '{"kind":"billing","city":"Paris"}', '{"kind":"shipping","city":"Tokyo"}']);
+    await until(() => valuesOf(app, PAIR).length === 4, 'one row per address');
+    assert.deepEqual(objects(valuesOf(app, PAIR)), expected);
 
-    // drop the id and the JSON: just (kind, city)
-    await app.applyConfiguration({ columns: Object.fromEntries(
-      ['id', 'doc', 'doc_customer_addresses_element'].map((c) => [c, { hidden: true }])) });
-    // what the grid shows: its header cells
+    // drop the id and the JSON: just the pairs
+    await app.applyConfiguration({ columns: Object.fromEntries(['id', 'doc'].map((c) => [c, { hidden: true }])) });
+    // what the grid shows: its header cells, and the pairs printed for the eye
     const headers = (): string[] => [...doc.querySelectorAll<HTMLElement>('.dc-th[data-column]')]
       .map((th) => th.dataset['column'] ?? '').filter((c) => c !== '' && !c.startsWith('__'));
     await until(() => !headers().includes('id'), `the id hidden: ${headers().join(', ')}`);
-    assert.deepEqual(headers(), [KIND, CITY]);
+    assert.deepEqual(headers(), [PAIR]);
+    const shown = doc.querySelector('.dc-grid')?.textContent ?? doc.body.textContent ?? '';
+    assert.ok(shown.includes('{kind: billing, city: Paris}'), 'the pair, shown pretty');
 
-    // grouped: each pair once, and how many rows it covers
-    await app.controller.update({ ...app.snapshot, rows: [KIND, CITY], leafCount: true });
-    await app.controller.toggle(['billing']);
-    await until(() => (app.controller.view?.treeRows ?? []).some((r) => r.path.length === 2), 'the pairs under billing');
-    const leaves = (app.controller.view?.treeRows ?? []).filter((r) => r.path.length === 2).map((r) => r.path.join('/'));
-    assert.deepEqual(leaves.sort(), ['billing/London', 'billing/Paris']);
+    // grouped: each pair once
+    await app.controller.update({ ...app.snapshot, rows: [PAIR], leafCount: true });
+    await until(() => (app.controller.view?.treeRows ?? []).some((r) => r.path.length === 1), 'the pairs');
+    const groups = (app.controller.view?.treeRows ?? []).filter((r) => r.path.length === 1).map((r) => r.path[0]);
+    assert.deepEqual(objects(groups), ['{"kind":"billing","city":"London"}', '{"kind":"billing","city":"Paris"}',
+      '{"kind":"shipping","city":"Tokyo"}']);
     assert.deepEqual(errors, []);
   });
 });

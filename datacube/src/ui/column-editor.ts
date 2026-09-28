@@ -23,7 +23,7 @@ import {
   type CalcStage,
   type Completion,
 } from '../calc.ts';
-import type { Extraction } from '../json-shape.ts';
+import { explodeLambda, explodeName, explodeType, type Extraction } from '../json-shape.ts';
 import { buildJsonFields, freeName, type JsonColumnReader } from './json-fields.ts';
 import type { CompileOutcome } from '../cube.ts';
 import type { Lambda } from '../../../pure-protocol/src/index.ts';
@@ -518,7 +518,8 @@ export class ColumnEditor {
     // FROM A JSON COLUMN: pick a field and the name, kind and Pure are
     // filled in below -- then compiled and applied like anything typed.
     const jsonBox = el(doc, 'div', 'dc-calc-json', exprBox);
-    this.#paintJson(jsonBox, (e) => {
+    /** An extraction into the form: name, kind, explode, and the compiler's print of its Pure. */
+    const take = (e: Extraction): void => {
       if (this.#autoName) {
         const taken = new Set(rowColumns(this.#options.snapshot()).map((c) => c.name));
         this.#draft.name = freeName(e.name, taken);
@@ -535,6 +536,43 @@ export class ColumnEditor {
         this.#paintPicker(picker, expr);
         this.#edited();
       });
+    };
+    // AN EXPLODE OF OBJECTS: which of each element's fields the ONE column holds -- one ticked,
+    // its value; several, a tuple `(billing, Paris)`; none, the element as JSON.
+    const explodeFields = el(doc, 'div', 'dc-calc-explode-fields', exprBox);
+    explodeFields.hidden = true;
+    const paintExplode = (e: Extraction): void => {
+      explodeFields.replaceChildren();
+      const ex = e.explode;
+      explodeFields.hidden = ex === undefined;
+      if (!ex) return;
+      el(doc, 'div', 'dc-calc-explode-note', explodeFields).textContent =
+        'Each element becomes: the fields ticked, one column -- several make a tuple.';
+      const chosen = new Set(ex.fields.map((f) => f.key));
+      for (const f of ex.fields) {
+        const row = el(doc, 'label', 'dc-calc-explode-field', explodeFields);
+        const tick = el(doc, 'input', 'dc-calc-explode-tick', row) as HTMLInputElement;
+        tick.type = 'checkbox';
+        tick.checked = true;
+        tick.value = f.key;
+        row.append(doc.createTextNode(` ${f.key} (${f.type})`));
+        tick.addEventListener('change', () => {
+          if (tick.checked) chosen.add(f.key);
+          else chosen.delete(f.key);
+          const fields = ex.fields.filter((x) => chosen.has(x.key));
+          take({
+            ...e,
+            name: explodeName(ex.base, fields),
+            lambda: explodeLambda(ex.array, fields),
+            type: explodeType(fields),
+            kind: fields.length === 1 ? fields[0]!.kind : 'dimension',
+          });
+        });
+      }
+    };
+    this.#paintJson(jsonBox, (e) => {
+      take(e);
+      paintExplode(e);
     });
 
     const exprRow = el(doc, 'label', 'dc-coleditor-code', exprBox);

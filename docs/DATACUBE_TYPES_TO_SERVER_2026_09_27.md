@@ -460,11 +460,19 @@ Added: "first element, as JSON" for an array of objects.
 **Explode (the user, 2026-09-28: "all cities explode ... all tuples of city+kind").** A calculated
 column marked `unnest` is each row once per element of the collection its expression yields:
 `lateral(x|<collection>->flatten(~name))`, upstream Pure's own unnest (`lateral` and `flatten` are
-upstream functions; lite lowers them to `CROSS JOIN LATERAL (... UNNEST ...)`). The element is a JSON
-column of its own, extracted from again, so an address's kind and city sit side by side; the Columns
-panel hides the id to leave just (kind, city), and grouping by both gives each pair once. The field
-browser offers "one row per element (explode)" on every array, and the column editor a checkbox,
-row stage only, warning that a row's own figures then count once per element. Proven through the
+upstream functions; lite lowers them to `CROSS JOIN LATERAL (... UNNEST ...)`). The user, same day:
+"one column that is tuple of the ticked", in one step, and "def json object with a pretty printer".
+So an explode of objects shows the elements' fields to tick, all ticked to start: several make ONE
+JSON object holding just them, `{"kind":"billing","city":"Paris"}` -- each element mapped before the
+flatten (`map(e|[pair(...)]->newMap()->toVariant())`), so the exploded column IS the tuple; a field
+an element lacks is `null`, values keep their JSON types; one ticked is that field's value, typed;
+none, the element as JSON. (A text tuple, `(billing, Paris)`, was built first and replaced: text is
+ambiguous -- a comma in a value, a missing field -- and cannot be taken apart again.) JSON cells show
+for the eye, `{kind: billing, city: Paris}` (format.ts via `prettyJson`: bare keys and plain
+strings, quoted when they could be misread; display only). An array of plain values explodes to its
+values, typed. The Columns panel hides the id to leave just the pairs, and grouping gives each once.
+The column editor keeps an explode checkbox, row stage only, warning that a row's own figures then
+count once per element. Proven through the
 real app (`test/json-read`) against DuckDB's own UNNEST. pure-protocol gained `Relation.lateral` and
 `flatten`, twinned byte for byte with lite's parse. Also measured on the way: upstream Pure CAN list a
 document's keys (`to(@Map<String, Variant>)->keys()`), which an earlier T6 note denied; a database
