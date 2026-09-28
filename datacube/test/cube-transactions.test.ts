@@ -11,6 +11,7 @@ import type { Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import { setHeaderDrag } from '../src/ui/pivot-panel.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';
@@ -121,9 +122,12 @@ function menu(text: string, label: string): void {
 }
 
 /** The chevron of the group row labelled `label`. */
+/** A group's label is its value, with its child count when the tree shows one: `EMEA (2)`. */
+const groupRow = (label: string): HTMLElement | undefined => [...root.querySelectorAll<HTMLElement>('.dc-row')]
+  .find((r) => (r.querySelector('.dc-tree-label')?.textContent ?? '').replace(/ \(\d+\)$/, '') === label);
+
 function chevron(label: string): HTMLElement {
-  const row = [...root.querySelectorAll<HTMLElement>('.dc-row')]
-    .find((r) => r.querySelector('.dc-tree-label')?.textContent === label);
+  const row = groupRow(label);
   assert.ok(row, `no group row '${label}'`);
   return row.querySelector('.dc-chevron') as HTMLElement;
 }
@@ -350,6 +354,99 @@ describe('a Properties Apply is ONE transaction, the tree included (P2-169)', ()
     assert.deepEqual(app.snapshot.sorts, []);
     assert.equal(app.tree.showTotals, before);
     assert.equal(app.configuration.showRootAggregation, before);
+  });
+});
+
+describe('history through the app (B2)', () => {
+  const sort = async (label: 'Ascending' | 'Descending'): Promise<void> => {
+    menu('EMEA', label);
+    await settle();
+  };
+  const ctrlZ = (): void => {
+    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+  };
+
+  it('a change made while an Undo runs: no mixed state, and undo goes back to where it was made (P2-106)', async () => {
+    await sort('Ascending');
+    engine.hold = true;
+    void app.undo();
+    await settle();
+    assert.deepEqual(app.snapshot.sorts, [], 'the undo is on screen, pending');
+    menu('EMEA', 'Remove Vertical Pivot on region');
+    await settle();
+    engine.hold = false;
+    engine.releaseAll();
+    await settle();
+    assert.deepEqual([app.snapshot.rows, app.snapshot.sorts], [['desk'], []], 'the undo AND the change landed');
+    assert.equal(app.canRedo, false, 'a new change ends the redo branch, as always');
+    await app.undo();
+    await settle();
+    assert.deepEqual([app.snapshot.rows, app.snapshot.sorts], [['region', 'desk'], []],
+      'undo returns to the state the change was made on, never to the undone sort');
+  });
+
+  it('two quick Ctrl-Z while the first runs are two steps, each to a state that was on screen (P2-107)', async () => {
+    await sort('Ascending');
+    await sort('Descending');
+    engine.hold = true;
+    ctrlZ();
+    await settle();
+    ctrlZ();
+    await settle();
+    engine.hold = false;
+    engine.releaseAll();
+    await settle();
+    assert.deepEqual(app.snapshot.sorts, [], 'two presses, two steps');
+    await app.redo();
+    await settle();
+    assert.deepEqual(app.snapshot.sorts, [{ column: 'region', direction: 'asc' }], 'redo walks them back in order');
+  });
+
+  it('collapsing a group opened by the expand level is a step, and undo opens it again (P2-109)', async () => {
+    app.dispose();
+    root.replaceChildren();
+    app = new CubeApp(root, SNAPSHOT, { engine, planner: new StubPlanner(),
+      configuration: { ...DEFAULT_CONFIGURATION, initialExpandToLevel: 1 } });
+    await app.open();
+    await settle();
+    assert.equal(groupRow('EMEA')?.getAttribute('aria-expanded'), 'true', 'opened by the expand level');
+    chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
+    chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    await settle();
+    assert.equal(app.tree.isOpen(['EMEA']), false);
+    assert.equal(app.canUndo, true, 'a collapse from the expand level is a change');
+    await app.undo();
+    await settle();
+    assert.equal(app.tree.isOpen(['EMEA']), true, 'undone');
+  });
+
+  it('Settings > Max History Stack Size takes effect at once', async () => {
+    app.openSettings();
+    const input = root.querySelector('[data-setting="dataCube.editor.maxHistoryStackSize"] input') as HTMLInputElement;
+    input.value = '10';
+    input.dispatchEvent(new dom.window.Event('change'));
+    ([...root.querySelectorAll('button')].find((b) => b.textContent === 'OK') ?? assert.fail('no OK')).click();
+    for (let i = 0; i < 12; i += 1) {
+      await app.applyConfiguration({ reportTitle: `title ${i}` });
+    }
+    assert.equal(app.state.historyDepth.past, 10);
+  });
+
+  it('the menu offers Redo only when there is one to take', async () => {
+    const redo = (): HTMLElement | undefined => {
+      (root.querySelector('.dc-titlebar-menu') as HTMLElement).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      const item = [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')]
+        .find((el) => el.querySelector('.dc-menu-label')?.textContent === 'Redo');
+      (root.querySelector('.dc-titlebar-menu') as HTMLElement).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+      return item;
+    };
+    await sort('Ascending');
+    assert.equal(redo()?.getAttribute('aria-disabled'), 'true', 'nothing to redo');
+    await app.undo();
+    await settle();
+    assert.notEqual(redo()?.getAttribute('aria-disabled'), 'true', 'one to redo');
+    await sort('Descending');
+    assert.equal(redo()?.getAttribute('aria-disabled'), 'true', 'a new change ended it');
   });
 });
 

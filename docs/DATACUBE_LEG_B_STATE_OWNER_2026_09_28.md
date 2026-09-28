@@ -38,10 +38,10 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-103 | a chip move is two changes; a refused move drops the grouping | **closed B1c**: the panel reports one `ZoneLayout` per gesture. `test/cube-transactions.test.ts` "a chip dragged … is ONE change" (red before: "2 changes were undone") |
 | P2-104 | a superseded refresh turns the busy signal off while the newer one runs | **closed B1b**: busy is `owner.busy`. "a superseded run ending does not turn busy off…" (red before) |
 | P2-105 | `dispose()` stops nothing: late queries, listeners, callbacks outlive the cube | open |
-| P2-106 | an action during an in-flight Undo mixes states and loses the redo | open |
-| P2-107 | overlapping Undos roll back to a state never rendered | open |
+| P2-106 | an action during an in-flight Undo mixes states and loses the redo | **fixed by B1b** (the owner lands the undo AND the change; undo returns to where the change was made); pinned in B2 by `test/cube-transactions.test.ts` "a change made while an Undo runs" — passed on first run |
+| P2-107 | overlapping Undos roll back to a state never rendered | **fixed by B1b** (two presses are two steps over the stack); pinned in B2 by "two quick Ctrl-Z …" — passed on first run |
 | P2-108 | Undo restores the configuration but not appearance, zones or title bar | **closed B1b**: one paint from the state (`#paintState`). "the zones and the title bar come back with the state" (red before) |
-| P2-109 | the history key ignores groups collapsed from an expand level | open (`stateKey` reads `openPaths` only) |
+| P2-109 | the history key ignores groups collapsed from an expand level | **fixed by B1a/B1b** (`TreeState.key` sees closed groups and the expand level); pinned in B2 by "collapsing a group opened by the expand level is a step" — passed on first run |
 | P2-110 | during a refresh the context menu pairs the old rows with the new snapshot | **closed B1c**: the menu reads `rendered` (`#shown`). "a right-click while a regroup runs names the column…" (red before: it offered `desk = 'EMEA'` on a region row) |
 | P2-114 | fire-and-forget calls: unhandled rejections; failed presentation changes keep the new config | **closed B1b**: presentation runs no query; `change` never throws (it returns an outcome). "a presentation change runs no query…" (red before) |
 | P2-127 | the host TOGGLES instead of applying the requested expand state | **closed B1b**: `tree.setOpen(path, expanded)`. "two quick clicks … leave it open" (red with the toggle put back) |
@@ -215,6 +215,10 @@ drafts are B4.
 
 - **B2 — history.** Undo/redo through the owner in the app (the rules are B1a's), Settings > Max
   History Stack Size, the menu's enabled states. P2-106, 107, 109 each red-first through the app.
+B2 LANDED as tests only: P2-106, 107, 109 were already fixed by the owner (each test passed on its
+first run, so recorded, not claimed); also pinned: Settings > Max History Stack Size takes effect at
+once, and the menu offers Redo only when there is one.
+
 - **B3 — lifecycle and supersession.** Dispose, listeners, drill sequence, resize drag, Escape.
   P2-105, 131, 210, 220, 221.
 - **B4 — editors on live state.** Filters, Sorts, Dimensions, Apply re-entry, compile refusals.
