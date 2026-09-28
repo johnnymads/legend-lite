@@ -122,8 +122,18 @@ Two rules for overlapping work:
 - **A change built on a pending one, then refused, reverts both**, and says so ("2 changes were
   undone: …"). The later change was made on top of the earlier; replaying the earlier alone would
   apply a state the user never saw. Honest and simple beats clever.
-- **Undo while a change is in flight cancels the pending change and steps back from `committed`** —
-  never from the pending state.
+- **Undo while the user's change is in flight cancels THAT change** — the one thing they just did —
+  and nothing more (the screen stays on `committed`, the query is stopped). Refined 2026-09-28 while
+  building the owner: "cancel and also step back" would undo two things for one press.
+- **Undo while an undo is in flight goes one step further**: two presses are two steps, each to a
+  state that was on the stack (P2-107); redo while an undo is in flight cancels the undo.
+- **A change made on an undo in flight lands as the undo AND the change**, one step each: undo then
+  returns to the state the change was made on, and the redo branch goes as after any new change
+  (P2-106). Refused, it reverts both and names both ("undo", "pivot").
+- **A presentation change while a query runs lands with it** (laid on the pending state too); while
+  an undo runs it rides the undo, kept on both sides, not a step of its own (the stacks are the
+  move's until it lands).
+- **A change that changes nothing is nothing**: no query, no step, no event.
 
 A chip move is ONE transaction (P2-103); a Properties Apply is ONE transaction, tree settings
 included (P2-169); expanding a row SETS it open (or closed) — never a toggle (P2-101, P2-127).
@@ -173,22 +183,28 @@ Each slice is small enough to prove and push on its own. For EVERY slice:
 
 The slices:
 
-- **B1a — the owner in front.** `CubeStateOwner` exists; every write of the cube's state goes through
-  it (today's 25 sites in `app.ts` and the controller's `update`/`toggle`/`setTree`/`adoptTree`), still
-  using today's refresh underneath. It emits `changed`. The app's `#snapshot` and `#config` FIELDS are
-  deleted (reads go to the owner), and a guardrail test holds that nothing outside `cube-state.ts`
-  assigns cube state. "Changed since saved" moves onto `changed`. No behaviour change is the goal;
-  nothing is claimed closed yet.
-- **B1b — presentation vs query.** The rule above; a test that a colour, width or format change runs
-  no query and a query change does. Closes P2-114's "failed presentation change keeps the config".
-- **B1c — transactions.** Commit on success, repaint everything from `committed` on refusal, latest
-  wins, busy from the owner, the two overlapping-work rules. Closes P2-100, 101, 102, 104, 108, 114.
-- **B1d — the controller made stateless.** Its snapshot, tree, view and history fields go; the
-  guardrail extends to it. Pins P2-99 (no machine undo steps).
-- **B1e — whole gestures as one transaction.** A chip move, a Properties Apply (tree settings
+(Refined 2026-09-28, before any code: B1a–B1d as first written moved the app onto the owner in four
+half-steps, each leaving two owners alive. Instead the owner is built and PROVEN ALONE first, then the
+app switches in one step.)
+
+- **B1a — the owner, built and proven alone.** `src/cube-state.ts`: `CubeStateOwner`, `UndoStack`,
+  `queryKey`/`stateKey`, events; every rule above proven by `test/cube-state.test.ts` against a query
+  side whose answers the test hands out by hand (each overlap is one exact ordering, not a race).
+  `TreeState` gains `key` (open AND closed groups AND the expand level: P2-109) and `setOpen` (set,
+  never toggle; asking for what is changes nothing: P2-127). Nothing in the app changes.
+- **B1b — the switch.** The app runs on the owner: every write of the cube's state goes through
+  `owner.change` (today's 25 sites in `app.ts` and the controller's `update`/`toggle`/`setTree`/
+  `adoptTree`); the app's `#snapshot`/`#config` fields and the controller's snapshot, tree, view and
+  history fields are DELETED; the controller becomes `run(state) → view | refusal`; presentation
+  paints `current`, anything off the rows reads `rendered`; "changed since saved" listens to the
+  owner; a guardrail test holds that nothing outside `cube-state.ts` assigns cube state (app AND
+  controller). Closes, each with a red-first test through the app: P2-99 (no machine undo steps),
+  P2-100, 101, 102, 104, 108, 114.
+- **B1c — whole gestures as one transaction.** A chip move, a Properties Apply (tree settings
   included), expand/collapse as a set. The context menu, drill and value filters read `rendered`.
   Closes P2-103, 110, 127, 169.
-- **B2 — history.** Undo/redo as transactions on the owner, whole-state keys. P2-106, 107, 109.
+- **B2 — history.** Undo/redo through the owner in the app (the rules are B1a's), Settings > Max
+  History Stack Size, the menu's enabled states. P2-106, 107, 109 each red-first through the app.
 - **B3 — lifecycle and supersession.** Dispose, listeners, drill sequence, resize drag, Escape.
   P2-105, 131, 210, 220, 221.
 - **B4 — editors on live state.** Filters, Sorts, Dimensions, Apply re-entry, compile refusals.
@@ -205,7 +221,7 @@ controller, and B5 and B6 have landed — not before.
 - The §2 statuses are from READING the code ("the cited mechanism is unchanged"), not reproductions.
   The red-first rule is what corrects them: some "open" rows may already be fixed another way, and the
   two "overtaken" rows are claims until their tests pin them.
-- B1a touches the most code for the least visible change; it is where a half-migration would hide.
+- B1b touches the most code for the least visible change; it is where a half-migration would hide.
   The guardrail (no state assigned outside the owner) is what stops "a cache for convenience" from
   becoming a second owner again.
 - The transaction rules change what the user sees on a refusal (both changes undone, said so): a

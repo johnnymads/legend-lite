@@ -158,6 +158,23 @@ export class TreeState {
     return [...this.#open];
   }
 
+  /** Groups the user closed that the expand level would otherwise open. */
+  get closedPaths(): string[] {
+    return [...this.#closed];
+  }
+
+  /**
+   * What decides which groups show open, as one comparable string: the open and closed
+   * paths (sorted), the expand level and the grand total. History and "did this change"
+   * compare trees by it -- the open paths alone missed a group closed from the expand level
+   * (P2-109).
+   */
+  get key(): string {
+    return JSON.stringify([
+      [...this.#open].sort(), [...this.#closed].sort(), this.#expandTo, this.#showTotals,
+    ]);
+  }
+
   isOpen(path: RowPath, depth = Infinity): boolean {
     const key = pathKey(path);
     if (this.#open.has(key)) return true;
@@ -171,6 +188,16 @@ export class TreeState {
 
   toggle(path: RowPath): TreeState {
     return this.isOpen(path) ? this.collapse(path) : this.expand(path);
+  }
+
+  /**
+   * The group OPEN or CLOSED, as asked -- this same tree when it already is. A request, not a
+   * flip: a double-click, or a key repeated while a query ran, toggled twice and undid itself
+   * (P2-127).
+   */
+  setOpen(path: RowPath, open: boolean): TreeState {
+    if (this.isOpen(path) === open) return this;
+    return open ? this.expand(path) : this.collapse(path);
   }
 
   expand(path: RowPath): TreeState {

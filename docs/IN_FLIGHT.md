@@ -345,3 +345,6 @@ PivotJoinColumnTest.java` (red without the fix), registered in `JdbcSurfaceCensu
   Cross-area edit coming (rule 7): `wasm/BUILD.bazel` and a new boundary class in
   `wasm/src/main/java/planner/` beside `Wasm.java`: the warehouse SQL-API client
   (`//warehouse:sqlapi`) compiled into the planner module. Nothing in `core/`, `spec/`, `tools/`.
+
+**Leg B (2026-09-28, docs/DATACUBE_LEG_B_STATE_OWNER_2026_09_28.md): no edit outside `datacube/` and
+`docs/`.** B1a adds the state owner (`datacube/src/cube-state.ts`) alone; B1b switches the app onto it.
