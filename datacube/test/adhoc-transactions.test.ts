@@ -202,3 +202,45 @@ describe('Ad Hoc on screen (B5a)', () => {
     assert.deepEqual(failures, [], 'no error window for a mode that is gone');
   });
 });
+
+describe('Member Selection follows its dimension (B5c, P2-280)', () => {
+  it('opened from the POV, then the dimension moves to Rows: opening it again gives the ROWS window, not the old one', async () => {
+    const dom = new JSDOM('<!doctype html><body><div id="m"></div></body>');
+    const doc = dom.window.document as unknown as Document;
+    const host = doc.getElementById('m') as HTMLElement;
+    const win = dom.window as unknown as { requestAnimationFrame: unknown };
+    win.requestAnimationFrame = (cb: FrameRequestCallback) => { cb(0); return 1; };
+    globalThis.requestAnimationFrame = win.requestAnimationFrame as typeof requestAnimationFrame;
+    globalThis.cancelAnimationFrame = () => {};
+    // windows as the app keeps them: by title, an open one raised rather than rebuilt
+    const open = new Map<string, HTMLElement>();
+    const statuses: string[] = [];
+    const src = new Source();
+    const mode = new AdHocMode(host, new AdHocSession(cube(), src.run), {
+      formatters: new FormatterCache(),
+      rowHeight: 20,
+      showWindow: (title, build) => {
+        if (open.has(title)) return;
+        const el = doc.createElement('div');
+        doc.body.append(el);
+        open.set(title, el);
+        build(el, () => { el.remove(); open.delete(title); });
+      },
+      startTask: () => () => {},
+      status: (text) => statuses.push(text),
+      reportFailure: () => {},
+      onExit: () => {},
+    });
+    await mode.refresh();
+    mode.openMemberSelection('region', 'pov');
+    await tick();
+    const kind = (): string | undefined => open.get('Member Selection: region')
+      ?.querySelector<HTMLInputElement>('input[type="radio"], input[type="checkbox"]')?.type;
+    assert.equal(kind(), 'radio', 'from the POV: one pick');
+    await mode.session.povToAxis('region', 'rows');
+    mode.openMemberSelection('region', 'axis');
+    await tick();
+    assert.equal(kind(), 'checkbox', 'on the rows: many picks, not the POV window raised');
+  });
+});
+

@@ -972,6 +972,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           + current.lost.map((n) => `- ${n}`).join('\n')
         : undefined),
       save: async (name, asNew) => {
+        const refused = app.saveRefusal();
+        if (refused) throw new Error(refused);
         const doc = app.cubeDocument(name, current.unknown);
         if (!doc) throw new Error('this cube cannot be saved yet: only cubes over a file are');
         const id = !asNew && current.cubeId !== undefined ? current.cubeId : crypto.randomUUID();

@@ -41,6 +41,10 @@ export interface AdHocModeOptions {
   readonly reportFailure: (error: unknown) => void;
   /** Leave the mode: the app puts the cube's own grid back. */
   readonly onExit: () => void;
+  /** Settings > Row Buffer, for the Ad Hoc grid as for the cube's. */
+  readonly overscan?: number;
+  /** Each view painted, and whether it is stale: the app's status bar reads it. */
+  readonly onView?: (view: AdHocView, stale: boolean) => void;
   readonly writeClipboard?: (text: string) => void | Promise<void>;
 }
 
@@ -69,6 +73,8 @@ export class AdHocMode {
   #model: ColumnModel | null = null;
   #selection: CellRange | null = null;
   #busy = 0;
+  /** Each open Member Selection window: the place it was opened for, and its close (P2-280). */
+  readonly #memberWindows = new Map<string, { readonly place: 'axis' | 'pov'; readonly close: () => void }>();
   /** Set by `destroy`: a step answering after the mode is gone says and paints nothing (P2-270). */
   #destroyed = false;
 
@@ -85,6 +91,7 @@ export class AdHocMode {
     this.#grid = new DataGrid(gridHost, options.formatters, {
       rowHeight: options.rowHeight,
       autoFit: true,
+      ...(options.overscan !== undefined ? { overscan: options.overscan } : {}),
       // Double-click or Enter on a row member zooms in on it.
       onActivateCell: (row, column) => this.#onActivateCell(row, column),
       onDoubleClickCell: (row, column) => this.#onActivateCell(row, column),
@@ -126,6 +133,11 @@ export class AdHocMode {
 
   get busy(): boolean {
     return this.#busy > 0;
+  }
+
+  /** Settings > Row Buffer. */
+  setOverscan(rows: number): void {
+    this.#grid.setOverscan(rows);
   }
 
   destroy(): void {
@@ -187,6 +199,7 @@ export class AdHocMode {
     const pending = this.session.stale ? ' (not refreshed)' : '';
     this.#options.status(
       `${view.table.rowCount} rows, ${view.columnTuples.length} columns${pending}`);
+    this.#options.onView?.(view, this.session.stale);
   }
 
   // -- the POV bar ------------------------------------------------------------
@@ -469,13 +482,29 @@ export class AdHocMode {
    * the POV. Its tree is the source's members, looked up as it opens.
    */
   openMemberSelection(dimension: string, place: 'axis' | 'pov'): void {
+    // A window open for the SAME dimension in ANOTHER place is closed, not
+    // raised: it kept its old place, and its OK then did nothing (P2-280).
+    const open = this.#memberWindows.get(dimension);
+    if (open && open.place !== place) open.close();
     const s = this.session;
     const grid = s.grid;
     const onAxis = [...grid.rows, ...grid.columns].find((a) => a.dimension === dimension);
     const selected = place === 'pov'
       ? [grid.pov[dimension] ?? []]
       : [...(onAxis?.members ?? [])];
-    this.#options.showWindow(`Member Selection: ${dimension}`, (host, close) =>
+    this.#options.showWindow(`Member Selection: ${dimension}`, (host, closeWindow) => {
+      const close = (): void => {
+        if (this.#memberWindows.get(dimension)?.close === close) this.#memberWindows.delete(dimension);
+        closeWindow();
+      };
+      this.#memberWindows.set(dimension, { place, close });
+      // still where it was when the window opened? A step since may have moved it
+      const stillThere = (): boolean => {
+        const g = s.grid;
+        return place === 'pov'
+          ? dimension in g.pov
+          : [...g.rows, ...g.columns].some((a) => a.dimension === dimension);
+      };
       buildMemberSelection(host, {
         dimension,
         mode: place === 'pov' ? 'one' : 'many',
@@ -485,6 +514,10 @@ export class AdHocMode {
         onFailure: (e) => this.#options.reportFailure(e),
         onOk: (picked) => {
           close();
+          if (!stillThere()) {
+            this.#options.status(`${dimension} moved since this window opened: open Member Selection again`, 'warn');
+            return;
+          }
           if (place === 'pov') {
             const one = picked[0];
             if (one) void this.#run('Setting the POV...', () => s.setPov(dimension, one));
@@ -493,7 +526,8 @@ export class AdHocMode {
           }
         },
         onClose: close,
-      }), MEMBER_SELECTION_WINDOW);
+      });
+    }, MEMBER_SELECTION_WINDOW);
   }
 
   openOptions(): void {

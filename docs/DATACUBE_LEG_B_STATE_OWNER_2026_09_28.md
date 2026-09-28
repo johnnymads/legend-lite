@@ -62,15 +62,15 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-268 | Navigate Without Data status inverted | **closed B5a**: "(not refreshed)" and the warning say what is TRUE (`session.stale`: the view does not answer the grid). `test/adhoc-transactions.test.ts` (red with the old status logic put back) |
 | P2-269 | old view's headers laid out with the new grid's depth | **no longer reproduces** (re-tested: with the old depth put back the headers still read right -- the column model no longer depends on it); the mode lays out with the grid the view answers (`shownGrid`) anyway; pinned by `test/adhoc-transactions.test.ts`, not claimed |
 | P2-270 | exiting Ad Hoc does not cancel an in-flight step | **closed B5a**: `destroy` cancels the step in flight (`session.dispose`) and the mode says nothing after. `test/adhoc-transactions.test.ts` (red before: an error window for a mode that was gone) |
-| P2-280 | Member Selection re-raised in its old place after the dimension moves | open |
+| P2-280 | Member Selection re-raised in its old place after the dimension moves | **closed B5c**: a Member Selection window open for the dimension in another place is closed, not raised; an OK after the dimension moved says so. `test/adhoc-transactions.test.ts` (red with the old raise put back) |
 | P2-282 | Ad Hoc Undo/Redo always query | **closed B5a**: with Navigate Without Data on, undo and redo commit without a query (`StateRules.defer`). `test/adhoc-transactions.test.ts` (red before: 3 queries) |
-| P2-283 | Settings do not reach Ad Hoc | open |
-| P2-284 | the menu's Undo/Redo state reflects the hidden cube in Ad Hoc | open (reads `#controller.canUndo`) |
-| P2-287 | the cube's Filter button stays under the Ad Hoc grid | open |
-| P2-288 | Save View in Ad Hoc saved the hidden cube | **overtaken, same defect moved**: Save View is gone; the Cubes window in Ad Hoc saves the hidden cube and not the Ad Hoc layout |
-| P2-289 | cube-only entries offered in Ad Hoc re-query the hidden cube | open |
-| P2-290 | the status bar shows the hidden cube's counts under Ad Hoc | open |
-| P2-291 | entering Ad Hoc during a pending filter carries a filter later refused | open (built from the optimistic snapshot) |
+| P2-283 | Settings do not reach Ad Hoc | **closed B5b**: Settings reach Ad Hoc -- the history limit (its session), the row buffer (its grid), Debug Mode (its queries logged). `test/cube-transactions.test.ts` (red before: 12 undo steps kept under a limit of 10) |
+| P2-284 | the menu's Undo/Redo state reflects the hidden cube in Ad Hoc | **closed B5b**: the menu's Undo/Redo read the Ad Hoc session while it is on. `test/cube-transactions.test.ts` (red before) |
+| P2-287 | the cube's Filter button stays under the Ad Hoc grid | **closed B5b**: the status bar is Ad Hoc's while it is on: no cube Filter/Properties links. `test/cube-transactions.test.ts` (red before) |
+| P2-288 | Save View in Ad Hoc saved the hidden cube | **closed B5b** (successor: the Cubes window): `app.saveRefusal()` -- in Ad Hoc a save says it keeps the cube, not the layout on screen, and the host's Save refuses with that message. `test/cube-transactions.test.ts` (red before: no refusal) |
+| P2-289 | cube-only entries offered in Ad Hoc re-query the hidden cube | **closed B5b**: the cube's own entries (Properties, drag zones, dimensions, Ctrl-E, Filters, column editor) are disabled or refused in Ad Hoc (`#cubeOnly`); Settings > Reload reloads Ad Hoc. `test/cube-transactions.test.ts` (red before) |
+| P2-290 | the status bar shows the hidden cube's counts under Ad Hoc | **closed B5b**: the status bar shows Ad Hoc's own counts (`#renderAdHocStatus`, fed by the mode's `onView`). `test/cube-transactions.test.ts` (red before) |
+| P2-291 | entering Ad Hoc during a pending filter carries a filter later refused | **closed B5c**: Ad Hoc is built from the cube ON SCREEN (`owner.committed`), never a change in flight. `test/cube-transactions.test.ts` (red before: EMEA pinned from an unaccepted filter) |
 | P2-297 | re-sign-in never reaches the open cube (old token) | open |
 | P2-299 | the shared model parse is tied to the first query's signal | **overtaken**: the engine client sends the model per request (E8); nothing shared is parsed |
 | P2-330 | concurrent file opens have no ordering guard | open (the host's `openFile` has no sequence) |
@@ -234,6 +234,8 @@ land, represent, defer; `CubeStateOwner` is it with `CUBE_RULES`), deferral and 
 `test/cube-state.test.ts`; `AdHocSession` runs on it. P2-259, 260, 261, 268, 270, 282 closed; P2-269
 no longer reproduces (pinned). Moving a dimension between rows and columns now runs no query: the
 same questions, the answers placed again.
+
+B5b + B5c LANDED: P2-283, 284, 287, 288, 289, 290, 280, 291 closed. Leg B's Ad Hoc slice done.
 
 - **B6 — the host page.** Open sequence, re-sign-in, the leave guard for any work. P2-297, 330, 334, 337.
 

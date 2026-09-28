@@ -1054,6 +1054,8 @@ export class CubeApp {
    * rule between groups rather than padding alone.
    */
   #renderStatusBar(view: CubeView, cols: number): void {
+    // Ad Hoc owns the bar while it is on (`#renderAdHocStatus`)
+    if (this.#adhoc) return;
     const doc = this.#doc;
     const bar = this.#els.stats;
     bar.replaceChildren();
@@ -1138,6 +1140,26 @@ export class CubeApp {
     right.append(this.#statusSeparator(), this.#progress);
 
     // The host's own readout, last.
+    this.#adoptHostStatus();
+  }
+
+  /**
+   * The status bar in Ad Hoc Analysis: its own counts, and none of the
+   * cube's links -- the cube's Filter said "(on)" over numbers that ignore
+   * it (P2-287), and the counts were the hidden cube's (P2-290).
+   */
+  #renderAdHocStatus(rows: number, cols: number, stale: boolean): void {
+    const bar = this.#els.stats;
+    bar.replaceChildren();
+    const left = this.#doc.createElement('div');
+    left.className = 'dc-status-actions';
+    const right = this.#doc.createElement('div');
+    right.className = 'dc-status-readout';
+    bar.append(left, right);
+    const readout = this.#doc.createElement('div');
+    readout.className = 'dc-status-rows dc-status-timing';
+    readout.textContent = `${rows.toLocaleString()} rows \u00d7 ${cols} cols${stale ? ' (not refreshed)' : ''}`;
+    right.append(readout, this.#statusSeparator(), this.#progress);
     this.#adoptHostStatus();
   }
 
@@ -2320,13 +2342,20 @@ export class CubeApp {
     if (this.#adhoc) return;
     // OPEN ON WHAT THE USER WAS LOOKING AT: its row groups down the
     // rows, its pivots across, a filter pinning a member as that member.
-    const { cube, grid } = carryOver(this.#snapshot, this.#dimensions());
+    // From the cube ON SCREEN, never a change still in flight: a pending
+    // filter the cube then refused was carried in as a pinned member, and
+    // every Ad Hoc query failed (P2-291).
+    const { cube, grid } = carryOver(this.#owner.committed.snapshot, this.#dimensions());
     if (cube.outline.dimensions.length === 0) {
       this.#status('Ad Hoc Analysis needs at least one dimension column', 'warn');
       return;
     }
-    const session = new AdHocSession(cube, (snapshot, scope) =>
-      this.#controller.level(snapshot, scope), grid);
+    const session = new AdHocSession(cube, async (snapshot, scope) => {
+      const rows = await this.#controller.level(snapshot, scope);
+      // Settings > Debug Mode logs Ad Hoc's queries too (P2-283)
+      this.#debug('adhoc query', { snapshot, scope, rows: rows.rowCount });
+      return rows;
+    }, grid, { historyLimit: numericSetting(this.#settings, 'dataCube.editor.maxHistoryStackSize') });
     const middle = this.#els.grid.parentElement as HTMLElement;
     const host = this.#doc.createElement('div');
     middle.before(host);
@@ -2340,6 +2369,10 @@ export class CubeApp {
       status: (text, kind) => this.#status(text, kind),
       reportFailure: (error) => this.#reportFailure(error),
       onExit: () => this.exitAdHoc(),
+      overscan: numericSetting(this.#settings, 'dataCube.grid.rowBuffer'),
+      // THE STATUS BAR IS AD HOC'S while it is on: its counts, and none of
+      // the cube's links (P2-287, P2-290)
+      onView: (view, stale) => this.#renderAdHocStatus(view.table.rowCount, view.columnTuples.length, stale),
       ...(this.#options.writeClipboard ? { writeClipboard: this.#options.writeClipboard } : {}),
     });
     this.#adhoc = mode;
@@ -2363,6 +2396,8 @@ export class CubeApp {
     this.#els.root.classList.remove('dc-adhoc-on');
     (this.#els.grid.parentElement as HTMLElement).hidden = false;
     this.#applyChrome();
+    // the cube's own status bar back
+    if (this.#view) this.#renderStatusBar(this.#view, this.#view.columns.leaves.length);
     this.#status('Back to the cube');
   }
 
@@ -2374,6 +2409,7 @@ export class CubeApp {
   // -- dimensions ----------------------------------------------------------
 
   useDimension(dimension: Dimension): void {
+    if (this.#cubeOnly()) return;
     void this.#query((s) => useDimension(s, dimension), `dimension ${dimension.name}`);
   }
 
@@ -2384,7 +2420,30 @@ export class CubeApp {
    * it -- upstream's Properties... from a column header. An editor
    * already open is raised and moved to that column, keeping its draft.
    */
+  /**
+   * An action of the cube's own, asked while Ad Hoc Analysis is on: said,
+   * and not done -- it changed the hidden cube and nothing on screen
+   * (P2-289). True when refused.
+   */
+  #cubeOnly(): boolean {
+    if (!this.#adhoc) return false;
+    this.#status('That acts on the cube: leave Ad Hoc Analysis first', 'warn');
+    return true;
+  }
+
+  /**
+   * Why the cube cannot be saved right now, or undefined. In Ad Hoc
+   * Analysis a save would keep the hidden cube, not the layout on screen,
+   * and say "saved" (P2-288).
+   */
+  saveRefusal(): string | undefined {
+    return this.#adhoc
+      ? 'Saving keeps the cube, not the Ad Hoc Analysis layout on screen: leave Ad Hoc Analysis to save the cube.'
+      : undefined;
+  }
+
   openEditor(column?: string): void {
+    if (this.#cubeOnly()) return;
     const open = this.#editor;
     if (open && this.#open.has('Properties')) {
       this.#showOverlay('Properties', () => {});
@@ -2412,6 +2471,7 @@ export class CubeApp {
    * compiles again whenever the cube changes under it.
    */
   openColumnEditor(start: ColumnEditorStart): void {
+    if (this.#cubeOnly()) return;
     const editing = 'edit' in start ? start.edit : undefined;
     const key = editing !== undefined
       ? `column:${editing}`
@@ -2485,6 +2545,7 @@ export class CubeApp {
   }
 
   openFilters(): void {
+    if (this.#cubeOnly()) return;
     this.#showOverlay('Filters', (host, close) => {
       this.#filters = new FilterEditor(host, {
         // Row-stage calculated columns filter like any other, and each
@@ -2655,14 +2716,19 @@ export class CubeApp {
   /** The settings, in effect: each one reaches what it controls. */
   #applySettings(values: SettingValues): void {
     this.#settings = values;
-    this.#owner.setHistoryLimit(
-      numericSetting(values, 'dataCube.editor.maxHistoryStackSize'));
-    this.#grid.setOverscan(numericSetting(values, 'dataCube.grid.rowBuffer'));
+    const limit = numericSetting(values, 'dataCube.editor.maxHistoryStackSize');
+    const buffer = numericSetting(values, 'dataCube.grid.rowBuffer');
+    this.#owner.setHistoryLimit(limit);
+    this.#grid.setOverscan(buffer);
+    // and Ad Hoc's, which kept 100 steps and the default buffer (P2-283)
+    this.#adhoc?.session.setHistoryLimit(limit);
+    this.#adhoc?.setOverscan(buffer);
     this.#options.onSettingsChanged?.(values);
   }
 
   #settingAction(key: SettingKey): void {
-    if (key === 'dataCube.debugger.action.reload') void this.#owner.refresh();
+    // Reload what is ON SCREEN: Ad Hoc's grid while it is on
+    if (key === 'dataCube.debugger.action.reload') void (this.#adhoc ? this.#adhoc.refresh() : this.#owner.refresh());
   }
 
   /** Settings > Debug Mode: what ran, what it made, what failed. */
@@ -2952,25 +3018,31 @@ export class CubeApp {
       // all: a keyboard shortcut that silently does nothing gives a
       // person no way to tell "there is no undo here" from "undo is
       // broken". A disabled entry answers that before they press it.
+      const cubeOnly = this.#adhoc ? { disabled: true } : {};
       const items: MenuItem[] = [
+        // WHAT UNDO ACTS ON: Ad Hoc's session while it is on, never the
+        // hidden cube's history (P2-284).
         {
           id: 'view.undo',
           label: 'Undo',
-          ...(this.#owner.canUndo ? {} : { disabled: true }),
+          ...((this.#adhoc ? this.#adhoc.session.canUndo : this.#owner.canUndo) ? {} : { disabled: true }),
         },
         {
           id: 'view.redo',
           label: 'Redo',
-          ...(this.#owner.canRedo ? {} : { disabled: true }),
+          ...((this.#adhoc ? this.#adhoc.session.canRedo : this.#owner.canRedo) ? {} : { disabled: true }),
         },
         // Upstream's hamburger: Undo, Redo, Settings..., then the rest.
         { id: 'view.settings', label: 'Settings...' },
-        { id: 'view.properties', label: 'Properties...' },
+        // The cube's own entries are not offered while Ad Hoc is on: they
+        // changed the hidden cube and nothing visible (P2-289).
+        { id: 'view.properties', label: 'Properties...', ...cubeOnly },
         {
           id: 'view.zones',
           label: this.#config.showDragZones
             ? 'Hide Drag Zones'
             : 'Show Drag Zones',
+          ...cubeOnly,
         },
         { id: 'view.titleBar', label: 'Hide Title Bar' },
         // The other way to work the cube: members on axes, the rest
@@ -2982,7 +3054,7 @@ export class CubeApp {
         },
       ];
       for (const d of availableDimensions(this.#snapshot, this.#dimensions())) {
-        items.push({ id: 'view.dimension', label: d.name, column: d.name });
+        items.push({ id: 'view.dimension', label: d.name, column: d.name, ...cubeOnly });
       }
       // The HOST's own entries last, so its additions never push the
       // cube's own actions around as they come and go.
