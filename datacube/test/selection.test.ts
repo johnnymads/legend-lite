@@ -105,14 +105,14 @@ describe('selectionStats', () => {
     assert.equal(s.max, 30);
   });
 
-  it('returns zeros rather than infinities for an empty selection', () => {
+  it('returns no min or max rather than infinities for a selection with no numbers', () => {
     const s = selectionStats(TABLE, ALL, {
       anchor: { row: 0, col: 0 },
       focus: { row: 2, col: 0 },
     });
     assert.equal(s.numeric, 0);
-    assert.equal(s.min, 0);
-    assert.equal(s.max, 0);
+    assert.equal(s.min, null);
+    assert.equal(s.max, null);
     assert.equal(s.average, 0);
   });
 });

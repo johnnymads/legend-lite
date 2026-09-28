@@ -14,6 +14,7 @@
 
 import type { FontCase } from './format.ts';
 import type { Scalar } from './result.ts';
+import { isNumeric } from './types.ts';
 import { numberOf } from './values.ts';
 
 /** Which of the four colour slots a value falls into. */
@@ -112,12 +113,16 @@ export interface GridAppearance extends CellAppearance {
  * Null is NOT an error -- it is an absent value, which in a pivot is
  * ordinary and usually means "no rows in this combination".
  */
-export function valueState(value: Scalar, isError = false): ValueState {
+export function valueState(value: Scalar, type: string | undefined, isError = false): ValueState {
   if (isError) return 'error';
-  if (typeof value !== 'number') return 'normal';
-  if (Number.isNaN(value)) return 'error';
-  if (value === 0) return 'zero';
-  return value < 0 ? 'negative' : 'normal';
+  // numeric by the column's COMPILER type: a decimal's value is its exact text and a big
+  // integer a bigint, and each is as negative or as zero as a double
+  if (!isNumeric(type)) return 'normal';
+  if (typeof value === 'number' && Number.isNaN(value)) return 'error';
+  const n = typeof value === 'number' ? value : numberOf(value, type);
+  if (n === null) return 'normal';
+  if (n === 0) return 'zero';
+  return n < 0 ? 'negative' : 'normal';
 }
 
 /**
@@ -179,11 +184,12 @@ export function mergeAppearance(
 export function cellStyle(
   appearance: CellAppearance,
   value: Scalar,
+  type: string | undefined,
   isError = false,
 ): Record<string, string> {
   const { foreground, background } = coloursFor(
     appearance,
-    valueState(value, isError),
+    valueState(value, type, isError),
   );
   const style: Record<string, string> = {};
   if (foreground) style['color'] = foreground;
@@ -280,18 +286,19 @@ export interface HeatmapSpec {
 }
 
 /**
- * The numeric range of a column, ignoring blanks and non-numbers.
+ * The numeric range of a column, ignoring blanks; a column whose compiler type is not
+ * numeric has none.
  *
  * Returns null when there is nothing to scale, so a caller renders no
  * heatmap rather than a uniform block of the low colour.
  */
-export function columnRange(values: readonly Scalar[]): HeatmapRange | null {
+export function columnRange(values: readonly Scalar[], type: string | undefined): HeatmapRange | null {
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   let seen = false;
   for (const cell of values) {
     // a decimal's exact text or a bigint places on the scale like a number (presentation)
-    const v = numberOf(cell);
+    const v = numberOf(cell, type);
     if (v === null) continue;
     seen = true;
     if (v < min) min = v;
@@ -347,8 +354,9 @@ export function heatColour(
   value: Scalar,
   spec: HeatmapSpec,
   range: HeatmapRange | null,
+  type: string | undefined,
 ): string | null {
-  const n = numberOf(value);
+  const n = numberOf(value, type);
   if (n === null) return null;
   const r = spec.range ?? range;
   if (!r) return null;

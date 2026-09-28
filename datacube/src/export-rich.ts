@@ -49,10 +49,6 @@ export function escapeXml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
-function isNumber(v: Scalar): v is number {
-  return typeof v === 'number' && Number.isFinite(v);
-}
-
 /**
  * The grid as a standalone HTML document.
  *
@@ -85,9 +81,9 @@ export function toHtml(
     const cells = cols
       .map((c) => {
         const v = c.values[r] ?? null;
-        // Numbers right-align; text does not -- by the column's compiler type (a
+        // Numbers right-align; text does not -- by the column's compiler type alone (a
         // decimal's value is its exact text), and a non-null cell of it.
-        const cls = v !== null && (isNumeric(c.type) || isNumber(v)) ? ' class="n"' : '';
+        const cls = v !== null && isNumeric(c.type) ? ' class="n"' : '';
         return `<td${cls}>${escapeXml(fmt(v, c.name))}</td>`;
       })
       .join('');
@@ -143,7 +139,7 @@ export function toSpreadsheetML(
   const cell = (v: Scalar, name: string): string => {
     if (v === null) return '<Cell/>';
     const type = typeOf.get(name);
-    if (isNumeric(type) || isNumber(v) || typeof v === 'bigint') {
+    if (isNumeric(type)) {
       return `<Cell><Data ss:Type="Number">${String(v)}</Data></Cell>`;
     }
     if (isTemporal(type) && !isTimeOfDay(type) && typeof v === 'string') {

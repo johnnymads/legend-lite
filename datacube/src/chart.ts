@@ -15,14 +15,19 @@
 // re-querying and risking a picture that disagrees with the numbers
 // beside it.
 
-import type { ResultTable } from './result.ts';
+import type { ResultTable, Scalar } from './result.ts';
 import { TREE_COLUMN } from './treeview.ts';
+import { COMPACT_FORMAT, FormatterCache, type ColumnFormat } from './format.ts';
 import { isNumeric } from './types.ts';
 import { numberOf } from './values.ts';
 
 export interface ChartPoint {
+  /** The label, as the grid shows it. */
   readonly label: string;
+  /** Where the value is drawn: a double, for geometry only. */
   readonly value: number;
+  /** The value as the grid shows it, exact and in its column's format. */
+  readonly text: string;
 }
 
 export interface ChartOptions {
@@ -35,6 +40,11 @@ export interface ChartOptions {
   readonly height?: number;
   /** Cap on the number of points drawn. */
   readonly limit?: number;
+  /** The columns on screen, in order: a chart draws what the grid shows, nothing hidden. */
+  readonly columns?: readonly string[];
+  /** The grid's formatter and formats, so labels and values read as on screen. */
+  readonly formatters?: FormatterCache;
+  readonly formats?: Readonly<Record<string, ColumnFormat>>;
 }
 
 const WIDTH = 760;
@@ -53,35 +63,42 @@ const PALETTE = [
  * Chosen rather than demanded, because a chart reached from a
  * right-click has no opportunity to ask. The tree column is the
  * label when there is one -- in a grouped cube it is the only column
- * carrying a dimension -- and the first column with real numbers in
- * it is the value.
+ * carrying a dimension -- and the first column the compiler types
+ * numeric is the value. Only the columns on screen, when the caller
+ * names them: a hidden count column is not what the user is looking at.
  */
 export function chartData(
   table: ResultTable,
   options: ChartOptions = {},
 ): ChartPoint[] {
+  const shown = options.columns === undefined ? table.columns
+    : options.columns.flatMap((n) => table.columns.filter((c) => c.name === n));
   const byName = (n: string | undefined) =>
-    n === undefined ? undefined : table.columns.find((c) => c.name === n);
+    n === undefined ? undefined : shown.find((c) => c.name === n);
 
   const labelCol =
     byName(options.labelColumn)
-    ?? table.columns.find((c) => c.name === TREE_COLUMN)
-    ?? table.columns.find((c) => !isNumeric(c.type) && c.values.some((v) => v !== null));
+    ?? shown.find((c) => c.name === TREE_COLUMN)
+    ?? shown.find((c) => !isNumeric(c.type) && c.values.some((v) => v !== null));
 
   const valueCol =
     byName(options.valueColumn)
     // the first NUMERIC column by its compiler type (a decimal's value is its exact text)
-    ?? table.columns.find((c) => c.name !== labelCol?.name && isNumeric(c.type));
+    ?? shown.find((c) => c.name !== labelCol?.name && isNumeric(c.type));
 
   if (!valueCol) return [];
 
+  const formatters = options.formatters ?? new FormatterCache();
+  const text = (v: Scalar, column: { name: string; type: string }): string =>
+    formatters.format(v, options.formats?.[column.name], column.type);
   const out: ChartPoint[] = [];
   const limit = options.limit ?? 50;
   for (let r = 0; r < table.rowCount && out.length < limit; r++) {
-    const v = numberOf(valueCol.values[r] ?? null);
+    const raw = valueCol.values[r] ?? null;
+    const v = numberOf(raw, valueCol.type);
     if (v === null) continue;
-    const raw = labelCol?.values[r] ?? null;
-    out.push({ label: raw === null ? '' : String(raw), value: v });
+    const label = labelCol?.values[r] ?? null;
+    out.push({ label: labelCol === undefined ? '' : text(label, labelCol), value: v, text: text(raw, valueCol) });
   }
   return out;
 }
@@ -177,7 +194,7 @@ export function toBarChart(
     parts.push(
       `<rect x="${x.toFixed(2)}" y="${top.toFixed(2)}"`
       + ` width="${barW.toFixed(2)}" height="${Math.max(height, 0.5).toFixed(2)}"`
-      + ` fill="${colour}"><title>${esc(`${d.label}: ${fmt(d.value)}`)}</title>`
+      + ` fill="${colour}"><title>${esc(`${d.label}: ${d.text}`)}</title>`
       + `</rect>`,
     );
     parts.push(
@@ -193,13 +210,10 @@ export function toBarChart(
   return svg(w, h, parts.join(''), options.title);
 }
 
+/** An axis figure: THE compact number (format.ts), never a second renderer. */
+const AXIS = new FormatterCache();
 function fmt(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  const abs = Math.abs(n);
-  if (abs >= 1e9) return `${(n / 1e9).toFixed(1)}b`;
-  if (abs >= 1e6) return `${(n / 1e6).toFixed(1)}m`;
-  if (abs >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
-  return String(Math.round(n * 100) / 100);
+  return AXIS.format(n, COMPACT_FORMAT, 'Float');
 }
 
 interface Rect {
@@ -330,7 +344,7 @@ export function toTreemap(
       `<rect x="${r.x.toFixed(2)}" y="${r.y.toFixed(2)}"`
       + ` width="${r.w.toFixed(2)}" height="${r.h.toFixed(2)}"`
       + ` fill="${colour}" stroke="#ffffff" stroke-width="1">`
-      + `<title>${esc(`${d.label}: ${fmt(d.value)}`)}</title></rect>`,
+      + `<title>${esc(`${d.label}: ${d.text}`)}</title></rect>`,
     );
     // A label only where it fits; a clipped word in a sliver is noise.
     if (r.w > 46 && r.h > 18) {

@@ -554,6 +554,28 @@ export function renderFormats(
   return out;
 }
 
+/**
+ * The formats a VIEW's leaves render in: each leaf's own settings over the defaults of the
+ * type the COMPILER gave that leaf -- the average of an Integer is a Float and shows two
+ * places, a count of text is an Integer. A pivoted leaf (`2021__|__notional`) is named
+ * after its measure, so it takes the settings made on the measure. A leaf with neither
+ * settings nor a numeric type is absent: it renders by its type alone.
+ */
+export function leafFormats(
+  config: CubeConfiguration,
+  leaves: readonly { name: string; path: readonly string[]; isDimension: boolean; type: string | undefined }[],
+): Record<string, ColumnFormat | undefined> {
+  const own = toFormats(config);
+  const out: Record<string, ColumnFormat | undefined> = {};
+  for (const leaf of leaves) {
+    const measure = leaf.isDimension ? undefined : leaf.path[leaf.path.length - 1];
+    const set = own[leaf.name] ?? (measure === undefined ? undefined : own[measure]);
+    const defaults = numberDefaults(leaf.type);
+    out[leaf.name] = set || defaults ? { kind: 'auto', ...defaults, ...set } : undefined;
+  }
+  return out;
+}
+
 /** Per-column fonts and colours, merged over the grid's by the grid. */
 export function toColumnAppearance(
   config: CubeConfiguration,

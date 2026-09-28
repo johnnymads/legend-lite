@@ -11,8 +11,7 @@
 
 import type { LeafColumn } from './grid/columns.ts';
 import type { ResultTable, Scalar } from './result.ts';
-import { isNumeric } from './types.ts';
-import { asDecimal, exactSum } from './values.ts';
+import { asDecimal, exactSum, numberOf } from './values.ts';
 
 /**
  * The columns a selection's positions name: the grid's VISIBLE leaves, in
@@ -96,8 +95,13 @@ export interface SelectionStats {
   /** EXACT: decimal text (values.ts `exactSum`), so a DECIMAL beyond 2^53 sums to its digits. */
   readonly sum: string;
   readonly average: number;
-  readonly min: number;
-  readonly max: number;
+  /** The smallest and largest numeric cells, as their own exact values; null when none. */
+  readonly min: Scalar;
+  readonly max: Scalar;
+  /** The compiler type the numeric cells share, when they share one. */
+  readonly type: string | undefined;
+  /** The leaves the numeric cells came from, by name: whose format they are read in. */
+  readonly columns: readonly string[];
 }
 
 /**
@@ -122,8 +126,10 @@ export function selectionStats(
   let blank = 0;
   let sum = 0;
   const exact: unknown[] = [];
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
+  let min: { n: number; v: Scalar } | null = null;
+  let max: { n: number; v: Scalar } | null = null;
+  const types = new Set<string>();
+  const names = new Set<string>();
 
   for (let c = b.left; c <= b.right; c++) {
     const leaf = leaves[c];
@@ -136,15 +142,16 @@ export function selectionStats(
         continue;
       }
       // numeric by the column's COMPILER type: a decimal's value is its exact text and a
-      // big integer a bigint, and `typeof` would skip both (a number where no type is known)
-      const isNumber = isNumeric(column?.type) || typeof v === 'number' || typeof v === 'bigint';
-      const n = typeof v === 'number' ? v : Number(v);
-      if (isNumber && Number.isFinite(n) && asDecimal(v) !== null) {
+      // big integer a bigint; min and max keep the cell's own exact value
+      const n = numberOf(v, column?.type);
+      if (n !== null && asDecimal(v) !== null) {
         numeric += 1;
         sum += n;
         exact.push(v);
-        if (n < min) min = n;
-        if (n > max) max = n;
+        types.add(column?.type as string);
+        if (leaf !== undefined) names.add(leaf.name);
+        if (min === null || n < min.n) min = { n, v };
+        if (max === null || n > max.n) max = { n, v };
       }
     }
   }
@@ -155,8 +162,10 @@ export function selectionStats(
     blank,
     sum: exactSum(exact),
     average: numeric > 0 ? sum / numeric : 0,
-    min: numeric > 0 ? min : 0,
-    max: numeric > 0 ? max : 0,
+    min: min?.v ?? null,
+    max: max?.v ?? null,
+    type: types.size === 1 ? [...types][0] : undefined,
+    columns: [...names],
   };
 }
 

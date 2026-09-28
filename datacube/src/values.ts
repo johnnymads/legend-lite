@@ -15,6 +15,8 @@
 //
 // What a value MEANS is its column's compiler type; this module only keeps it exact.
 
+import { isNumeric } from './types.ts';
+
 const MS_PER_DAY = 86_400_000;
 const pad = (n: number | bigint, w = 2): string => String(n).padStart(w, '0');
 
@@ -138,14 +140,16 @@ export function parseExact(text: string): unknown {
 }
 
 /**
- * A numeric cell as a double, for PRESENTATION only -- a heatmap's colour, a chart's
- * pixel: a number, a bigint, or a decimal's exact text. Null for anything else. Never for
- * a value that is shown, exported, summed or written back: those stay exact.
+ * A cell of a NUMERIC column as a double, for PRESENTATION only -- a heatmap's colour, a
+ * chart's pixel, a cell's sign: a number, a bigint, or a decimal's exact text. Numeric by
+ * the column's COMPILER type, never by the value's own: a String column of '00501' holds no
+ * numbers. Null for anything else. Never for a value that is shown, exported, summed or
+ * written back: those stay exact.
  */
-export function numberOf(v: unknown): number | null {
+export function numberOf(v: unknown, type: string | undefined): number | null {
+  if (!isNumeric(type)) return null;
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
   if (typeof v === 'bigint') return Number(v);
   if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) return Number(v);
   return null;
 }
-

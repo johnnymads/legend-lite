@@ -75,10 +75,14 @@ describe('FormatterCache', () => {
     assert.equal(c.format(42, f), '$42.00');
   });
 
-  it('auto renders by the value type so an unconfigured cube looks sane', () => {
+  it('auto renders by the column\'s compiler type so an unconfigured cube looks sane', () => {
     const c = new FormatterCache();
-    assert.equal(c.format('EMEA'), 'EMEA');
-    assert.equal(c.format(1234.567, { kind: 'auto', ...EN }), '1,234.57');
+    assert.equal(c.format('EMEA', undefined, 'String'), 'EMEA');
+    assert.equal(c.format(1234.567, { kind: 'auto', ...EN }, 'Float'), '1,234.57');
+    // a decimal's value is its exact text: a number because its column is numeric
+    assert.equal(c.format('1234.50', { kind: 'auto', ...EN }, 'Decimal'), '1,234.5');
+    // and text that looks like a number is text when its column is: a zip code stays '00501'
+    assert.equal(c.format('00501', { kind: 'auto', ...EN }, 'String'), '00501');
     // a date's value is its calendar text; the column's compiler type says it is a date
     assert.equal(c.format('2024-03-01', { kind: 'auto', ...EN }, 'StrictDate'), 'Mar 01, 2024');
   });
@@ -102,7 +106,7 @@ describe('negative zero', () => {
   it('a value that rounds to zero shows no minus', () => {
     const f = new FormatterCache();
     assert.equal(f.format(-0.0012, { kind: 'number', locale: 'en-US', decimals: 2 }), '0.00');
-    assert.equal(f.format(-0.0012, { kind: 'auto', locale: 'en-US' }), '0');
+    assert.equal(f.format(-0.0012, { kind: 'auto', locale: 'en-US' }, 'Float'), '0');
     assert.equal(f.format(-1.5, { kind: 'number', locale: 'en-US', decimals: 2 }), '-1.50');
   });
 });

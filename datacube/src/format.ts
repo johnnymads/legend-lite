@@ -126,6 +126,15 @@ function applyCase(text: string, c: FontCase | undefined): string {
 export const DEFAULT_FORMAT: ColumnFormat = { kind: 'auto' };
 
 /**
+ * THE compact number: a magnitude scale per value and one place ("1.2m", "450k", "12.5") --
+ * a chart's axis, where room is short. Rendered by `FormatterCache.format` like every other
+ * number, never by hand.
+ */
+export const COMPACT_FORMAT: ColumnFormat = {
+  kind: 'number', numberScale: 'auto', maximumFractionDigits: 1,
+};
+
+/**
  * Cache key. Only the fields that affect the Intl object belong here --
  * nullText and negativeParens are applied by us afterwards, so folding
  * them into the key would split the cache for no reason.
@@ -271,7 +280,9 @@ export class FormatterCache {
       if (format.kind === 'auto' && isTemporal(type) && !isTimeOfDay(type)) {
         return this.format(value, { ...format, kind: hasTimeOfDay(type) ? 'datetime' : 'date' }, type);
       }
-      if (format.kind === 'auto' && (isNumeric(type) || typeof value === 'number' || typeof value === 'bigint')) {
+      // a number by its column's type, never its own: a decimal is exact text, and a
+      // String column of '00501' is text
+      if (format.kind === 'auto' && isNumeric(type)) {
         return this.format(value, { ...format, kind: 'number' }, type);
       }
       // a JSON document, shown for the eye (`{kind: billing, city: Paris}`); its value stays JSON

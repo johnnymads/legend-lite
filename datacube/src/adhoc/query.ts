@@ -30,6 +30,7 @@ import {
   type Outline,
   type OutlineDimension,
 } from './state.ts';
+import { isNumeric } from '../types.ts';
 import { numberOf } from '../values.ts';
 
 /** What the mode queries: the cube's source and measures, and its outline. */
@@ -311,18 +312,22 @@ export function assembleGrid(
   // Every cell, then what suppression keeps.
   const cells = rowTuples.map((row) => columnTuples.map((col) => valueOf(row, col)));
   const o = grid.options;
-  const empty = (v: Scalar): boolean => v === null;
-  // zero by value: a decimal's exact text '0.00' is a zero too
-  const zero = (v: Scalar): boolean => numberOf(v) === 0;
-  const keepRow = (vals: readonly Scalar[]): boolean =>
-    !(o.suppressMissingRows && vals.every(empty))
-    && !(o.suppressZeroRows && vals.every((v) => empty(v) || zero(v)) && vals.some(zero));
-  const colVals = (c: number): Scalar[] => cells.map((row) => row[c] ?? null);
-  const keepCol = (c: number): boolean =>
-    !(o.suppressMissingColumns && colVals(c).every(empty))
-    && !(o.suppressZeroColumns && colVals(c).every((v) => empty(v) || zero(v)) && colVals(c).some(zero));
-  const rowsKept = rowTuples.map((_r, i) => i).filter((i) => keepRow(cells[i] ?? []));
-  const colsKept = columnTuples.map((_c, i) => i).filter(keepCol);
+  const allRows = rowTuples.map((_r, i) => i);
+  const allCols = columnTuples.map((_c, i) => i);
+  const empty = (ri: number, ci: number): boolean => (cells[ri]?.[ci] ?? null) === null;
+  // zero by the cell's measure's COMPILER type: a decimal's exact text '0.00' is a zero too
+  const zero = (ri: number, ci: number): boolean => {
+    const m = measureOf(rowTuples[ri] as readonly MemberPath[], columnTuples[ci] as readonly MemberPath[]);
+    return numberOf(cells[ri]?.[ci] ?? null, m === undefined ? undefined : measureType(m)) === 0;
+  };
+  type Cell = readonly [number, number];
+  const suppressed = (line: readonly Cell[], missing?: boolean, zeros?: boolean): boolean =>
+    (missing === true && line.every(([r, c]) => empty(r, c)))
+    || (zeros === true && line.every(([r, c]) => empty(r, c) || zero(r, c)) && line.some(([r, c]) => zero(r, c)));
+  const rowsKept = allRows.filter((ri) => !suppressed(allCols.map((ci): Cell => [ri, ci]),
+    o.suppressMissingRows, o.suppressZeroRows));
+  const colsKept = allCols.filter((ci) => !suppressed(allRows.map((ri): Cell => [ri, ci]),
+    o.suppressMissingColumns, o.suppressZeroColumns));
 
   // Row labels, indented by generation, repeated outer members blanked.
   const rowDimensions = grid.rows.map((a) => a.dimension);
@@ -350,7 +355,8 @@ export function assembleGrid(
   const valueColumns: ResultColumn[] = colsKept.map((ci) => {
     const tuple = columnTuples[ci] as readonly MemberPath[];
     // the measure's plan type; a column holding several measures (measures on the
-    // rows) has no single one, so it is Pure's top type, Any
+    // rows) takes their common type in Pure's lattice: Number when all are numbers (so
+    // each cell still reads and colours as one), else the top type, Any
     const types = new Set(rowsKept.flatMap((ri) => {
       const m = measureOf(rowTuples[ri] as readonly MemberPath[], tuple);
       const t = m === undefined ? undefined : measureType(m);
@@ -358,7 +364,8 @@ export function assembleGrid(
     }));
     return {
       name: tuple.map((p, d) => segment(columnDims[d] as string, p)).join(PIVOT_SEPARATOR),
-      type: types.size === 1 ? [...types][0] as string : 'Any',
+      type: types.size === 1 ? [...types][0] as string
+        : types.size > 0 && [...types].every(isNumeric) ? 'Number' : 'Any',
       values: rowsKept.map((ri) => cells[ri]?.[ci] ?? null),
     };
   });

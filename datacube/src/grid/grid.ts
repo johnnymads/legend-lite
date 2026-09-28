@@ -1190,10 +1190,11 @@ export class DataGrid {
         if (loaded) {
           const value: Scalar =
             table.columns[leaf.index]?.values[local] ?? null;
+          const type = table.columns[leaf.index]?.type;
           const text = this.#formatters.format(
             value,
             this.#options.formats?.[leaf.name] ?? DEFAULT_FORMAT,
-            table.columns[leaf.index]?.type,
+            type,
           );
 
           // Colour follows the VALUE, not the column: a scale across
@@ -1203,7 +1204,7 @@ export class DataGrid {
             this.#options.appearance ?? {},
             this.#options.columnAppearance?.[leaf.name],
           );
-          for (const [k, v] of Object.entries(cellStyle(appearance, value))) {
+          for (const [k, v] of Object.entries(cellStyle(appearance, value, type))) {
             cell.style.setProperty(k, v);
           }
 

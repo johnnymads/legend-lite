@@ -33,6 +33,7 @@ import {
   toColumnAppearance,
   toColumnLayout,
   renderFormats,
+  leafFormats,
   toFormats,
   DEFAULT_MAX_ROWS,
   renameColumnConfig,
@@ -292,7 +293,7 @@ export class CubeApp {
   /** Measured heatmap scales, by leaf index. See `#refreshHeatmaps`. */
   readonly #heatmaps = new Map<
     number,
-    { spec: HeatmapSpec; byDepth: Map<number, HeatmapRange> }
+    { spec: HeatmapSpec; byDepth: Map<number, HeatmapRange>; type: string | undefined }
   >();
   readonly #columnsPanel: ColumnsToolPanel;
   readonly #els: {
@@ -514,6 +515,7 @@ export class CubeApp {
           value,
           heat.spec,
           this.#heatRange(leaf.index, row) ?? null,
+          heat.type,
         );
       },
       rowMeta: (abs) => this.#rowMeta(abs),
@@ -712,20 +714,17 @@ export class CubeApp {
   /** Re-fill the format map in place. See `#formats`. */
   #refreshFormats(): void {
     for (const key of Object.keys(this.#formats)) delete this.#formats[key];
-    const byColumn = renderFormats(this.#config, this.#snapshot);
-    Object.assign(this.#formats, byColumn);
-    // A pivoted leaf is named after its MEASURE, not its source
-    // column, so a format set on `notional` has to be copied onto
-    // every `2021__|__notional` the pivot produced -- otherwise the
-    // formats apply to a flat cube and silently stop at the first
-    // pivot.
+    Object.assign(this.#formats, renderFormats(this.#config, this.#snapshot));
+    // What is ON SCREEN renders by its own leaf's type: a measure's result type, which
+    // aggregation changes (the average of an Integer is a Float), never its source's.
     const view = this.#view;
     if (!view) return;
-    for (const leaf of view.columns.leaves) {
-      if (leaf.isDimension) continue;
-      const measure = leaf.path[leaf.path.length - 1];
-      const format = measure !== undefined ? byColumn[measure] : undefined;
-      if (format) this.#formats[leaf.name] = format;
+    const byLeaf = leafFormats(this.#config, view.columns.leaves.map((leaf) => ({
+      ...leaf, type: view.rows.columns[leaf.index]?.type,
+    })));
+    for (const [name, format] of Object.entries(byLeaf)) {
+      if (format) this.#formats[name] = format;
+      else delete this.#formats[name];
     }
   }
 
@@ -1211,6 +1210,8 @@ export class CubeApp {
       const spec = this.#heatmapFor(leaf.name);
       if (!spec) continue;
       const values = view.rows.columns[leaf.index]?.values ?? [];
+      // placed on the scale by the leaf's COMPILER type: a date or a text column has none
+      const type = view.rows.columns[leaf.index]?.type;
 
       if (spec.range) {
         // An explicitly fixed scale is the user's decision and is
@@ -1218,6 +1219,7 @@ export class CubeApp {
         this.#heatmaps.set(leaf.index, {
           spec,
           byDepth: new Map([[-1, spec.range]]),
+          type,
         });
         continue;
       }
@@ -1232,10 +1234,10 @@ export class CubeApp {
 
       const byDepth = new Map<number, HeatmapRange>();
       for (const [depth, bucket] of atDepth) {
-        const range = columnRange(bucket);
+        const range = columnRange(bucket, type);
         if (range) byDepth.set(depth, range);
       }
-      if (byDepth.size > 0) this.#heatmaps.set(leaf.index, { spec, byDepth });
+      if (byDepth.size > 0) this.#heatmaps.set(leaf.index, { spec, byDepth, type });
     }
   }
 
@@ -1792,14 +1794,24 @@ export class CubeApp {
       return;
     }
     const s = selectionStats(table, this.#grid.columns?.leaves ?? [], range);
+    // Read as the grid reads them: in the one format the numeric cells' columns share
+    // (a 4-place rate stays at 4 places), else as plain numbers. Min and max are cells,
+    // so they take their column's type; the sum is exact decimal text, the average a
+    // double -- each rendered by its own type.
+    const formats = new Set(s.columns.map((c) => this.#formats[c]));
+    const format: ColumnFormat = formats.size === 1
+      ? { ...([...formats][0] ?? STATS_FORMAT), kind: 'number' } : STATS_FORMAT;
+    const show = (v: Scalar, type: string | undefined): string =>
+      this.#formatters.format(v, format, type);
     // Blanks are reported rather than folded into the count, because
     // an average over a pivot region that treated empty combinations
     // as zero would be wrong in the direction of looking plausible.
     slot.textContent =
       s.numeric === 0
         ? `${s.cells} cells, none numeric`
-        : `sum ${fmt(s.sum)} · avg ${fmt(s.average)} · min ${fmt(s.min)} · ` +
-          `max ${fmt(s.max)} · ${s.numeric} of ${s.cells} numeric` +
+        : `sum ${show(s.sum, 'Decimal')} · avg ${show(s.average, 'Float')} · ` +
+          `min ${show(s.min, s.type ?? 'Number')} · max ${show(s.max, s.type ?? 'Number')} · ` +
+          `${s.numeric} of ${s.cells} numeric` +
           (s.blank > 0 ? ` · ${s.blank} blank` : '');
   }
 
@@ -2000,9 +2012,14 @@ export class CubeApp {
     const view = this.#view;
     if (!view) return;
     const title = this.#config.reportTitle ?? 'cube';
-    const svg = kind === 'plot'
-      ? toBarChart(view.rows, { title })
-      : toTreemap(view.rows, { title });
+    // what the grid shows, as it shows it: its visible columns, in its formats
+    const options = {
+      title,
+      columns: view.columns.leaves.map((leaf) => leaf.name),
+      formatters: this.#formatters,
+      formats: this.#formats,
+    };
+    const svg = kind === 'plot' ? toBarChart(view.rows, options) : toTreemap(view.rows, options);
     this.#showOverlay(kind === 'plot' ? 'Plot' : 'Treemap', (host) => {
       const box = this.#doc.createElement('div');
       box.className = 'dc-chart';
@@ -2046,7 +2063,8 @@ export class CubeApp {
           content: toSpreadsheetML(view.rows, { title }),
         };
       case 'html':
-        return { name: `${base}.html`, mime: 'text/html', content: toHtml(view.rows, { title }) };
+        // Formatted: a page exists to be read, so it says what the screen says.
+        return { name: `${base}.html`, mime: 'text/html', content: toHtml(view.rows, doc) };
       case 'text':
         // Formatted, not raw: plain text exists to be READ -- pasted
         // into a message or a ticket -- so it should say what the
@@ -3123,15 +3141,8 @@ function isTextEntry(target: EventTarget | null): boolean {
   );
 }
 
-function fmt(n: number | string): string {
-  // an exact decimal's text goes to Intl as it is: its digits, not a double's
-  if (typeof n === 'string') {
-    return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
-      .format(n as unknown as number);
-  }
-  if (!Number.isFinite(n)) return '—';
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
+/** The selection statistics' numbers where their columns share no format. */
+const STATS_FORMAT: ColumnFormat = { kind: 'number', maximumFractionDigits: 2 };
 
 /**
  * A three-way merge of an editor's draft: what changed between `base`

@@ -432,6 +432,32 @@ every column it makes. So the sampler stays client side, and becomes robust:
   compact-number and one date renderer.
 - Stays client: this is presentation of already-typed values.
 
+T7 state (2026-09-28): DONE, proven through the real app (`test/typed-values`, T7a-e, under the
+UTC, Tokyo and New York lanes).
+- one rule: a value is a number because its COLUMN's compiler type is numeric, never because of
+  its JavaScript type. `numberOf(v, type)`, `valueState(v, type)`, `columnRange(values, type)`,
+  `heatColour(..., type)` and `FormatterCache.format`'s auto mode all take the type; the
+  `typeof v === 'number' || typeof v === 'bigint'` fallbacks are deleted (format, selection
+  stats, HTML and Excel exports). Bugs this closed: a negative DECIMAL (exact text) or big
+  integer (bigint) was never coloured negative, nor a zero one zero; a String column of
+  numeric-looking text ('00501') was heat-mapped and summed as numbers.
+- a leaf's default format comes from ITS OWN type (`leafFormats`), not its source column's: the
+  average of an Integer is a Float and shows two places (it showed 0: "2" for 1.5). A pivoted
+  leaf still takes the settings made on its measure.
+- the selection statistics render through the formatter in the format their columns share (a
+  4-place rate keeps 4 places); min and max are the cells' own exact values.
+- charts draw what the grid shows: only visible columns (a grouped cube's hidden count column
+  was charted before the measure), labels and tooltips in the grid's text, axis figures in THE
+  compact number (`COMPACT_FORMAT`, format.ts; chart.ts's own `toFixed` renderer deleted).
+- the HTML export is formatted and labelled like the screen, as plain text and PDF already were
+  (it printed raw values and internal names).
+- Ad Hoc Analysis: zero suppression reads each cell's measure type; a column holding several
+  numeric measures is typed `Number`, their join in Pure's lattice, so it still renders and
+  colours as numbers (it was `Any`).
+- NOT done, blocked on the precise-types gap (above): a Decimal's SCALE as its default places.
+  lite reports `Decimal`, not `Numeric(p,s)`; reading the scale off the value's text would be a
+  type learned from data, so a Decimal defaults to 2 places until the compiler says its scale.
+
 **T8. Harnesses ask the compiler.**
 - The demo and verification scripts read the source's relation type before choosing columns, and
   compare typed values, not rendered text.

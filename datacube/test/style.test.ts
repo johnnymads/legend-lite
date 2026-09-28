@@ -19,33 +19,43 @@ import type { CellAppearance } from '../src/style.ts';
 
 describe('valueState', () => {
   it('separates negative, zero and normal', () => {
-    assert.equal(valueState(-1), 'negative');
-    assert.equal(valueState(0), 'zero');
-    assert.equal(valueState(1), 'normal');
+    assert.equal(valueState(-1, 'Float'), 'negative');
+    assert.equal(valueState(0, 'Float'), 'zero');
+    assert.equal(valueState(1, 'Float'), 'normal');
   });
 
   it('treats NaN as an error, not a number', () => {
     // A failed computation must not be coloured as though it held a
     // value; that is how a broken measure goes unnoticed.
-    assert.equal(valueState(Number.NaN), 'error');
-    assert.equal(valueState(1, true), 'error');
+    assert.equal(valueState(Number.NaN, 'Float'), 'error');
+    assert.equal(valueState(1, 'Float', true), 'error');
   });
 
   it('treats null as ordinary, because an empty cell is ordinary', () => {
     // In a pivot a null usually means "no rows in this combination",
     // which is information rather than a fault.
-    assert.equal(valueState(null), 'normal');
+    assert.equal(valueState(null, 'Float'), 'normal');
   });
 
-  it('leaves non-numbers alone', () => {
-    assert.equal(valueState('EMEA'), 'normal');
-    assert.equal(valueState(false), 'normal');
+  it('leaves a column the compiler does not type numeric alone', () => {
+    assert.equal(valueState('EMEA', 'String'), 'normal');
+    assert.equal(valueState(false, 'Boolean'), 'normal');
+    // text that looks like a number is still text: a String column of '-5' is not negative
+    assert.equal(valueState('-5', 'String'), 'normal');
+    assert.equal(valueState(-5, undefined), 'normal');
+  });
+
+  it('reads a decimal\'s exact text and a big integer by their column\'s type', () => {
+    assert.equal(valueState('-12.50', 'Decimal'), 'negative');
+    assert.equal(valueState('0.00', 'Decimal'), 'zero');
+    assert.equal(valueState('1234.56', 'Decimal'), 'normal');
+    assert.equal(valueState(-9007199254740993n, 'Integer'), 'negative');
   });
 
   it('does not call -0 negative', () => {
     // -0 === 0 is true, so the zero slot wins, which is what a reader
     // expects to see.
-    assert.equal(valueState(-0), 'zero');
+    assert.equal(valueState(-0, 'Float'), 'zero');
   });
 });
 
@@ -114,35 +124,35 @@ describe('cellStyle', () => {
       normalForeground: '#111',
       negativeForeground: 'crimson',
     };
-    assert.equal(cellStyle(a, 42)['color'], '#111');
-    assert.equal(cellStyle(a, -42)['color'], 'crimson');
+    assert.equal(cellStyle(a, 42, 'Float')['color'], '#111');
+    assert.equal(cellStyle(a, -42, 'Float')['color'], 'crimson');
   });
 
   it('combines underline and strikethrough rather than replacing', () => {
     // The controls exclude them; a cube saved elsewhere can hold both.
-    const s = cellStyle({ underline: 'solid', strikethrough: true }, 1);
+    const s = cellStyle({ underline: 'solid', strikethrough: true }, 1, 'Float');
     assert.equal(s['text-decoration'], 'underline line-through');
   });
 
   it("draws the underline's variant", () => {
-    assert.equal(cellStyle({ underline: 'wavy' }, 1)['text-decoration'], 'underline wavy');
-    assert.equal(cellStyle({ underline: 'solid' }, 1)['text-decoration'], 'underline');
+    assert.equal(cellStyle({ underline: 'wavy' }, 1, 'Float')['text-decoration'], 'underline wavy');
+    assert.equal(cellStyle({ underline: 'solid' }, 1, 'Float')['text-decoration'], 'underline');
   });
 
   it("renders upstream's family names as stacks, anything else as given", () => {
-    assert.equal(cellStyle({ fontFamily: 'Roboto Mono' }, 1)['font-family'],
+    assert.equal(cellStyle({ fontFamily: 'Roboto Mono' }, 1, 'Float')['font-family'],
       '"Roboto Mono", ui-monospace, monospace');
     assert.equal(fontStack('Inter'), 'Inter');
   });
 
   it('maps alignment onto the flex axis the cells use', () => {
-    assert.equal(cellStyle({ textAlign: 'left' }, 1)['justify-content'], 'flex-start');
-    assert.equal(cellStyle({ textAlign: 'center' }, 1)['justify-content'], 'center');
-    assert.equal(cellStyle({ textAlign: 'right' }, 1)['justify-content'], 'flex-end');
+    assert.equal(cellStyle({ textAlign: 'left' }, 1, 'Float')['justify-content'], 'flex-start');
+    assert.equal(cellStyle({ textAlign: 'center' }, 1, 'Float')['justify-content'], 'center');
+    assert.equal(cellStyle({ textAlign: 'right' }, 1, 'Float')['justify-content'], 'flex-end');
   });
 
   it('says nothing when nothing is configured', () => {
-    assert.deepEqual(cellStyle({}, 1), {});
+    assert.deepEqual(cellStyle({}, 1, 'Float'), {});
   });
 });
 
@@ -217,13 +227,19 @@ describe('gridVariables', () => {
 
 describe('heatmap', () => {
   it('ignores blanks and non-numbers when measuring a column', () => {
-    assert.deepEqual(columnRange([10, null, 'x', -5, 30]), { min: -5, max: 30 });
+    assert.deepEqual(columnRange([10, null, 'x', -5, 30], 'Float'), { min: -5, max: 30 });
+    // a decimal's exact text places on the scale by its column's type
+    assert.deepEqual(columnRange(['-1.50', '2.25'], 'Decimal'), { min: -1.5, max: 2.25 });
+  });
+
+  it('measures no range over a column the compiler does not type numeric', () => {
+    assert.equal(columnRange(['10', '20'], 'String'), null);
   });
 
   it('reports no range when there is nothing to scale', () => {
     // A caller must render no heatmap rather than a uniform block of
     // the low colour.
-    assert.equal(columnRange([null, 'x']), null);
+    assert.equal(columnRange([null, 'x'], 'Float'), null);
   });
 
   it('places a value in its range', () => {
@@ -259,17 +275,17 @@ describe('heatmap', () => {
   it('colours a cell, or declines to', () => {
     const spec = { from: '#ffffff', to: '#ff0000' };
     const range = { min: 0, max: 10 };
-    assert.equal(heatColour(10, spec, range), '#ff0000');
-    assert.equal(heatColour(null, spec, range), null);
-    assert.equal(heatColour('x', spec, range), null);
-    assert.equal(heatColour(5, spec, null), null, 'no range, no colour');
+    assert.equal(heatColour(10, spec, range, 'Float'), '#ff0000');
+    assert.equal(heatColour(null, spec, range, 'Float'), null);
+    assert.equal(heatColour('x', spec, range, 'Float'), null);
+    assert.equal(heatColour(5, spec, null, 'Float'), null, 'no range, no colour');
   });
 
   it('prefers a fixed range over the measured one', () => {
     // Deriving the scale from the visible rows makes the colours
     // change as the user scrolls a windowed grid.
     const spec = { from: '#000000', to: '#ffffff', range: { min: 0, max: 100 } };
-    assert.equal(heatColour(50, spec, { min: 49, max: 51 }), '#808080');
+    assert.equal(heatColour(50, spec, { min: 49, max: 51 }, 'Float'), '#808080');
   });
 });
 
@@ -277,7 +293,7 @@ describe('cube-wide Case (General Properties)', () => {
   // A disabled control ("Per column") until 2026-09-25; upstream has
   // DataCubeConfiguration.fontCase for the whole cube.
   it('renders as text-transform on every cell', () => {
-    assert.equal(cellStyle({ fontCase: 'uppercase' }, 'emea')['text-transform'], 'uppercase');
-    assert.equal(cellStyle({}, 'emea')['text-transform'], undefined);
+    assert.equal(cellStyle({ fontCase: 'uppercase' }, 'emea', 'String')['text-transform'], 'uppercase');
+    assert.equal(cellStyle({}, 'emea', 'String')['text-transform'], undefined);
   });
 });

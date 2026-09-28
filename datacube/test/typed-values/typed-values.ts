@@ -40,6 +40,10 @@ Database typed::DB
     (
         id INTEGER, amount DECIMAL(38,2)
     )
+    Table P
+    (
+        region VARCHAR(32), qty INTEGER, pnl DECIMAL(10,2), big BIGINT
+    )
 )
 
 ###Connection
@@ -102,22 +106,27 @@ async function quiet(engine: Watched): Promise<void> {
   }
 }
 
-async function openCube(snapshot: CubeSnapshot): Promise<{ app: CubeApp; engine: Watched; errors: string[] }> {
+async function openCube(snapshot: CubeSnapshot, configuration = DEFAULT_CONFIGURATION): Promise<{
+  app: CubeApp; engine: Watched; errors: string[]; root: HTMLElement; dom: JSDOM;
+  downloads: [string, string, string][];
+}> {
   const dom = new JSDOM('<!doctype html><body><div id="r"></div></body>');
   (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame =
     (fn: () => void) => { fn(); return 0; };
   const root = dom.window.document.getElementById('r') as HTMLElement;
   const engine = new Watched(new DuckDbEngine(conn));
   const errors: string[] = [];
+  const downloads: [string, string, string][] = [];
   const app = new CubeApp(root, snapshot, {
     engine,
     planner,
-    configuration: DEFAULT_CONFIGURATION,
+    configuration,
     onStatus: (text, kind) => { if (kind === 'error') errors.push(text); },
+    download: (n, m, t) => downloads.push([n, m, t]),
   });
   await app.open().catch(() => undefined);
   await quiet(engine);
-  return { app, engine, errors };
+  return { app, engine, errors, root, dom, downloads };
 }
 
 const SOURCE = accessor('typed::DB', 'T');
@@ -151,6 +160,9 @@ before(async () => {
     ('AMER', 3, 2, 30.75, 3.5, DATE '2024-02-01', TIMESTAMP '2024-02-01 12:00:00', true)`, 0);
   await local.run('CREATE TABLE BIG (id INTEGER, amount DECIMAL(38,2))', 0);
   await local.run(`INSERT INTO BIG VALUES (1, 12345678901234567.89), (2, 1.01)`, 0);
+  await local.run('CREATE TABLE P (region VARCHAR(32), qty INTEGER, pnl DECIMAL(10,2), big BIGINT)', 0);
+  await local.run(`INSERT INTO P VALUES ('EMEA', 1, -12.50, -9007199254740993), ('EMEA', 2, 0.00, 1),
+    ('AMER', 3, 1234.56, 2)`, 0);
   planner = new WasmPlanner({ model: MODEL, runtime: 'typed::RT', assetBaseUrl: MODULE_DIR, cache: false });
 });
 
@@ -303,5 +315,87 @@ describe('step 2: exact cells, whatever the time zone (run under TZ lanes)', () 
     const stats = selectionStats(view.rows, view.columns.leaves, {
       anchor: { row: 0, col: c }, focus: { row: 1, col: c } });
     assert.equal(String(stats.sum), '12345678901234568.90');
+  });
+});
+
+// T7 (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md): everything the screen, an export, a
+// chart and the selection statistics SAY about a value is decided by its column's
+// compiler type -- a decimal's exact text and a big integer are numbers because their
+// column is numeric, never because of the JavaScript type of the value.
+describe('T7: one formatter on compiler types', () => {
+  const P = accessor('typed::DB', 'P');
+  const rgb = (hex: string): string =>
+    `rgb(${[1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+  const NEGATIVE = rgb(DEFAULT_CONFIGURATION.appearance.negativeForeground as string);
+  const ZERO = rgb(DEFAULT_CONFIGURATION.appearance.zeroForeground as string);
+  const NORMAL = rgb(DEFAULT_CONFIGURATION.appearance.normalForeground as string);
+  /** A column's cells on screen: their text and colour, in row order. */
+  const cells = (root: HTMLElement, column: string): [string, string][] =>
+    [...root.querySelectorAll<HTMLElement>(`.dc-cell[data-column="${column}"]`)]
+      .map((c) => [c.textContent?.trim() ?? '', c.style.color]);
+  const grouped = (measures: CubeSnapshot['measures'], only?: string) => openCube({
+    source: { query: P },
+    columns: ([
+      { name: 'region', type: 'String', kind: 'dimension' },
+      { name: 'qty', type: 'Integer', kind: 'measure' },
+      { name: 'pnl', type: 'Decimal', kind: 'measure' },
+      { name: 'big', type: 'Integer', kind: 'measure' },
+    ] as CubeSnapshot['columns']).filter((c) => only === undefined || c.name === 'region' || c.name === only),
+    derived: [], rows: ['region'], pivotOn: [], measures, sorts: [], epoch: 1,
+  });
+
+  it('T7a: a negative DECIMAL and a big integer are coloured negative, a zero one zero', async () => {
+    const o = await flat(P);
+    assert.deepEqual(o.errors, []);
+    assert.deepEqual(cells(o.root, 'pnl'), [
+      ['(12.50)', NEGATIVE], ['0.00', ZERO], ['1,234.56', NORMAL]]);
+    assert.deepEqual(cells(o.root, 'big').map(([, colour]) => colour), [NEGATIVE, NORMAL, NORMAL]);
+  });
+
+  it('T7b: a measure\'s default format is ITS type\'s: the average of an Integer shows decimals', async () => {
+    const o = await grouped([{ name: 'qty', column: 'qty', fn: 'average' }]);
+    assert.deepEqual(o.errors, []);
+    // EMEA's average of 1 and 2: 1.5, a Float -- not rounded to the source Integer's 0 places
+    assert.ok(cells(o.root, 'qty').some(([text]) => text === '1.50'), JSON.stringify(cells(o.root, 'qty')));
+  });
+
+  it('T7c: the HTML export says what the screen says', async () => {
+    const o = await flat(P);
+    const menu = (label: string): void => {
+      const item = [...o.dom.window.document.querySelectorAll<HTMLElement>('.dc-menu [role="menuitem"]')]
+        .find((i) => (i.querySelector('.dc-menu-label')?.textContent ?? i.textContent) === label);
+      assert.ok(item, `no menu entry ${label}`);
+      item.click();
+    };
+    o.root.querySelector('.dc-cell')!.dispatchEvent(new o.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+    menu('HTML');
+    ([...o.root.ownerDocument.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent === 'Accept'))?.click();
+    const html = o.downloads.find(([name]) => name.endsWith('.html'))?.[2] ?? '';
+    assert.match(html, /<td class="n">\(12\.50\)<\/td>/);
+    assert.match(html, /<td class="n">1,234\.56<\/td>/);
+  });
+
+  it('T7d: the selection statistics read the column\'s type and format', async () => {
+    const o = await openCube({
+      source: { query: P }, columns: await sourceColumns(planner, P),
+      derived: [], rows: [], pivotOn: [], measures: [], sorts: [], epoch: 1,
+    }, { ...DEFAULT_CONFIGURATION, showSelectionStats: true });
+    o.root.querySelector<HTMLElement>('.dc-th[data-column="pnl"]')!
+      .dispatchEvent(new o.dom.window.MouseEvent('click', { bubbles: true }));
+    const stats = o.root.querySelector('.dc-status-stats')?.textContent ?? '';
+    assert.equal(stats, 'sum 1,222.06 · avg 407.35 · min (12.50) · max 1,234.56 · 3 of 3 numeric');
+  });
+
+  it('T7e: a treemap\'s tooltip says what the grid says', async () => {
+    // the region and its P&L alone: a treemap draws the first numeric column on screen
+    const o = await grouped([{ name: 'pnl', column: 'pnl', fn: 'sum' }], 'pnl');
+    o.root.querySelector('.dc-cell')!.dispatchEvent(new o.dom.window.MouseEvent('contextmenu', { bubbles: true }));
+    const item = [...o.dom.window.document.querySelectorAll<HTMLElement>('.dc-menu [role="menuitem"]')]
+      .find((i) => i.querySelector('.dc-menu-label')?.textContent === 'Treemap');
+    assert.ok(item);
+    item.click();
+    const svg = o.root.ownerDocument.querySelector('.dc-chart')?.innerHTML ?? '';
+    assert.match(svg, /<title>AMER: 1,234\.56<\/title>/, svg.slice(0, 400));
   });
 });
