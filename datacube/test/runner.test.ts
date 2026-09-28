@@ -11,12 +11,13 @@ import { isStale } from '../src/epoch.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint, limitsOf } from './fake-planner.ts';
 import { fromElement, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
+import { variable } from '../../pure-protocol/src/index.ts';
 
 /** A cube query, as DataCube builds one. */
 const Q = fromElement('demo::T').select(['region']).lambda();
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: '$trades' },
+  source: { query: variable('trades') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },
@@ -124,7 +125,7 @@ describe('a controller on a remote engine', () => {
     views.push(controller.view?.rows.rowCount ?? -1);
     assert.deepEqual(views, [1]);
     assert.equal(executor.queries.length, 1);
-    assert.match(toJson(executor.queries[0]!), /\$trades/);
+    assert.match(toJson(executor.queries[0]!), /"_type":"var","name":"trades"/);
     assert.equal(controller.runnerName, 'engine');
   });
 

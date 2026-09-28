@@ -21,17 +21,18 @@ import {
 } from '../src/adhoc/state.ts';
 import type { ResultTable } from '../src/result.ts';
 import { levelLambda } from '../src/query.ts';
-import type { LevelScope } from '../src/serialize.ts';
-import { liteParsed, litePrint } from './lite-compiler.ts';
+import type { LevelScope } from '../src/query.ts';
+import { litePrint } from './lite-compiler.ts';
+import { element } from '../../pure-protocol/src/index.ts';
 
 /** A query as the compiler prints it: the level the Ad Hoc query names, built and printed by lite. */
 async function printed(q: { readonly snapshot: AdHocCube['snapshot']; readonly scope?: LevelScope }): Promise<string> {
-  return litePrint(levelLambda(q.snapshot, await liteParsed(q.snapshot), q.scope));
+  return litePrint(levelLambda(q.snapshot, q.scope));
 }
 
 const CUBE: AdHocCube = {
   snapshot: {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns: [
       { name: 'year', type: 'String' },
       { name: 'quarter', type: 'String' },

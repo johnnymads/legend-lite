@@ -24,6 +24,8 @@
 // because duckdb-wasm has it compiled in and registerFileBuffer
 // makes it no harder.
 
+import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
+
 
 /** One column, as DuckDB's `DESCRIBE` reports it. */
 export interface DescribedColumn {
@@ -50,8 +52,8 @@ export interface CatalogTable {
 export interface CatalogDatabase {
   /** `###Relational Database ...`, every column declared by the dialect. */
   readonly text: string;
-  /** The relation expression that reads the table: `#>{local::DB.t}#`. */
-  readonly accessor: string;
+  /** The relation that reads the table, `#>{local::DB.t}#`, as protocol. */
+  readonly source: ValueSpecification;
   /** SQL over a column the source must apply so it holds its declared type. */
   readonly conversions: readonly { readonly column: string; readonly sql: string }[];
   /** Columns left out because the source cannot convert them. */
@@ -65,8 +67,8 @@ export interface InferredModel {
   /** Pure source: database, connection, runtime. */
   readonly model: string;
   readonly runtime: string;
-  /** The relation expression the cube reads from. */
-  readonly source: string;
+  /** The relation the cube reads from, as protocol. */
+  readonly source: ValueSpecification;
   /** What the source must apply, and what was left out (see `CatalogDatabase`). */
   readonly conversions: CatalogDatabase['conversions'];
   readonly excluded: CatalogDatabase['excluded'];
@@ -129,7 +131,7 @@ Runtime ${pkg}::RT
   return {
     model,
     runtime: `${pkg}::RT`,
-    source: db.accessor,
+    source: db.source,
     conversions: db.conversions,
     excluded: db.excluded,
   };

@@ -19,9 +19,10 @@ import type { CubeSnapshot } from '../src/snapshot.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';
 import { toJson, type ColSpecArrayInstance, type Lambda } from '../../pure-protocol/src/index.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: '#>{trades::DB.TRADES}#' },
+  source: { query: accessor('trades::DB', 'TRADES') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },
@@ -72,10 +73,13 @@ function selectOf(q: Lambda): { readonly source: unknown; readonly columns: read
   if (f?._type !== 'func' || f.function !== 'select') return undefined;
   const [source, columns] = f.parameters;
   return {
-    source: (source as { readonly value?: unknown } | undefined)?.value,
+    source: source === undefined ? undefined : toJson(source),
     columns: (columns as ColSpecArrayInstance).value.colSpecs.map((c) => c.name),
   };
 }
+
+/** Where these cubes snap: a table the model would declare. */
+const SNAP_TARGET = { table: 'TRADES_SNAP', source: accessor('trades::DB', 'TRADES_SNAP') };
 
 class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
@@ -103,7 +107,7 @@ describe('snapping goes through the planner', () => {
     // and DuckDB rejected it.
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, planner);
+    const c = new CubeController(engine, planner, { snapTarget: SNAP_TARGET });
     await c.update(SNAPSHOT);
     planner.pure.length = 0;
     planner.queries.length = 0;
@@ -115,7 +119,7 @@ describe('snapping goes through the planner', () => {
     assert.ok(
       planner.queries.some((q) => {
         const s = selectOf(q);
-        return s?.source === '#>{trades::DB.TRADES}#' && s.columns.length > 0;
+        return s?.source === toJson(accessor('trades::DB', 'TRADES')) && s.columns.length > 0;
       }),
       `planner saw: ${planner.pure.join(' ;; ')}`,
     );
@@ -128,13 +132,13 @@ describe('snapping goes through the planner', () => {
 
   it('snaps EVERY source column, so any later view answers from the snap', async () => {
     const planner = new RecordingPlanner();
-    const c = new CubeController(new RecordingEngine(), planner);
+    const c = new CubeController(new RecordingEngine(), planner, { snapTarget: SNAP_TARGET });
     // a measure over one column: the other is still copied
     await c.update(SNAPSHOT);
     planner.queries.length = 0;
     await c.snap('test');
     assert.ok(planner.queries.some((q) => JSON.stringify(selectOf(q)) === JSON.stringify(
-      { source: '#>{trades::DB.TRADES}#', columns: ['region', 'notional'] })),
+      { source: toJson(accessor('trades::DB', 'TRADES')), columns: ['region', 'notional'] })),
     `planner saw: ${planner.pure.join(' ;; ')}`);
   });
 
@@ -142,12 +146,12 @@ describe('snapping goes through the planner', () => {
     // It used to select only the columns the view referenced -- none, for a
     // freshly opened table -- and the planner refused `select(~[])`.
     const planner = new RecordingPlanner();
-    const c = new CubeController(new RecordingEngine(), planner);
+    const c = new CubeController(new RecordingEngine(), planner, { snapTarget: SNAP_TARGET });
     await c.update({ ...SNAPSHOT, measures: [], columns: [...SNAPSHOT.columns, { name: 'trade date', type: 'StrictDate' }] });
     planner.queries.length = 0;
     await c.snap('test');
     assert.ok(planner.queries.some((q) => JSON.stringify(selectOf(q)) === JSON.stringify(
-      { source: '#>{trades::DB.TRADES}#', columns: ['region', 'notional', 'trade date'] })),
+      { source: toJson(accessor('trades::DB', 'TRADES')), columns: ['region', 'notional', 'trade date'] })),
     `planner saw: ${planner.pure.join(' ;; ')}`);
     assert.equal(c.snaps.isSnapped, true);
   });
@@ -155,7 +159,7 @@ describe('snapping goes through the planner', () => {
   it('materialises what the planner returned', async () => {
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, planner);
+    const c = new CubeController(engine, planner, { snapTarget: SNAP_TARGET });
     await c.update(SNAPSHOT);
     await c.snap('test');
 
@@ -178,7 +182,7 @@ describe('the snapped plane actually redirects', () => {
     const c = new CubeController(engine, planner, {
       snapTarget: {
         table: 'TRADES_SNAP',
-        expression: '#>{trades::DB.TRADES_SNAP}#',
+        source: accessor('trades::DB', 'TRADES_SNAP'),
       },
     });
     await c.update(SNAPSHOT);
@@ -198,7 +202,7 @@ describe('the snapped plane actually redirects', () => {
     const c = new CubeController(engine, planner, {
       snapTarget: {
         table: 'TRADES_SNAP',
-        expression: '#>{trades::DB.TRADES_SNAP}#',
+        source: accessor('trades::DB', 'TRADES_SNAP'),
       },
     });
     await c.update(SNAPSHOT);
@@ -209,26 +213,18 @@ describe('the snapped plane actually redirects', () => {
     await c.refresh();
     assert.ok(
       planner.pure.every(
-        (p) => p.includes('TRADES}#') && !p.includes('TRADES_SNAP'),
+        (p) => p.includes('"TRADES"') && !p.includes('TRADES_SNAP'),
       ),
       planner.pure.join(' ;; '),
     );
   });
 
-  it('defaults to the generated table when no target is named', async () => {
-    // The shim's source IS a SQL identifier, so a quoted generated
-    // name is the right redirect there.
-    const planner = new RecordingPlanner();
-    const engine = new RecordingEngine();
-    const c = new CubeController(engine, planner);
-    await c.update({ ...SNAPSHOT, source: { expression: 'trades' } });
-    await c.snap('test');
-    planner.pure.length = 0;
-
-    await c.refresh();
-    assert.ok(
-      planner.pure.every((p) => p.includes('\\"dc_snap_1\\"')),
-      planner.pure.join(' ;; '),
-    );
+  it('refuses to snap when the host names no table to snap into', async () => {
+    // A generated table name was a bare SQL identifier: no compiler can
+    // read it as a relation, so the snapped cube could not be planned.
+    const c = new CubeController(new RecordingEngine(), new RecordingPlanner());
+    await c.update(SNAPSHOT);
+    await assert.rejects(() => c.snap('test'), /names no table to freeze a snapshot into/);
+    assert.equal(c.snaps.isSnapped, false);
   });
 });

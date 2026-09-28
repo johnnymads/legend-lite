@@ -24,10 +24,11 @@ import { fetchTree } from '../src/treeview.ts';
 import { PlanThenRun } from '../src/runner.ts';
 import { TreeState } from '../src/tree.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
-import { fakeParse, fakeParsed, fakePrint, someQuery } from './fake-planner.ts';
+import { fakeParse, fakePrint, someQuery } from './fake-planner.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
 
 const GROUPED: CubeSnapshot = {
-  source: { expression: '#>{db.T}#' },
+  source: { query: accessor('db', 'T') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'country', type: 'String' },
@@ -134,13 +135,11 @@ describe('a tree fetch that is already obsolete', () => {
     };
 
     const state = TreeState.fromPaths([['EMEA']]);
-    const parsed = await fakeParsed(GROUPED);
     await assert.rejects(
       () => fetchTree(GROUPED, state, {
         // The levels ask a RUNNER now: plan-then-execute is one
         // arrangement of that, a remote engine is another.
         runner: new PlanThenRun(planner, engine),
-        parsed,
         guard,
         epoch: guard.current,
         signal: controller.signal,

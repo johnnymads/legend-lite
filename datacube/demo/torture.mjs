@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { PlanError, UpstreamPlanner } from '../src/planner.ts';
-import { NULL_GROUP, pivotValuesQuery, serialize } from '../src/serialize.ts';
+import { NULL_GROUP, pivotValuesQuery, serialize } from '../src/query.ts';
 
 /**
  * A pivoted shape's values, for a harness that only PLANS: one typed

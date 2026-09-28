@@ -25,6 +25,7 @@ import type { ResultTable } from '../../src/result.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
 import { MODEL, RUNTIME } from '../wasm-differential/cases.ts';
+import { accessor } from '../../../pure-protocol/src/index.ts';
 
 const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
 
@@ -63,7 +64,7 @@ const TRUTH_SQL: Record<string, string> = {
 };
 
 const CUBE: CubeSnapshot = {
-  source: { expression: '#>{trades::DB.TRADES}#' },
+  source: { query: accessor('trades::DB', 'TRADES') },
   columns: COLUMNS,
   derived: [],
   rows: ['region', 'desk'],

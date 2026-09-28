@@ -18,7 +18,7 @@ import {
   toFilter,
   updateNode,
 } from '../src/ui/filter-editor.ts';
-import { filterExpression } from '../src/serialize.ts';
+import { printFilter } from './lite-compiler.ts';
 import type { FilterNode } from '../src/snapshot.ts';
 
 const COLUMNS = [
@@ -95,7 +95,7 @@ describe('toFilter', () => {
     tree = updateNode(tree, tree.id, { join: 'or' });
     const f = toFilter(tree);
     assert.equal(f?.kind, 'or');
-    assert.equal(filterExpression(f!), "(($x.region == 'EMEA') || ($x.desk == 'Rates'))");
+    assert.equal(printFilter(f!), "x|($x.region == 'EMEA') || ($x.desk == 'Rates')");
   });
 
   it('expresses A AND NOT (B OR C), which a flat list cannot', () => {
@@ -111,15 +111,16 @@ describe('toFilter', () => {
     root = addTo(root, root.id, inner);
 
     assert.equal(
-      filterExpression(toFilter(root)!),
-      "(($x.region == 'EMEA') && (!((($x.desk == 'Rates') || ($x.desk == 'Credit')))))",
+      printFilter(toFilter(root)!),
+      "x|($x.region == 'EMEA') && !(($x.desk == 'Rates') || ($x.desk == 'Credit'))",
     );
   });
 
   it('negates a single condition', () => {
     let tree = newGroup([newCondition('region')]);
     tree = updateNode(tree, tree.children[0]!.id, { text: 'EMEA', not: true });
-    assert.equal(filterExpression(toFilter(tree)!), "!($x.region == 'EMEA')");
+    // the compiler prints `not(equal(...))` as upstream's printer does: `!=`
+    assert.equal(printFilter(toFilter(tree)!), "x|$x.region != 'EMEA'");
   });
 
   it('drops a group whose children are all incomplete', () => {
@@ -130,7 +131,7 @@ describe('toFilter', () => {
   it('needs no value for a nullary operator', () => {
     let tree = newGroup([newCondition('region')]);
     tree = updateNode(tree, tree.children[0]!.id, { operator: 'isEmpty' });
-    assert.equal(filterExpression(toFilter(tree)!), '$x.region->isEmpty()');
+    assert.equal(printFilter(toFilter(tree)!), 'x|$x.region->isEmpty()');
   });
 
   it('needs a second column for a column operator', () => {
@@ -138,7 +139,7 @@ describe('toFilter', () => {
     tree = updateNode(tree, tree.children[0]!.id, { operator: 'equalColumn' });
     assert.equal(toFilter(tree), undefined, 'incomplete until a column is picked');
     tree = updateNode(tree, tree.children[0]!.id, { rightColumn: 'desk' });
-    assert.equal(filterExpression(toFilter(tree)!), '$x.region == $x.desk');
+    assert.equal(printFilter(toFilter(tree)!), 'x|$x.region == $x.desk');
   });
 });
 
@@ -657,9 +658,9 @@ describe('TODAY and NOW', () => {
 
   it('render as the Pure functions, so the date moves with the day', () => {
     assert.equal(
-      filterExpression({ kind: 'condition', column: 'trade_date',
+      printFilter({ kind: 'condition', column: 'trade_date',
         operator: 'lessThan', value: { relative: 'today' } }),
-      '$x.trade_date < today()',
+      'x|$x.trade_date < today()',
     );
   });
 });

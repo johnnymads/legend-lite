@@ -15,9 +15,11 @@ import { freshName } from '../src/ui/panel-dimensions.ts';
 import { groupableColumns } from '../src/ui/panel-kit.ts';
 import { AGGREGATES } from '../src/ui/panel-column.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { stand } from './fake-planner.ts';
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'desk', type: 'String' },
@@ -26,7 +28,7 @@ const CUBE: CubeSnapshot = {
   ],
   // A ratio, so a measure -- declared, as the calculated-column
   // editor always declares a row-stage column's kind now.
-  derived: [{ name: 'margin', expression: '$x.a / $x.b', kind: 'measure' }],
+  derived: [{ name: 'margin', lambda: stand('$x.a / $x.b'), kind: 'measure' }],
   rows: ['region'],
   pivotOn: [],
   measures: [{ name: 'total', column: 'notional', fn: 'sum' }],
@@ -525,10 +527,10 @@ describe('groupableColumns', () => {
     const names = groupableColumns(draftFor({
       ...CUBE,
       derived: [
-        { name: 'margin', expression: '$x.a / $x.b', kind: 'measure' },
-        { name: 'big', expression: '$x.notional > 1', kind: 'dimension' },
+        { name: 'margin', lambda: stand('$x.a / $x.b'), kind: 'measure' },
+        { name: 'big', lambda: stand('$x.notional > 1'), kind: 'dimension' },
       ],
-      groupDerived: [{ name: 'share', expression: '$x.total / 2' }],
+      groupDerived: [{ name: 'share', lambda: stand('$x.total / 2') }],
     })).map((c) => c.name);
     assert.deepEqual(names, ['region', 'desk', 'year', 'big']);
   });

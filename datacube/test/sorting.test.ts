@@ -7,9 +7,12 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
-import { serialize } from '../src/serialize.ts';
+
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { totalOrderSorts } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { row } from './lite-compiler.ts';
+import { printLevel } from './lite-compiler.ts';
 
 let engine: DuckDbEngine;
 
@@ -48,7 +51,7 @@ after(async () => {
 });
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [],
   derived: [],
   rows: ['region'],
@@ -73,7 +76,7 @@ describe('sorting by a pivoted column', () => {
   });
 
   it('emits the sort AFTER the pivot\'s groupBy, where the column exists', () => {
-    const out = serialize({
+    const out = printLevel({
       ...CUBE,
       sorts: [{ column: '2023__|__total', direction: 'desc' }],
     }, undefined, { tuples: [['2023'], ['2024']] });
@@ -105,7 +108,7 @@ describe('sorting by a pivoted column', () => {
   it('still appends the row dimension, so ties are deterministic', () => {
     // Without it, two groups tying on the pivot cell can come back in
     // either order and a windowed read can repeat or skip one.
-    const out = serialize({
+    const out = printLevel({
       ...CUBE,
       sorts: [{ column: '2024__|__total', direction: 'desc' }],
     }, undefined, { tuples: [['2023'], ['2024']] });
@@ -115,10 +118,10 @@ describe('sorting by a pivoted column', () => {
 
 describe('sorting by a derived measure', () => {
   it('sorts on a post-aggregation column', () => {
-    const out = serialize({
+    const out = printLevel({
       ...CUBE,
       pivotOn: [],
-      groupDerived: [{ name: 'share', expression: '$x.total / 100' }],
+      groupDerived: [{ name: 'share', lambda: row('$x.total / 100') }],
       sorts: [{ column: 'share', direction: 'desc' }],
     });
     // The column must exist before it is ordered by.

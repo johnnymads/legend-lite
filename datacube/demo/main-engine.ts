@@ -31,11 +31,12 @@ import {
   planeMenu,
 } from './boot.ts';
 import { sourceColumns } from '../src/source-columns.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
 
 /** The H2-backed model: its connection seeds its own table. */
 const MODEL = './trades-h2.pure';
 const RUNTIME = 'trades::h2::RT';
-const SOURCE = '#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#';
+const SOURCE = accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES');
 
 /**
  * What this page knows about the engine's table that the compiler does not: `year` is
@@ -80,7 +81,7 @@ async function main(): Promise<void> {
   });
 
   const snapshot: CubeSnapshot = {
-    source: { expression: SOURCE },
+    source: { query: SOURCE },
     columns: await sourceColumns(executor, SOURCE, DECLARED),
     derived: [],
     rows: ['region', 'desk'],

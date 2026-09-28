@@ -1,16 +1,13 @@
 // Snapshot -> the cube's queries as PROTOCOL JSON (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md,
-// T4b): the same queries serialize.ts writes as Pure text, built as trees with pure-protocol's
-// Relation API. A tree cannot misplace an operator the way text can (the grammar applies
-// < <= > >= left to right with && and ||), and no literal is ever spelled here.
+// T4b): every query DataCube sends, built as a tree with pure-protocol's Relation API. Pure text
+// exists only where a person reads or writes it, and the compiler owns both edges: it parses what
+// was typed (the snapshot holds the result: its source and each calculated column's lambda) and
+// prints a query for a person to read. A tree cannot misplace an operator the way text can (the
+// grammar applies < <= > >= left to right with && and ||), and no literal is ever spelled here.
 //
-// STEP 1 OF T4b: built BESIDE serialize.ts, and proven byte-identical to lite's own parse of the
-// text serialize.ts writes, for every cube case (test/query-twins.test.ts). Literals keep exactly
-// the types the text gave them in this step -- an integer an integer, a fraction a float, exact
-// digits exact -- so that proof can be byte for byte; typing a literal by its column (T4c) is a
-// change of meaning, made and proven there.
-//
-// Until step 3 the snapshot still holds TEXT for its source and calculated columns; the caller
-// hands their parsed forms in (`Parsed`), parsed by the compiler.
+// Literals keep the types the queries' text gave them before T4b -- an integer an integer, a
+// fraction a float, exact digits exact; typing a literal by its column (T4c) is a change of
+// meaning, made and proven there.
 
 import {
   agg, and, asc, collection, derive, desc, fn, from, lambda, lit, not, or, property, variable,
@@ -20,10 +17,15 @@ import {
   CubeRefusal,
   columnType,
   LEAF_COUNT_COLUMN,
+  PIVOT_TOTAL_KEY,
   isJsonValue,
   isRelativeDate,
   referencedColumns,
+  rowColumns,
   totalOrderSorts,
+  WINDOW_FUNCTIONS,
+  type AggregateFn,
+  type ColumnKind,
   type CubeSnapshot,
   type DerivedColumn,
   type FilterNode,
@@ -32,38 +34,13 @@ import {
   type SortSpec,
   type WindowSpec,
 } from './snapshot.ts';
+import type { RowPath } from './tree.ts';
 import { ROOT_COLUMN } from './grid/columns.ts';
-import { DEFAULT_DRILL_LIMIT, drillConditions, type DrillRequest } from './drill.ts';
-import { isNumeric, isTemporal } from './types.ts';
-import {
-  MAX_PIVOT_VALUES,
-  ROOT_VALUE,
-  WINDOW_META,
-  carriedMeasures,
-  columnSpecs,
-  defaultMeasure,
-  detailColumns,
-  effectivePivotOn,
-  isDetail,
-  isSingleRow,
-  memberConditions,
-  parentConditions,
-  pivotColumns,
-  refuseUnpivotable,
-  type LevelScope,
-  type PivotFacts,
-  type TypeOf,
-} from './serialize.ts';
+import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
+import { isBoolean, isNumeric, isTemporal, isVariant } from './types.ts';
+import { columnRef } from './calc.ts';
 
-/** The snapshot's text, parsed by the compiler (until step 3 makes the snapshot hold these). */
-export interface Parsed {
-  /** The source relation, `source.expression` parsed. */
-  readonly source: ValueSpecification;
-  /** A calculated column's expression (a body over `$x`), parsed as the lambda `x|<expression>`. */
-  expression(text: string): Lambda;
-}
-
-// ---- literals: the types serialize.ts's text gave them (see the header) ----
+// ---- literals: the types the queries' text gave them before T4b (see the header) ----
 
 const TEMPORAL_TEXT = /^(-?\d{4,}-\d{2}-\d{2}([T ]\d{2}:\d{2}:\d{2}(\.\d+)?)?|\d{2}:\d{2}:\d{2}(\.\d+)?)$/;
 const EXACT_NUMBER = /^-?\d+(\.\d+)?$/;
@@ -74,10 +51,9 @@ function numberText(text: string): ValueSpecification {
 }
 
 /**
- * The ONE place this step does not reproduce serialize.ts's meaning: a Decimal column's exact
- * value is a DECIMAL literal. serialize.ts writes it bare, the grammar lexes that as a Float, and a
- * Float is read through a double -- `12345678901234567.89` compared as `12345678901234568`. The
- * text should have been `12345678901234567.89D`; its twin in test/query-twins.test.ts is that.
+ * A Decimal column's exact value is a DECIMAL literal. The text builders wrote it bare, the grammar
+ * lexed that as a Float, and a Float is read through a double -- `12345678901234567.89` compared as
+ * `12345678901234568`. (T4c moves this choice to the compiler's column type.)
  */
 function exactNumber(text: string, type: string | undefined): ValueSpecification {
   return type !== undefined && /(^|::)(Decimal|Numeric)$/.test(type) ? lit.decimal(text) : numberText(text);
@@ -90,14 +66,20 @@ function temporalText(text: string): ValueSpecification {
   return t.includes('T') ? lit.dateTime(t) : lit.strictDate(t);
 }
 
-/** A `Date` (the filter editor's, until T4c) as serialize.ts spelled it: local fields, seconds. */
-function dateNode(v: Date): ValueSpecification {
+/**
+ * A `Date` (the filter editor's, until T4c) in local terms, to the second: the day alone at
+ * midnight, else the day and time. The filter sends it and the menu names it this way.
+ */
+export function localDateText(v: Date): string {
   const p = (n: number): string => String(n).padStart(2, '0');
   const day = `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`;
-  const midnight = v.getHours() === 0 && v.getMinutes() === 0 && v.getSeconds() === 0;
-  return midnight
-    ? lit.strictDate(day)
-    : lit.dateTime(`${day}T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`);
+  return v.getHours() === 0 && v.getMinutes() === 0 && v.getSeconds() === 0
+    ? day : `${day}T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`;
+}
+
+function dateNode(v: Date): ValueSpecification {
+  const text = localDateText(v);
+  return text.includes('T') ? lit.dateTime(text) : lit.strictDate(text);
 }
 
 /** A filter value as a literal node; `type` is its column's compiler type. */
@@ -238,7 +220,7 @@ const LEAF_COUNT_SPEC = (): ColSpec =>
 
 // ---- calculated columns and windows ----
 
-/** A level's shape for a window (see serialize.ts's `derivedExtend`). */
+/** A level's shape for a window: the rows grouped at this level, and those present. */
 interface LevelWindow {
   readonly rows: readonly string[];
   readonly present: readonly string[];
@@ -246,8 +228,11 @@ interface LevelWindow {
 }
 
 /** A calculated column appended to `rel`: an expression over the row, or a window. */
-function extendDerived(rel: Relation, d: DerivedColumn, parsed: Parsed, level?: LevelWindow): Relation {
-  if (!d.window) return rel.extend([derive(d.name, parsed.expression(d.expression))]);
+function extendDerived(rel: Relation, d: DerivedColumn, level?: LevelWindow): Relation {
+  if (!d.window) {
+    if (!d.lambda) throw new CubeRefusal(`the calculated column '${d.name}' has no expression`);
+    return rel.extend([derive(d.name, d.lambda)]);
+  }
   let w: WindowSpec = d.window;
   if (level) {
     const here = new Set(level.present);
@@ -265,7 +250,7 @@ function extendDerived(rel: Relation, d: DerivedColumn, parsed: Parsed, level?: 
 const sortKey = (s: SortSpec): AppliedFunction => (s.direction === 'asc' ? asc(s.column) : desc(s.column));
 
 /** `extend(over(...), ~[name: {p,w,r|...}])` in the forms Pure's `over` overloads take. */
-function extendWindow(rel: Relation, name: string, w: WindowSpec): Relation {
+export function extendWindow(rel: Relation, name: string, w: WindowSpec): Relation {
   const sorts = w.order.map(sortKey);
   const meta = WINDOW_META.get(w.fn);
   if (!meta) throw new CubeRefusal(`unknown window function '${String(w.fn)}'`);
@@ -327,18 +312,18 @@ function extendWindow(rel: Relation, name: string, w: WindowSpec): Relation {
 // ---- the cube's queries ----
 
 /** The source with the cube's row-stage calculated columns: what step 0 types. */
-export function sourceWithDerived(s: CubeSnapshot, parsed: Parsed): Relation {
-  let rel = from(parsed.source);
-  for (const d of s.derived) rel = extendDerived(rel, d, parsed);
+export function sourceWithDerived(s: CubeSnapshot): Relation {
+  let rel = from(s.source.query);
+  for (const d of s.derived) rel = extendDerived(rel, d);
   return rel;
 }
 
-/** Step 1 of a pivot: its value combinations (see serialize.ts's `pivotValuesQuery`). */
-export function pivotValuesLambda(s: CubeSnapshot, parsed: Parsed): Lambda | null {
+/** Step 1 of a pivot: its value combinations, in the pivot's order, one past the cap. */
+export function pivotValuesLambda(s: CubeSnapshot): Lambda | null {
   const on = effectivePivotOn(s);
   if (on.length === 0 || (s.pivotValues !== undefined && s.pivotValues.length > 0)) return null;
   refuseUnpivotable(s);
-  let rel = sourceWithDerived(s, parsed);
+  let rel = sourceWithDerived(s);
   if (s.filter) rel = rel.filter(lambda(['x'], filterNode(s.filter, 'x', (c) => columnType(s, c))));
   return rel
     .select(on)
@@ -357,17 +342,17 @@ function tupleCondition(s: CubeSnapshot, tuple: readonly string[]): ValueSpecifi
     'x', (c) => columnType(s, c));
 }
 
-/** One level's query (see serialize.ts's `serialize`, line for line). */
-export function levelLambda(snapshot: CubeSnapshot, parsed: Parsed, scope?: LevelScope, pivot?: PivotFacts): Lambda {
-  return levelRelation(snapshot, parsed, scope, pivot).lambda();
+/** One level's query: the source, calculated columns, filter, grouping, pivot, sorts and cap. */
+export function levelLambda(snapshot: CubeSnapshot, scope?: LevelScope, pivot?: PivotFacts): Lambda {
+  return levelRelation(snapshot, scope, pivot).lambda();
 }
 
-function levelRelation(snapshot: CubeSnapshot, parsed: Parsed, scope?: LevelScope, pivot?: PivotFacts): Relation {
-  let rel = from(parsed.source);
+function levelRelation(snapshot: CubeSnapshot, scope?: LevelScope, pivot?: PivotFacts): Relation {
+  let rel = from(snapshot.source.query);
   const groupCols = scope ? snapshot.rows.slice(0, Math.max(0, scope.level)) : snapshot.rows;
   const grandTotal = scope !== undefined && scope.level === 0 && snapshot.rows.length > 0;
 
-  for (const d of snapshot.derived) rel = extendDerived(rel, d, parsed);
+  for (const d of snapshot.derived) rel = extendDerived(rel, d);
 
   const conditions: FilterNode[] = [];
   if (snapshot.filter) conditions.push(snapshot.filter);
@@ -468,7 +453,7 @@ function levelRelation(snapshot: CubeSnapshot, parsed: Parsed, scope?: LevelScop
     order: shown.length > 0 ? shown : keys,
   };
   for (const d of snapshot.groupDerived ?? []) {
-    if (!d.childAggregate) rel = extendDerived(rel, d, parsed, levelWindow);
+    if (!d.childAggregate) rel = extendDerived(rel, d, levelWindow);
   }
 
   if (!isSingleRow(snapshot, groupCols, grandTotal)) {
@@ -484,10 +469,9 @@ function levelRelation(snapshot: CubeSnapshot, parsed: Parsed, scope?: LevelScop
   return rel;
 }
 
-/** A level's child-group aggregates (see serialize.ts's `childAggregateQuery`). */
+/** A level's child-group aggregates: each group row's aggregate of its child groups' figures. */
 export function childAggregateLambda(
   snapshot: CubeSnapshot,
-  parsed: Parsed,
   scope: LevelScope,
 ): { readonly query: Lambda; readonly columns: readonly string[] } | null {
   const wanted = (snapshot.groupDerived ?? []).filter((d) => d.childAggregate);
@@ -523,20 +507,12 @@ export function childAggregateLambda(
     // each child aggregate reads its own copy of the column, `$x.<column>`
     const copies = wanted.map((d) => ({
       name: `__child_${d.name}`,
-      expression: `$x.${measureOf(d.childAggregate!.of).column}`,
+      lambda: lambda(['x'], ref('x', measureOf(d.childAggregate!.of).column)),
       kind: 'measure' as const,
     }));
-    const byCopy = new Map(copies.map((c, i) => [c.expression, measureOf(wanted[i]!.childAggregate!.of).column]));
-    const withCopies: Parsed = {
-      source: parsed.source,
-      expression: (text) => {
-        const column = byCopy.get(text);
-        return column === undefined ? parsed.expression(text) : lambda(['x'], ref('x', column));
-      },
-    };
     const measures = wanted.map((d, i) => ({ name: d.name, column: copies[i]!.name, fn: d.childAggregate!.fn }));
     return {
-      query: levelLambda({ ...base, derived: [...base.derived, ...copies], measures }, withCopies,
+      query: levelLambda({ ...base, derived: [...base.derived, ...copies], measures },
         { level, parent: scope.parent }),
       columns: wanted.map((d) => d.name),
     };
@@ -545,7 +521,7 @@ export function childAggregateLambda(
     const m = measureOf(d.childAggregate!.of);
     return [m.name, m] as const;
   })).values()];
-  let rel = levelRelation({ ...base, measures: inner }, parsed, { level: level + 1, parent: scope.parent });
+  let rel = levelRelation({ ...base, measures: inner }, { level: level + 1, parent: scope.parent });
   const aggs = wanted.map((d) => aggregateSpec({
     name: d.name,
     column: measureOf(d.childAggregate!.of).name,
@@ -557,9 +533,9 @@ export function childAggregateLambda(
   return { query: rel.lambda(), columns: wanted.map((d) => d.name) };
 }
 
-/** The rows behind a cell (see drill.ts's `drillQuery`): the population, not its aggregate. */
-export function drillLambda(snapshot: CubeSnapshot, parsed: Parsed, request: DrillRequest): Lambda {
-  let rel = sourceWithDerived(snapshot, parsed);
+/** The rows behind a cell: the population, not its aggregate, capped. */
+export function drillLambda(snapshot: CubeSnapshot, request: DrillRequest): Lambda {
+  let rel = sourceWithDerived(snapshot);
   const conditions = drillConditions(snapshot, request);
   const typeOf: TypeOf = (c) => columnType(snapshot, c);
   if (conditions.length === 1) {
@@ -570,28 +546,502 @@ export function drillLambda(snapshot: CubeSnapshot, parsed: Parsed, request: Dri
   return rel.limit(request.limit ?? DEFAULT_DRILL_LIMIT).lambda();
 }
 
-/** The compiler's parse (the runner's `parse`): what a person typed, as its lambda. */
-export type Parse = (text: string, signal?: AbortSignal) => Promise<Lambda>;
+// ---- the cube's structure: what each query is built from ----
+
+/** What the grand total's synthetic key holds. Upstream's value. */
+export const ROOT_VALUE = '[ROOT]';
+
+/** A column's compiler type, by name: how a value's literal is spelled (T3). */
+export type TypeOf = (column: string) => string | undefined;
+
+/** Each window function's facts, by name. */
+export const WINDOW_META = new Map(WINDOW_FUNCTIONS.map((f) => [f.fn, f]));
 
 /**
- * The snapshot's text parsed by the compiler, once: its source and each calculated column's
- * expression. Until T4b step 3 the snapshot holds TEXT for these (what a person typed); step 3
- * makes it hold the parsed forms and this goes.
+ * One level of the row-group tree.
+ *
+ * `level` is how many row dimensions to group by: 0 is the grand
+ * total, 1 the top level, and so on. `parent` pins the ancestors, so
+ * expanding EMEA fetches only EMEA's children.
+ *
+ * A subtotal is therefore literally the same measure expression with
+ * grouping columns dropped -- not a second aggregation pass that could
+ * disagree with the detail underneath it.
  */
-export async function parseSnapshot(s: CubeSnapshot, parse: Parse, signal?: AbortSignal): Promise<Parsed> {
-  const source = (await parse(`|${s.source.expression}`, signal)).body[0];
-  if (source === undefined) throw new CubeRefusal(`the source '${s.source.expression}' is not an expression`);
-  const lambdas = new Map<string, Lambda>();
-  for (const d of [...s.derived, ...(s.groupDerived ?? [])]) {
-    if (d.window || d.childAggregate || lambdas.has(d.expression)) continue;
-    lambdas.set(d.expression, await parse(`x|${d.expression}`, signal));
-  }
-  return {
-    source,
-    expression: (text) => {
-      const l = lambdas.get(text);
-      if (!l) throw new Error(`a calculated column's expression was not parsed: ${text}`);
-      return l;
-    },
+export interface LevelScope {
+  readonly level: number;
+  readonly parent: RowPath;
+  /**
+   * Cap on rows for this level. Callers pass maxRows + 1 so that the
+   * presence of the extra row reports "there is more" without a
+   * second counting query.
+   */
+  readonly limit?: number;
+}
+
+/**
+ * Sentinel for a group whose key is SQL NULL.
+ *
+ * A group label is a rendered string, so any printable sentinel could
+ * collide with a real value; this one cannot be produced by
+ * formatting.
+ */
+export const NULL_GROUP = '\u0000null';
+
+/**
+ * Conditions pinning a branch: region == 'EMEA', and so on.
+ *
+ * A NULL group key cannot be matched with `==`, so it becomes an
+ * isEmpty test. Without that, expanding a group whose key is null
+ * silently returns no children.
+ */
+/**
+ * A group key, turned back into the value it came from.
+ *
+ * Paths are TEXT -- one string per level -- so a temporal key
+ * arrives here as the ISO form `groupValue` wrote. Comparing that
+ * string against a timestamp column is what produced `Conversion
+ * Error: invalid timestamp field format`, so the declared type of
+ * the dimension decides how to read it back.
+ *
+ * A value that does not parse is left as text rather than turned
+ * into `Invalid Date`: a filter that cannot be built is better than
+ * one that silently matches nothing.
+ */
+function keyValue(type: string | undefined, value: string): FilterValue {
+  // A Variant key is the document's JSON text, exactly as the database
+  // printed it -- so it matches as a document (DuckDB compares JSON as
+  // text, and this is that text).
+  if (isVariant(type)) return { json: value };
+  // A NUMBER or a BOOLEAN key compares as one. As text it was
+  // `$x.year == '2021'`, which one engine casts and another refuses.
+  // Only when the text round-trips exactly: an integer past 2^53 stays
+  // text rather than becoming a neighbouring number.
+  // A number or a date keeps its EXACT text; `literal` spells it by the column's type
+  // (an integer past 2^53, a decimal's digits, a timestamp's microseconds all survive).
+  if (isBoolean(type) && (value === 'true' || value === 'false')) return value === 'true';
+  return value;
+}
+
+/**
+ * The conditions pinning a member of a hierarchy -- `columns[i] ==
+ * path[i]` down its path, typed as the tree's keys are. Ad Hoc Analysis mode's
+ * members use the same rule the tree's branches do.
+ */
+export function memberConditions(
+  snapshot: CubeSnapshot,
+  columns: readonly string[],
+  path: RowPath,
+): FilterNode[] {
+  return parentConditions({ ...snapshot, rows: columns }, path);
+}
+
+export function parentConditions(
+  snapshot: CubeSnapshot,
+  parent: RowPath,
+): FilterNode[] {
+  const out: FilterNode[] = [];
+  // Calculated columns too: a group on one has keys of its own type.
+  const typeOf = new Map(rowColumns(snapshot).map((c) => [c.name, c.type]));
+  parent.forEach((value, i) => {
+    const column = snapshot.rows[i];
+    if (column === undefined) return;
+    out.push(
+      value === NULL_GROUP
+        ? { kind: 'condition', column, operator: 'isEmpty' }
+        : {
+            kind: 'condition',
+            column,
+            operator: 'equal',
+            value: keyValue(typeOf.get(column), value),
+          },
+    );
+  });
+  return out;
+}
+
+/**
+ * The cube for ONE group's detail rows: upstream's last drilldown level,
+ * where "no groupBy() is needed" -- the group's keys become a filter
+ * and the rows come back as they are, sorted and capped as the cube
+ * says. Group-level calculated columns still apply ("computed for each
+ * row in the table, no matter whether it's a leaf-level row or an
+ * aggregate"). Sorts on names only an aggregate has (a measure, a
+ * pivot column) are dropped: a source row has no such column.
+ *
+ * A PIVOTED cube keeps its pivot, grouped by every dimension -- the
+ * finest rows a pivot has, as upstream's pivot without its groupBy.
+ */
+export function detailSnapshot(s: CubeSnapshot, parent: RowPath): CubeSnapshot {
+  const keys = parentConditions(s, parent);
+  const all = [...(s.filter ? [s.filter] : []), ...keys];
+  const filter: FilterNode | undefined = all.length === 0 ? undefined
+    : all.length === 1 ? all[0] : { kind: 'and', children: all };
+  const { filter: _old, ...rest } = s;
+  void _old;
+  const visible = new Set([
+    ...detailColumns(s),
+    ...(s.groupDerived ?? []).map((d) => d.name),
+  ]);
+  const base: CubeSnapshot = {
+    ...rest,
+    ...(filter ? { filter } : {}),
+    sorts: s.sorts.filter((x) => visible.has(x.column)),
+    leafCount: false,
   };
+  if (s.pivotOn.length === 0) return { ...base, rows: [], measures: [] };
+  const isOn = new Set(s.pivotOn);
+  const dims = rowColumns(s)
+    .filter((c) => c.kind === 'dimension' && !isOn.has(c.name))
+    .map((c) => c.name);
+  // The same pivot columns as every level above it: the cube's values,
+  // not the group's, so a group with no EMEA rows shows an empty EMEA
+  // column rather than a missing one.
+  return { ...base, rows: dims };
+}
+
+// ---------------------------------------------------------------------------
+// THE PIVOT, as two plain queries (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md).
+//
+// Step 1 finds the values (`pivotValuesQuery`); step 2 is one groupBy per
+// level with a conditional aggregate per value and measure (`serialize`).
+// Both are ordinary Pure, planned by legend-lite with static types, so a
+// warehouse reader may run them and every engine answers the same SQL.
+// ---------------------------------------------------------------------------
+
+/** More value combinations than this is refused, not cut off. */
+export const MAX_PIVOT_VALUES = 500;
+
+/** The header text of a NULL pivot value's column. */
+export const EMPTY_PIVOT_LABEL = '(empty)';
+
+/**
+ * Step 1's answer: the value combinations present, in header order.
+ *
+ * Each value is a group-key text -- what a tree path holds, NULL_GROUP
+ * for a missing value -- so a pivot value and a group key become a
+ * literal by one rule (`keyValue`).
+ */
+export interface PivotFacts {
+  readonly tuples: readonly (readonly string[])[];
+}
+
+/**
+ * A column the pivot makes: a CELL (one value combination crossed with
+ * one measure) or a TOTAL (`tuple` null: the measure over every value).
+ *
+ * What a pivot column IS comes from here, never from parsing its name.
+ */
+export interface PivotColumn {
+  readonly name: string;
+  readonly measure: Measure;
+  readonly tuple: readonly string[] | null;
+}
+
+/** The name of one measure's pivot total column. */
+export function pivotTotalColumn(measure: string): string {
+  return `${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}${measure}`;
+}
+
+/** Whether a column is a pivot total (see `PivotTotal`). */
+export function isPivotTotalColumn(name: string): boolean {
+  return name.startsWith(`${PIVOT_TOTAL_KEY}${PIVOT_SEPARATOR}`);
+}
+
+/** A pivot value as its column's header shows it. */
+export function pivotLabel(key: string): string {
+  return key === NULL_GROUP ? EMPTY_PIVOT_LABEL : key;
+}
+
+/** The pivot keys that pivot: those not excluded from the pivot. */
+export function effectivePivotOn(s: CubeSnapshot): string[] {
+  const excluded = excludedFromPivot(s);
+  return s.pivotOn.filter((c) => !excluded.has(c));
+}
+
+function excludedFromPivot(s: CubeSnapshot): Set<string> {
+  return new Set(rowColumns(s).filter((c) => c.excludedFromPivot).map((c) => c.name));
+}
+
+/**
+ * The measures a pivot spreads across its values.
+ *
+ * The configured ones, minus any whose column is excluded from the
+ * pivot (that setting did nothing on a cube with configured measures,
+ * P2-16). None configured: every measure-kind column that is neither a
+ * pivot key nor excluded, on its own aggregate -- upstream's
+ * `_pivotAggCols`. Nothing at all: a filler count, as upstream's
+ * `_fixEmptyAggCols`, because a pivot has to show something.
+ */
+export function spreadMeasures(s: CubeSnapshot): Measure[] {
+  const excluded = excludedFromPivot(s);
+  const on = effectivePivotOn(s);
+  if (s.measures.length > 0) {
+    const kept = s.measures.filter((m) => !excluded.has(m.column));
+    if (kept.length > 0) return kept;
+  } else {
+    const isOn = new Set(on);
+    const specOf = columnSpecs(s);
+    const synthesised = rowColumns(s)
+      .filter((c) => !isOn.has(c.name) && !excluded.has(c.name) && c.kind === 'measure')
+      .map((c) => defaultMeasure(c.name, specOf.get(c.name), 'sum'));
+    if (synthesised.length > 0) return synthesised;
+  }
+  return [{ name: 'count', column: on[0] ?? '', fn: 'count' }];
+}
+
+/**
+ * The columns a pivoted cube's queries make, in header order: each value
+ * combination's cells, measure by measure, then the Totals when the cube
+ * shows them. A deterministic function of the cube and step 1's answer,
+ * so the query and every reader of its result agree on it.
+ *
+ * A cell is named `value__|__measure` (upstream's spelling). A name that
+ * is already taken -- by a source column, or by a real value that reads
+ * like a NULL's "(empty)" -- gets a `~2` suffix: names are identifiers
+ * here, and nothing reads meaning out of them.
+ */
+export function pivotColumns(s: CubeSnapshot, facts: PivotFacts): PivotColumn[] {
+  const spread = spreadMeasures(s);
+  const taken = new Set([
+    ...detailColumns(s),
+    ...(s.groupDerived ?? []).map((d) => d.name),
+  ]);
+  const out: PivotColumn[] = [];
+  for (const tuple of facts.tuples) {
+    for (const measure of spread) {
+      const base = [...tuple.map(pivotLabel), measure.name].join(PIVOT_SEPARATOR);
+      let name = base;
+      for (let n = 2; taken.has(name); n++) name = `${base}~${n}`;
+      taken.add(name);
+      out.push({ name, measure, tuple });
+    }
+  }
+  const total = s.pivotTotal;
+  if (total) {
+    for (const measure of spread) {
+      const fn = total.functions?.[measure.column] ?? measure.fn;
+      const { weight: _w, ...rest } = measure;
+      const retargeted: Measure = fn === 'wavg' && measure.weight !== undefined
+        ? { ...rest, fn, weight: measure.weight }
+        : { ...rest, fn };
+      out.push({ name: pivotTotalColumn(measure.name), measure: retargeted, tuple: null });
+    }
+  }
+  return out;
+}
+
+/**
+ * A pivot names a column after each distinct value, and a Variant's value
+ * is a whole JSON document: every column would be called
+ * `{"items": [...]}__|__qty`. The question is always about a value INSIDE
+ * the document, so say how to get it -- before either step runs.
+ */
+export function refuseUnpivotable(s: CubeSnapshot): void {
+  const specOf = columnSpecs(s);
+  for (const name of effectivePivotOn(s)) {
+    if (isVariant(specOf.get(name)?.type)) {
+      throw new CubeRefusal(
+        `cannot pivot on '${name}': it holds JSON. Pivot on a value `
+        + `extracted from it instead -- a calculated column such as `
+        + `x|${columnRef(name)}->get('key')->to(@String)`,
+      );
+    }
+  }
+}
+
+/** Pinned values as step 1's answer (`pivotValues`, one key). */
+export function pinnedPivotFacts(s: CubeSnapshot): PivotFacts | null {
+  if (s.pivotValues === undefined || s.pivotValues.length === 0) return null;
+  // A key as `groupValue` writes a tree key: a cell's exact text (a filter editor's Date,
+  // until T4 types the editor's values, keeps its old local spelling)
+  const p = (n: number): string => String(n).padStart(2, '0');
+  const key = (v: FilterValue): string => (v instanceof Date
+    ? `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`
+      + `T${p(v.getHours())}:${p(v.getMinutes())}:${p(v.getSeconds())}`
+    : isJsonValue(v) ? v.json
+      : isRelativeDate(v) ? v.relative : String(v));
+  return { tuples: s.pivotValues.map((v) => [key(v)]) };
+}
+
+/**
+ * The columns a grouped pivot carries BESIDE its cells, each on its own
+ * aggregate in the same groupBy (upstream's `pivotGroupByColumns`): the
+ * other dimensions take their unique value, the other measures their
+ * own aggregate. A configured measure excluded from the pivot is one of
+ * them, under its own name. Before, these came from a second query
+ * joined in by key; now they are columns of the level's own.
+ */
+export function carriedMeasures(s: CubeSnapshot, groupCols: readonly string[]): Measure[] {
+  const excluded = excludedFromPivot(s);
+  const isKey = new Set([...groupCols, ...effectivePivotOn(s)]);
+  const spread = spreadMeasures(s);
+  const excludedConfigured = s.measures.filter((m) => excluded.has(m.column));
+  const handled = new Set([
+    ...spread.map((m) => m.column),
+    ...excludedConfigured.map((m) => m.column),
+  ]);
+  const specOf = columnSpecs(s);
+  const out: Measure[] = [...excludedConfigured];
+  for (const name of detailColumns(s)) {
+    if (isKey.has(name) || handled.has(name)) continue;
+    const spec = specOf.get(name);
+    const measure = spec?.kind === 'measure'
+      || (isNumeric(spec?.type) && spec?.kind === undefined);
+    out.push(defaultMeasure(name, spec, measure ? 'sum' : 'unique'));
+  }
+  return out;
+}
+
+/**
+ * Serialize a snapshot to Pure relation grammar.
+ *
+ * The pipeline is emitted in the order legend-lite expects, and each
+ * stage is omitted entirely when it would be a no-op, so a simple cube
+ * produces simple text that a human can read in a bug report.
+ */
+/** No grouping, no pivot, no measures: rows straight through. */
+export function isDetail(s: CubeSnapshot): boolean {
+  return (
+    s.rows.length === 0 && s.pivotOn.length === 0 && s.measures.length === 0
+  );
+}
+
+/**
+ * Every column an aggregate default may consult, derived included.
+ *
+ * A calculated column has a type once a result has landed (see
+ * `DerivedColumn.type`), and the default has to see it: a numeric one
+ * must sum like any other number rather than fall through to `unique`.
+ * Source columns win a name collision, which cannot happen anyway --
+ * `nameProblem` refuses it in the editor.
+ */
+export interface SpecLike {
+  readonly name: string;
+  readonly type?: string;
+  readonly kind?: ColumnKind;
+  readonly aggregate?: AggregateFn;
+  readonly aggregateWeight?: string;
+}
+
+export function columnSpecs(s: CubeSnapshot): Map<string, SpecLike> {
+  const out = new Map<string, SpecLike>();
+  for (const d of [...s.derived, ...(s.groupDerived ?? [])]) {
+    // The DECLARED kind wins over the type, exactly as it does for a
+    // source column: `kindOf` reads an explicit kind first, and a
+    // calculated column the user called a dimension must not sum
+    // because its values happen to be numeric.
+    out.set(d.name, {
+      name: d.name,
+      ...(d.type === undefined ? {} : { type: d.type }),
+      ...(d.kind === undefined ? {} : { kind: d.kind }),
+      ...(d.aggregate === undefined ? {} : { aggregate: d.aggregate }),
+      ...(d.aggregateWeight === undefined
+        ? {}
+        : { aggregateWeight: d.aggregateWeight }),
+    });
+  }
+  for (const c of s.columns) out.set(c.name, c);
+  return out;
+}
+
+/**
+ * The aggregate a column takes when nothing configured a MEASURE for
+ * it: Column Properties > Aggregation when set (census §2 -- the
+ * dropdown reached no query before), else the kind's default.
+ */
+export function defaultMeasure(
+  name: string,
+  spec: SpecLike | undefined,
+  fallback: AggregateFn,
+): Measure {
+  return {
+    name,
+    column: name,
+    fn: spec?.aggregate ?? fallback,
+    ...(spec?.aggregateWeight !== undefined
+      ? { weight: spec.aggregateWeight }
+      : {}),
+  };
+}
+
+/**
+ * Every column available BEFORE aggregation: the source's, plus the
+ * row-stage calculated ones.
+ *
+ * `groupDerived` is deliberately absent. Those are extended AFTER the
+ * groupBy -- that is the whole point of the stage -- so naming one in
+ * the projection asks the source for a column that does not exist
+ * yet. It did, and the planner said so: "unknown column 'margin' in
+ * (region:String[0..1], ...)". Every group-stage calculated column
+ * was unusable for as long as that line was here.
+ */
+export function detailColumns(s: CubeSnapshot): string[] {
+  return [
+    ...s.columns.map((c) => c.name),
+    ...s.derived.map((d) => d.name),
+  ];
+}
+
+/**
+ * Whether this query can only ever return ONE row.
+ *
+ * True for an aggregate with nothing to group by -- the grand total.
+ * False for a detail query, which also has no grouping but returns
+ * every row, and therefore very much wants a sort and a cap.
+ */
+export function isSingleRow(
+  s: CubeSnapshot,
+  groupCols: readonly string[],
+  grandTotal = false,
+): boolean {
+  return (
+    groupCols.length === 0
+    && (grandTotal || s.measures.length > 0 || s.pivotOn.length > 0)
+  );
+}
+
+// ---- drill-through: the rows behind a number ----
+//
+// It turns every subtotal from an assertion into an auditable claim: an analyst who can click a
+// figure and see the records that produced it can defend it. The query (`drillLambda`) is the
+// cube's own filter, plus the clicked row's group path, plus the clicked column's pivot value --
+// and then NO aggregation, so the result is provably the population the aggregate was computed
+// over. Against a snap it reads the frozen rows, the same data the aggregate came from.
+
+export interface DrillRequest {
+  /** The clicked row's group path; [] for the grand total. */
+  readonly path: RowPath;
+  /**
+   * The clicked column's pivot values, outermost first. Absent for a
+   * row-dimension cell or an unpivoted cube.
+   */
+  readonly pivotPath?: readonly string[];
+  /** Safety valve: drill-through is a peek, not an export. */
+  readonly limit?: number;
+}
+
+export const DEFAULT_DRILL_LIMIT = 500;
+
+/**
+ * Conditions pinning the clicked cell.
+ *
+ * Exported because the set of conditions is the auditable part: a
+ * reviewer should be able to read exactly which rows were counted.
+ */
+export function drillConditions(
+  snapshot: CubeSnapshot,
+  request: DrillRequest,
+): FilterNode[] {
+  const out: FilterNode[] = [];
+  if (snapshot.filter) out.push(snapshot.filter);
+  // TYPED, by the rule a tree level and a pivot cell use (`keyValue`): a
+  // year is `== 2021`, not `== '2021'`, and a NULL key is `isEmpty`. So
+  // the drill pins exactly the rows its cell aggregated.
+  out.push(...memberConditions(snapshot, snapshot.rows.slice(0, request.path.length), request.path));
+  const pivot = request.pivotPath ?? [];
+  if (pivot.length > 0) {
+    out.push(...memberConditions(snapshot, effectivePivotOn(snapshot).slice(0, pivot.length), pivot));
+  }
+  return out;
 }

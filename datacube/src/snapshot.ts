@@ -12,6 +12,7 @@
 // query be matched against the snapshot that asked for it and discarded
 // if it is stale (see `epoch` below).
 
+import type { Lambda, ValueSpecification } from '../../pure-protocol/src/index.ts';
 import { defaultKind } from './types.ts';
 
 /**
@@ -300,10 +301,11 @@ export interface ChildAggregate {
 export interface DerivedColumn {
   readonly name: string;
   /**
-   * Pure expression body, with `$x` bound to the row, e.g. '$x.a * 2'.
-   * Unused (empty) for a window column.
+   * The column as a function of the row, `x|$x.a * 2`, as protocol: the
+   * compiler's parse of what the person typed (upstream's `mapFn`). Absent
+   * for a window or child-aggregate column.
    */
-  readonly expression: string;
+  readonly lambda?: Lambda;
   /** A window column instead of an expression: see `WindowSpec`. */
   readonly window?: WindowSpec;
   /** An aggregate of the child groups instead: see `ChildAggregate`. */
@@ -459,8 +461,11 @@ export type FilterNode = FilterCondition | FilterGroup | FilterNot;
 
 /** Where the rows come from. */
 export interface SourceRef {
-  /** Pure expression yielding a relation, e.g. a table or a function call. */
-  readonly expression: string;
+  /**
+   * The relation the cube reads, as protocol: `#>{db.T}#` built from a
+   * catalog, or the compiler's parse of a hand-written expression.
+   */
+  readonly query: ValueSpecification;
 }
 
 /**

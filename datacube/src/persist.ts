@@ -18,11 +18,22 @@
 //    work it was.
 
 import type { ColumnFormat } from './format.ts';
-import type { CubeSnapshot } from './snapshot.ts';
+import {
+  ExactNumber,
+  fromJson,
+  readLambda,
+  readValueSpecification,
+  toJson as protocolJson,
+} from '../../pure-protocol/src/index.ts';
+import type { CubeSnapshot, DerivedColumn } from './snapshot.ts';
 import { TreeState, parsePathKey } from './tree.ts';
 
-/** Bumped whenever the shape changes in a way a reader must handle. */
-export const CURRENT_VERSION = 1;
+/**
+ * Bumped whenever the shape changes in a way a reader must handle. 2: the
+ * source and each calculated column are protocol (T4b), written exactly.
+ */
+export const CURRENT_VERSION = 2;
+
 
 export interface ColumnSettings {
   /** Display order, outermost first. Absent means engine order. */
@@ -104,8 +115,10 @@ export function save(options: SaveOptions): SavedView {
 export function toJson(view: SavedView): string {
   const { unknown, ...rest } = view;
   // Unknown fields are written back at the top level, where they came
-  // from, so a newer client sees its own settings unchanged.
-  return JSON.stringify({ ...unknown, ...rest }, null, 2);
+  // from, so a newer client sees its own settings unchanged. Written by the
+  // protocol library: a tree's exact numbers (a decimal's `12.30`, an integer
+  // past 2^53) cannot go through JSON.stringify.
+  return protocolJson({ ...unknown, ...rest });
 }
 
 /**
@@ -119,19 +132,29 @@ export function load(input: string | unknown): SavedView {
   let raw: unknown = input;
   if (typeof input === 'string') {
     try {
-      raw = JSON.parse(input);
+      raw = fromJson(input);
     } catch (e) {
       throw new SavedViewError(
         `not valid JSON (${e instanceof Error ? e.message : String(e)})`,
       );
     }
   }
-  if (raw === null || typeof raw !== 'object') {
+  // a bare number reads as an ExactNumber, an object to typeof: not a view either
+  if (raw === null || typeof raw !== 'object' || raw instanceof ExactNumber || Array.isArray(raw)) {
     throw new SavedViewError('expected an object');
   }
   const obj = raw as Record<string, unknown>;
 
-  const version = typeof obj['version'] === 'number' ? obj['version'] : 0;
+  const version = obj['version'] instanceof ExactNumber || typeof obj['version'] === 'number'
+    ? Number(String(obj['version'])) : 0;
+  if (version < CURRENT_VERSION) {
+    // Its source and calculated columns are Pure text. Upstream's saved
+    // specification (#21) replaces this format; until then, say so plainly.
+    throw new SavedViewError(
+      `saved by an earlier version (${version}), whose queries were text; ` +
+        `open the cube again and save it`,
+    );
+  }
   if (version > CURRENT_VERSION) {
     throw new SavedViewError(
       `written by a newer version (${version} > ${CURRENT_VERSION}); ` +
@@ -146,7 +169,7 @@ export function load(input: string | unknown): SavedView {
 
   const unknown: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (!KNOWN_KEYS.has(k)) unknown[k] = v;
+    if (!KNOWN_KEYS.has(k)) unknown[k] = plain(v);
   }
 
   const view: SavedView = {
@@ -156,7 +179,7 @@ export function load(input: string | unknown): SavedView {
       typeof obj['savedAt'] === 'string'
         ? obj['savedAt']
         : new Date(0).toISOString(),
-    snapshot: migrateSnapshot(snapshot as Record<string, unknown>, version),
+    snapshot: readSnapshot(snapshot as Record<string, unknown>),
     expanded: Array.isArray(obj['expanded'])
       ? (obj['expanded'] as unknown[]).filter(
           (x): x is string => typeof x === 'string',
@@ -164,71 +187,71 @@ export function load(input: string | unknown): SavedView {
       : [],
     showTotals: obj['showTotals'] !== false,
     ...(obj['columns'] && typeof obj['columns'] === 'object'
-      ? { columns: obj['columns'] as ColumnSettings }
+      ? { columns: plain(obj['columns']) as ColumnSettings }
       : {}),
     ...(Object.keys(unknown).length > 0 ? { unknown } : {}),
   };
   return view;
 }
 
-/**
- * Bring an older snapshot up to the current shape.
- *
- * Version 0 is anything written before the format carried a version
- * at all: fields are filled in rather than rejected, because a view
- * saved by an early build is exactly the case this exists to survive.
- */
-function migrateSnapshot(
-  raw: Record<string, unknown>,
-  _from: number,
-): CubeSnapshot {
-  const arr = (k: string): string[] =>
-    Array.isArray(raw[k])
-      ? (raw[k] as unknown[]).filter((x): x is string => typeof x === 'string')
-      : [];
-
+/** A saved snapshot: its trees read exactly, everything else as plain JSON. */
+function readSnapshot(raw: Record<string, unknown>): CubeSnapshot {
+  const field = (k: string): unknown => plain(raw[k]);
+  const arr = (k: string): string[] => {
+    const v = field(k);
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  };
+  const list = <T>(k: string): T[] => {
+    const v = field(k);
+    return Array.isArray(v) ? (v as T[]) : [];
+  };
   const source = raw['source'];
-  const expression =
-    source && typeof source === 'object' &&
-    typeof (source as { expression?: unknown }).expression === 'string'
-      ? (source as { expression: string }).expression
-      : typeof source === 'string'
-        ? source
-        : '';
-  if (expression === '') throw new SavedViewError("missing 'snapshot.source'");
-
+  if (!source || typeof source !== 'object' || !('query' in source)) {
+    throw new SavedViewError("missing 'snapshot.source'");
+  }
+  const groupDerived = raw['groupDerived'];
+  const filter = field('filter');
+  const pivotValues = field('pivotValues');
+  const window = field('window');
+  const maxRows = field('maxRows');
   return {
-    source: { expression },
-    columns: Array.isArray(raw['columns'])
-      ? (raw['columns'] as CubeSnapshot['columns'])
-      : [],
-    derived: Array.isArray(raw['derived'])
-      ? (raw['derived'] as CubeSnapshot['derived'])
-      : [],
-    ...(Array.isArray(raw['groupDerived'])
-      ? {
-          groupDerived: raw['groupDerived'] as NonNullable<
-            CubeSnapshot['groupDerived']
-          >,
-        }
-      : {}),
-    ...(raw['filter'] ? { filter: raw['filter'] as NonNullable<CubeSnapshot['filter']> } : {}),
+    source: { query: readValueSpecification((source as { query: unknown }).query) },
+    columns: list<CubeSnapshot['columns'][number]>('columns'),
+    derived: calculated(raw['derived']),
+    ...(Array.isArray(groupDerived) ? { groupDerived: calculated(groupDerived) } : {}),
+    ...(filter ? { filter: filter as NonNullable<CubeSnapshot['filter']> } : {}),
     rows: arr('rows'),
     pivotOn: arr('pivotOn'),
-    ...(Array.isArray(raw['pivotValues'])
-      ? { pivotValues: raw['pivotValues'] as NonNullable<CubeSnapshot['pivotValues']> }
+    ...(Array.isArray(pivotValues)
+      ? { pivotValues: pivotValues as NonNullable<CubeSnapshot['pivotValues']> }
       : {}),
-    measures: Array.isArray(raw['measures'])
-      ? (raw['measures'] as CubeSnapshot['measures'])
-      : [],
-    sorts: Array.isArray(raw['sorts'])
-      ? (raw['sorts'] as CubeSnapshot['sorts'])
-      : [],
-    ...(raw['window'] ? { window: raw['window'] as NonNullable<CubeSnapshot['window']> } : {}),
-    ...(typeof raw['maxRows'] === 'number' ? { maxRows: raw['maxRows'] } : {}),
+    measures: list<CubeSnapshot['measures'][number]>('measures'),
+    sorts: list<CubeSnapshot['sorts'][number]>('sorts'),
+    ...(window ? { window: window as NonNullable<CubeSnapshot['window']> } : {}),
+    ...(typeof maxRows === 'number' ? { maxRows } : {}),
     // A restored view starts a fresh session, so it starts at epoch 0.
     epoch: 0,
   };
+}
+
+/** Calculated columns, each lambda read exactly. */
+function calculated(raw: unknown): DerivedColumn[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item) => item && typeof item === 'object').map((item) => {
+    const { lambda, ...rest } = item as { lambda?: unknown };
+    const fields = plain(rest) as Omit<DerivedColumn, 'lambda'>;
+    return lambda === undefined ? fields : { ...fields, lambda: readLambda(lambda) };
+  });
+}
+
+/** A value outside the trees as plain JSON: its exact numbers as numbers. */
+function plain(v: unknown): unknown {
+  if (v instanceof ExactNumber) return Number(v.text);
+  if (Array.isArray(v)) return v.map(plain);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, plain(x)]));
+  }
+  return v;
 }
 
 /** The expansion state a saved view describes. */

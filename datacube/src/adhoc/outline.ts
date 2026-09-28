@@ -13,7 +13,7 @@
 
 import type { Dimension } from '../dimensions.ts';
 import type { ResultTable } from '../result.ts';
-import { memberConditions, type LevelScope } from '../serialize.ts';
+import { memberConditions, type LevelScope } from '../query.ts';
 import type { Scalar } from '../result.ts';
 import {
   rowColumns,

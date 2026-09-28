@@ -1,7 +1,9 @@
 // The calculated-column editor: one column per window, as upstream's
-// DataCubeColumnEditor. The compile is a stub here -- what matters is
-// that the editor COMPILES (never runs), waits for it, and shows the
-// compiler's answer where the user is looking.
+// DataCubeColumnEditor. The person edits the whole lambda (`x|...`), the
+// compiler parses it (lite's own parser here) and prints a column back
+// when it reopens. The compile is a stub -- what matters is that the
+// editor COMPILES (never runs), waits for it, and shows the compiler's
+// answer where the user is looking.
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
@@ -14,14 +16,20 @@ import {
   type ColumnEditorStart,
 } from '../src/ui/column-editor.ts';
 import type { CubeSnapshot, DerivedColumn } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { someQuery } from './fake-planner.ts';
+import { liteParse, litePrint, print, row } from './lite-compiler.ts';
+
+/** A column's lambda as the compiler prints it, or undefined when it has none. */
+const printed = (d: DerivedColumn | undefined): string | undefined => (d?.lambda ? print(d.lambda) : undefined);
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },
   ],
-  derived: [{ name: 'uplift', expression: '$x.notional * 1.1', kind: 'measure' }],
+  derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'), kind: 'measure' }],
   rows: [],
   pivotOn: [],
   measures: [],
@@ -44,9 +52,11 @@ function open(start: ColumnEditorStart): ColumnEditor {
     snapshot: () => CUBE,
     start,
     debounceMs: 0,
+    parse: liteParse,
+    print: litePrint,
     compile: async (candidate): Promise<CompileOutcome | undefined> => {
       compiled.push(candidate);
-      return canCompile ? { query: null, refusal: refuse } : undefined;
+      return canCompile ? { query: someQuery(), refusal: refuse } : undefined;
     },
     apply: async (row, group, rename) => {
       applied.push({ row, group, ...(rename ? { rename } : {}) });
@@ -92,17 +102,17 @@ describe('a new column', () => {
   it('compiles the cube WITH the draft, and OK waits for a clean compile', async () => {
     open({});
     assert.equal($<HTMLButtonElement>('.dc-calc-ok').disabled, true, 'no expression yet');
-    type('.dc-calc-input-expr', '$x.notional * 2');
+    type('.dc-calc-input-expr', 'x|$x.notional * 2');
     await settle();
     const last = compiled.at(-1);
-    assert.ok(last?.derived.some((d) => d.expression === '$x.notional * 2'));
+    assert.ok(last?.derived.some((d) => printed(d) === 'x|$x.notional * 2'));
     assert.match($('.dc-calc-check').textContent ?? '', /Compiles/);
     assert.equal($<HTMLButtonElement>('.dc-calc-ok').disabled, false);
   });
 
   it("a refusal disables OK and shows the compiler's own words", async () => {
     refuse = "unknown function 'nope'";
-    open({ expression: '$x.notional->nope()' });
+    open({ expression: 'x|$x.notional->nope()' });
     await settle();
     assert.match($('.dc-calc-check').textContent ?? '', /unknown function 'nope'/);
     assert.equal($<HTMLButtonElement>('.dc-calc-ok').disabled, true);
@@ -118,18 +128,18 @@ describe('a new column', () => {
   });
 
   it('Group Level goes to the group stage, with no kind', async () => {
-    open({ expression: '1', level: 'group' });
+    open({ expression: 'x|1', level: 'group' });
     await settle();
     $<HTMLButtonElement>('.dc-calc-ok').click();
     await settle();
-    assert.equal(applied[0]?.group.at(-1)?.expression, '1');
+    assert.equal(printed(applied[0]?.group.at(-1)), 'x|1');
     assert.equal(applied[0]?.group.at(-1)?.kind, undefined);
     assert.equal(closed, 1, 'OK that the cube took closes the window');
   });
 
   it('never runs anything to check: a plane that cannot compile checks on OK', async () => {
     canCompile = false;
-    open({ expression: '$x.notional' });
+    open({ expression: 'x|$x.notional' });
     await settle();
     assert.match($('.dc-calc-check').textContent ?? '', /checked on OK/);
     assert.equal($<HTMLButtonElement>('.dc-calc-ok').disabled, false);
@@ -139,7 +149,9 @@ describe('a new column', () => {
 describe('an existing column', () => {
   it('opens on it, and a rename is REPORTED', async () => {
     open({ edit: 'uplift' });
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, '$x.notional * 1.1');
+    await settle();
+    // the compiler's print of the column's lambda
+    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 1.1');
     type('.dc-calc-input-name', 'boost');
     await settle();
     $<HTMLButtonElement>('.dc-calc-ok').click();
@@ -150,9 +162,10 @@ describe('an existing column', () => {
 
   it('Reset puts back what it opened with', async () => {
     open({ edit: 'uplift' });
-    type('.dc-calc-input-expr', '$x.notional * 9');
+    await settle();
+    type('.dc-calc-input-expr', 'x|$x.notional * 9');
     $<HTMLButtonElement>('.dc-calc-reset').click();
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, '$x.notional * 1.1');
+    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 1.1');
   });
 
   it('Delete takes it out; a refusal keeps the window and says why', async () => {
@@ -169,32 +182,37 @@ describe('an existing column', () => {
   it("an OK the cube refuses keeps the user's text", async () => {
     applyRefusal = 'refused by the cube';
     open({ edit: 'uplift' });
-    type('.dc-calc-input-expr', '$x.notional * 3');
+    await settle();
+    type('.dc-calc-input-expr', 'x|$x.notional * 3');
     await settle();
     $<HTMLButtonElement>('.dc-calc-ok').click();
     await settle();
     assert.equal(closed, 0);
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, '$x.notional * 3');
+    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 3');
     assert.match($('.dc-calc-problem').textContent ?? '', /refused by the cube/);
   });
 });
 
 describe('caretFor', () => {
-  it('points INSIDE the expression when its parse was refused at a position there', () => {
-    const parsing = 'x|$x.a + $x.nope)';
-    const col = parsing.indexOf(')') + 1;
-    assert.equal(caretFor(parsing, `unexpected ')' [1:${col}]`, '$x.a + $x.nope)'),
-      '$x.a + $x.nope)\n              ^');
+  it('points where the parser stopped, in the text the person typed', () => {
+    const text = 'x|$x.a + $x.nope)';
+    const col = text.indexOf(')') + 1;
+    assert.equal(caretFor(text, `unexpected ')' [1:${col}]`), `${text}\n${' '.repeat(col - 1)}^`);
   });
 
-  it('places a position on a later line of the expression', () => {
-    assert.equal(caretFor('x|$x.a +\n  $x.b)', 'unexpected [2:7]', '$x.a +\n  $x.b)'), '  $x.b)\n      ^');
+  it('places a position on a later line', () => {
+    assert.equal(caretFor('x|$x.a +\n  $x.b)', 'unexpected [2:7]'), '  $x.b)\n      ^');
   });
 
-  it('says nothing when there is no position, the parse was of another text, or nothing was parsed', () => {
-    assert.equal(caretFor('x|$x.a', 'no position', '$x.a'), undefined);
-    assert.equal(caretFor('x|$x.other', 'elsewhere [1:3]', '$x.a'), undefined);
-    assert.equal(caretFor(undefined, 'a compile refusal [1:3]', '$x.a'), undefined);
+  it('says nothing when the refusal names no position, or one outside the text', () => {
+    assert.equal(caretFor('x|$x.a', 'no position'), undefined);
+    assert.equal(caretFor('x|$x.a', 'elsewhere [9:1]'), undefined);
+  });
+
+  it("marks lite's own parse refusal of a draft", async () => {
+    const text = 'x|$x.a + )';
+    const refusal = await liteParse(text).then(() => '', (e: unknown) => String(e));
+    assert.match(caretFor(text, refusal) ?? '', /\^$/, refusal);
   });
 });
 
@@ -231,7 +249,7 @@ describe('a window column', () => {
       fn: 'sum', column: 'notional', partition: ['region'],
       order: [{ column: 'notional', direction: 'desc' }], frame: 'running',
     });
-    assert.equal(added?.expression, '');
+    assert.equal(added?.lambda, undefined);
     // And the compile saw the cube with it.
     assert.ok(compiled.at(-1)?.derived.some((d) => d.window?.fn === 'sum'));
   });
@@ -266,10 +284,10 @@ describe('a window column', () => {
 
   it('an existing window column opens on its form', () => {
     const w = { fn: 'lag' as const, column: 'notional', partition: [], order: [{ column: 'region', direction: 'asc' as const }], offset: 2 };
-    const cube: CubeSnapshot = { ...CUBE, derived: [...CUBE.derived, { name: 'prev', expression: '', kind: 'measure', window: w }] };
+    const cube: CubeSnapshot = { ...CUBE, derived: [...CUBE.derived, { name: 'prev', kind: 'measure', window: w }] };
     new ColumnEditor(root, {
-      snapshot: () => cube, start: { edit: 'prev' }, debounceMs: 0,
-      compile: async () => ({ query: null, refusal: null }), apply: async () => null, onClose: () => {},
+      snapshot: () => cube, start: { edit: 'prev' }, debounceMs: 0, parse: liteParse, print: litePrint,
+      compile: async () => ({ query: someQuery(), refusal: null }), apply: async () => null, onClose: () => {},
     });
     assert.equal($<HTMLSelectElement>('.dc-calc-mode').value, 'window');
     assert.equal($<HTMLSelectElement>('.dc-win-fn').value, 'lag');
@@ -290,9 +308,11 @@ describe('picking a JSON field', () => {
       snapshot: () => ORDERS,
       start,
       debounceMs: 0,
+      parse: liteParse,
+      print: litePrint,
       compile: async (candidate) => {
         compiled.push(candidate);
-        return { query: null, refusal: null };
+        return { query: someQuery(), refusal: null };
       },
       apply: async (row, group) => { applied.push({ row, group }); return null; },
       onClose: () => { closed += 1; },
@@ -322,10 +342,10 @@ describe('picking a JSON field', () => {
     await settle();
     assert.equal($<HTMLInputElement>('.dc-calc-input-name').value, 'customer_contact_email');
     assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value,
-      "$x.customer->get('contact')->get('email')->to(@String)");
+      "x|$x.customer->get('contact')->get('email')->to(@String)");
     assert.equal($<HTMLSelectElement>('.dc-calc-level').value, 'dimension');
     assert.ok(compiled.some((c) => c.derived.some((d) =>
-      d.expression.includes("get('email')"))), 'the pick was compiled');
+      (printed(d) ?? '').includes("get('email')"))), 'the pick was compiled');
     $<HTMLButtonElement>('.dc-calc-ok').click();
     await settle();
     assert.equal(applied.at(-1)?.row.at(-1)?.name, 'customer_contact_email');
@@ -335,8 +355,9 @@ describe('picking a JSON field', () => {
     openJson({ json: 'customer' });
     await settle();
     button('as JSON').click();
+    await settle();
     assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value,
-      "$x.customer->get('contact')");
+      "x|$x.customer->get('contact')");
   });
 
   it('keeps a name the user typed', async () => {
@@ -349,8 +370,8 @@ describe('picking a JSON field', () => {
 
   it('offers no JSON section on a cube without JSON columns', async () => {
     new ColumnEditor(root, {
-      snapshot: () => CUBE, start: {}, debounceMs: 0,
-      compile: async () => ({ query: null, refusal: null }),
+      snapshot: () => CUBE, start: {}, debounceMs: 0, parse: liteParse, print: litePrint,
+      compile: async () => ({ query: someQuery(), refusal: null }),
       apply: async () => null, onClose: () => {},
       sampleJson: async () => [],
     });

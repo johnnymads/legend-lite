@@ -31,6 +31,7 @@
 //    type one level down. This is the single most useful thing in
 //    their menu and it is the part a labels-only reading misses.
 
+import { localDateText } from '../query.ts';
 import type {
   CubeSnapshot,
   FilterNode,
@@ -39,7 +40,6 @@ import type {
   SortDirection,
 } from '../snapshot.ts';
 import type { CalcStage } from '../calc.ts';
-import { temporalLiteral } from '../serialize.ts';
 import { isJsonValue, isRelativeDate } from '../snapshot.ts';
 import { PIVOT_SEPARATOR } from '../grid/columns.ts';
 import { familyOf, isBoolean, isNumeric, isTemporal } from '../types.ts';
@@ -355,7 +355,7 @@ const OPERATOR_LABEL: Readonly<Partial<Record<FilterOperator, string>>> = {
 export function valueLabel(value: FilterValue): string {
   if (isRelativeDate(value)) return value.relative === 'today' ? 'TODAY' : 'NOW';
   if (isJsonValue(value)) return value.json;
-  if (value instanceof Date) return temporalLiteral(value).slice(1).replace('T', ' ');
+  if (value instanceof Date) return localDateText(value).replace('T', ' ');
   // Text QUOTED, as upstream's: "region = 'EMEA'", so a value that
   // looks like a number or is blank still reads as the text it is.
   if (typeof value === 'string') return `'${value}'`;

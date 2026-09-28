@@ -13,6 +13,7 @@ import {
   type Dimension,
 } from '../src/dimensions.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
 
 const GEO: Dimension = {
   name: 'Geography',
@@ -20,7 +21,7 @@ const GEO: Dimension = {
 };
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'country', type: 'String' },

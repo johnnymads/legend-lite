@@ -28,6 +28,7 @@
 //      aggregated results, so drill-through audits the same frozen data
 //      it is drilling into.
 
+import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
 
 /**
@@ -65,16 +66,22 @@ export interface SnapInfo {
   /** Its schema, when the live source's table has one (a warehouse's `sales.v_orders`). */
   readonly schema?: string;
   /**
-   * What a query should read from while this snap holds.
-   *
-   * A SOURCE EXPRESSION, not a table name, because the query is
-   * Pure before it is SQL: with the real planner the live source is
-   * `#>{db.TABLE}#` and the snapped one has to be a relation the
-   * planner can also resolve. Substituting a bare SQL identifier
-   * into Pure produces something no compiler accepts -- which is
-   * exactly what the first end-to-end run against legend-lite hit.
+   * What a query should read from while this snap holds: a relation the
+   * planner can resolve, as protocol (`#>{db.TABLE_SNAP}#`), never a bare
+   * SQL identifier -- the query is Pure before it is SQL.
    */
-  readonly sourceExpression: string;
+  readonly source: ValueSpecification;
+}
+
+/**
+ * Where a snap materialises: a table the cube's MODEL also declares, and the
+ * relation that reads it (`#>{db.TABLE_SNAP}#`), so a snapped cube's queries
+ * are planned exactly as live ones are.
+ */
+export interface SnapTarget {
+  readonly schema?: string;
+  readonly table: string;
+  readonly source: ValueSpecification;
 }
 
 export type PlaneState =
@@ -160,9 +167,9 @@ export class SnapManager {
    * refresh now, and a test pins that the snapped plane reads the
    * snap.
    */
-  sourceFor(liveSource: string): string {
+  sourceFor(liveSource: ValueSpecification): ValueSpecification {
     return this.#state.mode === 'snapped'
-      ? this.#state.snap.sourceExpression
+      ? this.#state.snap.source
       : liveSource;
   }
 
@@ -204,14 +211,12 @@ export class SnapManager {
     options: {
       readonly label?: string;
       /**
-       * Where to materialise, and what to call it in a query
-       * afterwards. Supplied by the caller because only the caller
-       * knows whether the source is a SQL identifier or a Pure
-       * accessor into a model -- and with a model, the snap target
-       * has to be a table that model also declares.
+       * Where to materialise, and what to call it in a query afterwards:
+       * a table the cube's model also declares. Supplied by the caller,
+       * which owns the model.
        */
-      readonly target?: { readonly schema?: string; readonly table: string; readonly expression: string };
-    } = {},
+      readonly target: SnapTarget;
+    },
   ): Promise<SnapInfo> {
     const estimate = await this.preflight(sourceSql, epoch);
     if (!estimate.withinLimit) {
@@ -219,8 +224,8 @@ export class SnapManager {
     }
 
     this.#counter += 1;
-    const schema = options.target?.schema;
-    const bare = options.target?.table ?? `dc_snap_${this.#counter}`;
+    const schema = options.target.schema;
+    const bare = options.target.table;
     const table = qualified(schema, bare);
     const engine = this.#localStore();
     if (this.#remote) {
@@ -243,7 +248,7 @@ export class SnapManager {
       rowCount: estimate.rowCount,
       table: bare,
       ...(schema ? { schema } : {}),
-      sourceExpression: options.target?.expression ?? table,
+      source: options.target.source,
     };
     this.#state = { mode: 'snapped', snap };
     return snap;

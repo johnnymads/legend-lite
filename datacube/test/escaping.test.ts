@@ -1,62 +1,25 @@
-// Getting a user's text into a Pure string and back out intact.
+// Getting a user's text into a query and back out intact.
 //
-// A filter value and an odd column name both end up inside single
-// quotes in generated Pure, and both come from a person. Escaping the
-// quote alone is not enough, because a BACKSLASH escapes whatever
-// follows it -- including the closing quote:
+// A filter value and an odd column name both come from a person, and in
+// Pure text both end up inside single quotes. Escaping the quote alone is
+// not enough, because a BACKSLASH escapes whatever follows it -- including
+// the closing quote:
 //
 //   value  C:\      ->  'C:\'     an unterminated literal
 //   value  back\'   ->  'back\''  the text becomes grammar
 //
-// The first is a crash from a Windows path somebody pasted. The second
-// is injection: the value stops being a value, and a filter travels
-// inside a saved view that one person can hand to another.
-//
-// Both were live until the torture work went looking. The fix is
-// ordering -- escape the backslash FIRST, so that by the time quotes
-// are escaped every backslash in the text is already doubled -- and
-// these tests exist because the ordering is the kind of thing a later
-// edit silently reverses.
+// The first is a crash from a pasted Windows path; the second is
+// injection. DataCube's queries are trees now (src/query.ts): a value is a
+// string node and a name a property, whatever they hold, and only the
+// COMPILER writes them as text. So the question these tests ask is the
+// compiler's: printed and parsed back, is every hostile value still one
+// value, and every odd name one name?
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { ident, literal, serialize } from '../src/serialize.ts';
-
-/** What a Pure single-quoted literal decodes back to. */
-function decodePure(quoted: string): string {
-  assert.ok(
-    quoted.startsWith("'") && quoted.endsWith("'"),
-    `not a quoted literal: ${quoted}`,
-  );
-  const body = quoted.slice(1, -1);
-  let out = '';
-  for (let i = 0; i < body.length; i++) {
-    if (body[i] === '\\') {
-      i += 1;
-      out += body[i] ?? '';
-    } else {
-      out += body[i];
-    }
-  }
-  return out;
-}
-
-/** Whether the quotes actually balance -- the unterminated-literal bug. */
-function isWellFormed(quoted: string): boolean {
-  if (!quoted.startsWith("'") || !quoted.endsWith("'") || quoted.length < 2) {
-    return false;
-  }
-  const body = quoted.slice(1, -1);
-  for (let i = 0; i < body.length; i++) {
-    if (body[i] === '\\') {
-      i += 1; // whatever follows is escaped
-      continue;
-    }
-    if (body[i] === "'") return false; // a bare quote closed it early
-  }
-  return true;
-}
+import { accessor, col, lambda, lit, toJson } from '../../pure-protocol/src/index.ts';
+import { liteParse, print, printLevel } from './lite-compiler.ts';
 
 const HOSTILE = [
   ['a plain value', 'AMER'],
@@ -77,32 +40,20 @@ const HOSTILE = [
   ['the pivot separator', '__|__'],
 ] as const;
 
-describe('a string value reaching Pure', () => {
+describe('a string value through the compiler\'s print and parse', () => {
   for (const [label, value] of HOSTILE) {
-    it(`stays one well-formed literal when it is ${label}`, () => {
-      const out = literal(value);
-      assert.ok(isWellFormed(out), `escaped out of its quotes: ${out}`);
-    });
-
-    it(`round-trips unchanged when it is ${label}`, () => {
-      assert.equal(decodePure(literal(value)), value);
+    it(`comes back the same value when it is ${label}`, async () => {
+      const query = lambda([], lit.string(value));
+      assert.equal(toJson(await liteParse(print(query))), toJson(query), print(query));
     });
   }
 });
 
-describe('an odd column name reaching Pure', () => {
+describe('an odd column name through the compiler\'s print and parse', () => {
   for (const [label, value] of HOSTILE) {
-    it(`quotes safely when the name is ${label}`, () => {
-      const out = ident(value);
-      // A plain identifier is emitted bare; anything else is quoted,
-      // and the quoted form must survive the same way a value does.
-      if (out.startsWith("'")) {
-        assert.ok(isWellFormed(out), `escaped out of its quotes: ${out}`);
-        assert.equal(decodePure(out), value);
-      } else {
-        assert.equal(out, value);
-        assert.match(out, /^[A-Za-z_][A-Za-z0-9_]*$/);
-      }
+    it(`comes back the same name when it is ${label}`, async () => {
+      const query = lambda(['x'], col('x', value));
+      assert.equal(toJson(await liteParse(print(query))), toJson(query), print(query));
     });
   }
 });
@@ -141,7 +92,7 @@ function stripLiterals(pure: string): string {
 
 describe('the injection attempt in a whole query', () => {
   const snap = {
-    source: { expression: '#>{db.T}#' },
+    source: { query: accessor('db', 'T') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'notional', type: 'Float' },
@@ -156,7 +107,7 @@ describe('the injection attempt in a whole query', () => {
 
   it('cannot close the literal and append its own pipeline', () => {
     const evil = "x')->select(~[region])->limit(1)->filter(y|'";
-    const pure = serialize(
+    const pure = printLevel(
       { ...snap, filter: { kind: 'condition', column: 'region', operator: 'equal', value: evil } },
       { level: 1, parent: [], limit: 10 },
     );
@@ -171,7 +122,7 @@ describe('the injection attempt in a whole query', () => {
 
   it('cannot break out through a column name either', () => {
     const evil = "region')->select(~[";
-    const pure = serialize(
+    const pure = printLevel(
       { ...snap, rows: [evil], columns: [...snap.columns, { name: evil, type: 'String' }] },
       { level: 1, parent: [], limit: 10 },
     );

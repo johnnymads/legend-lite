@@ -14,7 +14,9 @@
 // through it would call a float column an integer, or an id column a
 // float. The reader below keeps each number's own spelling.
 
-import { literal } from './serialize.ts';
+import {
+  col, fn, lambda, lit, to, toMany, type, variable, type Lambda, type ValueSpecification,
+} from '../../pure-protocol/src/index.ts';
 
 // ---- reading -------------------------------------------------------
 
@@ -235,8 +237,8 @@ export interface Extraction {
   readonly name: string;
   /** What the picker shows for it. */
   readonly label: string;
-  /** The row-stage expression body, `$x` the row. */
-  readonly expression: string;
+  /** The row-stage column, `x|...`, as protocol: the editor shows the compiler's print of it. */
+  readonly lambda: Lambda;
   /** The Pure type it will have. */
   readonly type: string;
   readonly kind: 'dimension' | 'measure';
@@ -254,9 +256,19 @@ export interface Field {
   readonly children: readonly Field[];
 }
 
-/** Pure to reach a path from the row: `$x.col->get('a')->get('b')`. */
-function reach(columnRef: string, keys: readonly string[]): string {
-  return keys.reduce((e, k) => `${e}->get(${literal(k)})`, columnRef);
+/** A path from the row: `$x.col->get('a')->get('b')`. */
+function reach(root: ValueSpecification, keys: readonly string[]): ValueSpecification {
+  return keys.reduce((e, k) => fn('get', e, lit.string(k)), root);
+}
+
+/** A function of the row. */
+function ofRow(body: ValueSpecification): Lambda {
+  return lambda(['x'], body);
+}
+
+/** `$e->get(key)`, inside a `map` over elements. */
+function element(key: string): ValueSpecification {
+  return fn('get', variable('e'), lit.string(key));
 }
 
 function nameOf(parts: readonly string[]): string {
@@ -285,31 +297,31 @@ export function topValues(shape: Shape, n = 12): string[] {
     .slice(0, n).map(([v]) => v);
 }
 
-/** A literal of a scalar kind, for `contains`. */
-function valueLiteral(kind: ScalarKind, text: string): string {
-  return kind === 'integer' || kind === 'float' ? text
-    : kind === 'boolean' ? text
-    : literal(text);
+/** A seen value as a literal of its scalar kind, for `contains`. */
+function valueLiteral(kind: ScalarKind, text: string): ValueSpecification {
+  return kind === 'integer' ? lit.integer(text)
+    : kind === 'float' ? lit.float(text)
+    : kind === 'boolean' ? lit.boolean(text === 'true')
+    : lit.string(text);
 }
 
 /**
  * The fields of a column's documents, and what each can become.
  *
- * `columnRef` is how the row reaches the column (`$x.customer`). The
- * top level is the column itself: an object column lists its keys, an
- * array column offers its array extractions directly.
+ * The top level is the column itself (`$x.<column>`): an object column
+ * lists its keys, an array column offers its array extractions directly.
  */
-export function fieldsOf(column: string, columnRef: string, sample: Sample): Field[] {
+export function fieldsOf(column: string, sample: Sample): Field[] {
   const total = Math.max(1, sample.rows);
   const build = (shape: Shape, path: readonly string[], parentPresent: number): Field => {
-    const expr = reach(columnRef, path);
+    const expr = reach(col('x', column), path);
     const names = [column, ...path];
     const extractions: Extraction[] = [];
     const scalar = scalarTypeOf(shape);
     if (scalar && shape.objects === 0 && shape.arrays === 0) {
       extractions.push({
         name: nameOf(names), label: `as ${PURE_TYPE[scalar]}`,
-        expression: `${expr}->to(@${PURE_TYPE[scalar]})`, type: PURE_TYPE[scalar],
+        lambda: ofRow(to(expr, type(PURE_TYPE[scalar]))), type: PURE_TYPE[scalar],
         kind: scalar === 'float' ? 'measure' : 'dimension',
       });
     }
@@ -318,7 +330,7 @@ export function fieldsOf(column: string, columnRef: string, sample: Sample): Fie
     // at the top -- that is the column itself.
     if (path.length > 0 && (shape.objects > 0 || shape.arrays > 0)) {
       extractions.push({ name: nameOf(names), label: 'as JSON',
-        expression: expr, type: 'Variant', kind: 'dimension' });
+        lambda: ofRow(expr), type: 'Variant', kind: 'dimension' });
     }
     if (shape.arrays > 0) extractions.push(...arrayExtractions(shape, expr, names));
     const children = shape.objects > 0
@@ -335,47 +347,47 @@ export function fieldsOf(column: string, columnRef: string, sample: Sample): Fie
   return [build(sample.shape, [], total)];
 }
 
-function arrayExtractions(shape: Shape, expr: string, names: readonly string[]): Extraction[] {
+function arrayExtractions(shape: Shape, expr: ValueSpecification, names: readonly string[]): Extraction[] {
   const out: Extraction[] = [];
-  const many = `${expr}->toMany(@Variant)`;
+  const many = toMany(expr, type('Variant'));
   out.push({ name: nameOf([...names, 'count']), label: 'number of elements',
-    expression: `${many}->size()`, type: 'Integer', kind: 'measure' });
+    lambda: ofRow(fn('size', many)), type: 'Integer', kind: 'measure' });
   const el = shape.element;
   if (!el) return out;
   const elScalar = scalarTypeOf(el);
   if (elScalar && el.objects === 0 && el.arrays === 0) {
     const t = PURE_TYPE[elScalar];
     out.push({ name: nameOf([...names, 'list']), label: 'all values, as text',
-      expression: `${expr}->toMany(@String)->joinStrings(', ')`,
+      lambda: ofRow(fn('joinStrings', toMany(expr, type('String')), lit.string(', '))),
       type: 'String', kind: 'dimension' });
     // "contains" compares a typed-in literal: text, numbers, booleans.
     const comparable = elScalar !== 'date' && elScalar !== 'datetime';
     for (const v of comparable ? topValues(el, 8) : []) {
       out.push({ name: nameOf([...names, 'has', v]), label: `contains ${v}`,
-        expression: `${expr}->toMany(@${t})->contains(${valueLiteral(elScalar, v)})`,
+        lambda: ofRow(fn('contains', toMany(expr, type(t)), valueLiteral(elScalar, v))),
         type: 'Boolean', kind: 'dimension' });
     }
   }
   if (el.objects > 0) {
     for (const [k, f] of [...el.fields.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      const key = literal(k);
       // Every element's value -- a scalar, or an array or object of its
       // own -- as ONE JSON array: ["MS-01","HS-01"].
       out.push({ name: nameOf([...names, k]), label: `every ${k}, as JSON`,
-        expression: `${many}->map(e | $e->get(${key}))->toVariant()`,
+        lambda: ofRow(fn('toVariant', fn('map', many, lambda(['e'], element(k))))),
         type: 'Variant', kind: 'dimension' });
       const s = scalarTypeOf(f);
       if (!s || f.objects > 0 || f.arrays > 0) continue;
       const t = PURE_TYPE[s];
       out.push({ name: nameOf([...names, k, 'list']), label: `every ${k}, as text`,
-        expression: `${many}->map(e | $e->get(${key})->to(@String)->toOne())->joinStrings(', ')`,
+        lambda: ofRow(fn('joinStrings',
+          fn('map', many, lambda(['e'], fn('toOne', to(element(k), type('String'))))), lit.string(', '))),
         type: 'String', kind: 'dimension' });
       out.push({ name: nameOf([...names, 'first', k]), label: `first element's ${k}`,
-        expression: `${expr}->get(0)->get(${key})->to(@${t})`,
+        lambda: ofRow(to(fn('get', fn('get', expr, lit.integer(0)), lit.string(k)), type(t))),
         type: t, kind: s === 'float' ? 'measure' : 'dimension' });
       if (s === 'integer' || s === 'float') {
         out.push({ name: nameOf([...names, k, 'total']), label: `total of ${k}`,
-          expression: `${many}->map(e | $e->get(${key})->to(@${t})->toOne())->sum()`,
+          lambda: ofRow(fn('sum', fn('map', many, lambda(['e'], fn('toOne', to(element(k), type(t))))))),
           type: t, kind: 'measure' });
       }
     }

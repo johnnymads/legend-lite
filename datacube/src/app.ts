@@ -49,7 +49,7 @@ import { AdHocSession } from './adhoc/session.ts';
 import { drillLambda, levelLambda } from './query.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
-import type { RemoteSource } from './snap.ts';
+import type { RemoteSource, SnapTarget } from './snap.ts';
 import { exportFileName, toCsv, toEml } from './export.ts';
 import {
   ALERT_WINDOW,
@@ -60,7 +60,7 @@ import {
   buildExecutionErrorAlert,
   type AlertOptions,
 } from './ui/alert.ts';
-import { isPivotTotalColumn, pivotLabel, type PivotColumn } from './serialize.ts';
+import { isPivotTotalColumn, pivotLabel, type PivotColumn } from './query.ts';
 import { toHtml, toSpreadsheetML } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
 import { toBarChart, toTreemap } from './chart.ts';
@@ -224,13 +224,10 @@ export interface CubeAppBaseOptions {
   /** Show the column drag zone. Off matches DataCube exactly. */
   readonly showColumnZone?: boolean;
   /**
-   * Where a snap materialises, when the source is a model relation.
-   *
-   * While snapped the query is still planned as Pure, so the frozen
-   * relation has to be one the model declares -- a generated
-   * `dc_snap_1` is a SQL identifier and means nothing to a compiler.
+   * Where a snap materialises: a relation the model declares, so a snapped
+   * cube is planned as a live one is. Without one the cube cannot snap.
    */
-  readonly snapTarget?: { readonly schema?: string; readonly table: string; readonly expression: string };
+  readonly snapTarget?: SnapTarget;
 }
 
 /**
@@ -1539,7 +1536,7 @@ export class CubeApp {
             .find((c) => c.name === column)?.type);
           this.openColumnEditor(json
             ? { json: column, level: 'dimension' }
-            : { expression: columnRef(column), level: this.#kindOf(column) ?? 'measure' });
+            : { expression: `x|${columnRef(column)}`, level: this.#kindOf(column) ?? 'measure' });
         }
         return;
       case 'calc.edit':
@@ -1934,7 +1931,7 @@ export class CubeApp {
       ? undefined
       : view.pivot?.columns.find((c) => c.name === leaf.name);
     const pivotPath = planned?.tuple ?? undefined;
-    const query = drillLambda(view.snapshot, await this.#controller.parsed(view.snapshot), {
+    const query = drillLambda(view.snapshot, {
       path: meta.path,
       ...(pivotPath ? { pivotPath } : {}),
     });
@@ -2325,6 +2322,8 @@ export class CubeApp {
         snapshot: () => this.#snapshot,
         pivotColumns: () => this.#view?.pivot?.columns ?? [],
         start,
+        parse: (text) => this.#controller.parse(text),
+        print: (query) => this.#controller.print(query),
         compile: (candidate, signal) => this.#controller.compile(candidate, signal),
         apply: (row, group, rename) => this.#setCalc(row, group, rename),
         sampleJson: (column) => this.#sampleJson(column),
@@ -2360,7 +2359,7 @@ export class CubeApp {
     };
     const scope = { level: 0, parent: [], limit: JSON_SAMPLE_ROWS };
     const { rows } = await this.#controller.runQuery(
-      levelLambda(flat, await this.#controller.parsed(flat), scope), flat, scope);
+      levelLambda(flat, scope), flat, scope);
     return rows.columns.find((c) => c.name === column)?.values ?? [];
   }
 
@@ -2441,7 +2440,7 @@ export class CubeApp {
       this.#status(refusal, 'error');
       this.#codeCheckAlert(
         "Query Validation Failure: Can't safely apply changes. Check the query code below for more details.",
-        refusal, await this.#queryText(checked.query, checked.parsing));
+        refusal, await this.#queryText(checked.query));
       return false;
     }
     const wasRoot = this.#config.showRootAggregation;
@@ -2520,13 +2519,10 @@ export class CubeApp {
   }
 
   /**
-   * A query as a person reads it: the text whose parse was refused, as it was
-   * typed (the position a parse refusal names is in it), else the query as the
-   * compiler prints it (E4). A print that fails says so in its place.
+   * A query as a person reads it: as the compiler prints it (E4). A print
+   * that fails says so in its place.
    */
-  async #queryText(query: Lambda | null, parsing?: string): Promise<string> {
-    if (parsing !== undefined) return parsing;
-    if (query === null) return '';
+  async #queryText(query: Lambda): Promise<string> {
     try {
       return await this.#controller.print(query);
     } catch (error: unknown) {

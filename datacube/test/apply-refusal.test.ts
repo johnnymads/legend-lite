@@ -16,9 +16,10 @@ import type { CubeSnapshot } from '../src/snapshot.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint, limitsOf } from './fake-planner.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { element } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: 'trades' },
+  source: { query: element('trades') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },

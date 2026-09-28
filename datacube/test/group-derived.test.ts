@@ -11,8 +11,11 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
-import { serialize } from '../src/serialize.ts';
+
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { row } from './lite-compiler.ts';
+import { printLevel } from './lite-compiler.ts';
 
 let engine: DuckDbEngine;
 
@@ -53,7 +56,7 @@ after(async () => {
 });
 
 const BASE: CubeSnapshot = {
-  source: { expression: 'deals' },
+  source: { query: element('deals') },
   columns: [],
   derived: [],
   rows: ['region'],
@@ -97,9 +100,9 @@ describe('the two extend stages are not interchangeable', () => {
 
 describe('serialize places each stage correctly', () => {
   it('puts a leaf-derived column BEFORE the aggregation', () => {
-    const out = serialize({
+    const out = printLevel({
       ...BASE,
-      derived: [{ name: 'net', expression: '$x.revenue - $x.profit' }],
+      derived: [{ name: 'net', lambda: row('$x.revenue - $x.profit') }],
     });
     const extendAt = out.indexOf('extend(~[net');
     const groupAt = out.indexOf('groupBy(');
@@ -108,10 +111,10 @@ describe('serialize places each stage correctly', () => {
   });
 
   it('puts a group-derived column AFTER the aggregation', () => {
-    const out = serialize({
+    const out = printLevel({
       ...BASE,
       groupDerived: [
-        { name: 'margin', expression: '$x.profit / $x.revenue' },
+        { name: 'margin', lambda: row('$x.profit / $x.revenue') },
       ],
     });
     const groupAt = out.indexOf('groupBy(');
@@ -121,20 +124,20 @@ describe('serialize places each stage correctly', () => {
   });
 
   it('places it after a PIVOT too (the pivot is a groupBy now)', () => {
-    const out = serialize({
+    const out = printLevel({
       ...BASE,
       pivotOn: ['region'],
-      groupDerived: [{ name: 'margin', expression: '$x.profit' }],
+      groupDerived: [{ name: 'margin', lambda: row('$x.profit') }],
     }, undefined, { tuples: [['EMEA']] });
     assert.ok(out.indexOf("if($x.region == 'EMEA'") >= 0, out);
     assert.ok(out.indexOf('groupBy(') < out.indexOf('extend(~[margin'));
   });
 
   it('emits both stages in one pipeline, in order', () => {
-    const out = serialize({
+    const out = printLevel({
       ...BASE,
-      derived: [{ name: 'net', expression: '$x.revenue - $x.profit' }],
-      groupDerived: [{ name: 'margin', expression: '$x.profit / $x.revenue' }],
+      derived: [{ name: 'net', lambda: row('$x.revenue - $x.profit') }],
+      groupDerived: [{ name: 'margin', lambda: row('$x.profit / $x.revenue') }],
     });
     assert.ok(
       out.indexOf('extend(~[net') <
@@ -146,10 +149,10 @@ describe('serialize places each stage correctly', () => {
   it('and the group stage lands before the sort and the cap', () => {
     // Otherwise a cube could not sort by a derived measure, which is
     // the commonest thing to want to do with one.
-    const out = serialize(
+    const out = printLevel(
       {
         ...BASE,
-        groupDerived: [{ name: 'margin', expression: '$x.profit' }],
+        groupDerived: [{ name: 'margin', lambda: row('$x.profit') }],
         sorts: [{ column: 'margin', direction: 'desc' }],
       },
       { level: 1, parent: [], limit: 11 },

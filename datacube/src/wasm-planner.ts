@@ -24,7 +24,7 @@
 // Pure prelude, which is why `warmUp()` exists and why the demo calls
 // it while the user is still looking at an empty grid.
 
-import { readLambda, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
+import { fromJson, readLambda, readValueSpecification, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { Planner } from './cube.ts';
 import type { CatalogDatabase, CatalogTable } from './infer.ts';
 import { PlanError } from './planner.ts';
@@ -424,7 +424,9 @@ export class WasmPlanner implements Planner {
     const answer = this.#useWorker()
       ? await this.#ask({ kind: 'databaseFromCatalog', catalog })
       : (await this.#load()).exports.databaseFromCatalogOrError(catalog);
-    return JSON.parse(decode(answer, `the columns of ${table.table}`)) as CatalogDatabase;
+    const { source, ...db } = fromJson(decode(answer, `the columns of ${table.table}`)) as
+      Omit<CatalogDatabase, 'source'> & { readonly source: unknown };
+    return { ...db, source: readValueSpecification(source) };
   }
 
   /**

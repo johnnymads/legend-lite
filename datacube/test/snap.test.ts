@@ -7,6 +7,11 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+
+/** The live source, and where a snap goes: the model would declare both. */
+const LIVE = element('trades');
+const target = (table: string) => ({ table, source: element(table) });
 import {
   SnapManager,
   SnapRefusal,
@@ -53,26 +58,25 @@ describe('SnapManager', () => {
     const s = new SnapManager(engine);
     assert.equal(s.state.mode, 'live');
     assert.equal(s.isSnapped, false);
-    assert.equal(s.sourceFor('trades'), 'trades');
+    assert.equal(s.sourceFor(LIVE), LIVE);
   });
 
   it('freezes rows and reports what was taken, and when', async () => {
     const s = new SnapManager(engine);
     const before = Date.now();
-    const info = await s.snap('SELECT * FROM trades', 1);
+    const info = await s.snap('SELECT * FROM trades', 1, { target: target('snap_a') });
 
     assert.equal(info.rowCount, 1000);
     assert.ok(info.takenAt.getTime() >= before);
     assert.match(info.label, /^Snap \d\d:\d\d$/);
     assert.equal(s.isSnapped, true);
     // Queries now read the frozen table, not the live source.
-    assert.notEqual(s.sourceFor('trades'), 'trades');
+    assert.deepEqual(s.sourceFor(LIVE), element('snap_a'));
   });
 
   it('is genuinely frozen: live changes do not reach the snap', async () => {
     const s = new SnapManager(engine);
-    await s.snap('SELECT * FROM trades', 1);
-    const snapped = s.sourceFor('trades');
+    const { table: snapped } = await s.snap('SELECT * FROM trades', 1, { target: target('snap_frozen') });
 
     // The world moves on underneath.
     await engine.run(
@@ -97,10 +101,10 @@ describe('SnapManager', () => {
 
   it('returns to live on release', async () => {
     const s = new SnapManager(engine);
-    await s.snap('SELECT * FROM trades', 1);
+    await s.snap('SELECT * FROM trades', 1, { target: target('snap_released') });
     await s.release();
     assert.equal(s.state.mode, 'live');
-    assert.equal(s.sourceFor('trades'), 'trades');
+    assert.equal(s.sourceFor(LIVE), LIVE);
   });
 
   it('refuses a snap beyond the row ceiling, before materialising', async () => {
@@ -113,7 +117,7 @@ describe('SnapManager', () => {
     assert.match(estimate.refusal ?? '', /exceeds the .* row snap limit/);
 
     await assert.rejects(
-      () => s.snap('SELECT * FROM range(20000000)', 2),
+      () => s.snap('SELECT * FROM range(20000000)', 2, { target: target('snap_huge') }),
       (e: unknown) => {
         assert.ok(e instanceof SnapRefusal);
         return true;
@@ -125,8 +129,8 @@ describe('SnapManager', () => {
 
   it('gives each snap its own table so two can coexist', async () => {
     const s = new SnapManager(engine);
-    const a = await s.snap('SELECT * FROM trades WHERE region = 0', 1);
-    const b = await s.snap('SELECT * FROM trades WHERE region = 1', 2);
+    const a = await s.snap('SELECT * FROM trades WHERE region = 0', 1, { target: target('snap_region_0') });
+    const b = await s.snap('SELECT * FROM trades WHERE region = 1', 2, { target: target('snap_region_1') });
     assert.notEqual(a.table, b.table);
     // Snap A survives taking snap B, which is what makes an
     // as-of-A vs as-of-B comparison possible.

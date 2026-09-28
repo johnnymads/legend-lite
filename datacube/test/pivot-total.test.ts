@@ -21,13 +21,14 @@ import {
   isPivotTotalColumn,
   pivotColumns,
   pivotTotalColumn,
-  serialize,
   type PivotFacts,
-} from '../src/serialize.ts';
+} from '../src/query.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
+import { printLevel } from './lite-compiler.ts';
 
 const CUBE: CubeSnapshot = {
-  source: { expression: '#>{db.trades}#' },
+  source: { query: accessor('db', 'trades') },
   columns: [
     { name: 'region', type: 'String', kind: 'dimension' },
     { name: 'year', type: 'Integer', kind: 'dimension' },
@@ -56,7 +57,7 @@ ResultTable {
 
 describe('the pivot total, a column of the level\'s own query', () => {
   it('is each measure over ALL of the group\'s rows, on its own aggregate', () => {
-    const q = serialize(CUBE, { level: 1, parent: [] }, YEARS);
+    const q = printLevel(CUBE, { level: 1, parent: [] }, YEARS);
     // No condition: every value's rows, the NULL year's included.
     assert.ok(q.includes(`'${pivotTotalColumn('notional')}':x|$x.notional:y|$y->sum()`), q);
     // An average's total is the average of the slice, from the database.
@@ -66,7 +67,7 @@ describe('the pivot total, a column of the level\'s own query', () => {
   });
 
   it('takes the configured total function over the measure\'s own', () => {
-    const q = serialize(
+    const q = printLevel(
       { ...CUBE, pivotTotal: { placement: 'right', functions: { price: 'max' } } },
       { level: 1, parent: [] }, YEARS,
     );
@@ -74,14 +75,14 @@ describe('the pivot total, a column of the level\'s own query', () => {
   });
 
   it('is on the grand total too', () => {
-    const q = serialize({ ...CUBE, rows: [] }, undefined, YEARS);
+    const q = printLevel({ ...CUBE, rows: [] }, undefined, YEARS);
     assert.match(q, /groupBy\(~\[__root__\]/);
     assert.ok(q.includes(pivotTotalColumn('notional')), q);
   });
 
   it('is absent without a total, and listed last among the planned columns', () => {
     const { pivotTotal: _t, ...none } = CUBE;
-    assert.doesNotMatch(serialize(none, { level: 1, parent: [] }, YEARS), /__pivot_total__/);
+    assert.doesNotMatch(printLevel(none, { level: 1, parent: [] }, YEARS), /__pivot_total__/);
     const planned = pivotColumns(CUBE, YEARS).map((c) => c.name);
     assert.deepEqual(planned, [
       '2021__|__notional', '2021__|__price', '2022__|__notional', '2022__|__price',
@@ -158,13 +159,13 @@ describe('measures a pivot does not spread', () => {
   };
 
   it('are carried on their own aggregate, in the same groupBy', () => {
-    const pure = serialize(EXCLUDED, { level: 1, parent: [] }, YEARS);
+    const pure = printLevel(EXCLUDED, { level: 1, parent: [] }, YEARS);
     assert.doesNotMatch(pure, /__\|__price/);
     assert.match(pure, /[~ ,]price:x\|\$x\.price:y\|\$y->average\(\)/);
   });
 
   it('a configured measure excluded from the pivot is carried under its own name', () => {
-    const pure = serialize({ ...EXCLUDED,
+    const pure = printLevel({ ...EXCLUDED,
       measures: [{ name: 'n', column: 'notional', fn: 'sum' },
         { name: 'p', column: 'price', fn: 'max' }] },
     { level: 1, parent: [] }, YEARS);

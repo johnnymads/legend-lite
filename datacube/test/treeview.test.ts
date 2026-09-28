@@ -17,11 +17,15 @@ import {
 } from '../src/treeview.ts';
 import { EpochGuard } from '../src/epoch.ts';
 import type { QueryRunner } from '../src/runner.ts';
-import { liteParse, liteParsed, litePrint } from './lite-compiler.ts';
-import { NULL_GROUP, serialize } from '../src/serialize.ts';
+import { liteParse, litePrint } from './lite-compiler.ts';
+import {
+  NULL_GROUP,
+} from '../src/query.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { printLevel } from './lite-compiler.ts';
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: 'trades' },
+  source: { query: element('trades') },
   columns: [],
   derived: [],
   rows: ['region', 'desk'],
@@ -463,7 +467,7 @@ describe('Show leaf count', () => {
   // it). Upstream's group queries carry a count and the group cell
   // shows it beside the label.
   const FLAT: CubeSnapshot = {
-    source: { expression: 'trades' },
+    source: { query: element('trades') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'notional', type: 'Float' },
@@ -478,11 +482,11 @@ describe('Show leaf count', () => {
   };
 
   it('a grouped level counts its rows; the grand total does not', () => {
-    const q1 = serialize(FLAT, { level: 1, parent: [] });
+    const q1 = printLevel(FLAT, { level: 1, parent: [] });
     assert.match(q1, /__leafCount:x\|1:y\|\$y->count\(\)/);
-    const q0 = serialize(FLAT, { level: 0, parent: [] });
+    const q0 = printLevel(FLAT, { level: 0, parent: [] });
     assert.doesNotMatch(q0, /__leafCount/);
-    assert.doesNotMatch(serialize({ ...FLAT, leafCount: false },
+    assert.doesNotMatch(printLevel({ ...FLAT, leafCount: false },
       { level: 1, parent: [] }), /__leafCount/);
   });
 
@@ -511,7 +515,7 @@ describe('the count, next level (the default)', () => {
   // An OPENED group shows how many rows sit directly beneath it, read
   // off the rows opening it fetched; a closed one shows nothing.
   const CUBE: CubeSnapshot = {
-    source: { expression: 'trades' },
+    source: { query: element('trades') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'desk', type: 'String' },
@@ -557,7 +561,7 @@ describe('the count, next level (the default)', () => {
   });
 
   it('asks nothing of the query', () => {
-    assert.doesNotMatch(serialize(CUBE, { level: 1, parent: [] }), /__leafCount/);
+    assert.doesNotMatch(printLevel(CUBE, { level: 1, parent: [] }), /__leafCount/);
   });
 });
 
@@ -566,7 +570,7 @@ describe('detail rows under the deepest group', () => {
   // just need to filter the data to match drilldown values, no
   // groupBy() is needed."
   const CUBE: CubeSnapshot = {
-    source: { expression: 'trades' },
+    source: { query: element('trades') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'pnl', type: 'Float' },
@@ -609,7 +613,7 @@ describe('detail rows under the deepest group', () => {
       print: litePrint,
     };
     const view = await fetchTree(CUBE, TreeState.empty().expand(['EMEA']), {
-      runner, parsed: await liteParsed(CUBE), guard: new EpochGuard(), epoch: 0,
+      runner, guard: new EpochGuard(), epoch: 0,
     });
     const detail = sent.find((q) => !q.includes('groupBy'));
     assert.ok(detail, `no detail query among ${sent.join(' | ')}`);
@@ -630,7 +634,7 @@ describe('opening a group under a column pivot', () => {
   // orders -- and a query cast to `EMEA__|__total` that its pivot did
   // not make is a binder error: the group could not be opened.
   const PIVOTED: CubeSnapshot = {
-    source: { expression: 'orders' },
+    source: { query: element('orders') },
     columns: [
       { name: 'segment', type: 'String' },
       { name: 'customer', type: 'String' },
@@ -673,7 +677,7 @@ describe('opening a group under a column pivot', () => {
   it('opens the detail rows with the cube\'s pivot columns, in one groupBy', async () => {
     const sent: string[] = [];
     await fetchTree(PIVOTED, TreeState.empty().expand(['Acme']), {
-      runner: runner(sent), parsed: await liteParsed(PIVOTED), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
+      runner: runner(sent), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
     });
     const detail = sent.find((q) => q.includes("$x.customer == 'Acme'"));
     assert.ok(detail, sent.join(' | '));
@@ -687,7 +691,7 @@ describe('opening a group under a column pivot', () => {
     const sent: string[] = [];
     const twoLevels = { ...PIVOTED, rows: ['segment', 'customer'] };
     await fetchTree(twoLevels, TreeState.empty().expand(['S']), {
-      runner: runner(sent), parsed: await liteParsed(twoLevels), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
+      runner: runner(sent), guard: new EpochGuard(), epoch: 0, pivot: VALUES,
     });
     const child = sent.filter((q) => q.includes("$x.segment == 'S'"));
     assert.equal(child.some((q) => /limit\(0\)/.test(q)), false, child.join(' | '));

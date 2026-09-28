@@ -24,6 +24,7 @@ import { sourceColumns } from '../../src/source-columns.ts';
 import { familyOf } from '../../src/types.ts';
 import { toCsv } from '../../src/export.ts';
 import { selectionStats } from '../../src/selection.ts';
+import { accessor, col, lambda, lit, times, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 
 const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
 
@@ -116,7 +117,7 @@ async function openCube(snapshot: CubeSnapshot): Promise<{ app: CubeApp; engine:
   return { app, engine, errors };
 }
 
-const SOURCE = '#>{typed::DB.T}#';
+const SOURCE = accessor('typed::DB', 'T');
 const COLUMNS: CubeSnapshot['columns'] = [
   { name: 'region', type: 'String', kind: 'dimension' },
   { name: 'qty', type: 'Integer', kind: 'measure' },
@@ -156,9 +157,9 @@ describe('step 1: types from the compiler', () => {
     // aggregate reads its type (a number sums). The type used to be learned
     // from the first result and the query run again.
     const o = await openCube({
-      source: { expression: SOURCE },
+      source: { query: SOURCE },
       columns: COLUMNS,
-      derived: [{ name: 'double_qty', expression: '$x.qty * 2' }],
+      derived: [{ name: 'double_qty', lambda: lambda(['x'], times(col('x', 'qty'), lit.integer(2))) }],
       rows: ['region'],
       pivotOn: [],
       measures: [],
@@ -173,7 +174,7 @@ describe('step 1: types from the compiler', () => {
 
   it('S1b: every result column carries the type the COMPILER gives it, not the engine\'s wire type', async () => {
     const o = await openCube({
-      source: { expression: SOURCE },
+      source: { query: SOURCE },
       columns: COLUMNS,
       derived: [],
       rows: ['region'],
@@ -249,9 +250,9 @@ describe('a source\'s columns come from the compiler', () => {
 });
 
 /** A flat cube over one source, its columns typed by the compiler, opened for real. */
-async function flat(source: string, filter?: CubeSnapshot['filter']) {
+async function flat(source: ValueSpecification, filter?: CubeSnapshot['filter']) {
   return openCube({
-    source: { expression: source },
+    source: { query: source },
     columns: await sourceColumns(planner, source),
     derived: [],
     rows: [],
@@ -292,7 +293,7 @@ describe('step 2: exact cells, whatever the time zone (run under TZ lanes)', () 
   });
 
   it('S2c: a DECIMAL(38,2) beyond 2^53 exports and sums exactly', async () => {
-    const o = await flat('#>{typed::DB.BIG}#');
+    const o = await flat(accessor('typed::DB', 'BIG'));
     const view = o.app.controller.view!;
     assert.deepEqual(exported(view, 'amount'), ['1.01', '12345678901234567.89']);
     const c = view.columns.leaves.findIndex((l) => l.name === 'amount');

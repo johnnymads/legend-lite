@@ -8,12 +8,13 @@ import {
   scalarTypeOf,
   type Field,
 } from '../src/json-shape.ts';
+import { print } from './lite-compiler.ts';
 
-/** Every extraction under a field, by default column name. */
+/** Every extraction under a field, by default column name: its lambda as the compiler prints it. */
 function byName(fields: readonly Field[]): Map<string, { expression: string; type: string }> {
   const out = new Map<string, { expression: string; type: string }>();
   const walk = (f: Field): void => {
-    for (const e of f.extractions) out.set(e.name, e);
+    for (const e of f.extractions) out.set(e.name, { expression: print(e.lambda), type: e.type });
     f.children.forEach(walk);
   };
   fields.forEach(walk);
@@ -81,44 +82,44 @@ describe('fieldsOf', () => {
   ]);
 
   it('reaches a nested key through get, typed by the sample', () => {
-    const f = byName(fieldsOf('customer', '$x.customer', orders));
+    const f = byName(fieldsOf('customer', orders));
     assert.deepEqual(f.get('customer_tier'), {
       ...f.get('customer_tier'),
-      expression: "$x.customer->get('tier')->to(@String)", type: 'String' });
+      expression: "x|$x.customer->get('tier')->to(@String)", type: 'String' });
     assert.equal(f.get('customer_contact_email')?.expression,
-      "$x.customer->get('contact')->get('email')->to(@String)");
+      "x|$x.customer->get('contact')->get('email')->to(@String)");
     assert.equal(f.get('customer_n')?.type, 'Float');
   });
 
   it('reports how often a key is there', () => {
-    const [root] = fieldsOf('customer', '$x.customer', orders);
+    const [root] = fieldsOf('customer', orders);
     const contact = root!.children.find((c) => c.path.join('.') === 'contact');
     assert.equal(Math.round(contact!.presence * 100), 33);
   });
 
   it('offers count, text, and contains for an array of scalars', () => {
     const tags = inferShape(['["gift","b2b"]', '["gift"]', '[]']);
-    const f = byName(fieldsOf('tags', '$x.tags', tags));
-    assert.equal(f.get('tags_count')?.expression, '$x.tags->toMany(@Variant)->size()');
-    assert.equal(f.get('tags_list')?.expression, "$x.tags->toMany(@String)->joinStrings(', ')");
-    assert.equal(f.get('tags_has_gift')?.expression, "$x.tags->toMany(@String)->contains('gift')");
+    const f = byName(fieldsOf('tags', tags));
+    assert.equal(f.get('tags_count')?.expression, 'x|$x.tags->toMany(@Variant)->size()');
+    assert.equal(f.get('tags_list')?.expression, "x|$x.tags->toMany(@String)->joinStrings(', ')");
+    assert.equal(f.get('tags_has_gift')?.expression, "x|$x.tags->toMany(@String)->contains('gift')");
     assert.equal(f.get('tags_has_gift')?.type, 'Boolean');
   });
 
   it('offers per-field text, first and total for an array of objects', () => {
     const items = inferShape(['[{"sku":"A","qty":2},{"sku":"B","qty":1}]']);
-    const f = byName(fieldsOf('items', '$x.items', items));
+    const f = byName(fieldsOf('items', items));
     assert.equal(f.get('items_first_sku')?.expression,
-      "$x.items->get(0)->get('sku')->to(@String)");
+      "x|$x.items->get(0)->get('sku')->to(@String)");
     assert.equal(f.get('items_qty_total')?.expression,
-      "$x.items->toMany(@Variant)->map(e | $e->get('qty')->to(@Integer)->toOne())->sum()");
+      "x|$x.items->toMany(@Variant)->map(e|$e->get('qty')->to(@Integer)->toOne())->sum()");
     assert.equal(f.get('items_sku_total'), undefined, 'text has no total');
   });
 
   it('quotes a key that is not a plain name', () => {
     const odd = inferShape(['{"it\'s":1}']);
-    const f = byName(fieldsOf('c', '$x.c', odd));
-    assert.equal(f.get('c_it_s')?.expression, "$x.c->get('it\\'s')->to(@Integer)");
+    const f = byName(fieldsOf('c', odd));
+    assert.equal(f.get('c_it_s')?.expression, "x|$x.c->get('it\\'s')->to(@Integer)");
   });
 });
 
@@ -133,17 +134,17 @@ describe('freeName', () => {
 describe('as JSON', () => {
   it('pulls a nested object or array out, and every element field as one array', () => {
     const docs = inferShape(['{"c":{"e":"a"},"items":[{"sku":"A","tags":["x"]}]}']);
-    const f = byName(fieldsOf('d', '$x.d', docs));
-    assert.deepEqual(f.get('d_c'), { ...f.get('d_c'), expression: "$x.d->get('c')", type: 'Variant' });
-    assert.equal(f.get('d_items')?.expression, "$x.d->get('items')");
+    const f = byName(fieldsOf('d', docs));
+    assert.deepEqual(f.get('d_c'), { ...f.get('d_c'), expression: "x|$x.d->get('c')", type: 'Variant' });
+    assert.equal(f.get('d_items')?.expression, "x|$x.d->get('items')");
     assert.equal(f.get('d_items_sku')?.expression,
-      "$x.d->get('items')->toMany(@Variant)->map(e | $e->get('sku'))->toVariant()");
+      "x|$x.d->get('items')->toMany(@Variant)->map(e|$e->get('sku'))->toVariant()");
     // An array inside each element: its values from every element.
     assert.equal(f.get('d_items_tags')?.type, 'Variant');
   });
 
   it('is not offered for the column itself', () => {
-    const f = byName(fieldsOf('c', '$x.c', inferShape(['{"a":1}'])));
+    const f = byName(fieldsOf('c', inferShape(['{"a":1}'])));
     assert.equal(f.get('c'), undefined);
   });
 });

@@ -40,6 +40,8 @@ import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { isNumeric } from '../src/types.ts';
 import { sourceColumns } from '../src/source-columns.ts';
+import { accessor, type ValueSpecification } from '../../pure-protocol/src/index.ts';
+import type { SnapTarget } from '../src/snap.ts';
 
 const ROWS = 200_000;
 
@@ -146,8 +148,8 @@ export const DEMO_DIMENSIONS: readonly {
 /** What an entry point must hand `boot`. */
 export interface Engine {
   readonly planner: Planner;
-  readonly source: string;
-  readonly snapTarget: { readonly table: string; readonly expression: string };
+  readonly source: ValueSpecification;
+  readonly snapTarget: SnapTarget;
   /**
    * Models made in this tab: the compiler's Database for a table's catalog
    * (T2), and repointing the planner at the model around it.
@@ -195,12 +197,12 @@ export interface Engine {
  */
 export type MakePlanner = (status: HTMLElement) => Promise<Engine>;
 
-/** Where the demo's shared model and tables live. */
-export const SOURCE = '#>{trades::DB.TRADES}#';
-export const SNAP_TARGET = {
+/** Where the demo's shared model and tables live: `#>{trades::DB.TRADES}#`. */
+export const SOURCE = accessor('trades::DB', 'TRADES');
+export const SNAP_TARGET: SnapTarget = {
   table: 'TRADES_SNAP',
-  expression: '#>{trades::DB.TRADES_SNAP}#',
-} as const;
+  source: accessor('trades::DB', 'TRADES_SNAP'),
+};
 export const RUNTIME = 'trades::RT';
 
 /** One copy of the model text, fetched so the file is the source. */
@@ -320,7 +322,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   status.textContent = label;
 
   const snapshot: CubeSnapshot = {
-    source: { expression: source },
+    source: { query: source },
     // the compiler types every column; the page declares only that year is a dimension
     columns: await sourceColumns(planner, source, [{ name: 'year', kind: 'dimension' }]),
     derived: [],
@@ -374,7 +376,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // snap lands under the source's own name so one model reads both.
     place: {
       readonly live?: WarehouseEngine;
-      readonly snapTarget?: { readonly schema?: string; readonly table: string; readonly expression: string };
+      readonly snapTarget?: SnapTarget;
     } = {},
   ): CubeApp {
     // PARK THE STATUS TEXT FIRST.
@@ -649,7 +651,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             app.dispose();
             app = makeApp(
               {
-                source: { expression: m.source },
+                source: { query: m.source },
                 columns,
                 derived: [],
                 rows: [],
@@ -666,7 +668,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
               [],
               {
                 live: new WarehouseEngine(session as WarehouseSession),
-                snapTarget: { schema: chosen.schema, table: chosen.name, expression: m.source },
+                snapTarget: { schema: chosen.schema, table: chosen.name, source: m.source },
               },
             );
             status.textContent = `live on the warehouse as ${(session as WarehouseSession).principal}`;
@@ -694,7 +696,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         app.dispose();
         app = makeApp(
           {
-            source: { expression: opened.source },
+            source: { query: opened.source },
             columns,
             derived: [],
             rows: [],

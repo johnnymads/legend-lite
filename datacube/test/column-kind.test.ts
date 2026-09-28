@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { serialize } from '../src/serialize.ts';
+
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import {
   dimensionColumns,
@@ -9,9 +9,11 @@ import {
   measureColumns,
   totalOrderSorts,
 } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { printLevel } from './lite-compiler.ts';
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'year', type: 'Integer', kind: 'dimension' },
@@ -66,7 +68,7 @@ describe('excludedFromPivot', () => {
       ),
     };
     // No values are needed: nothing pivots.
-    const out = serialize(s);
+    const out = printLevel(s);
     assert.equal(out.includes('__|__'), false, 'no pivot cell remains');
     assert.match(out, /groupBy\(~\[region\]/, 'it falls back to a plain group');
     assert.equal(/\$x\.year ==/.test(out), false, 'and nothing is split by year');
@@ -81,7 +83,7 @@ describe('excludedFromPivot', () => {
       ],
       pivotOn: ['year', 'qtr'],
     };
-    const out = serialize(s, undefined, { tuples: [['2023']] });
+    const out = printLevel(s, undefined, { tuples: [['2023']] });
     assert.match(out, /if\(\$x\.year == 2023, /);
     assert.equal(/\$x\.qtr ==/.test(out), false, 'qtr splits nothing');
   });
@@ -95,7 +97,7 @@ describe('treeColumnSort', () => {
     assert.deepEqual(totalOrderSorts(s, ['region']), [
       { column: 'region', direction: 'desc' },
     ]);
-    assert.match(serialize(s, undefined, { tuples: [['2023']] }), /sort\(\[~region->descending\(\)\]\)/);
+    assert.match(printLevel(s, undefined, { tuples: [['2023']] }), /sort\(\[~region->descending\(\)\]\)/);
   });
 
   it('defaults to ascending', () => {

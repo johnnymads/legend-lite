@@ -17,6 +17,7 @@ import { buildExecutionErrorAlert, markPosition } from '../src/ui/alert.ts';
 import { DOCS, docHint } from '../src/ui/docs.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';
+import { element } from '../../pure-protocol/src/index.ts';
 
 let dom: JSDOM;
 let root: HTMLElement;
@@ -139,7 +140,7 @@ describe('documentation hints', () => {
 // -- the app, end to end --------------------------------------------------
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: 'trades' },
+  source: { query: element('trades') },
   columns: [{ name: 'region', type: 'String' }, { name: 'notional', type: 'Float' }],
   derived: [],
   rows: [],

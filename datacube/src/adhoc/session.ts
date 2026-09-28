@@ -6,7 +6,7 @@
 // grid the user has since moved on from is dropped, never shown.
 
 import type { ResultTable } from '../result.ts';
-import type { LevelScope } from '../serialize.ts';
+import type { LevelScope } from '../query.ts';
 import type { CubeSnapshot } from '../snapshot.ts';
 import {
   inHierarchyOrder,

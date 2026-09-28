@@ -27,7 +27,7 @@
 // "all columns" -- the completion has to be as honest as the query.
 
 import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
-import { pivotLabel, type PivotColumn } from './serialize.ts';
+import { pivotLabel, type PivotColumn } from './query.ts';
 import { rowColumns, type CubeSnapshot } from './snapshot.ts';
 
 /** Which extend stage an expression belongs to. */

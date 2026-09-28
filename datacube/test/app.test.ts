@@ -3,7 +3,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { JSDOM } from 'jsdom';
 
 import { CubeApp } from '../src/app.ts';
-import { pivotTotalColumn } from '../src/serialize.ts';
+import { pivotTotalColumn } from '../src/query.ts';
 import type { Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
@@ -13,9 +13,10 @@ import { setHeaderDrag } from '../src/ui/pivot-panel.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';
 import { toJson, type Lambda } from '../../pure-protocol/src/index.ts';
+import { element } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: 'trades' },
+  source: { query: element('trades') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'desk', type: 'String' },
@@ -1131,6 +1132,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine: new CountingEngine(),
       planner: new StubPlanner(),
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP') },
     });
     await app.open();
     const toggle = root.querySelector('.dc-titlebar-toggle') as HTMLButtonElement;

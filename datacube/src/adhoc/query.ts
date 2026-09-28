@@ -18,7 +18,7 @@ import {
   memberConditions,
   NULL_GROUP,
   type LevelScope,
-} from '../serialize.ts';
+} from '../query.ts';
 import type { CubeSnapshot, FilterNode, Measure } from '../snapshot.ts';
 import { groupValue } from '../treeview.ts';
 import {

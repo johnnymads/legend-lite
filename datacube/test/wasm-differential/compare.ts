@@ -1,11 +1,11 @@
-// End-to-end: DataCube's own serialiser -> the WASM planner -> SQL,
-// checked against the JVM over the same grammar.
+// End-to-end: DataCube's own query builder -> the WASM planner -> SQL,
+// checked against the JVM over the same query.
 //
 // The unit tests exercise the seam with a fake module, and
 // wasm/differential.mjs exercises the planner over a hand-written
 // corpus. Neither proves the thing that actually matters for shipping:
-// that the Pure DataCube EMITS -- from real snapshots, through
-// serialize(), with pivots and tree levels and filters -- plans
+// that the queries DataCube SENDS -- from real snapshots, through
+// query.ts, with pivots and tree levels and filters -- plan
 // identically in the browser and on the server.
 //
 // The JVM's answers are a build output (//datacube:cube_jvm_answers,
@@ -22,7 +22,8 @@ import { fileURLToPath } from 'node:url';
 
 import { relationColumns } from '../../src/relation-type.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
-import { grammars, MODEL, RUNTIME } from './cases.ts';
+import { toJson } from '../../../pure-protocol/src/index.ts';
+import { MODEL, queries, RUNTIME } from './cases.ts';
 
 // Beside this package in the runfiles: the module and its runtime
 // (//wasm:planner), and the JVM's answers.
@@ -48,7 +49,7 @@ function norm(s: string): string {
   return `OK\n${JSON.stringify({ sql: body.sql, columns: relationColumns(body.type) })}`;
 }
 
-it('DataCube\'s own grammar plans the same in WASM and on the JVM', async () => {
+it('DataCube\'s own queries plan the same in WASM and on the JVM', async () => {
   const jvm = blocks(readFileSync(ANSWERS, 'utf8'));
   const planner = new WasmPlanner({
     model: MODEL,
@@ -56,35 +57,35 @@ it('DataCube\'s own grammar plans the same in WASM and on the JVM', async () => 
     assetBaseUrl: MODULE_DIR,
     cache: false,
   });
-  const queries = grammars();
-  assert.equal(jvm.size, queries.length, 'the JVM answered a different query list');
+  const cases = queries();
+  assert.equal(jvm.size, cases.length, 'the JVM answered a different query list');
 
   const differ: string[] = [];
   let planned = 0;
-  for (const { name, grammar } of queries) {
+  for (const { name, query } of cases) {
     const expected = jvm.get(name) ?? '<<missing>>';
     let actual: string;
     try {
-      const plan = await planner.planText(grammar);
+      const plan = await planner.plan(query);
       actual = `OK\n${JSON.stringify({ sql: plan.sql, columns: plan.columns })}`;
       planned++;
     } catch (e) {
-      // planOrError's ERR text, reassembled the way the JVM half writes
+      // planJsonOrError's ERR text, reassembled the way the JVM half writes
       // it, so a refusal compares as a refusal rather than as a crash.
       actual = `ERR\n?\n${(e as Error).message}`;
     }
     if (norm(expected) !== (actual.startsWith('OK\n') ? actual : norm(actual))) {
-      differ.push(`${name}\n  grammar: ${grammar}\n  jvm : ${JSON.stringify(expected)}`
+      differ.push(`${name}\n  query: ${toJson(query)}\n  jvm : ${JSON.stringify(expected)}`
         + `\n  wasm: ${JSON.stringify(actual)}`);
     }
   }
-  assert.deepEqual(differ, [], `${differ.length} of ${queries.length} differ:\n${differ.join('\n')}`);
+  assert.deepEqual(differ, [], `${differ.length} of ${cases.length} differ:\n${differ.join('\n')}`);
   // Every shape here is one a user reaches, so every one must PLAN: two
   // builds that refuse alike agree perfectly while the cube is broken.
-  assert.equal(planned, queries.length, 'a cube shape a user reaches was refused');
+  assert.equal(planned, cases.length, 'a cube shape a user reaches was refused');
 });
 
-it('the same queries as protocol JSON: the same plan, and the printer round-trips them (T4a)', async () => {
+it('the compiler prints every query so that it parses back to the same tree, in both styles', async () => {
   const planner = new WasmPlanner({
     model: MODEL,
     runtime: RUNTIME,
@@ -92,21 +93,12 @@ it('the same queries as protocol JSON: the same plan, and the printer round-trip
     cache: false,
   });
   const differ: string[] = [];
-  for (const { name, grammar } of grammars()) {
-    // E1's twin: the text as the wire carries it
-    const json = await planner.parse(grammar);
-    // E9's twin on the JSON plans exactly what the text plans
-    const fromText = await planner.planText(grammar);
-    const fromJson = await planner.plan(json);
-    if (fromJson.sql !== fromText.sql || JSON.stringify(fromJson.columns) !== JSON.stringify(fromText.columns)) {
-      differ.push(`${name}: planJson differs from plan\n  text: ${fromText.sql}\n  json: ${fromJson.sql}`);
-    }
-    // E4's twin prints it; the print parses back to the same JSON, in both styles
+  for (const { name, query } of queries()) {
     for (const style of ['STANDARD', 'PRETTY'] as const) {
-      const text = await planner.compose(json, style);
+      const text = await planner.compose(query, style);
       const again = await planner.parse(text);
-      if (JSON.stringify(again) !== JSON.stringify(json)) {
-        differ.push(`${name} (${style}): the print does not parse back to the same JSON\n  print: ${text}`);
+      if (toJson(again) !== toJson(query)) {
+        differ.push(`${name} (${style}): the print does not parse back to the same tree\n  print: ${text}`);
       }
     }
   }

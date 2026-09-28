@@ -19,8 +19,6 @@ import {
 
 export interface JsonFieldsOptions {
   readonly column: string;
-  /** `$x.<column>`, as a calculated column reaches it. */
-  readonly columnRef: string;
   /** The column's cells from a sample of rows. */
   readonly sample: () => Promise<readonly unknown[]>;
   /** A field's extraction was chosen. */
@@ -70,7 +68,7 @@ export function buildJsonFields(host: HTMLElement, options: JsonFieldsOptions): 
       say(`No JSON values in the ${sample.rows.toLocaleString()} sampled rows.`, true);
       return;
     }
-    for (const f of fieldsOf(options.column, options.columnRef, sample)) {
+    for (const f of fieldsOf(options.column, sample)) {
       tree.append(fieldRow(f));
     }
   })();
@@ -114,7 +112,7 @@ export function buildJsonFields(host: HTMLElement, options: JsonFieldsOptions): 
     b.className = 'dc-jsonfields-add';
     b.textContent = e.label;
     // The Pure it writes, on hover: nothing hidden about what it does.
-    b.title = `${e.name}: ${e.type}\n${e.expression}`;
+    b.title = `${e.name}: ${e.type}`;
     b.addEventListener('click', () => {
       for (const other of tree.querySelectorAll('.dc-jsonfields-picked')) {
         other.classList.remove('dc-jsonfields-picked');

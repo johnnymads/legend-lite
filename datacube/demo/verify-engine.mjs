@@ -18,7 +18,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
-import { pivotValuesQuery, serialize } from '../src/serialize.ts';
+import { pivotValuesQuery, serialize } from '../src/query.ts';
 import { levelLambda, parseSnapshot } from '../src/query.ts';
 
 const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')

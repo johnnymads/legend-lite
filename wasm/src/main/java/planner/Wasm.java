@@ -221,7 +221,7 @@ public final class Wasm {
      * read by legend-lite's DuckDB dialect -- the declared types, and the conversions the
      * source must apply, or the columns left out when it cannot.
      * {@code {"path", "schema"?, "table", "convertible", "columns": [{"name","type"}]}} in;
-     * {@code "OK\n" + {"text", "accessor", "conversions": [{"column","sql"}], "excluded": [name]}}
+     * {@code "OK\n" + {"text", "source" (protocol), "conversions": [{"column","sql"}], "excluded": [name]}}
      * or the refusal out, as
      * {@link #planOrError}'s are folded.
      */
@@ -246,7 +246,10 @@ public final class Wasm {
             }
             java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
             out.put("text", db.text());
-            out.put("accessor", db.accessor());
+            // the relation that reads the table, as protocol: the compiler's parse of its own accessor
+            com.legend.json.Json.Obj lambda = com.legend.json.Json.parseObject(com.legend.protocol.SourceInformation.strip(
+                    com.legend.protocol.ProtocolEmitter.emitLambda(com.legend.parser.SpecParser.parseLambda("|" + db.accessor()))));
+            out.put("source", lambda.getArr("body").items().get(0));
             out.put("conversions", conversions);
             out.put("excluded", db.excluded());
             return "OK\n" + com.legend.json.Json.toCompact(out);

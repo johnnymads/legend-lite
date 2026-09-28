@@ -18,11 +18,13 @@ import {
   nameProblem,
 } from '../src/calc.ts';
 import { PIVOT_SEPARATOR } from '../src/generated/lite-facts.ts';
-import { pivotColumns } from '../src/serialize.ts';
+import { pivotColumns } from '../src/query.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
+import { stand } from './fake-planner.ts';
 
 const snap = (over: Partial<CubeSnapshot> = {}): CubeSnapshot => ({
-  source: { expression: '#>{db.T}#' },
+  source: { query: accessor('db', 'T') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },
@@ -109,9 +111,9 @@ describe('what a calculated column can see', () => {
     // declared before it -- and never itself.
     const s = snap({
       derived: [
-        { name: 'first', expression: '1' },
-        { name: 'second', expression: '2' },
-        { name: 'third', expression: '3' },
+        { name: 'first', lambda: stand('1') },
+        { name: 'second', lambda: stand('2') },
+        { name: 'third', lambda: stand('3') },
       ],
     });
     const got = labels(columnsInScope(s, 'row', 'second'));
@@ -122,8 +124,8 @@ describe('what a calculated column can see', () => {
 
   it('offers every calculated column when adding a NEW one', () => {
     const s = snap({
-      derived: [{ name: 'first', expression: '1' },
-        { name: 'second', expression: '2' }],
+      derived: [{ name: 'first', lambda: stand('1') },
+        { name: 'second', lambda: stand('2') }],
     });
     const got = labels(columnsInScope(s, 'row'));
     assert.ok(got.includes('first') && got.includes('second'), got.join(','));
@@ -194,7 +196,7 @@ describe('naming a calculated column', () => {
   it('refuses a name that collides with any existing column', () => {
     const s = snap({
       measures: [{ name: 'total', column: 'notional', fn: 'sum' }],
-      derived: [{ name: 'uplift', expression: '1' }],
+      derived: [{ name: 'uplift', lambda: stand('1') }],
     });
     for (const taken of ['region', 'total', 'uplift']) {
       assert.match(nameProblem(s, 'row', taken) ?? '',
@@ -203,7 +205,7 @@ describe('naming a calculated column', () => {
   });
 
   it('allows a name to keep itself when editing', () => {
-    const s = snap({ derived: [{ name: 'uplift', expression: '1' }] });
+    const s = snap({ derived: [{ name: 'uplift', lambda: stand('1') }] });
     assert.equal(nameProblem(s, 'row', 'uplift', 'uplift'), null);
   });
 

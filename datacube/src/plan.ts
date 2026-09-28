@@ -16,8 +16,10 @@
 import type { ResultTable } from './result.ts';
 import type { QueryRunner } from './runner.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
-import { levelLambda, pivotValuesLambda, sourceWithDerived, type Parsed } from './query.ts';
 import {
+  levelLambda,
+  pivotValuesLambda,
+  sourceWithDerived,
   MAX_PIVOT_VALUES,
   effectivePivotOn,
   pinnedPivotFacts,
@@ -25,7 +27,7 @@ import {
   type LevelScope,
   type PivotColumn,
   type PivotFacts,
-} from './serialize.ts';
+} from './query.ts';
 import { CubeRefusal, type CubeSnapshot } from './snapshot.ts';
 import { groupValue } from './treeview.ts';
 
@@ -51,10 +53,9 @@ export interface SchemaChange {
 export async function typeColumns(
   snapshot: CubeSnapshot,
   runner: QueryRunner,
-  parsed: Parsed,
   signal?: AbortSignal,
 ): Promise<{ readonly snapshot: CubeSnapshot; readonly changes: readonly SchemaChange[] }> {
-  const typed = await runner.relationType(sourceWithDerived(snapshot, parsed).lambda(), signal);
+  const typed = await runner.relationType(sourceWithDerived(snapshot).lambda(), signal);
   if (typed.length === 0) return { snapshot, changes: [] };
   const types = new Map(typed.map((c) => [c.name, c.type]));
   const changes: SchemaChange[] = [];
@@ -97,7 +98,6 @@ export interface PivotPlan {
 export async function planPivot(
   snapshot: CubeSnapshot,
   runner: QueryRunner,
-  parsed: Parsed,
   signal?: AbortSignal,
 ): Promise<PivotPlan | undefined> {
   if (effectivePivotOn(snapshot).length === 0) return undefined;
@@ -105,7 +105,7 @@ export async function planPivot(
   if (pinned) {
     return { facts: pinned, columns: pivotColumns(snapshot, pinned), query: null, sql: null };
   }
-  const query = pivotValuesLambda(snapshot, parsed);
+  const query = pivotValuesLambda(snapshot);
   if (query === null) throw new Error('a pivoted cube has no values query');
   const { rows, sql } = await runner.run(query, snapshot, undefined, signal);
   const facts = pivotFacts(rows, snapshot);
@@ -141,13 +141,12 @@ export function pivotFacts(rows: ResultTable, snapshot: CubeSnapshot): PivotFact
  */
 export async function levelWithValues(
   snapshot: CubeSnapshot,
-  parsed: Parsed,
   scope: LevelScope | undefined,
   runValues: (query: Lambda) => Promise<ResultTable>,
 ): Promise<Lambda> {
-  if (effectivePivotOn(snapshot).length === 0) return levelLambda(snapshot, parsed, scope);
+  if (effectivePivotOn(snapshot).length === 0) return levelLambda(snapshot, scope);
   const pinned = pinnedPivotFacts(snapshot);
-  const values = pivotValuesLambda(snapshot, parsed);
+  const values = pivotValuesLambda(snapshot);
   const facts = pinned ?? (values === null ? { tuples: [] } : pivotFacts(await runValues(values), snapshot));
-  return levelLambda(snapshot, parsed, scope, facts);
+  return levelLambda(snapshot, scope, facts);
 }

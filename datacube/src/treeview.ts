@@ -14,13 +14,14 @@
 import type { EpochGuard } from './epoch.ts';
 import type { QueryRunner } from './runner.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
-import { childAggregateLambda, levelLambda, type Parsed } from './query.ts';
 import {
+  childAggregateLambda,
+  levelLambda,
   NULL_GROUP,
   detailSnapshot,
   type LevelScope,
   type PivotFacts,
-} from './serialize.ts';
+} from './query.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
 import {
   LEAF_COUNT_COLUMN,
@@ -153,8 +154,6 @@ export async function fetchTree(
      * that its rows answer its query.
      */
     readonly runner: QueryRunner;
-    /** The snapshot's source and calculated columns, parsed (query.ts `parseSnapshot`). */
-    readonly parsed: Parsed;
     readonly guard: EpochGuard;
     readonly epoch: number;
     readonly assemble?: AssembleOptions;
@@ -196,7 +195,7 @@ export async function fetchTree(
       const scoped = detail
         ? { level: target.rows.length, parent: [], limit: maxRows + 1 }
         : { ...request, limit: maxRows + 1 };
-      const query = levelLambda(target, deps.parsed, scoped, deps.pivot);
+      const query = levelLambda(target, scoped, deps.pivot);
       const { rows: full, sql } = await deps.runner.run(
         query, { ...target, epoch: deps.epoch }, scoped, deps.signal,
       );
@@ -250,13 +249,12 @@ export async function withChildAggregates(
   paths: readonly RowPath[],
   deps: {
     readonly runner: QueryRunner;
-    readonly parsed: Parsed;
     readonly snapshot: CubeSnapshot;
     readonly signal?: AbortSignal;
   },
 ): Promise<ResultTable> {
   const scope: LevelScope = { level: request.level, parent: request.parent };
-  const query = childAggregateLambda(snapshot, deps.parsed, scope);
+  const query = childAggregateLambda(snapshot, scope);
   if (query === null || table.rowCount === 0) return table;
   const { rows: found } = await deps.runner.run(query.query, deps.snapshot, scope, deps.signal);
   const level = request.level;

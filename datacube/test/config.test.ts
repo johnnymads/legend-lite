@@ -18,11 +18,14 @@ import {
   type CubeConfiguration,
 } from '../src/config.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
-import { serialize } from '../src/serialize.ts';
+
 import { renameColumnReferences } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { row } from './lite-compiler.ts';
+import { printLevel } from './lite-compiler.ts';
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'year', type: 'Integer' },
@@ -279,7 +282,7 @@ describe('Column Properties > Aggregation reaches the query', () => {
   // to max, the query was byte-identical to the default and still
   // summed (census §2).
   const FLAT: CubeSnapshot = {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'year', type: 'Integer', kind: 'dimension' },
@@ -303,25 +306,25 @@ describe('Column Properties > Aggregation reaches the query', () => {
   });
 
   it('in a grouped cube', () => {
-    const q = serialize(applyToSnapshot(FLAT, withAgg('notional', 'max')));
+    const q = printLevel(applyToSnapshot(FLAT, withAgg('notional', 'max')));
     assert.match(q, /notional:x\|\$x\.notional:y\|\$y->max\(\)/);
   });
 
   it('in a column pivot', () => {
-    const q = serialize(applyToSnapshot({ ...FLAT, rows: [], pivotOn: ['year'] },
+    const q = printLevel(applyToSnapshot({ ...FLAT, rows: [], pivotOn: ['year'] },
       withAgg('notional', 'max')), undefined, { tuples: [['2023']] });
     assert.match(q, /'2023__\|__notional':x\|if\(\$x\.year == 2023, \|\$x\.notional, \|\[\]\):y\|\$y->max\(\)/);
   });
 
   it('a weighted average carries its weight column', () => {
-    const q = serialize(applyToSnapshot(FLAT, withAgg('notional', 'wavg', 'qty')));
+    const q = printLevel(applyToSnapshot(FLAT, withAgg('notional', 'wavg', 'qty')));
     assert.match(q, /notional:x\|\$x\.notional->wavgRowMapper\(\$x\.qty\):y\|\$y->wavg\(\)/);
   });
 
   it('on a calculated column too', () => {
-    const q = serialize(applyToSnapshot({
+    const q = printLevel(applyToSnapshot({
       ...FLAT,
-      derived: [{ name: 'uplift', expression: '$x.notional * 1.1', kind: 'measure' }],
+      derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'), kind: 'measure' }],
     }, withAgg('uplift', 'max')));
     assert.match(q, /uplift:x\|\$x\.uplift:y\|\$y->max\(\)/);
   });
@@ -352,9 +355,9 @@ describe('renaming a calculated column that is in use', () => {
   // left those naming a column that no longer existed, and the planner
   // refused the rename.
   const USING: CubeSnapshot = {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns: [{ name: 'region', type: 'String' }, { name: 'qty', type: 'Integer' }],
-    derived: [{ name: 'big', expression: '$x.qty > 10', kind: 'dimension' }],
+    derived: [{ name: 'big', lambda: row('$x.qty > 10'), kind: 'dimension' }],
     rows: ['big'],
     pivotOn: ['big'],
     measures: [{ name: 'n', column: 'big', fn: 'count' }],
@@ -392,7 +395,7 @@ describe('renaming a calculated column that is in use', () => {
 
 describe('what the count counts', () => {
   const base: CubeSnapshot = {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns: [{ name: 'region', type: 'String' }],
     derived: [],
     rows: ['region'],

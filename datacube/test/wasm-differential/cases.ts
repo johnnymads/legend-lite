@@ -1,18 +1,19 @@
 // The cube shapes DataCube's WASM differential plans, and the model they
-// plan against. Shared by emit.ts (which serialises them, for the JVM's
+// plan against. Shared by emit.ts (which writes them, for the JVM's
 // answers) and compare.ts (which plans them in the module).
 //
-// The grammar is not written by hand anywhere: it comes out of the
-// product's own serialiser, which is the only way to catch a construct
-// DataCube emits that the hand-written corpus (wasm/corpus) never
+// No query is written by hand: each is built by the product's own query
+// builder (src/query.ts), which is the only way to catch a construct
+// DataCube sends that the hand-written corpus (wasm/corpus) never
 // thought to.
 
+import { accessor, col, lambda, lit, times, type Lambda } from '../../../pure-protocol/src/index.ts';
 import {
-  NULL_GROUP, childAggregateQuery, detailSnapshot, pivotValuesQuery, serialize, type PivotFacts,
-} from '../../src/serialize.ts';
+  NULL_GROUP, childAggregateLambda, detailSnapshot, levelLambda, pivotValuesLambda, type PivotFacts,
+} from '../../src/query.ts';
 import { planQueries, type AdHocCube } from '../../src/adhoc/query.ts';
 import { initialGrid, setPov, zoomIn } from '../../src/adhoc/state.ts';
-import type { LevelScope } from '../../src/serialize.ts';
+import type { LevelScope } from '../../src/query.ts';
 import type { CubeSnapshot, WindowSpec } from '../../src/snapshot.ts';
 
 export const MODEL = `###Relational
@@ -59,7 +60,7 @@ const COLUMNS: CubeSnapshot['columns'] = [
 
 function snap(over: Partial<CubeSnapshot>): CubeSnapshot {
   return {
-    source: { expression: '#>{trades::DB.TRADES}#' },
+    source: { query: accessor('trades::DB', 'TRADES') },
     columns: COLUMNS,
     derived: [],
     rows: [],
@@ -92,7 +93,7 @@ const YEAR_QTRS: PivotFacts = {
 };
 
 export const CASES: {
-  name: string; snapshot: CubeSnapshot; scope?: LevelScope; pure?: string; pivot?: PivotFacts;
+  name: string; snapshot: CubeSnapshot; scope?: LevelScope; query?: Lambda; pivot?: PivotFacts;
 }[] = [
   { name: 'flat', snapshot: snap({}) },
   { name: 'measures-only', snapshot: snap({ measures: SUM_NOTIONAL }) },
@@ -218,7 +219,7 @@ export const CASES: {
     name: 'derived',
     snapshot: snap({
       rows: ['region'],
-      derived: [{ name: 'double_qty', expression: '$x.qty * 2' }],
+      derived: [{ name: 'double_qty', lambda: lambda(['x'], times(col('x', 'qty'), lit.integer(2))) }],
       measures: SUM_NOTIONAL,
     }),
   },
@@ -299,8 +300,8 @@ const AD_HOC: AdHocCube = {
 // total, and under a pivot.
 {
   const row = (name: string, window: WindowSpec, kind: 'measure' | 'dimension' = 'measure') =>
-    ({ name, expression: '', kind, window });
-  const grp = (name: string, window: WindowSpec) => ({ name, expression: '', window });
+    ({ name, kind, window });
+  const grp = (name: string, window: WindowSpec) => ({ name, window });
   // Every order-sensitive window (a running or moving frame, lag, last, ntile) orders by
   // enough keys to be TOTAL: rows are unique on (book, year, qtr) in any data this corpus
   // runs over (the mode differential's included), so no answer depends on how an engine
@@ -360,17 +361,17 @@ for (const measures of [SUM_NOTIONAL, []]) {
     rows: ['region', 'desk', 'book'],
     measures,
     groupDerived: [
-      { name: 'weakest', expression: '', childAggregate: { fn: 'min', of: 'notional' } },
-      { name: 'children', expression: '', childAggregate: { fn: 'count', of: 'notional' } },
-      { name: 'typical', expression: '', childAggregate: { fn: 'median', of: 'notional' } },
+      { name: 'weakest', childAggregate: { fn: 'min', of: 'notional' } },
+      { name: 'children', childAggregate: { fn: 'count', of: 'notional' } },
+      { name: 'typical', childAggregate: { fn: 'median', of: 'notional' } },
     ],
   });
   for (const level of [0, 1, 2, 3]) {
     const scope = { level, parent: ['EMEA', 'Rates'].slice(0, Math.max(0, level - 1)) };
-    const q = childAggregateQuery(cube, scope);
+    const q = childAggregateLambda(cube, scope);
     if (!q) throw new Error(`no child query at level ${level}`);
     CASES.push({ name: `children-${measures.length ? 'measure' : 'nomeasure'}-level-${level}`,
-      snapshot: cube, scope, pure: q.pure });
+      snapshot: cube, scope, query: q.query });
     // And the level's own query, which must not carry the column.
     CASES.push({ name: `children-main-${measures.length ? 'measure' : 'nomeasure'}-level-${level}`,
       snapshot: cube, scope });
@@ -390,11 +391,11 @@ function detailCase(
 // Every pivot's FIRST step, its values query, is a case of its own: both
 // of a pivot's queries are planned on both sides.
 for (const c of [...CASES]) {
-  const values = c.pivot ? pivotValuesQuery(c.snapshot) : null;
-  if (values !== null) CASES.push({ name: `${c.name}-values`, snapshot: c.snapshot, pure: values });
+  const values = c.pivot ? pivotValuesLambda(c.snapshot) : null;
+  if (values !== null) CASES.push({ name: `${c.name}-values`, snapshot: c.snapshot, query: values });
 }
 
-/** Each case's Pure, as DataCube emits it. */
-export function grammars(): { name: string; grammar: string }[] {
-  return CASES.map((c) => ({ name: c.name, grammar: c.pure ?? serialize(c.snapshot, c.scope, c.pivot) }));
+/** Each case's query, as DataCube builds it. */
+export function queries(): { name: string; query: Lambda }[] {
+  return CASES.map((c) => ({ name: c.name, query: c.query ?? levelLambda(c.snapshot, c.scope, c.pivot) }));
 }

@@ -5,8 +5,6 @@
 // WASM planner), exercised by the WASM tests.
 
 import { findAll, isFunction, lambda, lit, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
-import { parseSnapshot, type Parsed } from '../src/query.ts';
-import type { CubeSnapshot } from '../src/snapshot.ts';
 
 /** A stand-in for the compiler's parse: `x|expr` as a lambda of `x` whose body holds `expr`. */
 export async function fakeParse(text: string): Promise<Lambda> {
@@ -27,9 +25,9 @@ export function limitsOf(query: Lambda): unknown[] {
     .map((f) => (f.parameters[1] as { readonly value?: unknown } | undefined)?.value);
 }
 
-/** A snapshot's text through the stand-in parse, for a test that builds a cube's queries itself. */
-export function fakeParsed(snapshot: CubeSnapshot): Promise<Parsed> {
-  return parseSnapshot(snapshot, fakeParse);
+/** A calculated column's stand-in lambda, for a test that never plans or prints it: `x|` holding the body. */
+export function stand(body: string): Lambda {
+  return lambda(['x'], lit.string(body));
 }
 
 /** A query for a test that needs one and never looks inside it. */

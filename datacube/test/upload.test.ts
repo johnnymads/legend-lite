@@ -13,6 +13,9 @@ import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { sampleById, sampleFileName } from '../src/samples.ts';
 import { ingestFile, type DuckDbFiles } from '../src/upload.ts';
 import { build, plannerFor } from './catalog-builder.ts';
+import {
+  asc, col as column, derive, fn, from, lambda, lit, to, type, type ValueSpecification,
+} from '../../pure-protocol/src/index.ts';
 
 let engine: DuckDbEngine;
 let files: DuckDbFiles;
@@ -95,10 +98,16 @@ describe('ingestFile with JSON', () => {
 
       // ... and the planner's own SQL reads it as a Variant: an index, a key, a whole value.
       const planner = plannerFor(r.model, r.runtime);
-      const plan = await planner.plan(await planner.parse(`|${r.source}`
-        + `->extend(~[first_sku: x | $x.items->get(0)->get('sku')->to(@String),`
-        + ` city: x | $x.shipping->get('city')->to(@String)])`
-        + `->select(~[id, first_sku, city, shipping])->sort([~id->ascending()])`));
+      const get = (v: ValueSpecification, key: string | number): ValueSpecification =>
+        fn('get', v, typeof key === 'number' ? lit.integer(key) : lit.string(key));
+      const plan = await planner.plan(from(r.source)
+        .extend([
+          derive('first_sku', lambda(['x'], to(get(get(column('x', 'items'), 0), 'sku'), type('String')))),
+          derive('city', lambda(['x'], to(get(column('x', 'shipping'), 'city'), type('String')))),
+        ])
+        .select(['id', 'first_sku', 'city', 'shipping'])
+        .sort([asc('id')])
+        .lambda());
       const out = await engine.execute(plan, 0);
       const col = (n: string) => out.columns.find((c) => c.name === n)!;
       assert.deepEqual(col('first_sku').values, ['ABC', 'DEF']);

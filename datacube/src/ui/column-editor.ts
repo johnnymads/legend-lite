@@ -17,7 +17,6 @@
 // column's level, inserted at the caret.
 
 import {
-  columnRef,
   columnsInScope,
   completionsFor,
   nameProblem,
@@ -27,7 +26,8 @@ import {
 import type { Extraction } from '../json-shape.ts';
 import { buildJsonFields, freeName } from './json-fields.ts';
 import type { CompileOutcome } from '../cube.ts';
-import type { PivotColumn } from '../serialize.ts';
+import type { Lambda } from '../../../pure-protocol/src/index.ts';
+import type { PivotColumn } from '../query.ts';
 import { docHint } from './docs.ts';
 import {
   WINDOW_FUNCTIONS,
@@ -65,6 +65,10 @@ export interface ColumnEditorOptions {
   /** The pivot's columns as the current view's plan made them. */
   readonly pivotColumns?: () => readonly PivotColumn[];
   readonly start: ColumnEditorStart;
+  /** What the person typed, `x|...`, as its lambda: the compiler's parse (E1). */
+  readonly parse: (text: string) => Promise<Lambda>;
+  /** A column's lambda as text to edit: the compiler's print (E4). */
+  readonly print: (query: Lambda) => Promise<string>;
   /** Compile without running; undefined where the plane cannot. */
   readonly compile: (
     candidate: CubeSnapshot,
@@ -95,6 +99,7 @@ interface Draft {
    * (group level) an aggregate of the child groups' figures.
    */
   mode: 'expression' | 'window' | 'children';
+  /** The whole lambda as the person edits it, `x|$x.a * 2` (upstream's editor shows the same). */
   expression: string;
   window: WindowSpec;
   child: ChildAggregate;
@@ -123,7 +128,7 @@ export class ColumnEditor {
   readonly #options: ColumnEditorOptions;
   /** The column's name when editing began; absent when adding. */
   readonly #original: string | undefined;
-  readonly #initial: Draft;
+  #initial: Draft;
   #draft: Draft;
   #check: Check = { state: 'idle' };
   /** A refusal from the cube on OK or Delete, shown until the next edit. */
@@ -148,10 +153,12 @@ export class ColumnEditor {
     this.#doc = container.ownerDocument;
     this.#options = options;
     const start = options.start;
+    let printing: Lambda | undefined;
     if ('edit' in start) {
       const found = findColumn(options.snapshot(), start.edit);
       this.#original = start.edit;
-      this.#initial = found ?? {
+      printing = found?.lambda;
+      this.#initial = found?.draft ?? {
         name: start.edit, level: 'measure', mode: 'expression', expression: '',
         window: NEW_WINDOW, child: NEW_CHILD,
       };
@@ -162,13 +169,30 @@ export class ColumnEditor {
         // MEASURE by default, as upstream (DataCubeNewColumnState).
         level: start.level ?? 'measure',
         mode: 'expression',
-        expression: start.expression ?? '',
+        expression: start.expression ?? 'x|',
         window: NEW_WINDOW,
         child: NEW_CHILD,
       };
     }
     this.#autoName = !('edit' in start);
     this.#draft = { ...this.#initial, window: { ...this.#initial.window }, child: { ...this.#initial.child } };
+    this.#render();
+    if (printing) void this.#open(printing);
+    else this.#schedule(0);
+  }
+
+  /** An existing column's lambda, printed by the compiler for the person to edit. */
+  async #open(lambda: Lambda): Promise<void> {
+    let text: string;
+    try {
+      text = await this.#options.print(lambda);
+    } catch (error: unknown) {
+      this.#refusal = error instanceof Error ? error.message : String(error);
+      this.#paint();
+      return;
+    }
+    this.#initial = { ...this.#initial, expression: text };
+    this.#draft.expression = text;
     this.#render();
     this.#schedule(0);
   }
@@ -196,8 +220,21 @@ export class ColumnEditor {
     return this.#draft.level === 'group' ? 'group' : 'row';
   }
 
-  /** The cube's two lists with this draft in place of the original. */
-  #lists(): { row: DerivedColumn[]; group: DerivedColumn[] } {
+  /**
+   * The draft's lambda, as the compiler parses what the person typed; a
+   * refusal is the parser's message (a position it names is in `text`).
+   */
+  async #parsed(): Promise<{ readonly lambda?: Lambda } | { readonly refusal: string }> {
+    if (this.#draft.mode !== 'expression') return {};
+    try {
+      return { lambda: await this.#options.parse(this.#draft.expression.trim()) };
+    } catch (error: unknown) {
+      return { refusal: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** The cube's two lists with this draft (its lambda parsed) in place of the original. */
+  #lists(lambda?: Lambda): { row: DerivedColumn[]; group: DerivedColumn[] } {
     const s = this.#options.snapshot();
     const without = (list: readonly DerivedColumn[]): DerivedColumn[] =>
       list.filter((d) => d.name !== this.#original);
@@ -206,7 +243,7 @@ export class ColumnEditor {
     const d = this.#draft;
     const next: DerivedColumn = {
       name: d.name.trim(),
-      expression: d.mode === 'expression' ? d.expression.trim() : '',
+      ...(d.mode === 'expression' && lambda ? { lambda } : {}),
       ...(d.mode === 'window' ? { window: this.#window() } : {}),
       ...(d.mode === 'children' ? { childAggregate: { ...d.child } } : {}),
       // A group-level column is already past the aggregation, so it has
@@ -230,8 +267,8 @@ export class ColumnEditor {
       : undefined;
   }
 
-  #candidate(): CubeSnapshot {
-    const { row, group } = this.#lists();
+  #candidate(lambda?: Lambda): CubeSnapshot {
+    const { row, group } = this.#lists(lambda);
     const next: CubeSnapshot = { ...this.#options.snapshot(), derived: row, groupDerived: group };
     const rename = this.#rename();
     return rename ? renameColumnReferences(next, rename.from, rename.to) : next;
@@ -240,10 +277,8 @@ export class ColumnEditor {
   /** What the calculation still lacks, or null when it is complete. */
   #bodyProblem(): string | null {
     const d = this.#draft;
-    if (d.mode === 'expression') {
-      return d.expression.trim().length === 0
-        ? 'An expression is required — e.g. $x.notional * 1.05' : null;
-    }
+    // An expression is judged by the compiler: its parse refusal names what is missing.
+    if (d.mode === 'expression') return null;
     if (d.mode === 'children') {
       const s = this.#options.snapshot();
       if (d.level !== 'group') return 'Child groups are a Group Level calculation';
@@ -306,10 +341,19 @@ export class ColumnEditor {
   async #compile(): Promise<void> {
     const abort = new AbortController();
     this.#inflight = abort;
-    const expression = this.#draft.expression.trim();
+    const text = this.#draft.expression.trim();
+    const parsed = await this.#parsed();
+    if (abort.signal.aborted || this.#inflight !== abort) return;
+    if ('refusal' in parsed) {
+      this.#inflight = null;
+      const caret = caretFor(text, parsed.refusal);
+      this.#check = { state: 'refused', message: parsed.refusal, ...(caret === undefined ? {} : { caret }) };
+      this.#paint();
+      return;
+    }
     let outcome: CompileOutcome | undefined;
     try {
-      outcome = await this.#options.compile(this.#candidate(), abort.signal);
+      outcome = await this.#options.compile(this.#candidate(parsed.lambda), abort.signal);
     } catch {
       return; // aborted: a newer compile owns the form
     }
@@ -320,12 +364,7 @@ export class ColumnEditor {
     } else if (outcome.refusal === null) {
       this.#check = { state: 'ok' };
     } else {
-      const caret = caretFor(outcome.parsing, outcome.refusal, expression);
-      this.#check = {
-        state: 'refused',
-        message: outcome.refusal,
-        ...(caret === undefined ? {} : { caret }),
-      };
+      this.#check = { state: 'refused', message: outcome.refusal };
     }
     this.#paint();
   }
@@ -337,8 +376,13 @@ export class ColumnEditor {
     this.#busy = true;
     this.#paint();
     try {
-      const { row, group } = this.#lists();
-      this.#refusal = await this.#options.apply(row, group, this.#rename());
+      const parsed = await this.#parsed();
+      if ('refusal' in parsed) {
+        this.#refusal = parsed.refusal;
+      } else {
+        const { row, group } = this.#lists(parsed.lambda);
+        this.#refusal = await this.#options.apply(row, group, this.#rename());
+      }
     } finally {
       this.#busy = false;
     }
@@ -474,10 +518,13 @@ export class ColumnEditor {
       }
       this.#draft.level = e.kind;
       level.value = e.kind;
-      this.#draft.expression = e.expression;
-      expr.value = e.expression;
-      this.#paintPicker(picker, expr);
-      this.#edited();
+      // the extraction is a tree; the person edits the compiler's print of it
+      void this.#options.print(e.lambda).then((text) => {
+        this.#draft.expression = text;
+        expr.value = text;
+        this.#paintPicker(picker, expr);
+        this.#edited();
+      });
     });
 
     const exprRow = el(doc, 'label', 'dc-coleditor-code', exprBox);
@@ -486,7 +533,7 @@ export class ColumnEditor {
     expr.rows = 4;
     expr.spellcheck = false;
     expr.setAttribute('aria-label', 'Expression');
-    expr.placeholder = '$x.notional * 1.05';
+    expr.placeholder = 'x|$x.notional * 1.05';
     expr.addEventListener('input', () => {
       this.#draft.expression = expr.value;
       this.#edited();
@@ -590,7 +637,7 @@ export class ColumnEditor {
       const column = pick.value;
       if (!column) return;
       buildJsonFields(fields, {
-        column, columnRef: columnRef(column), sample: () => sample(column), onPick,
+        column, sample: () => sample(column), onPick,
       });
     };
     pick.addEventListener('change', show);
@@ -877,61 +924,62 @@ function freshName(s: CubeSnapshot): string {
   return `col_${n}`;
 }
 
-/** An existing calculated column as a draft, or undefined if it has gone. */
-function findColumn(s: CubeSnapshot, name: string): Draft | undefined {
+/**
+ * An existing calculated column as a draft, and its lambda to print into it
+ * (the draft's text waits for the compiler's print), or undefined if it has gone.
+ */
+function findColumn(s: CubeSnapshot, name: string): { readonly draft: Draft; readonly lambda?: Lambda } | undefined {
   const row = s.derived.find((d) => d.name === name);
   if (row) {
     return {
-      name,
-      // A column saved before kinds were declared behaves as its type.
-      level: row.kind ?? defaultKind(row.type),
-      mode: row.window ? 'window' : 'expression',
-      expression: row.expression,
-      window: row.window ?? NEW_WINDOW,
-      child: NEW_CHILD,
+      draft: {
+        name,
+        // A column saved before kinds were declared behaves as its type.
+        level: row.kind ?? defaultKind(row.type),
+        mode: row.window ? 'window' : 'expression',
+        expression: '',
+        window: row.window ?? NEW_WINDOW,
+        child: NEW_CHILD,
+      },
+      ...(row.lambda ? { lambda: row.lambda } : {}),
     };
   }
   const group = (s.groupDerived ?? []).find((d) => d.name === name);
   return group
     ? {
-      name, level: 'group',
-      mode: group.childAggregate ? 'children' : group.window ? 'window' : 'expression',
-      expression: group.expression, window: group.window ?? NEW_WINDOW,
-      child: group.childAggregate ?? NEW_CHILD,
+      draft: {
+        name, level: 'group',
+        mode: group.childAggregate ? 'children' : group.window ? 'window' : 'expression',
+        expression: '', window: group.window ?? NEW_WINDOW,
+        child: group.childAggregate ?? NEW_CHILD,
+      },
+      ...(group.lambda ? { lambda: group.lambda } : {}),
     }
     : undefined;
 }
 
 /**
- * Where the refusal points INSIDE the expression, as the line with a
- * caret under it -- when the refused text is this expression's parse
- * (`x|<expression>`, query.ts `parseSnapshot`) and the parser named a
- * `[line:col]` in it. The position is in the parsed text, whose head is
- * known, so the offset is found, never guessed.
+ * Where a parse refusal points in what the person typed, as the line with a
+ * caret under it -- when the parser named a `[line:col]` inside the text.
  */
-export function caretFor(
-  parsing: string | undefined,
-  refusal: string,
-  expression: string,
-): string | undefined {
+export function caretFor(text: string, refusal: string): string | undefined {
   const at = /\[(\d+):(\d+)\]/.exec(refusal);
-  const head = 'x|';
-  if (!at || parsing !== `${head}${expression}`) return undefined;
-  const rel = offsetOf(parsing, Number(at[1]), Number(at[2])) - head.length;
-  if (rel < 0 || rel > expression.length) return undefined;
-  const lineStart = expression.lastIndexOf('\n', rel - 1) + 1;
-  const lineEnd = expression.indexOf('\n', rel);
-  const line = expression.slice(lineStart, lineEnd < 0 ? undefined : lineEnd);
-  return `${line}\n${' '.repeat(rel - lineStart)}^`;
+  if (!at) return undefined;
+  const offset = offsetOf(text, Number(at[1]), Number(at[2]));
+  if (offset === undefined || offset > text.length) return undefined;
+  const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+  const lineEnd = text.indexOf('\n', offset);
+  const line = text.slice(lineStart, lineEnd < 0 ? undefined : lineEnd);
+  return `${line}\n${' '.repeat(offset - lineStart)}^`;
 }
 
-/** A 1-based `[line:col]` as a character offset. */
-function offsetOf(text: string, line: number, col: number): number {
+/** A 1-based `[line:col]` as a character offset; undefined when the text has no such line. */
+function offsetOf(text: string, line: number, col: number): number | undefined {
   let offset = 0;
   for (let l = 1; l < line; l += 1) {
     const nl = text.indexOf('\n', offset);
-    if (nl < 0) return text.length;
+    if (nl < 0) return undefined;
     offset = nl + 1;
   }
-  return offset + col - 1;
+  return col < 1 ? undefined : offset + col - 1;
 }

@@ -7,14 +7,13 @@
 // upstream's `lambdaRelationType` on this plane -- the tab's planner module, a
 // legend-lite or legend-engine server.
 
-import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { lambda, type Lambda, type ValueSpecification } from '../../pure-protocol/src/index.ts';
 import type { PlanColumn } from './relation-type.ts';
 import type { ColumnKind, ColumnSpec } from './snapshot.ts';
 
-/** Anything that answers `lambdaRelationType` and parses: every planner, runner and executor. */
+/** Anything that answers `lambdaRelationType`: every planner, runner and executor. */
 export interface RelationTyper {
   relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]>;
-  parse(text: string, signal?: AbortSignal): Promise<Lambda>;
 }
 
 /** What a host may say about a column: its kind. Never its type. */
@@ -30,12 +29,11 @@ export interface DeclaredColumn {
  */
 export async function sourceColumns(
   typer: RelationTyper,
-  source: string,
+  source: ValueSpecification,
   declared: readonly DeclaredColumn[] = [],
   signal?: AbortSignal,
 ): Promise<ColumnSpec[]> {
-  // the source is a person's text until T4b step 3 (the snapshot then holds its tree)
-  const typed = await typer.relationType(await typer.parse(`|${source}`, signal), signal);
+  const typed = await typer.relationType(lambda([], source), signal);
   const names = new Set(typed.map((c) => c.name));
   const missing = declared.filter((d) => !names.has(d.name)).map((d) => d.name);
   if (missing.length > 0) {

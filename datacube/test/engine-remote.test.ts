@@ -9,9 +9,10 @@ import {
 import { pureType } from '../src/relation-type.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { element, fn, fromElement, lambda, toJson } from '../../pure-protocol/src/index.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: '#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#' },
+  source: { query: accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },

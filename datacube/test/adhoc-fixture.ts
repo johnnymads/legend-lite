@@ -6,6 +6,7 @@ import { buildCube } from '../src/adhoc/outline.ts';
 import { AdHocSession, type Run } from '../src/adhoc/session.ts';
 import type { ResultTable, Scalar } from '../src/result.ts';
 import type { CubeSnapshot, FilterNode } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
 
 type Row = Record<string, string | number | null>;
 export const DATA: Row[] = [
@@ -16,7 +17,7 @@ export const DATA: Row[] = [
 ];
 
 export const SNAPSHOT: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'year', type: 'String', kind: 'dimension' },
     { name: 'quarter', type: 'String', kind: 'dimension' },

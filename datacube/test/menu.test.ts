@@ -9,9 +9,10 @@ import {
   type MenuActionId,
 } from '../src/ui/menu.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { element } from '../../pure-protocol/src/index.ts';
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'desk', type: 'String' },

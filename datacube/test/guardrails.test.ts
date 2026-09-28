@@ -96,6 +96,55 @@ describe('types come from the compiler (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27
   });
 });
 
+describe('queries are protocol, never Pure text (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T4b)', () => {
+  // Every query is a tree built with pure-protocol's Relation API (src/query.ts); Pure
+  // text exists only where a PERSON reads or writes it, and the compiler owns both edges
+  // (it parses what was typed and prints for display). A string holding Pure syntax is
+  // how a TypeScript copy of the grammar's rules grows back -- the operator precedence
+  // and the literal spelling that drifted once already.
+  const PURE_SYNTAX = /(['"`])(?:(?!\1).)*(->|~\[|#>\{)/;
+  /**
+   * The text a person edits, and what it may say: the calculated-column editor's typing
+   * help (its examples and completions are inserted into what the person types) and one
+   * refusal that suggests an expression to type.
+   */
+  const FOR_A_PERSON = new Map([
+    [join('src', 'calc.ts'), 'the column editor\'s examples and completions'],
+    [join('src', 'query.ts'), 'a refusal suggesting what to type'],
+  ]);
+
+  it('builds no Pure text outside what a person types', () => {
+    const hits: string[] = [];
+    for (const f of FILES.filter((x) => !x.includes('generated'))) {
+      readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+        if (isComment(line) || !PURE_SYNTAX.test(line)) return;
+        const allowed = FOR_A_PERSON.get(f);
+        if (allowed === undefined) hits.push(`${f}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    assert.deepEqual(hits, [], `build the query as a tree (src/query.ts):\n${hits.join('\n')}`);
+  });
+
+  it('keeps the exceptions to what they are for', () => {
+    const count = (f: string): number => readFileSync(f, 'utf8').split('\n')
+      .filter((line) => !isComment(line) && PURE_SYNTAX.test(line)).length;
+    // pinned, so a query built as text cannot hide in an allowed file
+    assert.equal(count(join('src', 'query.ts')), 1, 'query.ts: only the unpivotable refusal');
+    assert.ok(count(join('src', 'calc.ts')) > 0, 'calc.ts: the editor help still exists');
+  });
+
+  it('calls no TDS function: the Relation API only (the user, 2026-09-27)', () => {
+    const TDS = /\bfn\(\s*'(project|restrict|olapGroupBy|renameColumns|groupByWithWindowSubset|tdsRows|extendWithWindow)'/;
+    const hits: string[] = [];
+    for (const f of FILES) {
+      readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+        if (!isComment(line) && TDS.test(line)) hits.push(`${f}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    assert.deepEqual(hits, [], hits.join('\n'));
+  });
+});
+
 describe('there is exactly one planner, and no way to fall back to another', () => {
   // A shim planner cost three real bugs: snap building SQL by hand,
   // the snapped plane never redirecting, and the SQL panel showing

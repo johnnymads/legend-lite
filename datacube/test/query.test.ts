@@ -8,35 +8,45 @@ import type {
 import { totalOrderSorts } from '../src/snapshot.ts';
 import {
   NULL_GROUP,
-  filterExpression,
-  ident,
   detailSnapshot,
-  literal,
   effectivePivotOn,
+  literalNode,
   pinnedPivotFacts,
   pivotTotalColumn,
-  pivotValuesQuery,
-  serialize as serializeWith,
   type LevelScope,
   type PivotFacts,
-} from '../src/serialize.ts';
+  type TypeOf,
+} from '../src/query.ts';
+import { accessor, col, element, lambda, variable } from '../../pure-protocol/src/index.ts';
+import type { FilterNode } from '../src/snapshot.ts';
+import { print, printFilter, printLevel, printValues, row } from './lite-compiler.ts';
+
+// The cube's queries are trees (src/query.ts); these tests read them as the COMPILER prints
+// them (lite's printer, STANDARD: one line), the text a person would see.
+
+/** A filter's condition as the compiler prints it, as the lambda `x|<condition>`. */
+function filterText(node: FilterNode, _param = 'x', typeOf?: TypeOf): string {
+  return printFilter(node, typeOf);
+}
+
+
 
 /** Step 1's answer for a cube pivoted on year: two years. */
 const YEARS: PivotFacts = { tuples: [['2023'], ['2024']] };
 
 /**
- * `serialize`, with the default cube's pivot values when a test about
- * something else does not give its own (the default cube pivots on
- * year). The one test of the refusal calls `serializeWith` itself.
+ * A level's query, printed, with the default cube's pivot values when a test
+ * about something else does not give its own (the default cube pivots on
+ * year). The one test of the refusal calls `printLevel` itself.
  */
-function serialize(s: CubeSnapshot, scope?: LevelScope, facts?: PivotFacts): string {
-  return serializeWith(s, scope, facts ?? (effectivePivotOn(s).length > 0 ? YEARS : undefined));
+function level(s: CubeSnapshot, scope?: LevelScope, facts?: PivotFacts): string {
+  return printLevel(s, scope, facts ?? (effectivePivotOn(s).length > 0 ? YEARS : undefined));
 }
 
 /** A minimal trades cube, overridable per test. */
 function snap(over: Partial<CubeSnapshot> = {}): CubeSnapshot {
   return {
-    source: { expression: '$trades' },
+    source: { query: variable('trades') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'country', type: 'String' },
@@ -54,14 +64,14 @@ function snap(over: Partial<CubeSnapshot> = {}): CubeSnapshot {
   };
 }
 
-describe('serialize', () => {
+describe('a level query', () => {
   it('writes a pivot as ONE groupBy, a conditional aggregate per value', () => {
     // Each cell is its measure over exactly the rows of its value, and
     // the other columns are carried on their own aggregate in the same
     // groupBy (docs/DATACUBE_CUBE_PLAN_DESIGN_2026_09_27.md).
     assert.equal(
-      serialize(snap(), undefined, YEARS),
-      '$trades->select(~[region, country, year, notional, qty])' +
+      level(snap(), undefined, YEARS),
+      '|$trades->select(~[region, country, year, notional, qty])' +
         "->groupBy(~[region, country], ~['2023__|__total':x|if($x.year == 2023, |$x.notional, |[]):y|$y->sum()," +
         " '2024__|__total':x|if($x.year == 2024, |$x.notional, |[]):y|$y->sum()," +
         ' qty:x|$x.qty:y|$y->sum()])' +
@@ -70,21 +80,21 @@ describe('serialize', () => {
   });
 
   it('asks for the values first, over the filter but not the group keys', () => {
-    const q = pivotValuesQuery(snap({
+    const q = printValues(snap({
       filter: { kind: 'condition', column: 'region', operator: 'equal', value: 'EMEA' },
       pivotSort: { year: 'desc' },
     }));
-    assert.equal(q, "$trades->filter(x|$x.region == 'EMEA')->select(~[year])->distinct()"
+    assert.equal(q, "|$trades->filter(x|$x.region == 'EMEA')->select(~[year])->distinct()"
       + '->sort([~year->descending()])->limit(501)');
-    assert.equal(pivotValuesQuery(snap({ pivotOn: [] })), null);
+    assert.equal(printValues(snap({ pivotOn: [] })), null);
   });
 
   it('refuses to be written without its values', () => {
-    assert.throws(() => serializeWith(snap()), /pivot values/);
+    assert.throws(() => printLevel(snap()), /pivot values/);
   });
 
   it('a NULL value has its own column, pinned by isEmpty', () => {
-    const s = serialize(snap(), { level: 1, parent: [] }, { tuples: [['2023'], [NULL_GROUP]] });
+    const s = level(snap(), { level: 1, parent: [] }, { tuples: [['2023'], [NULL_GROUP]] });
     assert.match(s, /'\(empty\)__\|__total':x\|if\(\$x\.year->isEmpty\(\), \|\$x\.notional, \|\[\]\)/);
   });
 
@@ -96,8 +106,8 @@ describe('serialize', () => {
     // SELECTED column that is not a group key (`_groupByAggCols`),
     // measures by their function and the rest by `uniq`.
     assert.equal(
-      serialize(snap({ pivotOn: [] })),
-      '$trades->select(~[region, country, year, notional, qty])' +
+      level(snap({ pivotOn: [] })),
+      '|$trades->select(~[region, country, year, notional, qty])' +
         '->groupBy(~[region, country], ~[year:x|$x.year:y|$y->sum(),' +
         ' total:x|$x.notional:y|$y->sum(), qty:x|$x.qty:y|$y->sum()])' +
         '->sort([~region->ascending(), ~country->ascending()])',
@@ -109,13 +119,13 @@ describe('serialize', () => {
     // carries a figure reads as "there is no total for this" rather
     // than as a projection that dropped it. The root query is a
     // groupBy with no keys, so it took the narrow path of its own.
-    const total = serialize(snap({ rows: [], pivotOn: [] }));
+    const total = level(snap({ rows: [], pivotOn: [] }));
     // ONE GROUP, SAID AS A GROUP. `groupBy(~[], ~[...])` is the
     // obvious spelling and it crashes the real engine with a
     // NullPointerException out of the plan builder; upstream never
     // writes it either, extending a constant column and grouping by
     // that instead (`_extendRootAggregation`, value `[ROOT]`).
-    assert.match(total, /extend\(~\[__root__: x\|'\[ROOT\]'\]\)/);
+    assert.match(total, /extend\(~\[__root__:x\|'\[ROOT\]'\]\)/);
     assert.match(total, /groupBy\(~\[__root__\]/);
     assert.equal(/groupBy\(~\[\]/.test(total), false);
     assert.match(total, /qty:x\|\$x\.qty:y\|\$y->sum\(\)/, total);
@@ -128,7 +138,7 @@ describe('serialize', () => {
     // the kind of wrong that reads as a bug in the data -- so an
     // explicit kind beats the type the column is carried in, and the
     // column inference marks a key-like numeric a dimension.
-    const pure = serialize(snap({
+    const pure = level(snap({
       pivotOn: [],
       columns: [
         { name: 'region', type: 'String' },
@@ -153,7 +163,7 @@ describe('serialize', () => {
     // MEASURE columns and `_fixEmptyAggCols` substitutes a filler
     // count if there are none. The same cube already grouped happily,
     // because the groupBy path has always synthesised its aggregates.
-    const s = serialize(snap({ measures: [] }), undefined, YEARS);
+    const s = level(snap({ measures: [] }), undefined, YEARS);
     // `notional` is a Float, so it is a measure and it sums.
     assert.match(s, /'2023__\|__notional':x\|if\(\$x\.year == 2023, \|\$x\.notional, \|\[\]\):y\|\$y->sum\(\)/);
     // And the DIMENSIONS are not spread: upstream excludes them from a
@@ -173,8 +183,8 @@ describe('serialize', () => {
     // correctly and the three row groups dissolved into a thousand
     // detail rows, while the row zone still listed region, desk and
     // book. The snapshot was right; the projection threw them away.
-    const s = serialize({
-      source: { expression: 't' },
+    const s = level({
+      source: { query: element('t') },
       columns: [
         { name: 'region', type: 'String' },
         { name: 'desk', type: 'String' },
@@ -205,7 +215,7 @@ describe('serialize', () => {
     // It was pivot -> cast -> groupBy, which re-aggregated the pivot's
     // finer partial results: an average of averages (P2-4).
     const CUBE = {
-      source: { expression: 't' },
+      source: { query: element('t') },
       columns: [
         { name: 'region', type: 'String' },
         { name: 'desk', type: 'String' },
@@ -225,19 +235,19 @@ describe('serialize', () => {
     const VALUES: PivotFacts = { tuples: [['2021'], ['2022']] };
 
     it('has no pivot, no cast and no second stage', () => {
-      const out = serialize(CUBE, { level: 1, parent: [] }, VALUES);
+      const out = level(CUBE, { level: 1, parent: [] }, VALUES);
       assert.equal(/pivot\(|cast\(/.test(out), false, out);
       assert.equal(out.split('groupBy(').length, 2, 'exactly one groupBy');
     });
 
     it('an AVERAGE cell is the average of its value\'s rows, not of partial averages', () => {
-      const out = serialize({ ...CUBE, measures: [{ name: 'avg_n', column: 'notional', fn: 'average' }] },
+      const out = level({ ...CUBE, measures: [{ name: 'avg_n', column: 'notional', fn: 'average' }] },
         { level: 1, parent: [] }, VALUES);
       assert.match(out, /'2021__\|__avg_n':x\|if\(\$x\.year == 2021, \|\$x\.notional, \|\[\]\):y\|\$y->average\(\)/);
     });
 
     it('carries every other column on its own aggregate', () => {
-      const out = serialize(CUBE, { level: 1, parent: [] }, VALUES);
+      const out = level(CUBE, { level: 1, parent: [] }, VALUES);
       assert.match(out, /trade_id:x\|\$x\.trade_id:y\|\$y->uniqueValueOnly/);
       assert.match(out, /quarter:x\|\$x\.quarter:y\|\$y->uniqueValueOnly/);
       // A dimension is carried, never spread: "not helpful", upstream.
@@ -245,28 +255,28 @@ describe('serialize', () => {
     });
 
     it('groups by the LEVEL, not by every row dimension', () => {
-      const out = serialize(CUBE, { level: 2, parent: ['AMER'] }, VALUES);
+      const out = level(CUBE, { level: 2, parent: ['AMER'] }, VALUES);
       assert.match(out, /->groupBy\(~\[region, desk\]/);
       assert.match(out, /filter\(x\|\$x\.region == 'AMER'\)/);
     });
 
     it('a weighted average wraps both halves of its pair', () => {
-      const out = serialize({ ...CUBE,
+      const out = level({ ...CUBE,
         measures: [{ name: 'w', column: 'notional', fn: 'wavg', weight: 'pnl' }] },
       { level: 1, parent: [] }, VALUES);
       assert.match(out, /if\(\$x\.year == 2021, \|\$x\.notional, \|\[\]\)->wavgRowMapper\(if\(\$x\.year == 2021, \|\$x\.pnl, \|\[\]\)\)/);
     });
 
     it('the Total is a column of the same query, on the configured aggregate', () => {
-      const out = serialize({ ...CUBE,
+      const out = level({ ...CUBE,
         measures: [{ name: 'avg_n', column: 'notional', fn: 'average' }],
         pivotTotal: { placement: 'right', functions: { notional: 'max' } } },
       { level: 1, parent: [] }, VALUES);
-      assert.ok(out.includes(`${ident(pivotTotalColumn('avg_n'))}:x|$x.notional:y|$y->max()`), out);
+      assert.ok(out.includes(`'${pivotTotalColumn('avg_n')}':x|$x.notional:y|$y->max()`), out);
     });
 
     it('drops a sort on a pivot column the values no longer make', () => {
-      const out = serialize({ ...CUBE,
+      const out = level({ ...CUBE,
         sorts: [{ column: '2019__|__notional', direction: 'desc' },
           { column: '2021__|__notional', direction: 'asc' }] },
       { level: 1, parent: [] }, VALUES);
@@ -280,7 +290,7 @@ describe('serialize', () => {
     // of nothing but dimensions still produces a query rather than
     // `pivot(~[year], ~[])`, which the compiler rejects far from the
     // cause.
-    const s = serialize(snap({
+    const s = level(snap({
       measures: [],
       columns: [
         { name: 'region', type: 'String' },
@@ -293,7 +303,7 @@ describe('serialize', () => {
   });
 
   it('maps count to the constant 1, not to a column', () => {
-    const s = serialize(
+    const s = level(
       snap({ measures: [{ name: 'n', column: 'notional', fn: 'count' }] }),
     );
     // In a pivot cell, 1 on the value's rows and nothing elsewhere.
@@ -310,7 +320,7 @@ describe('serialize', () => {
     // verification -- the string was well-formed and wrong. The torture
     // run against a real engine is what caught it, which is the whole
     // argument for having one.
-    const s = serialize(
+    const s = level(
       snap({
         measures: [
           { name: 'w', column: 'notional', fn: 'wavg', weight: 'qty' },
@@ -327,7 +337,7 @@ describe('serialize', () => {
   it('refuses wavg without a weight rather than degrading silently', () => {
     assert.throws(
       () =>
-        serialize(
+        level(
           snap({ measures: [{ name: 'w', column: 'notional', fn: 'wavg' }] }),
         ),
       /uses wavg but has no weight column/,
@@ -344,7 +354,7 @@ describe('serialize', () => {
       { column: 'country', direction: 'asc' },
     ]);
     assert.match(
-      serialize(s),
+      level(s),
       /sort\(\[~notional->descending\(\), ~region->ascending\(\), ~country->ascending\(\)\]\)/,
     );
   });
@@ -359,15 +369,15 @@ describe('serialize', () => {
 
   it('emits the row window as slice(offset, end)', () => {
     assert.match(
-      serialize(snap({ window: { offset: 100, limit: 50 } })),
+      level(snap({ window: { offset: 100, limit: 50 } })),
       /->slice\(100, 150\)$/,
     );
   });
 
   it('emits extend before filter', () => {
-    const s = serialize(
+    const s = level(
       snap({
-        derived: [{ name: 'net', expression: '$x.notional * 0.98' }],
+        derived: [{ name: 'net', lambda: row('$x.notional * 0.98') }],
         filter: {
           kind: 'condition',
           column: 'region',
@@ -378,30 +388,30 @@ describe('serialize', () => {
     );
     assert.match(
       s,
-      /^\$trades->extend\(~\[net: x\|\$x\.notional \* 0\.98\]\)->filter\(/,
+      /^\|\$trades->extend\(~\[net:x\|\$x\.notional \* 0\.98\]\)->filter\(/,
     );
   });
 
   it('pins pivot values when deliberately narrowed, WITHOUT filtering the source', () => {
     const pinned = snap({ pivotValues: [2023, 2024] });
-    assert.equal(pivotValuesQuery(pinned), null, 'no values query: they are given');
+    assert.equal(printValues(pinned), null, 'no values query: they are given');
     const facts = pinnedPivotFacts(pinned);
     assert.deepEqual(facts, YEARS);
-    const s = serialize(pinned, undefined, facts ?? undefined);
+    const s = level(pinned, undefined, facts ?? undefined);
     assert.match(s, /'2024__\|__total':x\|if\(\$x\.year == 2024,/);
     // A group whose rows all fall outside the list keeps its Total.
     assert.equal(/filter\(/.test(s), false, s);
   });
 });
 
-describe('serialize with a level scope', () => {
+describe('a level query at a level scope', () => {
   it('groups the grand total by nothing at all', () => {
     // level 0: every grouping column dropped, which is exactly what
     // makes the grand total the same expression as the detail.
-    const out = serialize(snap(), { level: 0, parent: [] }, YEARS);
+    const out = level(snap(), { level: 0, parent: [] }, YEARS);
     assert.equal(
       out,
-      "$trades->select(~[year, notional, region, country, qty])->extend(~[__root__: x|'[ROOT]'])" +
+      "|$trades->select(~[year, notional, region, country, qty])->extend(~[__root__:x|'[ROOT]'])" +
         "->groupBy(~[__root__], ~['2023__|__total':x|if($x.year == 2023, |$x.notional, |[]):y|$y->sum()," +
         " '2024__|__total':x|if($x.year == 2024, |$x.notional, |[]):y|$y->sum()," +
         ' region:x|$x.region:y|$y->uniqueValueOnly(), country:x|$x.country:y|$y->uniqueValueOnly(),' +
@@ -413,13 +423,13 @@ describe('serialize with a level scope', () => {
   });
 
   it('groups the top level by the first dimension only', () => {
-    const out = serialize(snap(), { level: 1, parent: [] }, YEARS);
+    const out = level(snap(), { level: 1, parent: [] }, YEARS);
     assert.match(out, /->groupBy\(~\[region\], ~\['2023__\|__total'/);
     assert.match(out, /->sort\(\[~region->ascending\(\)\]\)$/);
   });
 
   it('pins the parent branch when expanding', () => {
-    const out = serialize(snap(), { level: 2, parent: ['EMEA'] }, YEARS);
+    const out = level(snap(), { level: 2, parent: ['EMEA'] }, YEARS);
     assert.match(out, /filter\(x\|\$x\.region == 'EMEA'\)/);
     assert.match(out, /->groupBy\(~\[region, country\]/);
   });
@@ -434,8 +444,8 @@ describe('serialize with a level scope', () => {
       },
     });
     assert.match(
-      serialize(s, { level: 2, parent: ['EMEA'] }),
-      /filter\(x\|\(\(\$x\.notional > 100\) && \(\$x\.region == 'EMEA'\)\)\)/,
+      level(s, { level: 2, parent: ['EMEA'] }),
+      /filter\(x\|\(\$x\.notional > 100\) && \(\$x\.region == 'EMEA'\)\)/,
     );
   });
 
@@ -443,7 +453,7 @@ describe('serialize with a level scope', () => {
     // '== null' matches nothing in SQL, so expanding a null group
     // would silently return no children.
     assert.match(
-      serialize(snap(), { level: 2, parent: [NULL_GROUP] }),
+      level(snap(), { level: 2, parent: [NULL_GROUP] }),
       /filter\(x\|\$x\.region->isEmpty\(\)\)/,
     );
   });
@@ -451,7 +461,7 @@ describe('serialize with a level scope', () => {
   it('never orders by a dimension deeper than the level', () => {
     // 'country' does not exist in a level-1 result; naming it in the
     // ORDER BY would be a compile error at the engine.
-    const out = serialize(snap(), { level: 1, parent: [] });
+    const out = level(snap(), { level: 1, parent: [] });
     // Carried beside the cells it may be; ordered by, never.
     assert.equal(/sort\(\[[^\]]*country/.test(out), false, out);
   });
@@ -465,7 +475,7 @@ describe('serialize with a level scope', () => {
       ],
     });
     assert.match(
-      serialize(s, { level: 1, parent: [] }),
+      level(s, { level: 1, parent: [] }),
       /sort\(\[~total->descending\(\), ~region->ascending\(\)\]\)/,
     );
   });
@@ -473,25 +483,25 @@ describe('serialize with a level scope', () => {
   it('caps a level, AFTER the sort', () => {
     // A limit before the sort caps an arbitrary subset, so the first
     // page is not the first page.
-    const out = serialize(snap(), { level: 1, parent: [], limit: 1001 });
+    const out = level(snap(), { level: 1, parent: [], limit: 1001 });
     assert.match(out, /->sort\(\[~region->ascending\(\)\]\)->limit\(1001\)$/);
   });
 
   it('does not cap the grand total, which is one row', () => {
-    const out = serialize(snap(), { level: 0, parent: [], limit: 1001 });
+    const out = level(snap(), { level: 0, parent: [], limit: 1001 });
     assert.equal(out.includes('limit('), false);
   });
 
   it('is unchanged without a scope', () => {
-    assert.equal(serialize(snap()), serialize(snap(), undefined));
+    assert.equal(level(snap()), level(snap(), undefined));
   });
 
   it('a subtotal is the SAME cells over fewer keys', () => {
     // The property the design rests on: a level's figures are the same
     // aggregates as the level below, grouped by one key fewer -- never a
     // second pass over the level below's results.
-    const detail = serialize(snap(), { level: 2, parent: [] });
-    const subtotal = serialize(snap(), { level: 1, parent: [] });
+    const detail = level(snap(), { level: 2, parent: [] });
+    const subtotal = level(snap(), { level: 1, parent: [] });
     const cells = (q: string): string[] => q.match(/'20\d\d__\|__total':[^,]*,[^,]*,[^)]*\):y\|\$y->sum\(\)/g) ?? [];
     assert.deepEqual(cells(detail), cells(subtotal));
     assert.equal(cells(detail).length, 2);
@@ -503,19 +513,19 @@ describe('serialize with a level scope', () => {
 describe('filterExpression', () => {
   it('renders comparisons', () => {
     assert.equal(
-      filterExpression({
+      filterText({
         kind: 'condition',
         column: 'year',
         operator: 'greaterThanEqual',
         value: 2020,
       }),
-      '$x.year >= 2020',
+      'x|$x.year >= 2020',
     );
   });
 
   it('renders nested and/or with parentheses', () => {
     assert.equal(
-      filterExpression({
+      filterText({
         kind: 'and',
         children: [
           {
@@ -544,21 +554,21 @@ describe('filterExpression', () => {
         ],
       }),
       // each part parenthesized: the grammar applies < <= > >= left to right with && and ||
-      "(($x.region == 'EMEA') && ((($x.year == 2023) || ($x.year == 2024))))",
+      "x|($x.region == 'EMEA') && (($x.year == 2023) || ($x.year == 2024))",
     );
   });
 
   it('renders emptiness and membership', () => {
     assert.equal(
-      filterExpression({
+      filterText({
         kind: 'condition',
         column: 'country',
         operator: 'isEmpty',
       }),
-      '$x.country->isEmpty()',
+      'x|$x.country->isEmpty()',
     );
     assert.equal(
-      filterExpression({
+      filterText({
         kind: 'not',
         child: {
           kind: 'condition',
@@ -567,13 +577,13 @@ describe('filterExpression', () => {
           value: ['US', 'GB'],
         },
       }),
-      "!($x.country->in(['US', 'GB']))",
+      "x|!$x.country->in(['US', 'GB'])",
     );
   });
 
   it('treats an empty group as a no-op rather than an error', () => {
-    assert.equal(filterExpression({ kind: 'and', children: [] }), 'true');
-    assert.equal(filterExpression({ kind: 'or', children: [] }), 'false');
+    assert.equal(filterText({ kind: 'and', children: [] }), 'x|true');
+    assert.equal(filterText({ kind: 'or', children: [] }), 'x|false');
   });
 });
 
@@ -582,7 +592,7 @@ describe('the full filter vocabulary', () => {
     operator: string,
     extra: Record<string, unknown> = {},
   ): string =>
-    filterExpression({
+    filterText({
       kind: 'condition',
       column: 'region',
       operator,
@@ -590,22 +600,22 @@ describe('the full filter vocabulary', () => {
     } as never);
 
   it('renders negated string tests', () => {
-    assert.equal(cond('notContains', { value: 'X' }), "!$x.region->contains('X')");
+    assert.equal(cond('notContains', { value: 'X' }), "x|!$x.region->contains('X')");
     assert.equal(
       cond('notStartsWith', { value: 'X' }),
-      "!$x.region->startsWith('X')",
+      "x|!$x.region->startsWith('X')",
     );
-    assert.equal(cond('notEndsWith', { value: 'X' }), "!$x.region->endsWith('X')");
+    assert.equal(cond('notEndsWith', { value: 'X' }), "x|!$x.region->endsWith('X')");
     assert.equal(
       cond('notIn', { value: ['A', 'B'] }),
-      "!$x.region->in(['A', 'B'])",
+      "x|!$x.region->in(['A', 'B'])",
     );
   });
 
   it('uses isNotEmpty rather than negating isEmpty', () => {
     // The engine has the function; using its own vocabulary keeps a
     // generated query readable for whoever has to debug it.
-    assert.equal(cond('isNotEmpty'), '$x.region->isNotEmpty()');
+    assert.equal(cond('isNotEmpty'), 'x|$x.region->isNotEmpty()');
   });
 
   it('lowers BOTH sides for case-insensitive comparisons', () => {
@@ -625,7 +635,7 @@ describe('the full filter vocabulary', () => {
     // are not the same rule.
     assert.equal(
       cond('equalCaseInsensitive', { value: 'EMEA' }),
-      "$x.region->toOne()->toLower() == toLower('EMEA')",
+      "x|$x.region->toOne()->toLower() == toLower('EMEA')",
     );
     // BUT NOT for contains/startsWith/endsWith, which pre-lower.
     // Measured against a running legend-engine 4.138.5: with
@@ -637,15 +647,15 @@ describe('the full filter vocabulary', () => {
     // and the differential (verify:engine:diff) is what found it.
     assert.equal(
       cond('containsCaseInsensitive', { value: 'Em' }),
-      "$x.region->toOne()->toLower()->contains('em')",
+      "x|$x.region->toOne()->toLower()->contains('em')",
     );
     assert.equal(
       cond('startsWithCaseInsensitive', { value: 'LAT' }),
-      "$x.region->toOne()->toLower()->startsWith('lat')",
+      "x|$x.region->toOne()->toLower()->startsWith('lat')",
     );
     assert.equal(
       cond('endsWithCaseInsensitive', { value: 'MEA' }),
-      "$x.region->toOne()->toLower()->endsWith('mea')",
+      "x|$x.region->toOne()->toLower()->endsWith('mea')",
     );
     // EXCEPT IN AN `in` LIST, which takes literals and nothing else:
     // the engine asserts "IN is supported only for literal values or
@@ -653,22 +663,22 @@ describe('the full filter vocabulary', () => {
     // also why upstream ships no builder for them at all.
     assert.equal(
       cond('inCaseInsensitive', { value: ['EMEA', 'Amer'] }),
-      "$x.region->toOne()->toLower()->in(['emea', 'amer'])",
+      "x|$x.region->toOne()->toLower()->in(['emea', 'amer'])",
     );
     assert.equal(
       cond('notInCaseInsensitive', { value: ['EMEA'] }),
-      "!$x.region->toOne()->toLower()->in(['emea'])",
+      "x|!$x.region->toOne()->toLower()->in(['emea'])",
     );
   });
 
   it('compares two columns', () => {
     assert.equal(
       cond('greaterThanColumn', { rightColumn: 'country' }),
-      '$x.region > $x.country',
+      'x|$x.region > $x.country',
     );
     assert.equal(
       cond('equalColumn', { rightColumn: 'country' }),
-      '$x.region == $x.country',
+      'x|$x.region == $x.country',
     );
   });
 
@@ -678,11 +688,11 @@ describe('the full filter vocabulary', () => {
     // neither.
     assert.equal(
       cond('equalCaseInsensitiveColumn', { rightColumn: 'country' }),
-      '$x.region->toOne()->toLower() == $x.country->toOne()->toLower()',
+      'x|$x.region->toOne()->toLower() == $x.country->toOne()->toLower()',
     );
     assert.equal(
       cond('notEqualCaseInsensitiveColumn', { rightColumn: 'country' }),
-      '$x.region->toOne()->toLower() != $x.country->toOne()->toLower()',
+      'x|$x.region->toOne()->toLower() != $x.country->toOne()->toLower()',
     );
   });
 
@@ -726,11 +736,12 @@ describe('the full filter vocabulary', () => {
     assert.equal(new Set(operators).size, 31);
     // Every one must RENDER rather than fall through to the throw.
     for (const operator of operators) {
-      const out = filterExpression({
+      const out = filterText({
         kind: 'condition',
         column: 'region',
         operator,
-        value: operator.toLowerCase().includes('in') ? ['A'] : 'A',
+        // a list for the membership operators only (`contains` is not one)
+        value: ['in', 'notIn', 'inCaseInsensitive', 'notInCaseInsensitive'].includes(operator) ? ['A'] : 'A',
         rightColumn: 'country',
       });
       assert.ok(out.length > 0, operator);
@@ -746,46 +757,40 @@ describe('the full filter vocabulary', () => {
 
   it('quotes an awkward column name on both sides', () => {
     assert.equal(
-      filterExpression({
+      filterText({
         kind: 'condition',
         column: 'odd name',
         operator: 'equalColumn',
         rightColumn: '2023__|__total',
       }),
-      "$x.'odd name' == $x.'2023__|__total'",
+      "x|$x.'odd name' == $x.'2023__|__total'",
     );
   });
 });
 
-describe('ident and literal', () => {
-  it('leaves plain identifiers alone and quotes the rest', () => {
-    assert.equal(ident('region'), 'region');
-    assert.equal(ident('_a1'), '_a1');
+describe('names and literals, as the compiler prints them', () => {
+  it('leaves plain names alone and quotes the rest', () => {
+    const name = (n: string): string => print(lambda(['x'], col('x', n)));
+    assert.equal(name('region'), 'x|$x.region');
+    assert.equal(name('_a1'), 'x|$x._a1');
     // The pivot separator legend-lite and DataCube both use.
-    assert.equal(ident('2011__|__total'), "'2011__|__total'");
-    assert.equal(ident("it's"), "'it\\'s'");
+    assert.equal(name('2011__|__total'), "x|$x.'2011__|__total'");
+    assert.equal(name("it's"), "x|$x.'it\\'s'");
   });
 
-  it('escapes string literals and formats dates', () => {
-    assert.equal(literal("O'Hara"), "'O\\'Hara'");
-    assert.equal(literal(42), '42');
-    assert.equal(literal(true), 'true');
-    // A TIMESTAMP keeps its time. This asserted `%2024-03-01` for a
-    // Date carrying midday, i.e. every temporal was truncated to ten
-    // characters -- so a group key for one minute of trading matched
-    // the whole day and drilling into it returned every trade in it.
-    // A wrong answer with no error is worse than an error.
-    //
-    // Read in LOCAL terms, because that is the frame these Dates are
-    // built and displayed in; midnight still prints as a plain date.
+  it('escapes string literals and writes dates', () => {
+    const value = (v: Parameters<typeof literalNode>[0]): string => print(lambda([], literalNode(v)));
+    assert.equal(value("O'Hara"), "|'O\\'Hara'");
+    assert.equal(value(42), '|42');
+    assert.equal(value(true), '|true');
+    // A TIMESTAMP keeps its time: truncating one made a group key for one
+    // minute of trading match the whole day. Read in LOCAL terms, the frame
+    // these Dates are built and displayed in; midnight is a plain date.
     const noon = new Date('2024-03-01T12:00:00Z');
     const p = (n: number): string => String(n).padStart(2, '0');
-    assert.equal(
-      literal(noon),
-      `%2024-03-01T${p(noon.getHours())}:${p(noon.getMinutes())}:00`,
-    );
+    assert.equal(value(noon), `|%2024-03-01T${p(noon.getHours())}:${p(noon.getMinutes())}:00`);
     const midnight = new Date(2024, 2, 1);
-    assert.equal(literal(midnight), '%2024-03-01', 'midnight is a date');
+    assert.equal(value(midnight), '|%2024-03-01', 'midnight is a date');
   });
 });
 
@@ -800,7 +805,7 @@ describe('drilling into a TEMPORAL group', () => {
   // next level's query as a filter value. So the group appeared and
   // opening it failed, while the grid kept the previous answer.
   const TEMPORAL: CubeSnapshot = {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns: [
       { name: 'booked_at', type: 'DateTime' },
       { name: 'trade_date', type: 'StrictDate' },
@@ -823,7 +828,7 @@ describe('drilling into a TEMPORAL group', () => {
 
   it('filters on a TIMESTAMP literal, not on a locale string', () => {
     const at = new Date(2021, 0, 1, 3, 58, 0);
-    const out = serialize(TEMPORAL, { level: 2, parent: [key(at)] });
+    const out = level(TEMPORAL, { level: 2, parent: [key(at)] });
     assert.match(out, /%2021-01-01T03:58:00/,
       'the drilldown must carry a datetime literal');
     // The shape of the old failure: the locale string, quoted.
@@ -838,7 +843,7 @@ describe('drilling into a TEMPORAL group', () => {
     // built at LOCAL midnight read back through UTC names the day
     // before in any zone ahead of it.
     const day = new Date(2021, 0, 1);
-    const out = serialize(
+    const out = level(
       { ...TEMPORAL, rows: ['trade_date'] },
       { level: 2, parent: [key(day)] },
     );
@@ -847,7 +852,7 @@ describe('drilling into a TEMPORAL group', () => {
   });
 
   it('a non-temporal key is still compared as text', () => {
-    const out = serialize(
+    const out = level(
       { ...TEMPORAL,
         columns: [...TEMPORAL.columns, { name: 'region', type: 'String' }],
         rows: ['region'] },
@@ -864,7 +869,7 @@ describe('the DETAIL cube: no grouping, no pivot, no measures', () => {
   // away its sort and its row cap as well. The simplest grid was the
   // one that honoured neither.
   const DETAIL: CubeSnapshot = {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'notional', type: 'Float' },
@@ -878,15 +883,15 @@ describe('the DETAIL cube: no grouping, no pivot, no measures', () => {
   };
 
   it('projects the columns the cube declares', () => {
-    assert.equal(serialize(DETAIL), 't->select(~[region, notional])');
+    assert.equal(level(DETAIL), '|t->select(~[region, notional])');
   });
 
   it('includes derived columns in the projection', () => {
     const withDerived: CubeSnapshot = {
       ...DETAIL,
-      derived: [{ name: 'net', expression: '$x.notional * 2' }],
+      derived: [{ name: 'net', lambda: row('$x.notional * 2') }],
     };
-    assert.match(serialize(withDerived), /select\(~\[region, notional, net\]\)/);
+    assert.match(level(withDerived), /select\(~\[region, notional, net\]\)/);
   });
 
   it('HONOURS its sort', () => {
@@ -894,11 +899,11 @@ describe('the DETAIL cube: no grouping, no pivot, no measures', () => {
       ...DETAIL,
       sorts: [{ column: 'region', direction: 'asc' }],
     };
-    assert.match(serialize(sorted), /->sort\(\[~region->ascending\(\)\]\)$/);
+    assert.match(level(sorted), /->sort\(\[~region->ascending\(\)\]\)$/);
   });
 
   it('HONOURS its row cap', () => {
-    const pure = serialize(DETAIL, { level: 0, parent: [], limit: 100 });
+    const pure = level(DETAIL, { level: 0, parent: [], limit: 100 });
     assert.match(pure, /->limit\(100\)$/);
   });
 
@@ -907,7 +912,7 @@ describe('the DETAIL cube: no grouping, no pivot, no measures', () => {
       ...DETAIL,
       sorts: [{ column: 'notional', direction: 'desc' }],
     };
-    const pure = serialize(sorted, { level: 0, parent: [], limit: 10 });
+    const pure = level(sorted, { level: 0, parent: [], limit: 10 });
     assert.ok(
       pure.indexOf('->sort(') < pure.indexOf('->limit('),
       pure,
@@ -922,7 +927,7 @@ describe('the DETAIL cube: no grouping, no pivot, no measures', () => {
       measures: [{ name: 'n', column: 'notional', fn: 'sum' }],
       sorts: [{ column: 'region', direction: 'asc' }],
     };
-    const pure = serialize(total, { level: 0, parent: [], limit: 100 });
+    const pure = level(total, { level: 0, parent: [], limit: 100 });
     assert.equal(pure.includes('->sort('), false, pure);
     assert.equal(pure.includes('->limit('), false, pure);
   });
@@ -930,7 +935,7 @@ describe('the DETAIL cube: no grouping, no pivot, no measures', () => {
 
 describe('a calculated column aggregates as DECLARED', () => {
   const base = {
-    source: { expression: '#>{db.T}#' },
+    source: { query: accessor('db', 'T') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'notional', type: 'Float' },
@@ -942,9 +947,9 @@ describe('a calculated column aggregates as DECLARED', () => {
   } as const;
 
   it('sums a column the user called a measure', () => {
-    const out = serialize({
+    const out = level({
       ...base,
-      derived: [{ name: 'uplift', expression: '$x.notional * 1.1',
+      derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'),
         kind: 'measure' }],
       rows: ['region'],
     });
@@ -956,9 +961,9 @@ describe('a calculated column aggregates as DECLARED', () => {
       // A declared kind beats the type, exactly as it does for a
       // source column: a numeric-looking calculated column the user
       // means as a key -- a year bucket, a banded id -- must not sum.
-      const out = serialize({
+      const out = level({
         ...base,
-        derived: [{ name: 'bucket', expression: '$x.notional->round()',
+        derived: [{ name: 'bucket', lambda: row('$x.notional->round()'),
           kind: 'dimension', type: 'Integer' }],
         rows: ['region'],
       });
@@ -971,9 +976,9 @@ describe('a calculated column aggregates as DECLARED', () => {
     // type, the first query over a grouped cube aggregated a numeric
     // calculated column as `unique` -- a blank column -- and only
     // corrected itself after a second round trip.
-    const out = serialize({
+    const out = level({
       ...base,
-      derived: [{ name: 'uplift', expression: '$x.notional * 1.1',
+      derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'),
         kind: 'measure' }],
       rows: ['region'],
     });
@@ -983,9 +988,9 @@ describe('a calculated column aggregates as DECLARED', () => {
   it('falls back to the type when no kind was declared', () => {
     // Snapshots saved before the field existed still behave as they
     // did: a numeric type defaults to a measure.
-    const out = serialize({
+    const out = level({
       ...base,
-      derived: [{ name: 'uplift', expression: '$x.notional * 1.1',
+      derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'),
         type: 'Float' }],
       rows: ['region'],
     });
@@ -995,10 +1000,10 @@ describe('a calculated column aggregates as DECLARED', () => {
   it('keeps a group-stage column out of the pre-aggregation select', () => {
     // The defect that made the whole group stage unusable: the name
     // went into `select(~[...])`, which runs before the column exists.
-    const out = serialize({
+    const out = level({
       ...base,
       derived: [],
-      groupDerived: [{ name: 'margin', expression: '$x.pnl / $x.notional' }],
+      groupDerived: [{ name: 'margin', lambda: row('$x.pnl / $x.notional') }],
       rows: ['region'],
       measures: [{ name: 'notional', column: 'notional', fn: 'sum' }],
     });
@@ -1017,11 +1022,11 @@ describe('the GRAND TOTAL of a cube with no explicit measures', () => {
   // was `t->limit(1001)` -- raw rows -- so "Show root aggregation"
   // put the FIRST TRADE's values in the Total row and raised a false
   // truncation warning (found by the 2026-09-25 controls sweep).
-  const q = serialize(snap({ pivotOn: [], measures: [] }),
+  const q = level(snap({ pivotOn: [], measures: [] }),
     { level: 0, parent: [], limit: 1001 });
 
   it('aggregates, as one group over everything', () => {
-    assert.match(q, /extend\(~\[__root__: x\|'\[ROOT\]'\]\)->groupBy\(~\[__root__\]/);
+    assert.match(q, /extend\(~\[__root__:x\|'\[ROOT\]'\]\)->groupBy\(~\[__root__\]/);
     assert.match(q, /notional:x\|\$x\.notional:y\|\$y->sum\(\)/);
   });
 
@@ -1034,9 +1039,9 @@ describe('C3: a column pivot carries CALCULATED measures', () => {
   // The pivot's measure set read the source columns only, so a
   // calculated measure vanished from a pivoted cube with no error.
   it('aggregates a row-stage calculated measure in the pivot', () => {
-    const q = serialize(snap({
+    const q = level(snap({
       rows: [], measures: [],
-      derived: [{ name: 'uplift', expression: '$x.notional * 1.1', kind: 'measure' }],
+      derived: [{ name: 'uplift', lambda: row('$x.notional * 1.1'), kind: 'measure' }],
     }), undefined, YEARS);
     assert.match(q, /'2023__\|__uplift':x\|if\(\$x\.year == 2023, \|\$x\.uplift, \|\[\]\):y\|\$y->sum\(\)/);
   });
@@ -1053,31 +1058,31 @@ describe('a Variant column', () => {
     // It would run: every column would be named after a whole JSON
     // document. The question is always about a value inside one.
     assert.throws(
-      () => serialize(snap({ columns, rows: ['region'], pivotOn: ['payload'] })),
+      () => level(snap({ columns, rows: ['region'], pivotOn: ['payload'] })),
       /cannot pivot on 'payload': it holds JSON.*\$x\.payload->get\('key'\)->to\(@String\)/,
     );
   });
 
   it('pivots on a value extracted from it', () => {
-    const s = serialize(snap({
+    const s = level(snap({
       columns,
       derived: [{ name: 'sku', type: 'String', kind: 'dimension',
-        expression: "$x.payload->get('sku')->to(@String)" }],
+        lambda: row("$x.payload->get('sku')->to(@String)") }],
       rows: ['region'],
       pivotOn: ['sku'],
     }), undefined, { tuples: [['A1']] });
-    assert.match(s, /extend\(~\[sku: x\|\$x\.payload->get\('sku'\)->to\(@String\)/);
+    assert.match(s, /extend\(~\[sku:x\|\$x\.payload->get\('sku'\)->to\(@String\)/);
     assert.match(s, /if\(\$x\.sku == 'A1'/);
   });
 
   it('can be filtered on its presence', () => {
     assert.equal(
-      filterExpression({
+      filterText({
         kind: 'condition',
         column: 'payload',
         operator: 'isNotEmpty',
       }),
-      '$x.payload->isNotEmpty()',
+      'x|$x.payload->isNotEmpty()',
     );
   });
 });
@@ -1087,7 +1092,7 @@ describe('drilling into a JSON group', () => {
   // nothing: the key came back as `$x.customer == '{...}'`, which
   // compares the document to a JSON STRING holding its text.
   const ORDERS: CubeSnapshot = {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns: [
       { name: 'region', type: 'String' },
       { name: 'customer', type: 'Variant' },
@@ -1104,27 +1109,27 @@ describe('drilling into a JSON group', () => {
   const doc = '{"name":"Acme","tier":"gold"}';
 
   it('compares an object key as a document', () => {
-    const out = serialize(ORDERS, { level: 2, parent: [doc] });
+    const out = level(ORDERS, { level: 2, parent: [doc] });
     assert.ok(out.includes(`$x.customer == fromJson('${doc}')`), out);
   });
 
   it('compares an array key, and the empty array, as documents', () => {
     const tags = { ...ORDERS, rows: ['tags'] };
-    assert.ok(serialize(tags, { level: 2, parent: ['["gift","b2b"]'] })
+    assert.ok(level(tags, { level: 2, parent: ['["gift","b2b"]'] })
       .includes(`$x.tags == fromJson('["gift","b2b"]')`));
-    assert.ok(serialize(tags, { level: 2, parent: ['[]'] })
+    assert.ok(level(tags, { level: 2, parent: ['[]'] })
       .includes(`$x.tags == fromJson('[]')`));
   });
 
   it('opens the detail rows under a pivot with the same key', () => {
     const pivoted = { ...ORDERS, pivotOn: ['region'] };
-    const out = serialize(detailSnapshot(pivoted, [doc]), undefined, { tuples: [['EMEA']] });
+    const out = level(detailSnapshot(pivoted, [doc]), undefined, { tuples: [['EMEA']] });
     assert.ok(out.includes(`fromJson('${doc}')`), out);
   });
 
   it('escapes a quote inside the document', () => {
     const odd = '{"name":"O\'Brien"}';
-    const out = serialize(ORDERS, { level: 2, parent: [odd] });
+    const out = level(ORDERS, { level: 2, parent: [odd] });
     assert.ok(out.includes(`fromJson('{"name":"O\\'Brien"}')`), out);
   });
 });

@@ -22,8 +22,8 @@ import * as duckdb from '@duckdb/duckdb-wasm';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 import { levelWithValues } from '../src/plan.ts';
-import { parseSnapshot } from '../src/query.ts';
-import type { LevelScope } from '../src/serialize.ts';
+import { col, lambda, lit, times, type ValueSpecification } from '../../pure-protocol/src/index.ts';
+import type { LevelScope } from '../src/query.ts';
 import type {
   AggregateFn, CubeSnapshot, FilterNode, FilterOperator,
 } from '../src/snapshot.ts';
@@ -107,15 +107,14 @@ async function attempt(
     // A pivot is two queries: its values first (src/plan.ts), on the
     // same planner and engine as the level. The query is a tree; its
     // print is what the outcome records for a person to read.
-    const parsed = await parseSnapshot(snapshot, (text) => deps.planner.parse(text));
-    query = await levelWithValues(snapshot, parsed, scope, async (values) =>
+    query = await levelWithValues(snapshot, scope, async (values) =>
       deps.engine.execute(await deps.planner.plan(values), snapshot.epoch));
     pure = await deps.planner.print(query, 'STANDARD');
   } catch (e) {
-    // The serialiser refusing is still a refusal, not a crash: it
+    // The query builder refusing is still a refusal, not a crash: it
     // declines shapes the cube cannot express.
     out.push({ csv, op, verdict: 'refused', pure,
-      detail: `serialize: ${(e as Error).message}` });
+      detail: `build: ${(e as Error).message}` });
     return;
   }
   let plan: Plan;
@@ -146,9 +145,9 @@ async function attempt(
   }
 }
 
-function base(source: string, columns: CubeSnapshot['columns']): CubeSnapshot {
+function base(source: ValueSpecification, columns: CubeSnapshot['columns']): CubeSnapshot {
   return {
-    source: { expression: source },
+    source: { query: source },
     columns,
     derived: [],
     rows: [],
@@ -281,14 +280,9 @@ export async function runStress(): Promise<Outcome[]> {
     // -- derived --------------------------------------------------------
     if (nums[0]) {
       await attempt(out, { engine, planner }, entry.name, 'derived:arith',
+        // A tree: a column named `مبلغ` is a name, not grammar to quote.
         snap({ derived: [{ name: 'dbl',
-          // Quote it the way the serialiser would. Writing
-          // `$x.${name}` raw emitted `$x.مبلغ * 2`, which is not
-          // valid Pure -- a harness bug that looked like a product
-          // one until the message was read.
-          expression: `$x.${/^[A-Za-z_][A-Za-z0-9_]*$/.test(nums[0])
-            ? nums[0] : `'${nums[0].replace(/\\/g, '\\\\')
-              .replace(/'/g, "\\'")}'`} * 2` }] }));
+          lambda: lambda(['x'], times(col('x', nums[0]), lit.integer(2))) }] }));
     }
 
     // -- tree levels -----------------------------------------------------

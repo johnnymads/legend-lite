@@ -8,13 +8,14 @@ import { describe, it } from 'node:test';
 import type { ResultTable } from '../src/result.ts';
 import type { QueryRunner } from '../src/runner.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
-import { fakeParsed } from './fake-planner.ts';
-import { childAggregateQuery, serialize } from '../src/serialize.ts';
+
 import { renameColumnReferences, totalOrderSorts, type CubeSnapshot } from '../src/snapshot.ts';
 import { withChildAggregates } from '../src/treeview.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { printChildren, printLevel } from './lite-compiler.ts';
 
 const CUBE: CubeSnapshot = {
-  source: { expression: 't' },
+  source: { query: element('t') },
   columns: [
     { name: 'region', type: 'String' }, { name: 'desk', type: 'String' },
     { name: 'notional', type: 'Float' }, { name: 'pnl', type: 'Float' },
@@ -25,37 +26,37 @@ const CUBE: CubeSnapshot = {
   measures: [{ name: 'notional', column: 'notional', fn: 'sum' }],
   sorts: [],
   epoch: 1,
-  groupDerived: [{ name: 'weakest', expression: '', childAggregate: { fn: 'min', of: 'notional' } }],
+  groupDerived: [{ name: 'weakest', childAggregate: { fn: 'min', of: 'notional' } }],
 };
 
 describe('the child-group query', () => {
   it('groups one level deeper, then aggregates per group', () => {
-    const q = childAggregateQuery(CUBE, { level: 1, parent: [] });
+    const q = printChildren(CUBE, { level: 1, parent: [] });
     assert.equal(q?.pure,
-      "t->select(~[region, desk, notional])->groupBy(~[region, desk], ~[notional:x|$x.notional:y|$y->sum()])"
+      "|t->select(~[region, desk, notional])->groupBy(~[region, desk], ~[notional:x|$x.notional:y|$y->sum()])"
       + '->sort([~region->ascending(), ~desk->ascending()])'
       + '->groupBy(~[region], ~[weakest:x|$x.notional:y|$y->min()])');
     assert.deepEqual(q?.columns, ['weakest']);
   });
 
   it('the grand total groups by its root; the deepest level reads the source rows', () => {
-    assert.match(childAggregateQuery(CUBE, { level: 0, parent: [] })?.pure ?? '',
-      /groupBy\(~\[region\], .*\)->sort\(\[~region->ascending\(\)\]\)->extend\(~\[__root__: x\|'\[ROOT\]'\]\)->groupBy\(~\[__root__\], ~\[weakest:x\|\$x\.notional:y\|\$y->min\(\)\]\)/);
-    const deepest = childAggregateQuery(CUBE, { level: 2, parent: ['EMEA'] })?.pure ?? '';
-    assert.match(deepest, /extend\(~\[__child_weakest: x\|\$x\.notional\]\)/);
+    assert.match(printChildren(CUBE, { level: 0, parent: [] })?.pure ?? '',
+      /groupBy\(~\[region\], .*\)->sort\(\[~region->ascending\(\)\]\)->extend\(~\[__root__:x\|'\[ROOT\]'\]\)->groupBy\(~\[__root__\], ~\[weakest:x\|\$x\.notional:y\|\$y->min\(\)\]\)/);
+    const deepest = printChildren(CUBE, { level: 2, parent: ['EMEA'] })?.pure ?? '';
+    assert.match(deepest, /extend\(~\[__child_weakest:x\|\$x\.notional\]\)/);
     assert.match(deepest, /groupBy\(~\[region, desk\], ~\[notional:.*weakest:x\|\$x\.__child_weakest:y\|\$y->min\(\)\]\)/);
     assert.match(deepest, /filter\(x\|\$x\.region == 'EMEA'\)/);
   });
 
   it('none on a flat or pivoted cube, or without such a column', () => {
-    assert.equal(childAggregateQuery({ ...CUBE, rows: [] }, { level: 0, parent: [] }), null);
-    assert.equal(childAggregateQuery({ ...CUBE, pivotOn: ['desk'] }, { level: 1, parent: [] }), null);
-    assert.equal(childAggregateQuery({ ...CUBE, groupDerived: [] }, { level: 1, parent: [] }), null);
+    assert.equal(printChildren({ ...CUBE, rows: [] }, { level: 0, parent: [] }), null);
+    assert.equal(printChildren({ ...CUBE, pivotOn: ['desk'] }, { level: 1, parent: [] }), null);
+    assert.equal(printChildren({ ...CUBE, groupDerived: [] }, { level: 1, parent: [] }), null);
   });
 
   it('the level\'s own query neither computes it nor sorts by it', () => {
     const sorted = { ...CUBE, sorts: [{ column: 'weakest', direction: 'desc' as const }] };
-    assert.doesNotMatch(serialize(sorted, { level: 1, parent: [] }), /weakest/);
+    assert.doesNotMatch(printLevel(sorted, { level: 1, parent: [] }), /weakest/);
     assert.deepEqual(totalOrderSorts(sorted, ['region']).map((x) => x.column), ['region']);
   });
 
@@ -81,7 +82,7 @@ describe('placing the figures', () => {
     } as unknown as QueryRunner;
     const level = table({ region: ['AMER', 'APAC', 'EMEA'], notional: [1200, 900, 1700] });
     const out = await withChildAggregates(CUBE, { level: 1, parent: [] }, level,
-      [['AMER'], ['APAC'], ['EMEA']], { runner, parsed: await fakeParsed(CUBE), snapshot: CUBE });
+      [['AMER'], ['APAC'], ['EMEA']], { runner, snapshot: CUBE });
     assert.equal(sent.length, 1);
     assert.deepEqual(out.columns.find((c) => c.name === 'weakest')?.values, [50, null, 300]);
   });

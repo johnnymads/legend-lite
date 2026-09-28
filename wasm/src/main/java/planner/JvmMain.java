@@ -14,8 +14,9 @@ import java.util.Map;
  * jvm_answers): the answers are a function of the planner's source and the
  * queries, so Bazel caches them and re-plans only when either changes.
  *
- * <p>Usage: {@code JvmMain <model-file> <queries-tsv> <runtime> <out-file>}. Each
- * TSV line is {@code name<TAB>query}; the output is one block per query,
+ * <p>Usage: {@code JvmMain <model-file> <queries-tsv> <runtime> <out-file> [json]}. Each
+ * TSV line is {@code name<TAB>query}: Pure text, or with {@code json} the lambda's
+ * protocol JSON ({@link Wasm#planJsonOrError}); the output is one block per query,
  * {@code <<<name>>>\n<answer>\n<<<END>>>\n}, in the TSV's order.
  *
  * <p>It does not time anything. A build action shares its machine with every
@@ -41,11 +42,13 @@ public final class JvmMain {
             queries.put(line.substring(0, tab), line.substring(tab + 1));
         }
         String runtime = args[2];
+        boolean json = args.length > 4 && "json".equals(args[4]);
 
         StringBuilder out = new StringBuilder();
         for (Map.Entry<String, String> e : queries.entrySet()) {
             out.append("<<<").append(e.getKey()).append(">>>\n")
-                    .append(Wasm.planOrError(model, e.getValue(), runtime)).append('\n')
+                    .append(json ? Wasm.planJsonOrError(model, e.getValue(), runtime)
+                            : Wasm.planOrError(model, e.getValue(), runtime)).append('\n')
                     .append("<<<END>>>\n");
         }
         Files.writeString(Path.of(args[3]), out.toString(), StandardCharsets.UTF_8);

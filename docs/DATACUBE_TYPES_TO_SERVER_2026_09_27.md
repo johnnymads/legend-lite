@@ -244,6 +244,43 @@ text builders and the four text helpers are deleted, the side-by-side test with 
 SQL and rows; a guardrail that no `src/` file builds Pure text (no `'->'`/`'~['`/`'#>{'` string
 building) and none calls a TDS function.
 
+**T4b as landed so far (2026-09-27).** Step 1 (2d41013f1): `pure-protocol/` (the reusable library)
+and `datacube/src/query.ts` build every cube query as a tree, proven byte-equal to lite's parse of the
+old text over the corpus cases, 376 filters, every window, aggregate and drill (a filter precedence bug
+found on the way, 0980fb401). Step 2 (cb192b6c9): planners, runners and the remote executor take the
+tree (`plan`/`relationType`/`execute` of a `Lambda`, plus `parse` and `print(style)`); the tab keeps
+`planText` beside it. Text remains only in the snapshot (the source, a calculated column), parsed once
+per text by the compiler. The column editor's caret now comes from the draft's own parse refusal: a
+type refusal names no position in either form (checked in the module). Alerts print PRETTY (upstream's
+debug info); the demo panel STANDARD.
+
+**T4b step 3 as landed (2026-09-27): the snapshot holds protocol, and the text builders are gone.**
+Checked against upstream first: its snapshot holds a calculated column as protocol
+(`DataCubeSnapshot.ts`: `mapFn: PlainObject<V1_Lambda>`) and its editor edits the whole lambda
+(`x|...`), printed on open and parsed on OK. So:
+- `SourceRef.query` is a `ValueSpecification` (a catalog's comes from the tab's module as the
+  compiler's own parse of its accessor; the demo's are `accessor(...)`); a calculated column holds
+  its `lambda`. Nothing in the product parses per refresh any more.
+- `serialize.ts`'s and `drill.ts`'s text builders are deleted; the query-building rules they also
+  held are folded into `src/query.ts` (the one module that turns a snapshot into queries); drill.ts,
+  left with no product caller, is deleted; `test/query-twins.test.ts` goes with the text it compared.
+- The column editor edits the whole lambda as upstream's does; the compiler parses it (its parse
+  refusal carries the caret), and prints a column back when it reopens. The JSON-field picker builds
+  trees (`fn('get', ...)`), so no TypeScript spells a literal there.
+- A snap needs a named target (`SnapTarget`: a table the model declares, and its relation); the
+  generated SQL-identifier "source" no compiler could read is gone.
+- Saved views: the MINIMUM (the user) -- format 2 written and read exactly by the protocol library;
+  a view saved before is refused with a message, not migrated. Upstream's specification is #21.
+- The WASM differential's cases are trees, and the JVM answers are planned from their JSON
+  (`JvmMain ... json`).
+- Tests that pinned query text pin the COMPILER's print of the tree (lite's printer, STANDARD):
+  `|t->...` for a query, `name:x|` in a column spec, `unbounded()->rows(0)`, `!=` for `not(==)`.
+- Guardrail (`test/guardrails.test.ts`): no string in `src/` holds Pure syntax outside the
+  editor's typing help and one refusal (pinned), and no `fn(...)` calls a TDS function.
+
+T4b is complete with this. **Next: T4c** (typed keys, members and filter values; a literal's type
+from the column's compiler type; the NULL group a real null; exact filter inputs).
+
 **T5. What a type accepts, from the compiler.**
 - Filter operators, aggregates and calculated-column functions offered per type come from the
   compiler's signatures (D4); an aggregate's result type from the plan.

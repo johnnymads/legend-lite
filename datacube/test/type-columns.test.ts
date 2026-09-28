@@ -8,16 +8,18 @@ import { typeColumns } from '../src/plan.ts';
 import type { PlanColumn } from '../src/relation-type.ts';
 import type { QueryRunner } from '../src/runner.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
-import { liteParse, liteParsed, litePrint } from './lite-compiler.ts';
+import { liteParse, litePrint } from './lite-compiler.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
+import { row } from './lite-compiler.ts';
 
 const CUBE: CubeSnapshot = {
-  source: { expression: '#>{db::DB.T}#' },
+  source: { query: accessor('db::DB', 'T') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'amount', type: 'Float' },
     { name: 'gone', type: 'Integer' },
   ],
-  derived: [{ name: 'twice', expression: '$x.amount * 2' }],
+  derived: [{ name: 'twice', lambda: row('$x.amount * 2') }],
   rows: [],
   pivotOn: [],
   measures: [],
@@ -44,7 +46,7 @@ describe('typeColumns: the compiler types the cube before its first query', () =
       { name: 'amount', type: 'Decimal' },
       { name: 'gone', type: 'Integer' },
       { name: 'twice', type: 'Decimal' },
-    ], asked), await liteParsed(CUBE));
+    ], asked));
     assert.deepEqual(asked, ['|#>{db::DB.T}#->extend(~[twice:x|$x.amount * 2])']);
     assert.equal(out.snapshot.derived[0]?.type, 'Decimal', 'typed before any query');
     assert.equal(out.snapshot.columns.find((c) => c.name === 'amount')?.type, 'Decimal');
@@ -57,7 +59,7 @@ describe('typeColumns: the compiler types the cube before its first query', () =
       { name: 'region', type: 'String' },
       { name: 'amount', type: 'Float' },
       { name: 'twice', type: 'Float' },
-    ], []), await liteParsed(CUBE));
+    ], []));
     assert.deepEqual(out.changes, [{ column: 'gone', was: 'Integer', now: null }]);
   });
 
@@ -66,7 +68,7 @@ describe('typeColumns: the compiler types the cube before its first query', () =
       { name: 'region', type: 'String' },
       { name: 'amount', type: 'Float' },
       { name: 'gone', type: 'Integer' },
-    ], []), await liteParsed({ ...CUBE, derived: [] }));
+    ], []));
     assert.deepEqual(out.changes, []);
     assert.equal(out.snapshot.columns, CUBE.columns);
   });

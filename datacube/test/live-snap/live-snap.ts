@@ -37,11 +37,13 @@ import { PlanThenRun } from '../../src/runner.ts';
 import { SnapManager } from '../../src/snap.ts';
 import { listObjects, signIn, WarehouseEngine } from '../../src/warehouse.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
-import { CASES, grammars, MODEL, RUNTIME } from '../wasm-differential/cases.ts';
+import { levelLambda } from '../../src/query.ts';
+import { accessor, from } from '../../../pure-protocol/src/index.ts';
+import { CASES, MODEL, queries, RUNTIME } from '../wasm-differential/cases.ts';
 
 const RUNFILES = fileURLToPath(new URL('../../../', import.meta.url));
 const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
-const SOURCE = '#>{trades::DB.TRADES}#';
+const SOURCE = accessor('trades::DB', 'TRADES');
 const COLUMNS = ['region', 'desk', 'book', 'year', 'qtr', 'notional', 'pnl', 'qty'];
 
 /** The cases a READER cannot run live: none (they were the dynamic pivots). */
@@ -141,9 +143,9 @@ it('every cube case answers the same live on the warehouse and snapped in the ta
   const localRunner = new PlanThenRun(planner, local);
 
   const liveAnswers = new Map<string, { sql: string; rows: ResultTable } | { refused: string }>();
-  for (const [i, { name, grammar }] of grammars().entries()) {
+  for (const [i, { name, query }] of queries().entries()) {
     try {
-      const out = await liveRunner.run(await planner.parse(`|${grammar}`), CASES[i]!.snapshot, CASES[i]!.scope);
+      const out = await liveRunner.run(query, CASES[i]!.snapshot, CASES[i]!.scope);
       liveAnswers.set(name, out);
     } catch (e: unknown) {
       liveAnswers.set(name, { refused: e instanceof Error ? e.message : String(e) });
@@ -151,16 +153,16 @@ it('every cube case answers the same live on the warehouse and snapped in the ta
   }
 
   // SNAP: exactly the rows the reader may read, through the real SnapManager
-  const sourceSql = (await planner.plan(await planner.parse(`|${SOURCE}->select(~[${COLUMNS.join(', ')}])`))).sql;
+  const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
   const snaps = new SnapManager(local, live);
-  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', expression: SOURCE } });
+  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE } });
   assert.equal(info.rowCount, 10, 'the snap holds every row the reader may read');
 
   const refused: string[] = [];
   const differ: string[] = [];
   let compared = 0;
-  for (const [i, { name, grammar }] of grammars().entries()) {
-    const snapped = await localRunner.run(await planner.parse(`|${grammar}`), CASES[i]!.snapshot, CASES[i]!.scope);
+  for (const [i, { name, query }] of queries().entries()) {
+    const snapped = await localRunner.run(query, CASES[i]!.snapshot, CASES[i]!.scope);
     const l = liveAnswers.get(name)!;
     if ('refused' in l) {
       refused.push(name);
@@ -189,12 +191,13 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
     { table: trades.name, schema: trades.schema, convertible: false });
   assert.deepEqual(m.excluded, []);
   const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
-  const pure = await own.parse(`|${m.source}->groupBy(~[region], ~[notional:x|$x.notional:y|$y->sum()])->sort([~region->ascending()])`);
-  const snapshot = { ...CASES[0]!.snapshot, source: { expression: m.source } };
+  const snapshot = { ...CASES[0]!.snapshot, source: { query: m.source }, rows: ['region'],
+    measures: [{ name: 'notional', column: 'notional', fn: 'sum' as const }], sorts: [{ column: 'region', direction: 'asc' as const }] };
+  const pure = levelLambda(snapshot, { level: 1, parent: [] });
   const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
   const snaps = new SnapManager(local, live);
-  await snaps.snap((await own.plan(await own.parse(`|${m.source}->select(~[${COLUMNS.join(', ')}])`))).sql, 0,
-    { target: { schema: trades.schema, table: trades.name, expression: m.source } });
+  await snaps.snap((await own.plan(from(m.source).select(COLUMNS).lambda())).sql, 0,
+    { target: { schema: trades.schema, table: trades.name, source: m.source } });
   const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
   assert.equal(shape(localOut.rows, true), shape(liveOut.rows, true));
   assert.equal(liveOut.rows.rowCount, 4);

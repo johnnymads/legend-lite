@@ -21,9 +21,10 @@ import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';
+import { accessor } from '../../pure-protocol/src/index.ts';
 
 const BASE: CubeSnapshot = {
-  source: { expression: '#>{db.T}#' },
+  source: { query: accessor('db', 'T') },
   columns: [
     { name: 'region', type: 'String' },
     { name: 'notional', type: 'Float' },

@@ -16,7 +16,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { NULL_GROUP, effectivePivotOn, ident, pivotColumns, serialize, type PivotFacts } from '../src/serialize.ts';
+import {
+  NULL_GROUP,
+  effectivePivotOn,
+  levelLambda,
+  pivotColumns,
+  type PivotFacts,
+} from '../src/query.ts';
 import { buildColumnModel, PIVOT_SEPARATOR } from '../src/grid/columns.ts';
 import {
   CubeRefusal,
@@ -28,6 +34,22 @@ import {
   type SortSpec,
 } from '../src/snapshot.ts';
 import type { ResultTable } from '../src/result.ts';
+import { element } from '../../pure-protocol/src/index.ts';
+import { row } from './lite-compiler.ts';
+import { printLevel } from './lite-compiler.ts';
+import { findAll, type ColSpecArrayInstance, type ColSpecInstance, type Lambda, type ValueSpecification } from '../../pure-protocol/src/index.ts';
+
+/** Every column name a query writes or reads: its column specs, and its `$x.<name>` properties. */
+function columnNames(query: Lambda): string[] {
+  const specs = findAll(query, (n: ValueSpecification): n is ColSpecInstance | ColSpecArrayInstance =>
+    n._type === 'classInstance' && (n.type === 'colSpec' || n.type === 'colSpecArray'));
+  const props = findAll(query, (n: ValueSpecification): n is Extract<ValueSpecification, { _type: 'property' }> =>
+    n._type === 'property');
+  return [
+    ...specs.flatMap((c) => (c.type === 'colSpec' ? [c.value.name] : c.value.colSpecs.map((x) => x.name))),
+    ...props.map((p) => p.property),
+  ];
+}
 
 /** A tiny deterministic PRNG, so a seed reproduces a case exactly. */
 function rng(seed: number): () => number {
@@ -121,9 +143,9 @@ function makeSnapshot(r: () => number): CubeSnapshot {
         };
 
   return {
-    source: { expression: 't' },
+    source: { query: element('t') },
     columns,
-    derived: r() < 0.3 ? [{ name: 'd0', expression: '$x.a + 1' }] : [],
+    derived: r() < 0.3 ? [{ name: 'd0', lambda: row('$x.a + 1') }] : [],
     rows: some(3),
     pivotOn: some(2),
     measures,
@@ -173,13 +195,13 @@ function factsFor(s: CubeSnapshot): PivotFacts | undefined {
 
 function trySerialize(
   s: CubeSnapshot,
-  scope?: Parameters<typeof serialize>[1],
+  scope?: Parameters<typeof printLevel>[1],
   seed?: number,
 ): string | null {
   try {
     // A pivot's values come from its own query; the fuzz only writes
     // text, so each key gets a value and a NULL -- both condition forms.
-    return serialize(s, scope, factsFor(s));
+    return printLevel(s, scope, factsFor(s));
   } catch (e) {
     if (e instanceof CubeRefusal) return null;
     assert.fail(
@@ -399,13 +421,10 @@ describe('fuzzing the model layer', () => {
       if (pure === null) continue;
       // Only the pivot's OWN columns carry it, as the plan names them.
       const facts = factsFor(s);
-      let rest = pure;
-      for (const c of facts ? pivotColumns(s, facts) : []) rest = rest.split(ident(c.name)).join('');
-      assert.equal(
-        rest.includes(PIVOT_SEPARATOR),
-        false,
-        `seed ${seed}: separator leaked into ${pure}`,
-      );
+      const own = new Set((facts ? pivotColumns(s, facts) : []).map((c) => c.name));
+      const leaked = columnNames(levelLambda(s, undefined, facts ?? undefined))
+        .filter((n) => n.includes(PIVOT_SEPARATOR) && !own.has(n));
+      assert.deepEqual(leaked, [], `seed ${seed}: separator leaked into ${pure}`);
     }
   });
 });

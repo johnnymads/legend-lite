@@ -27,7 +27,7 @@ import type { QueryEngine } from './engine.ts';
 import type { Planner } from './cube.ts';
 import type { RemoteExecutor } from './engine-remote.ts';
 import type { CubeSnapshot } from './snapshot.ts';
-import type { LevelScope } from './serialize.ts';
+import type { LevelScope } from './query.ts';
 import type { ResultTable } from './result.ts';
 import type { Plan, PlanColumn } from './relation-type.ts';
 

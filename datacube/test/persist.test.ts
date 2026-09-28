@@ -11,9 +11,10 @@ import {
 } from '../src/persist.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { TreeState } from '../src/tree.ts';
+import { col, element, lambda, lit, times, toJson as protocolJson } from '../../pure-protocol/src/index.ts';
 
 const SNAPSHOT: CubeSnapshot = {
-  source: { expression: 'trades' },
+  source: { query: element('trades') },
   columns: [{ name: 'region', type: 'String' }],
   derived: [],
   rows: ['region', 'desk'],
@@ -105,8 +106,8 @@ describe('the row cap travels with the view', () => {
   it('ignores a non-numeric maxRows from a hand-edited file', () => {
     const back = load(
       JSON.stringify({
-        version: 1,
-        snapshot: { source: 'trades', maxRows: 'lots' },
+        version: 2,
+        snapshot: { source: { query: element('trades') }, maxRows: 'lots' },
       }),
     );
     assert.equal(back.snapshot.maxRows, undefined);
@@ -137,25 +138,25 @@ describe('forward and backward compatibility', () => {
     ]);
   });
 
-  it('reads a version-0 view that predates the version field', () => {
-    const v0 = {
+  it('refuses a view saved before its queries were protocol, and says so', () => {
+    const v1 = {
+      version: 1,
       name: 'legacy',
-      snapshot: {
-        source: 'trades', // was a bare string before it became an object
-        rows: ['region'],
-        pivotOn: [],
-        measures: [{ name: 'total', column: 'notional', fn: 'sum' }],
-      },
+      snapshot: { source: { expression: 'trades' }, rows: ['region'], pivotOn: [], measures: [] },
     };
-    const back = load(JSON.stringify(v0));
-    assert.equal(back.version, CURRENT_VERSION);
-    assert.equal(back.snapshot.source.expression, 'trades');
-    assert.deepEqual(back.snapshot.rows, ['region']);
-    // Absent collections become empty rather than undefined, so every
-    // consumer can assume the current shape.
-    assert.deepEqual(back.snapshot.derived, []);
-    assert.deepEqual(back.snapshot.sorts, []);
-    assert.equal(back.showTotals, true);
+    assert.throws(() => load(JSON.stringify(v1)), /saved by an earlier version \(1\), whose queries were text/);
+    assert.throws(() => load(JSON.stringify({ ...v1, version: undefined })), /earlier version \(0\)/);
+  });
+
+  it('keeps a calculated column\'s exact numbers: a decimal\'s digits, an integer past 2^53', () => {
+    const exact = lambda(['x'], times(col('x', 'notional'), lit.decimal('12.30'), lit.integer('9007199254740993')));
+    const v = save({
+      name: 'exact',
+      snapshot: { ...SNAPSHOT, derived: [{ name: 'scaled', lambda: exact }] },
+      tree: TreeState.empty(),
+    });
+    const back = load(toJson(v));
+    assert.equal(protocolJson(back.snapshot.derived[0]!.lambda), protocolJson(exact));
   });
 
   it('refuses a view from a newer version, and says so', () => {
@@ -163,7 +164,7 @@ describe('forward and backward compatibility', () => {
       () => load(JSON.stringify({ version: 99, snapshot: SNAPSHOT })),
       (e: unknown) => {
         assert.ok(e instanceof SavedViewError);
-        assert.match((e as Error).message, /newer version \(99 > 1\)/);
+        assert.match((e as Error).message, /newer version \(99 > 2\)/);
         assert.match((e as Error).message, /upgrade to open it/);
         return true;
       },
@@ -179,12 +180,12 @@ describe('failures are loud', () => {
   });
 
   it('reports a missing snapshot', () => {
-    assert.throws(() => load(JSON.stringify({ version: 1 })), /missing 'snapshot'/);
+    assert.throws(() => load(JSON.stringify({ version: 2 })), /missing 'snapshot'/);
   });
 
   it('reports a snapshot with no source', () => {
     assert.throws(
-      () => load(JSON.stringify({ version: 1, snapshot: { rows: [] } })),
+      () => load(JSON.stringify({ version: 2, snapshot: { rows: [] } })),
       /missing 'snapshot.source'/,
     );
   });

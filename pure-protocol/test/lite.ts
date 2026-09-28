@@ -44,3 +44,15 @@ export async function parse(text: string): Promise<string> {
 export async function compose(json: string, style: 'STANDARD' | 'PRETTY' = 'STANDARD'): Promise<string> {
   return ok((await load()).exports.composeLambdaOrError(json, style));
 }
+
+/** The same two, synchronous once the module has loaded: for fixtures built at a module's top level. */
+export async function ready(): Promise<{
+  parse(text: string): string;
+  compose(json: string, style?: 'STANDARD' | 'PRETTY'): string;
+}> {
+  const m = await load();
+  return {
+    parse: (text) => ok(m.exports.lambdaJsonOrError(text)),
+    compose: (json, style = 'STANDARD') => ok(m.exports.composeLambdaOrError(json, style)),
+  };
+}

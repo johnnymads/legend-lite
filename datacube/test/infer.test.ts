@@ -5,6 +5,8 @@ import { describe, it } from 'node:test';
 import { inferModel } from '../src/infer.ts';
 import { build } from './catalog-builder.ts';
 import { formatOf, tableNameOf } from '../src/upload.ts';
+import { lambda } from '../../pure-protocol/src/index.ts';
+import { print } from './lite-compiler.ts';
 
 describe('tableNameOf', () => {
   it('derives an identifier from a filename', () => {
@@ -58,7 +60,7 @@ describe('inferModel', () => {
     assert.match(m.model, /type: DuckDB;/);
     assert.match(m.model, /###Runtime/);
     assert.equal(m.runtime, 'local::RT');
-    assert.equal(m.source, '#>{local::DB.trades}#');
+    assert.equal(print(lambda([], m.source)), '|#>{local::DB.trades}#');
     assert.deepEqual(m.conversions, []);
   });
 
@@ -73,7 +75,7 @@ describe('inferModel', () => {
     const m = await inferModel(build, [{ name: 'a', type: 'VARCHAR' }],
       { table: 'my table', convertible: true });
     assert.match(m.model, /Table "my table"/);
-    assert.equal(m.source, '#>{local::DB."my table"}#');
+    assert.equal(print(lambda([], m.source)), '|#>{local::DB."my table"}#');
     await assert.rejects(inferModel(build, [{ name: 'a', type: 'VARCHAR' }],
       { table: 'a.b', convertible: true }), /cannot be carried/);
   });
@@ -119,7 +121,7 @@ describe('inferModel with a schema (a warehouse table)', () => {
     const m = await inferModel(build, [{ name: 'id', type: 'INTEGER' }, { name: 'region', type: 'VARCHAR' }],
       { table: 'v_orders', schema: 'sales', convertible: false });
     assert.match(m.model, /Schema sales\n {4}\(\n {8}Table v_orders\n {8}\(\n {12}id INTEGER,\n {12}region VARCHAR\(4096\)\n {8}\)\n {4}\)/);
-    assert.equal(m.source, '#>{local::DB.sales.v_orders}#');
+    assert.equal(print(lambda([], m.source)), '|#>{local::DB.sales.v_orders}#');
   });
 
   it('declares no schema when there is none', async () => {
