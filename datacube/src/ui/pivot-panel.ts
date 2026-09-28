@@ -46,9 +46,17 @@ export function setHeaderDrag(drag: HeaderDrag | null): void {
   dragging = drag;
 }
 
+/** Both zones' members, in order. */
+export type ZoneLayout = Readonly<Record<Zone, readonly string[]>>;
+
 export interface PivotPanelOptions {
-  /** Called with the new membership of a zone. */
-  readonly onChange: (zone: Zone, columns: readonly string[]) => void;
+  /**
+   * Called ONCE per gesture with the whole new layout. A chip dragged from
+   * one zone to the other changes both, and reporting them as two changes
+   * made two queries of one move -- and a refused move "undid 2 changes"
+   * the person never made (P2-103).
+   */
+  readonly onChange: (layout: ZoneLayout) => void;
   /** Whether a column may be dropped at all. Measures may not. */
   readonly canGroup: (column: string) => boolean;
   /** Header text for a column, where it differs from its name. */
@@ -112,7 +120,7 @@ export class PivotPanel {
   readonly #root: HTMLElement;
   readonly #doc: Document;
   readonly #options: PivotPanelOptions;
-  #state: Readonly<Record<Zone, readonly string[]>> = {
+  #state: ZoneLayout = {
     rows: [],
     columns: [],
   };
@@ -321,20 +329,21 @@ export class PivotPanel {
     // dimension is listed there too, and dragging that copy into
     // Column Labels put it on both axes.
     const other: Zone = zone === 'rows' ? 'columns' : 'rows';
-    if (this.#state[other].includes(drag.column)) {
-      this.#state = {
-        ...this.#state,
-        [other]: placeColumn(this.#state[other], drag.column, null),
-      };
-      this.#options.onChange(other, this.#state[other]);
-    }
-    this.#set(zone, placeColumn(this.#state[zone], drag.column, index));
+    const left = this.#state[other].includes(drag.column)
+      ? placeColumn(this.#state[other], drag.column, null)
+      : this.#state[other];
+    this.#layout({ ...this.#state, [other]: left, [zone]: placeColumn(this.#state[zone], drag.column, index) });
   }
 
   #set(zone: Zone, columns: readonly string[]): void {
-    if (columns === this.#state[zone]) return;
-    this.#state = { ...this.#state, [zone]: columns };
-    this.#options.onChange(zone, columns);
+    this.#layout({ ...this.#state, [zone]: columns });
+  }
+
+  /** One gesture's whole layout: reported once, nothing when nothing moved. */
+  #layout(next: ZoneLayout): void {
+    if (same(next.rows, this.#state.rows) && same(next.columns, this.#state.columns)) return;
+    this.#state = next;
+    this.#options.onChange(next);
     this.render();
   }
 }

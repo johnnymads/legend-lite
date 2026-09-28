@@ -35,21 +35,21 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-100 | a refusal rolls back only the app's snapshot; the controller keeps the refused one | **closed B1b**: one owner; a refusal repaints from `committed` and records no step. "leaves no undo step…" (red before) |
 | P2-101 | a failed expand/collapse leaves the tree flipped | **closed B1b**: the tree is part of the transaction. "a refused expand leaves the group closed" (red before) |
 | P2-102 | after a refused zone change the zones keep the refused layout | **closed B1b**: `#onState` repaints the zones from the state on every event. "a refused zone change puts the zones back" (red before) |
-| P2-103 | a chip move is two changes; a refused move drops the grouping | open (`pivot-panel.ts` calls `onChange` twice) |
+| P2-103 | a chip move is two changes; a refused move drops the grouping | **closed B1c**: the panel reports one `ZoneLayout` per gesture. `test/cube-transactions.test.ts` "a chip dragged … is ONE change" (red before: "2 changes were undone") |
 | P2-104 | a superseded refresh turns the busy signal off while the newer one runs | **closed B1b**: busy is `owner.busy`. "a superseded run ending does not turn busy off…" (red before) |
 | P2-105 | `dispose()` stops nothing: late queries, listeners, callbacks outlive the cube | open |
 | P2-106 | an action during an in-flight Undo mixes states and loses the redo | open |
 | P2-107 | overlapping Undos roll back to a state never rendered | open |
 | P2-108 | Undo restores the configuration but not appearance, zones or title bar | **closed B1b**: one paint from the state (`#paintState`). "the zones and the title bar come back with the state" (red before) |
 | P2-109 | the history key ignores groups collapsed from an expand level | open (`stateKey` reads `openPaths` only) |
-| P2-110 | during a refresh the context menu pairs the old rows with the new snapshot | open |
+| P2-110 | during a refresh the context menu pairs the old rows with the new snapshot | **closed B1c**: the menu reads `rendered` (`#shown`). "a right-click while a regroup runs names the column…" (red before: it offered `desk = 'EMEA'` on a region row) |
 | P2-114 | fire-and-forget calls: unhandled rejections; failed presentation changes keep the new config | **closed B1b**: presentation runs no query; `change` never throws (it returns an outcome). "a presentation change runs no query…" (red before) |
 | P2-127 | the host TOGGLES instead of applying the requested expand state | **closed B1b**: `tree.setOpen(path, expanded)`. "two quick clicks … leave it open" (red with the toggle put back) |
 | P2-131 | drill-through has no stale-result guard | open |
 | P2-144 | the Filters window keeps an old copy and its Apply overwrites newer changes | open |
 | P2-150 | reopening Filters rewrites '' / numeric-looking / quoted values | to re-test (T4c typed the values; the reopen path may still coerce) |
 | P2-152 | a serializer refusal throws from compile: the column editor hangs, Apply silently does nothing | open |
-| P2-169 | an Apply that also changes root aggregation / expand level loses its row, pivot and sort edits | **fixed by B1b** (the Apply is one transaction, tree included); its reproduction through the editor comes with B1c |
+| P2-169 | an Apply that also changes root aggregation / expand level loses its row, pivot and sort edits | **fixed by B1b** (86bc9f06e: the Apply is one transaction, tree included); pinned in B1c by "a Properties Apply is ONE transaction" (lands and refuses whole) — passes on B1b's code, not re-run against the code before it |
 | P2-170 | edits made while an Apply runs are recorded as applied | open (`#opened = this.#draft` after the await) |
 | P2-171 | the Sorts tab's direction dropdown reads a stale map | open |
 | P2-187 | the Dimensions editor loses hierarchy edits on rename/Add | open |
@@ -210,6 +210,9 @@ steps; a refused change made on a pending one says "N changes were undone".
 - **B1c — whole gestures as one transaction.** A chip move, a Properties Apply (tree settings
   included), expand/collapse as a set. The context menu, drill and value filters read `rendered`.
   Closes P2-103, 110, 127, 169.
+B1c LANDED: P2-103, P2-110 closed; P2-169 pinned (§2). The Sorts/Properties/Filters editors' own
+drafts are B4.
+
 - **B2 — history.** Undo/redo through the owner in the app (the rules are B1a's), Settings > Max
   History Stack Size, the menu's enabled states. P2-106, 107, 109 each red-first through the app.
 - **B3 — lifecycle and supersession.** Dispose, listeners, drill sequence, resize drag, Escape.

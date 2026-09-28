@@ -114,6 +114,7 @@ import {
   PivotPanel,
   currentHeaderDrag,
   type Zone,
+  type ZoneLayout,
 } from './ui/pivot-panel.ts';
 import {
   ColumnsToolPanel,
@@ -469,7 +470,7 @@ export class CubeApp {
     this.#sideZones = new PivotPanel(this.#columnsPanel.zones, {
       canGroup: (c) => this.#isDimension(c),
       labelFor: (c) => labelFor(this.#config, c),
-      onChange: (zone, columns) => this.#onZoneChange(zone, columns),
+      onChange: (layout) => this.#onLayout(layout),
       orientation: 'list',
       showColumnZone: true,
     });
@@ -477,7 +478,7 @@ export class CubeApp {
     this.#pivots = new PivotPanel(zones, {
       canGroup: (c) => this.#isDimension(c),
       labelFor: (c) => labelFor(this.#config, c),
-      onChange: (zone, columns) => this.#onZoneChange(zone, columns),
+      onChange: (layout) => this.#onLayout(layout),
       ...(options.showColumnZone !== undefined
         ? { showColumnZone: options.showColumnZone }
         : {}),
@@ -688,6 +689,16 @@ export class CubeApp {
   /** The view on screen, and its rows. */
   get #view(): CubeView | null {
     return this.#owner.view;
+  }
+
+  /**
+   * The snapshot of the view ON SCREEN. Anything read off the rows a person
+   * is looking at -- which column a clicked row groups by, what a cell is --
+   * reads this, never the change still in flight: during a regroup the
+   * menu named the pending grouping for the old rows (P2-110).
+   */
+  get #shown(): CubeSnapshot {
+    return this.#owner.rendered.snapshot;
   }
 
   get #treeRows(): readonly TreeRow[] {
@@ -1382,6 +1393,11 @@ export class CubeApp {
 
   // -- the drag zones -------------------------------------------------
 
+  /** A drag in the zones: the whole new layout, one change (P2-103). */
+  #onLayout(layout: ZoneLayout): void {
+    void this.#query((s) => ({ ...s, rows: [...layout.rows], pivotOn: [...layout.columns] }), 'move in the zones');
+  }
+
   #onZoneChange(zone: Zone, columns: readonly string[]): void {
     void this.#query((s) => (zone === 'rows'
       ? { ...s, rows: [...columns] }
@@ -1451,7 +1467,7 @@ export class CubeApp {
           // A path of length n is the nth row dimension; the grand
           // total's path is empty and offers no value filter.
           const path = meta?.path ?? [];
-          column = this.#snapshot.rows[path.length - 1];
+          column = this.#shown.rows[path.length - 1];
           value = path.length > 0 ? (path[path.length - 1] ?? null) : undefined;
         } else if (column !== undefined) {
           const leaf = this.#view.columns.leaves.find(
@@ -1474,7 +1490,7 @@ export class CubeApp {
           value = undefined;
         }
         if (column !== undefined) {
-          columnType = rowColumns(this.#snapshot).find(
+          columnType = rowColumns(this.#shown).find(
             (c) => c.name === column,
           )?.type;
         }
@@ -1485,7 +1501,7 @@ export class CubeApp {
         // groupBy, and every filter runs before it -- so a value
         // filter on one could only ever be refused.
         if (column !== undefined
-          && (this.#snapshot.groupDerived ?? []).some((d) => d.name === column)) {
+          && (this.#shown.groupDerived ?? []).some((d) => d.name === column)) {
           value = undefined;
         }
         // A GROUP or TOTAL row shows aggregates, and every filter runs on
@@ -1496,8 +1512,8 @@ export class CubeApp {
         // (a fine filter), or blank for "several", which is not "empty".
         // The group keys themselves are the tree column's, above.
         if (column !== undefined && column !== TREE_COLUMN && meta !== undefined
-          && !meta.isDetail && (this.#snapshot.rows.length > 0 || meta.isTotal)
-          && !this.#snapshot.rows.includes(column)
+          && !meta.isDetail && (this.#shown.rows.length > 0 || meta.isTotal)
+          && !this.#shown.rows.includes(column)
           && (this.#kindOf(column) === 'measure' || value === null)) {
           value = undefined;
         }
@@ -1509,15 +1525,15 @@ export class CubeApp {
       const propertiesColumn = onHeader && column !== undefined
         && column !== TREE_COLUMN
         ? facts.pivotBase
-          ?? this.#snapshot.measures.find((m) => m.name === column)?.column
+          ?? this.#shown.measures.find((m) => m.name === column)?.column
           ?? column
         : undefined;
       const groups = buildMenu({
-        snapshot: this.#snapshot,
+        snapshot: this.#shown,
         ...(propertiesColumn !== undefined ? { propertiesColumn } : {}),
         ...(column !== undefined ? { column } : {}),
         isRowDimension: column
-          ? this.#snapshot.rows.includes(column)
+          ? this.#shown.rows.includes(column)
           : false,
         hasSelection: this.#selection !== null,
         hasExpanded: this.#owner.current.tree.openPaths.length > 0,
@@ -1538,7 +1554,7 @@ export class CubeApp {
         ...(column !== undefined && this.#kindOf(column) !== undefined
           ? { extendable: true }
           : {}),
-        ...(column !== undefined ? calcStageOf(this.#snapshot, column) : {}),
+        ...(column !== undefined ? calcStageOf(this.#shown, column) : {}),
         ...facts,
         ...(value !== undefined ? { value } : {}),
         ...(columnType !== undefined ? { columnType } : {}),

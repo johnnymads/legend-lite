@@ -8,6 +8,7 @@ import {
   placeColumn,
   setHeaderDrag,
   type Zone,
+  type ZoneLayout,
 } from '../src/ui/pivot-panel.ts';
 
 describe('placeColumn', () => {
@@ -42,7 +43,7 @@ describe('placeColumn', () => {
 describe('the drag zones', () => {
   let dom: JSDOM;
   let root: HTMLElement;
-  let changes: [Zone, string[]][];
+  let changes: ZoneLayout[];
   let panel: PivotPanel;
 
   const DIMENSIONS = new Set(['region', 'desk', 'year']);
@@ -52,7 +53,7 @@ describe('the drag zones', () => {
     root = dom.window.document.getElementById('r') as HTMLElement;
     changes = [];
     panel = new PivotPanel(root, {
-      onChange: (zone, cols) => changes.push([zone, [...cols]]),
+      onChange: (layout) => changes.push(layout),
       canGroup: (c) => DIMENSIONS.has(c),
       showColumnZone: true,
     });
@@ -80,7 +81,7 @@ describe('the drag zones', () => {
   it('accepts a dimension dragged from a header', () => {
     setHeaderDrag({ column: 'region' });
     drop('rows');
-    assert.deepEqual(changes.at(-1), ['rows', ['region']]);
+    assert.deepEqual(changes.at(-1)?.rows, ['region']);
     assert.deepEqual(chips('rows'), ['region']);
   });
 
@@ -104,8 +105,8 @@ describe('the drag zones', () => {
     drop('columns');
     assert.deepEqual(chips('rows'), []);
     assert.deepEqual(chips('columns'), ['region']);
-    assert.deepEqual(changes.at(-2), ['rows', []]);
-    assert.deepEqual(changes.at(-1), ['columns', ['region']]);
+    // ONE change for the one gesture: both zones at once (P2-103)
+    assert.deepEqual(changes, [{ rows: [], columns: ['region'] }]);
   });
 
   it('removes a chip with its button', () => {
@@ -113,7 +114,7 @@ describe('the drag zones', () => {
     (
       zone('rows').querySelector('.dc-chip-remove') as HTMLButtonElement
     ).click();
-    assert.deepEqual(changes.at(-1), ['rows', ['desk']]);
+    assert.deepEqual(changes.at(-1)?.rows, ['desk']);
   });
 
   it('removes a chip from the KEYBOARD', () => {
@@ -125,7 +126,7 @@ describe('the drag zones', () => {
         bubbles: true,
       }),
     );
-    assert.deepEqual(changes.at(-1), ['rows', []]);
+    assert.deepEqual(changes.at(-1)?.rows, []);
   });
 
   it('hides the column zone by default, matching DataCube', () => {
@@ -162,14 +163,14 @@ describe('makeHeaderDraggable', () => {
 describe('the same zones, down a list', () => {
   let dom: JSDOM;
   let root: HTMLElement;
-  let changes: [Zone, string[]][];
+  let changes: ZoneLayout[];
 
   beforeEach(() => {
     dom = new JSDOM('<!doctype html><body><div id="r"></div></body>');
     root = dom.window.document.getElementById('r') as HTMLElement;
     changes = [];
     const panel = new PivotPanel(root, {
-      onChange: (zone, cols) => changes.push([zone, [...cols]]),
+      onChange: (layout) => changes.push(layout),
       // A MEASURE IS NOT GROUPABLE, as in the product: grouping by a
       // notional means one group per amount. A fixture that says
       // everything can be grouped cannot test the refusal.
@@ -195,7 +196,7 @@ describe('the same zones, down a list', () => {
     // grouped columns in the grid" on, a row dimension is listed in
     // that panel too.
     const panel2 = new PivotPanel(root, {
-      onChange: (zone, cols) => changes.push([zone, [...cols]]),
+      onChange: (layout) => changes.push(layout),
       canGroup: () => true,
       showColumnZone: true,
       orientation: 'list',
@@ -206,10 +207,8 @@ describe('the same zones, down a list', () => {
       .dispatchEvent(new dom.window.MouseEvent('drop', {
         bubbles: true, cancelable: true,
       }));
-    assert.deepEqual(changes, [
-      ['rows', ['desk']],
-      ['columns', ['year', 'region']],
-    ]);
+    // ONE change for the one gesture: both zones at once (P2-103)
+    assert.deepEqual(changes, [{ rows: ['desk'], columns: ['year', 'region'] }]);
   });
 
   it('renders no chain arrows, because the list IS the order', () => {
@@ -285,7 +284,7 @@ describe('the same zones, down a list', () => {
       bubbles: true, cancelable: true, clientY: 39, clientX: 50,
     }));
     // The bar was the truth: it landed last, and the bar is gone.
-    assert.deepEqual(changes.at(-1), ['rows', ['region', 'desk', 'year']]);
+    assert.deepEqual(changes.at(-1)?.rows, ['region', 'desk', 'year']);
     assert.deepEqual(marks(), ['-', '-']);
   });
 
@@ -312,6 +311,6 @@ describe('the same zones, down a list', () => {
       bubbles: true, cancelable: true, clientY: 5, clientX: 50,
     }));
     // Dropped in the top half of the FIRST chip: first place.
-    assert.deepEqual(changes.at(-1), ['rows', ['year', 'region', 'desk']]);
+    assert.deepEqual(changes.at(-1)?.rows, ['year', 'region', 'desk']);
   });
 });

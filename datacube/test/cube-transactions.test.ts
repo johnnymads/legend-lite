@@ -11,6 +11,7 @@ import type { Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import { setHeaderDrag } from '../src/ui/pivot-panel.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint } from './fake-planner.ts';
 import { element } from '../../pure-protocol/src/index.ts';
@@ -77,6 +78,7 @@ let root: HTMLElement;
 let engine: GateEngine;
 let app: CubeApp;
 let unhandled: unknown[];
+let statuses: [string, string][];
 
 /** Let every promise the app started settle (menus and chevrons do not return theirs). */
 async function settle(): Promise<void> {
@@ -98,7 +100,9 @@ beforeEach(async () => {
   unhandled = [];
   process.removeAllListeners('unhandledRejection');
   process.on('unhandledRejection', (e) => unhandled.push(e));
-  app = new CubeApp(root, SNAPSHOT, { engine, planner: new StubPlanner() });
+  statuses = [];
+  app = new CubeApp(root, SNAPSHOT, { engine, planner: new StubPlanner(),
+    onStatus: (text, kind) => statuses.push([text, kind]) });
   await app.open();
 });
 
@@ -256,6 +260,96 @@ describe('the shortcuts are registered once (B1b)', () => {
     await settle();
     assert.deepEqual(app.snapshot.sorts, [{ column: 'region', direction: 'desc' }], 'the sorts were not undone');
     assert.equal(app.configuration.showDragZones, false, 'the last fold was');
+  });
+});
+
+describe('a whole gesture is one change (B1c)', () => {
+  it('a chip dragged from Row Groups to Column Labels is ONE change: refused, it names one (P2-103)', async () => {
+    const zones = zoneChips();
+    engine.refuse = 'the engine said no';
+    setHeaderDrag({ column: 'desk', from: 'rows' });
+    (root.querySelector('.dc-app-side .dc-zone-columns') as HTMLElement)
+      .dispatchEvent(new dom.window.MouseEvent('drop', { bubbles: true, cancelable: true }));
+    await settle();
+    assert.deepEqual([app.snapshot.rows, app.snapshot.pivotOn], [['region', 'desk'], []], 'the cube as it was');
+    assert.deepEqual(zoneChips(), zones);
+    assert.equal(statuses.some(([t]) => /changes were undone/.test(t)), false,
+      `one gesture, one change: ${statuses.map(([t]) => t).join(' | ')}`);
+    engine.refuse = null;
+    setHeaderDrag({ column: 'desk', from: 'rows' });
+    (root.querySelector('.dc-app-side .dc-zone-columns') as HTMLElement)
+      .dispatchEvent(new dom.window.MouseEvent('drop', { bubbles: true, cancelable: true }));
+    await settle();
+    assert.deepEqual([app.snapshot.rows, app.snapshot.pivotOn], [['region'], ['desk']]);
+    await app.undo();
+    await settle();
+    assert.deepEqual([app.snapshot.rows, app.snapshot.pivotOn], [['region', 'desk'], []], 'one undo takes the whole move back');
+  });
+});
+
+describe('what is read off the rows on screen reads the state ON SCREEN (B1c)', () => {
+  it('a right-click while a regroup runs names the column the clicked row belongs to (P2-110)', async () => {
+    engine.hold = true;
+    menu('EMEA', 'Remove Vertical Pivot on region');
+    await settle();
+    assert.deepEqual(app.snapshot.rows, ['desk'], 'the regroup is pending');
+    const cell = [...root.querySelectorAll<HTMLElement>('.dc-cell')]
+      .find((c) => c.textContent?.trim().replace(/^[▸▾]/, '') === 'EMEA');
+    assert.ok(cell, 'EMEA is still on screen');
+    cell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true }));
+    const labels = menuItems().map((i) => i.querySelector('.dc-menu-label')?.textContent ?? '');
+    assert.ok(labels.includes("Add Filter: region = 'EMEA'"), labels.filter((l) => l.startsWith('Add Filter')).join(' | '));
+    engine.hold = false;
+    engine.releaseAll();
+    await settle();
+  });
+});
+
+describe('a Properties Apply is ONE transaction, the tree included (P2-169)', () => {
+  const overlay = (): HTMLElement => root.querySelector('.dc-app-overlay') as HTMLElement;
+  const tab = (name: string): void => {
+    ([...overlay().querySelectorAll<HTMLElement>('.dc-editor-tab')].find((b) => b.textContent === name)
+      ?? assert.fail(`no tab ${name}`)).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+  };
+  const apply = (): void => {
+    ([...overlay().querySelectorAll<HTMLButtonElement>('.dc-editor-footer button')]
+      .find((b) => b.textContent === 'Apply') ?? assert.fail('no Apply')).click();
+  };
+  /** Sort by desk, and flip "Show root aggregation", in ONE Apply. */
+  const edit = (): boolean => {
+    app.openEditor();
+    tab('Sorts');
+    const desk = [...overlay().querySelectorAll<HTMLElement>('.dc-pane-available .dc-selector-row')]
+      .find((r) => r.dataset['column'] === 'desk') ?? assert.fail('no desk to sort by');
+    desk.dispatchEvent(new dom.window.MouseEvent('dblclick', { bubbles: true }));
+    tab('General Properties');
+    const root$ = [...overlay().querySelectorAll<HTMLElement>('.dc-check')]
+      .find((l) => l.textContent === 'Show root aggregation')?.querySelector('input') ?? assert.fail('no root toggle');
+    root$.checked = !root$.checked;
+    root$.dispatchEvent(new dom.window.Event('change'));
+    apply();
+    return root$.checked;
+  };
+
+  it('lands with every edit: the sort AND the root total (the tree\'s own refresh used to land the old snapshot over the draft)', async () => {
+    const showTotals = edit();
+    await settle();
+    assert.deepEqual(app.snapshot.sorts.map((x) => x.column), ['desk'], 'the draft\'s sort survived');
+    assert.equal(app.tree.showTotals, showTotals, 'and the root total changed with it');
+    await app.undo();
+    await settle();
+    assert.deepEqual(app.snapshot.sorts, [], 'one undo takes the whole Apply back');
+    assert.equal(app.tree.showTotals, !showTotals);
+  });
+
+  it('refused, nothing of it stays: not the sort, not the root total', async () => {
+    const before = app.tree.showTotals;
+    engine.refuse = 'the engine said no';
+    edit();
+    await settle();
+    assert.deepEqual(app.snapshot.sorts, []);
+    assert.equal(app.tree.showTotals, before);
+    assert.equal(app.configuration.showRootAggregation, before);
   });
 });
 
