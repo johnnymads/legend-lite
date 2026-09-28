@@ -58,6 +58,7 @@ Database t::DB ( Table T ( qty INTEGER, desk VARCHAR(32) ) )
   const planner = plannerFor(MODEL, '');
   const compiler: QueryRunner = {
     name: 'lite',
+    stream: async () => { throw new Error('this test streams nothing'); },
     run: async () => { throw new Error('typing runs nothing'); },
     compile: async () => undefined,
     relationType: (query) => planner.relationType(query),

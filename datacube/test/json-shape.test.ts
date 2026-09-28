@@ -141,6 +141,9 @@ describe('as JSON', () => {
       "x|$x.d->get('items')->toMany(@Variant)->map(e|$e->get('sku'))->toVariant()");
     // An array inside each element: its values from every element.
     assert.equal(f.get('d_items_tags')?.type, 'Variant');
+    // one element, whole (T10): a JSON column of its own
+    assert.deepEqual([f.get('d_items_first')?.expression, f.get('d_items_first')?.type],
+      ["x|$x.d->get('items')->get(0)", 'Variant']);
   });
 
   it('is not offered for the column itself', () => {

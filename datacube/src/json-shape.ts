@@ -185,28 +185,47 @@ function observe(shape: Shape, n: JsonNode): void {
 export interface Sample {
   /** The inferred shape of the column's documents. */
   readonly shape: Shape;
-  /** Rows sampled, empty ones included. */
+  /** Rows read, empty ones included. */
   readonly rows: number;
   /** Documents that could not be read as JSON. */
   readonly unreadable: number;
+  /** Every row of the column was read: the shape describes all of it, not a sample. */
+  readonly complete: boolean;
 }
 
-/** Infer a shape from a column's cells, as the grid receives them. */
-export function inferShape(cells: readonly unknown[]): Sample {
-  const shape = emptyShape();
-  let unreadable = 0;
-  for (const cell of cells) {
-    if (cell === null || cell === undefined) continue;
+/**
+ * A column's shape, built as its cells arrive: a sample's, or -- reading every row --
+ * each streamed chunk's, observed and let go, so a whole column passes in flat memory.
+ */
+export class ShapeReader {
+  readonly #shape = emptyShape();
+  #rows = 0;
+  #unreadable = 0;
+
+  /** A cell as the grid receives it. */
+  add(cell: unknown): void {
+    this.#rows += 1;
+    if (cell === null || cell === undefined) return;
     // A JSON column arrives as its text; an object is what a nested
     // column looks like when a driver has already decoded it.
     const text = typeof cell === 'string' ? cell : JSON.stringify(cell);
     try {
-      observe(shape, parseJson(text));
+      observe(this.#shape, parseJson(text));
     } catch {
-      unreadable += 1;
+      this.#unreadable += 1;
     }
   }
-  return { shape, rows: cells.length, unreadable };
+
+  result(complete: boolean): Sample {
+    return { shape: this.#shape, rows: this.#rows, unreadable: this.#unreadable, complete };
+  }
+}
+
+/** Infer a shape from a sample of a column's cells, as the grid receives them. */
+export function inferShape(cells: readonly unknown[]): Sample {
+  const reader = new ShapeReader();
+  for (const cell of cells) reader.add(cell);
+  return reader.result(false);
 }
 
 /**
@@ -369,6 +388,9 @@ function arrayExtractions(shape: Shape, expr: ValueSpecification, names: readonl
     }
   }
   if (el.objects > 0) {
+    // One element, whole: a JSON column of its own (T10), extracted from again like any.
+    out.push({ name: nameOf([...names, 'first']), label: 'first element, as JSON',
+      lambda: ofRow(fn('get', expr, lit.integer(0))), type: 'Variant', kind: 'dimension' });
     for (const [k, f] of [...el.fields.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
       // Every element's value -- a scalar, or an array or object of its
       // own -- as ONE JSON array: ["MS-01","HS-01"].

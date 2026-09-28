@@ -24,7 +24,7 @@ import {
   type Completion,
 } from '../calc.ts';
 import type { Extraction } from '../json-shape.ts';
-import { buildJsonFields, freeName } from './json-fields.ts';
+import { buildJsonFields, freeName, type JsonColumnReader } from './json-fields.ts';
 import type { CompileOutcome } from '../cube.ts';
 import type { Lambda } from '../../../pure-protocol/src/index.ts';
 import type { PivotColumn } from '../query.ts';
@@ -88,7 +88,8 @@ export interface ColumnEditorOptions {
    * A sample of a JSON column's cells, for picking a field of it
    * (`ui/json-fields.ts`). Absent: the editor offers no JSON fields.
    */
-  readonly sampleJson?: (column: string) => Promise<readonly unknown[]>;
+  /** A JSON column's cells: a sample, or every row (`JsonColumnReader`). */
+  readonly readJson?: (column: string) => JsonColumnReader;
 }
 
 interface Draft {
@@ -613,12 +614,12 @@ export class ColumnEditor {
   /** A JSON column to pick from, and its fields once one is chosen. */
   #paintJson(box: HTMLElement, onPick: (e: Extraction) => void): void {
     const doc = this.#doc;
-    const sample = this.#options.sampleJson;
+    const readJson = this.#options.readJson;
     const self = this.#original;
     const json = rowColumns(this.#options.snapshot())
       .filter((c) => c.name !== self && isVariant(c.type))
       .map((c) => c.name);
-    if (!sample || json.length === 0) {
+    if (!readJson || json.length === 0) {
       box.remove();
       return;
     }
@@ -637,7 +638,7 @@ export class ColumnEditor {
       const column = pick.value;
       if (!column) return;
       buildJsonFields(fields, {
-        column, sample: () => sample(column), onPick,
+        column, reader: readJson(column), onPick,
       });
     };
     pick.addEventListener('change', show);

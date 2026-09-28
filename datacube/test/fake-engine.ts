@@ -21,5 +21,10 @@ export abstract class FakeEngine implements QueryEngine {
     return this.answer(sql, epoch, signal);
   }
 
+  /** The answer as one chunk: a double does not stream. */
+  async stream(plan: Plan, epoch: number, onChunk: (chunk: ResultTable) => void, signal?: AbortSignal): Promise<void> {
+    onChunk(await this.answer(plan.sql, epoch, signal));
+  }
+
   async close(): Promise<void> {}
 }

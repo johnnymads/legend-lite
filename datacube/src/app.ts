@@ -75,7 +75,8 @@ import {
 } from './grid/columns.ts';
 import { load, save, toJson, treeOf } from './persist.ts';
 import { selectionStats, selectionTable, type CellRange } from './selection.ts';
-import type { Scalar } from './result.ts';
+import type { ResultTable, Scalar } from './result.ts';
+import type { JsonColumnReader } from './ui/json-fields.ts';
 import {
   renameColumnReferences,
   rowColumns,
@@ -122,6 +123,8 @@ import { isVariant } from './types.ts';
 
 /** Rows sampled to infer what a JSON column holds. */
 const JSON_SAMPLE_ROWS = 1000;
+/** The row-count column of a JSON column's count query (`#jsonReader`). */
+const JSON_ROWS = '__json_rows';
 
 /**
  * How this cube turns Pure into rows -- one of two arrangements.
@@ -2343,7 +2346,7 @@ export class CubeApp {
         print: (query) => this.#controller.print(query),
         compile: (candidate, signal) => this.#controller.compile(candidate, signal),
         apply: (row, group, rename) => this.#setCalc(row, group, rename),
-        sampleJson: (column) => this.#sampleJson(column),
+        readJson: (column) => this.#jsonReader(column),
         onClose: close,
       }));
     }, {
@@ -2355,13 +2358,13 @@ export class CubeApp {
   }
 
   /**
-   * A sample of a JSON column's cells, for the column editor's JSON
-   * field picker: only what reaches the column (the source column
-   * alone, or a calculated one with the calculated columns before it),
-   * the first rows, unfiltered -- the shape of the data, not of the
-   * current view -- through the cube's own query path, so every plane.
+   * A JSON column's cells, through the cube's own query path so every plane: the column
+   * alone (a calculated one with the calculated columns before it), unfiltered -- the shape
+   * of the data, not of the current view. A sample of its first rows, with the column's row
+   * count; or every row in ONE streamed query, each chunk observed and let go (flat memory,
+   * one scan, every row exactly once).
    */
-  async #sampleJson(column: string): Promise<readonly unknown[]> {
+  #jsonReader(column: string): JsonColumnReader {
     const s = this.#snapshot;
     const at = s.derived.findIndex((d) => d.name === column);
     const flat: CubeSnapshot = {
@@ -2374,10 +2377,23 @@ export class CubeApp {
       sorts: [],
       epoch: s.epoch,
     };
-    const scope = { level: 0, parent: [], limit: JSON_SAMPLE_ROWS };
-    const { rows } = await this.#controller.runQuery(
-      levelLambda(flat, scope), flat, scope);
-    return rows.columns.find((c) => c.name === column)?.values ?? [];
+    const cellsOf = (rows: ResultTable): readonly unknown[] =>
+      rows.columns.find((c) => c.name === column)?.values ?? [];
+    // the rows the column has: one count over the same relation
+    const counted: CubeSnapshot = { ...flat, measures: [{ name: JSON_ROWS, column, fn: 'count' }] };
+    return {
+      sample: async (signal) => {
+        const scope = { level: 0, parent: [], limit: JSON_SAMPLE_ROWS };
+        const [sampled, total] = await Promise.all([
+          this.#controller.runQuery(levelLambda(flat, scope), flat, scope, signal),
+          this.#controller.runQuery(levelLambda(counted), counted, undefined, signal),
+        ]);
+        const n = total.rows.columns.find((c) => c.name === JSON_ROWS)?.values[0];
+        return { cells: cellsOf(sampled.rows), total: Number(n ?? 0) };
+      },
+      all: (onChunk, signal) => this.#controller.streamQuery(
+        levelLambda(flat), flat, (chunk) => onChunk(cellsOf(chunk)), signal),
+    };
   }
 
   /** Take one calculated column out, whichever stage it is in. */

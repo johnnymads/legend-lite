@@ -128,6 +128,25 @@ export class WarehouseEngine implements QueryEngine {
     return typedByPlan(await this.run(plan.sql, epoch, signal), plan);
   }
 
+  /** A planned query's rows chunk by chunk, as the server wrote them (its Arrow chunks). */
+  async stream(
+    plan: Plan,
+    epoch: number,
+    onChunk: (chunk: ResultTable) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const started = performance.now();
+    try {
+      for await (const bytes of this.arrowChunks(plan.sql, signal)) {
+        const table = tableFromIPC(bytes) as unknown as ArrowishTable;
+        onChunk(typedByPlan(toRawTable(table, epoch, performance.now() - started), plan));
+      }
+    } catch (error: unknown) {
+      if (signal?.aborted || error instanceof QueryError) throw error;
+      throw new QueryError(error instanceof Error ? error.message : String(error), plan.sql, { cause: error });
+    }
+  }
+
   async run(sql: string, epoch: number, signal?: AbortSignal): Promise<RawTable> {
     const started = performance.now();
     const batches: RecordBatch[] = [];

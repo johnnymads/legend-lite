@@ -30,6 +30,7 @@ const CUBE: CubeSnapshot = {
 function compiler(answer: PlanColumn[], asked: string[]): QueryRunner {
   return {
     name: 'compiler',
+    stream: async () => { throw new Error('this test streams nothing'); },
     run: async () => { throw new Error('step 0 runs nothing'); },
     compile: async () => undefined,
     relationType: async (query) => { asked.push(await litePrint(query)); return answer; },

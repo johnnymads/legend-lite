@@ -312,9 +312,35 @@ export class DuckDbEngine implements QueryEngine {
       if (signal?.aborted) throw signal.reason ?? new Error('aborted');
       const started = performance.now();
       if (typeof this.#conn.send === 'function') {
-        return this.#stream(sql, epoch, signal, started);
+        const acc = new BatchAccumulator();
+        await this.#batches(sql, signal, (batch) => acc.add(batch));
+        return acc.build(epoch, performance.now() - started);
       }
       return this.#whole(sql, epoch, signal, started);
+    });
+  }
+
+  /**
+   * A planned query's rows a batch at a time, as DuckDB produces them: each handed over
+   * typed by the plan, none kept. A connection that cannot stream hands over its whole
+   * result as one chunk (the same capability branch as `run`).
+   */
+  async stream(
+    plan: Plan,
+    epoch: number,
+    onChunk: (chunk: ResultTable) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    return this.#serialised(async () => {
+      if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+      const started = performance.now();
+      if (typeof this.#conn.send === 'function') {
+        await this.#batches(plan.sql, signal, (batch) =>
+          onChunk(typedByPlan(toRawTable(batch, epoch, performance.now() - started), plan)));
+        return;
+      }
+      onChunk(typedByPlan(await this.#whole(plan.sql, epoch, signal, started), plan));
     });
   }
 
@@ -400,16 +426,17 @@ export class DuckDbEngine implements QueryEngine {
 
   /**
    * The streaming path -- the ONLY path for a connection that can
-   * stream. `signal` is optional: without one the batches are simply
-   * consumed to the end, which is what a snap or a drill-through
-   * wants, and the result is identical either way.
+   * stream: each batch of `sql`'s result, in order, to `onBatch`
+   * (`run` accumulates them, `stream` hands them on). `signal` is
+   * optional: without one the batches are simply consumed to the end,
+   * which is what a snap or a drill-through wants, and the result is
+   * identical either way; with one, the query is cancelled between batches.
    */
-  async #stream(
+  async #batches(
     sql: string,
-    epoch: number,
     signal: AbortSignal | undefined,
-    started: number,
-  ): Promise<RawTable> {
+    onBatch: (batch: ArrowishTable) => void,
+  ): Promise<void> {
     const send = this.#conn.send;
     if (!send) throw new Error('streaming unavailable');
 
@@ -436,14 +463,13 @@ export class DuckDbEngine implements QueryEngine {
       );
     }
 
-    const acc = new BatchAccumulator();
     try {
       for await (const batch of batches) {
         if (signal?.aborted) {
           await cancel();
           throw signal.reason ?? new Error('aborted');
         }
-        acc.add(batch);
+        onBatch(batch);
       }
     } catch (cause) {
       if (signal?.aborted) {
@@ -458,7 +484,6 @@ export class DuckDbEngine implements QueryEngine {
     }
 
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
-    return acc.build(epoch, performance.now() - started);
   }
 
   async close(): Promise<void> {

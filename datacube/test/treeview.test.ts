@@ -589,6 +589,7 @@ describe('detail rows under the deepest group', () => {
     const sent: string[] = [];
     const runner: QueryRunner = {
       name: 'stub',
+      stream: async () => { throw new Error('this test streams nothing'); },
       async run(query) {
         const pure = await litePrint(query);
         sent.push(pure);
@@ -657,6 +658,7 @@ describe('opening a group under a column pivot', () => {
   function runner(sent: string[]): QueryRunner {
     return {
       name: 'stub',
+      stream: async () => { throw new Error('this test streams nothing'); },
       async run(query, snapshot) {
         sent.push(await litePrint(query));
         const keys = snapshot.rows.map((name) => ({

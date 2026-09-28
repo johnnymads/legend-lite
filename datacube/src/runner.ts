@@ -75,6 +75,12 @@ export interface QueryRunner {
   readonly name: string;
   run(query: Lambda, snapshot: CubeSnapshot, scope?: LevelScope, signal?: AbortSignal): Promise<RunOutcome>;
   /**
+   * Run a query and hand its rows over a chunk at a time, none kept: reading every row of
+   * a column in flat memory (`JsonColumnReader.all`). A plane that returns whole results
+   * hands the one result over as one chunk. Resolves after the last chunk.
+   */
+  stream(query: Lambda, snapshot: CubeSnapshot, onChunk: (chunk: ResultTable) => void, signal?: AbortSignal): Promise<void>;
+  /**
    * Compile WITHOUT running: resolves when the query compiles, throws
    * the compiler's refusal when it does not. It never executes to find out.
    */
@@ -121,6 +127,27 @@ export class PlanThenRun implements QueryRunner {
     }
   }
 
+  async stream(
+    query: Lambda,
+    snapshot: CubeSnapshot,
+    onChunk: (chunk: ResultTable) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let plan: Plan;
+    try {
+      plan = await this.planner.plan(query, signal);
+    } catch (error: unknown) {
+      if (signal?.aborted) throw error;
+      throw new QueryFailure(error, query);
+    }
+    try {
+      await this.engine.stream(plan, snapshot.epoch, onChunk, signal);
+    } catch (error: unknown) {
+      if (signal?.aborted) throw error;
+      throw new QueryFailure(error, query, plan.sql);
+    }
+  }
+
   relationType(query: Lambda, signal?: AbortSignal): Promise<PlanColumn[]> {
     return this.planner.relationType(query, signal);
   }
@@ -159,6 +186,16 @@ export class RemoteRun implements QueryRunner {
   }
 
   /** The engine's compile-only call: its `lambdaRelationType` answers or refuses. */
+  /** The engine returns a whole result: handed over as one chunk. */
+  async stream(
+    query: Lambda,
+    snapshot: CubeSnapshot,
+    onChunk: (chunk: ResultTable) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    onChunk((await this.run(query, snapshot, undefined, signal)).rows);
+  }
+
   async compile(query: Lambda, _snapshot: CubeSnapshot, signal?: AbortSignal): Promise<void> {
     await this.executor.relationType(query, signal);
   }

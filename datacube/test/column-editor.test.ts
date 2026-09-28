@@ -16,6 +16,7 @@ import {
   type ColumnEditorStart,
 } from '../src/ui/column-editor.ts';
 import type { CubeSnapshot, DerivedColumn } from '../src/snapshot.ts';
+import type { JsonColumnReader } from '../src/ui/json-fields.ts';
 import { element } from '../../pure-protocol/src/index.ts';
 import { someQuery } from './fake-planner.ts';
 import { liteParse, litePrint, print, row } from './lite-compiler.ts';
@@ -302,8 +303,25 @@ describe('picking a JSON field', () => {
     derived: [],
   };
   const CELLS = ['{"tier":"gold","contact":{"email":"a@x"}}', '{"tier":"silver"}'];
+  /** The whole column: the sample's two rows, then one only a full read sees. */
+  const EVERY_ROW = [[CELLS[0]], [CELLS[1], '{"tier":"bronze","since":2020}']];
 
-  function openJson(start: ColumnEditorStart, sampled: string[] = []): ColumnEditor {
+  /** A reader over those cells; `all` can be made to wait until it is cancelled. */
+  function reader(sampled: string[], column: string, wait = false): JsonColumnReader {
+    return {
+      sample: async () => { sampled.push(column); return { cells: CELLS, total: 3 }; },
+      all: (onChunk, signal) => new Promise<void>((resolve, reject) => {
+        if (wait) {
+          signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          return;
+        }
+        for (const chunk of EVERY_ROW) onChunk(chunk);
+        resolve();
+      }),
+    };
+  }
+
+  function openJson(start: ColumnEditorStart, sampled: string[] = [], wait = false): ColumnEditor {
     return new ColumnEditor(root, {
       snapshot: () => ORDERS,
       start,
@@ -316,7 +334,7 @@ describe('picking a JSON field', () => {
       },
       apply: async (row, group) => { applied.push({ row, group }); return null; },
       onClose: () => { closed += 1; },
-      sampleJson: async (column) => { sampled.push(column); return CELLS; },
+      readJson: (column) => reader(sampled, column, wait),
     });
   }
   const button = (label: string): HTMLButtonElement => {
@@ -368,12 +386,38 @@ describe('picking a JSON field', () => {
     assert.equal($<HTMLInputElement>('.dc-calc-input-name').value, 'mine');
   });
 
+  it('says a sample is a sample, and reads every row on request', async () => {
+    openJson({ json: 'customer' });
+    await settle();
+    const note = (): string => $<HTMLElement>('.dc-jsonfields-note').textContent ?? '';
+    assert.match(note(), /2 of 3 rows sampled/);
+    assert.ok(!root.textContent?.includes('since'), 'the sample has no since');
+    $<HTMLButtonElement>('.dc-jsonfields-all').click();
+    await settle();
+    assert.match(note(), /All 3 rows read/);
+    assert.ok(root.textContent?.includes('since'), 'every row shows the field only the third row has');
+    assert.equal($<HTMLButtonElement>('.dc-jsonfields-all').hidden, true);
+  });
+
+  it('a full read can be cancelled, and the sample stays', async () => {
+    openJson({ json: 'customer' }, [], true);
+    await settle();
+    const all = $<HTMLButtonElement>('.dc-jsonfields-all');
+    all.click();
+    assert.equal(all.textContent, 'Cancel');
+    all.click();
+    await settle();
+    assert.match($<HTMLElement>('.dc-jsonfields-note').textContent ?? '', /Stopped reading every row/);
+    assert.equal(all.textContent, 'Read every row');
+    button('as String');
+  });
+
   it('offers no JSON section on a cube without JSON columns', async () => {
     new ColumnEditor(root, {
       snapshot: () => CUBE, start: {}, debounceMs: 0, parse: liteParse, print: litePrint,
       compile: async () => ({ query: someQuery(), refusal: null }),
       apply: async () => null, onClose: () => {},
-      sampleJson: async () => [],
+      readJson: () => ({ sample: async () => ({ cells: [], total: 0 }), all: async () => undefined }),
     });
     assert.equal(root.querySelector('.dc-calc-json'), null);
   });

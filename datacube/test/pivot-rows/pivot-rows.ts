@@ -95,6 +95,9 @@ class Watched implements QueryEngine {
   async run(sql: string, epoch: number, signal?: AbortSignal): Promise<RawTable> {
     return this.#watch(() => this.#inner.run(sql, epoch, signal));
   }
+  async stream(plan: Plan, epoch: number, onChunk: (chunk: ResultTable) => void, signal?: AbortSignal): Promise<void> {
+    return this.#watch(() => this.#inner.stream(plan, epoch, onChunk, signal));
+  }
   async #watch<T>(go: () => Promise<T>): Promise<T> {
     this.inFlight += 1;
     try {

@@ -339,6 +339,16 @@ export class CubeController {
     return this.#runner.run(query, snapshot, scope, signal);
   }
 
+  /** A query's rows a chunk at a time, none kept (`QueryRunner.stream`). */
+  async streamQuery(
+    query: Lambda,
+    snapshot: CubeSnapshot,
+    onChunk: (chunk: ResultTable) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.#runner.stream(query, snapshot, onChunk, signal);
+  }
+
   /** What a person typed, as its lambda: the compiler's parse (E1, or its twin in the tab). */
   async parse(text: string, signal?: AbortSignal): Promise<Lambda> {
     return this.#runner.parse(text, signal);

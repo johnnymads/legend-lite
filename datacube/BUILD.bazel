@@ -122,6 +122,7 @@ test_suite(
     tests = [t[len("test/"):-len(".test.ts")].replace("-", "_") + "_test" for t in _TESTS] + [
         ":typecheck_test",
         ":pivot_rows_test",
+        ":json_read_test",
         ":typed_values_test",
         ":typed_values_tokyo_test",
         ":typed_values_new_york_test",
@@ -321,6 +322,32 @@ js_test(
         "//wasm:planner",
     ],
     entry_point = "test/pivot-rows/pivot-rows.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--experimental-wasm-exnref",
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=./test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+)
+
+# READING A JSON COLUMN: a sample, then every row in one streamed pass -- the real
+# app over the real WASM planner and DuckDB-WASM.
+js_test(
+    name = "json_read_test",
+    size = "medium",
+    chdir = package_name(),
+    data = [
+        "test/json-read/json-read.ts",
+        "test/strict-reporter.mjs",
+        ":node_modules/@duckdb/duckdb-wasm",
+        ":node_modules/jsdom",
+        ":src",
+        "//wasm:planner",
+    ],
+    entry_point = "test/json-read/json-read.ts",
     node_options = [
         "--experimental-strip-types",
         "--experimental-wasm-exnref",

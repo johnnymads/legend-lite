@@ -1,7 +1,9 @@
 // The fields of a JSON column, for the Add Column screen.
 //
-// Samples the column through the cube's own query path, infers the
-// shape of its documents (`json-shape.ts`), and lists every field with
+// Reads the column through the cube's own query path -- a sample of its
+// first rows, or on request EVERY row in one streamed pass (each chunk
+// observed and let go) -- infers the shape of its documents
+// (`json-shape.ts`), and lists every field with
 // what can be made of it -- the value itself; a nested object or array
 // as a JSON column of its own; for an array its count, its values as
 // text, whether it contains a value; for an array of objects each
@@ -11,16 +13,27 @@
 
 import {
   fieldsOf,
-  inferShape,
+  ShapeReader,
   type Extraction,
   type Field,
   type Sample,
 } from '../json-shape.ts';
 
+/** A JSON column's cells, read through the cube's own queries (so every plane). */
+export interface JsonColumnReader {
+  /** The first rows' cells, and how many rows the column has. */
+  sample(signal?: AbortSignal): Promise<{ readonly cells: readonly unknown[]; readonly total: number }>;
+  /**
+   * Every row, in one streamed pass: each chunk's cells as they arrive. Resolves after the
+   * last chunk; rejects when `signal` aborts.
+   */
+  all(onChunk: (cells: readonly unknown[]) => void, signal?: AbortSignal): Promise<void>;
+}
+
 export interface JsonFieldsOptions {
   readonly column: string;
-  /** The column's cells from a sample of rows. */
-  readonly sample: () => Promise<readonly unknown[]>;
+  /** How the column's cells are read. */
+  readonly reader: JsonColumnReader;
   /** A field's extraction was chosen. */
   readonly onPick: (extraction: Extraction) => void;
 }
@@ -39,37 +52,90 @@ export function buildJsonFields(host: HTMLElement, options: JsonFieldsOptions): 
   const note = doc.createElement('div');
   note.className = 'dc-jsonfields-note';
   note.setAttribute('role', 'status');
-  note.textContent = `Sampling ${options.column}…`;
+  const text = doc.createElement('span');
+  text.textContent = `Sampling ${options.column}…`;
+  // Read every row: the shape of the whole column, not a sample -- Cancel while reading.
+  const whole = doc.createElement('button');
+  whole.type = 'button';
+  whole.className = 'dc-jsonfields-all';
+  whole.hidden = true;
+  note.append(text, whole);
   const tree = doc.createElement('div');
   tree.className = 'dc-jsonfields-tree';
   tree.setAttribute('role', 'tree');
   host.append(note, tree);
 
-  const say = (text: string, bad = false): void => {
-    note.textContent = text;
+  const say = (message: string, bad = false): void => {
+    text.textContent = message;
     note.classList.toggle('dc-jsonfields-bad', bad);
   };
+  const fmt = (n: number): string => n.toLocaleString();
+
+  /** The fields of what was read, and what the reading covers. */
+  const show = (sample: Sample, total: number): void => {
+    tree.replaceChildren();
+    const read = sample.rows - sample.unreadable;
+    const unread = sample.unreadable > 0 ? ` (${fmt(sample.unreadable)} not JSON)` : '';
+    whole.hidden = sample.complete;
+    whole.textContent = 'Read every row';
+    if (read === 0 || sample.shape.present === sample.shape.nulls) {
+      say(`No JSON values in the ${fmt(sample.rows)} ${sample.complete ? '' : 'sampled '}rows.`, true);
+      return;
+    }
+    say(sample.complete
+      ? `All ${fmt(sample.rows)} rows read${unread}: every field, type and share below covers the whole `
+        + 'column. Pick a field; the expression below is compiled as usual.'
+      : `${fmt(sample.rows)} of ${fmt(total)} rows sampled${unread}. Pick a field: types and shares are `
+        + 'from the sample, and the expression below is compiled as usual.');
+    for (const f of fieldsOf(options.column, sample)) tree.append(fieldRow(f));
+  };
+
+  let shown: { readonly sample: Sample; readonly total: number } | undefined;
+  let reading: AbortController | undefined;
+
+  whole.addEventListener('click', () => {
+    if (reading) {
+      reading.abort();
+      return;
+    }
+    const total = shown?.total ?? 0;
+    const controller = new AbortController();
+    reading = controller;
+    whole.textContent = 'Cancel';
+    const reader = new ShapeReader();
+    let rows = 0;
+    say(`Reading every row of ${options.column}…`);
+    void options.reader.all((cells) => {
+      for (const cell of cells) reader.add(cell);
+      rows += cells.length;
+      say(`Reading every row of ${options.column}… ${fmt(rows)} of ${fmt(total)}`);
+    }, controller.signal).then(() => {
+      reading = undefined;
+      shown = { sample: reader.result(true), total: rows };
+      show(shown.sample, shown.total);
+    }, (e: unknown) => {
+      reading = undefined;
+      if (shown) show(shown.sample, shown.total);
+      if (controller.signal.aborted) {
+        say(`Stopped reading every row; showing the sample. ${text.textContent ?? ''}`);
+      } else {
+        say(`Could not read every row of ${options.column}: `
+          + (e instanceof Error ? e.message : String(e)), true);
+      }
+    });
+  });
 
   void (async () => {
-    let sample: Sample;
     try {
-      sample = inferShape(await options.sample());
+      const { cells, total } = await options.reader.sample();
+      const reader = new ShapeReader();
+      for (const cell of cells) reader.add(cell);
+      // a sample holding every row IS the whole column
+      shown = { sample: reader.result(cells.length >= total), total };
+      show(shown.sample, shown.total);
     } catch (e) {
       say(`Could not sample ${options.column}: `
         + (e instanceof Error ? e.message : String(e)), true);
-      return;
-    }
-    const read = sample.rows - sample.unreadable;
-    say(`${sample.rows.toLocaleString()} rows sampled`
-      + (sample.unreadable > 0 ? ` (${sample.unreadable} not JSON)` : '')
-      + '. Pick a field: types are a guess from the sample, and the '
-      + 'expression below is compiled as usual.');
-    if (read === 0 || sample.shape.present === 0) {
-      say(`No JSON values in the ${sample.rows.toLocaleString()} sampled rows.`, true);
-      return;
-    }
-    for (const f of fieldsOf(options.column, sample)) {
-      tree.append(fieldRow(f));
     }
   })();
 

@@ -131,6 +131,7 @@ describe('a tree fetch that is already obsolete', () => {
         return rows(epoch, ['EMEA', 'AMER']);
       },
       async run() { throw new Error('this cube sends no raw SQL'); },
+      async stream() { throw new Error('this cube streams nothing'); },
       async close() {},
     };
 
@@ -229,6 +230,7 @@ describe('the controller under a burst', () => {
         return rows(epoch, ['EMEA']);
       },
       async run() { throw new Error('this cube sends no raw SQL'); },
+      async stream() { throw new Error('this cube streams nothing'); },
       async close() {},
     };
 

@@ -407,10 +407,25 @@ keeps DuckDB's own types); not the warehouse (DuckDB's metadata). They matter to
 a Pure type (upstream `pureTypeToDataType`: temp tables, relation write). A core compiler leg,
 corpus/PCT measured first; due when either (1) is pinned byte-for-byte or relation write is built.
 
-**T6. JSON shape from the database.**
-- The paths and types of a JSON column come from the database over the whole column (D5), each
-  extraction typed by the compiler.
-- Deleted: `json-shape.ts`'s parser, classifier and table.
+**T6. JSON shape: the sampler, made robust (REVISED 2026-09-28, the user).** D5 (the database's
+JSON-structure function over the whole column) was measured and set aside: upstream Pure has no
+function that lists a document's keys (its Variant functions are fromJson, to, toMany, toVariant,
+get, flatten), so a lite-only native would break the field browser on the legend-engine plane
+("same client code on both"), and DuckDB's `json_group_structure` loses what users have (dates,
+presence, common values). The browser only SUGGESTS which `to(@T)` to write; the compiler types
+every column it makes. So the sampler stays client side, and becomes robust:
+- two modes: a SAMPLE (the first rows, labelled "1,000 of N rows sampled", N from a count query)
+  and READ EVERY ROW -- one ordinary query streamed chunk by chunk (`QueryEngine.stream`, new:
+  DuckDB-WASM's Arrow batches, the warehouse's Arrow chunks; the legend-engine plane hands its whole
+  result over as one chunk), each chunk observed and let go: one scan, every row exactly once,
+  flat memory, Cancel. Every plane.
+- rejected on the way: grouping the column by document and paging the groups (real documents
+  rarely repeat, and each page re-ran the whole grouping and sort); copying into DuckDB first (the
+  same bytes, plus storage -- a snapped cube's full read scans the copy anyway).
+- proven through the real app (`test/json-read`): 2,500 documents, a field only the last has; the
+  sample misses it, reading every row finds it, in more than one chunk.
+- the future home, if wanted server side: a Variant keys/structure function proposed to upstream
+  Pure, then implemented by lite; never a lite-only native or endpoint.
 
 **T7. One formatter on compiler types.**
 - Formats, colours, heatmaps, charts, stats and exports read the column's type and scale; one
@@ -436,9 +451,11 @@ comes from its catalog (T2) and whose types come from the compiler (T1):
 - another cube's result or saved view (a cube over a cube).
 Streaming sources (Kafka, websocket) are recorded for later: they change the refresh model.
 
-**T10. Extract a subset of a Variant column (the user, 2026-09-27), after T6.** A sub-object or an
-array becomes a new Variant column, not only a scalar; its type is the compiler's
-(`lambdaRelationType` of the extraction), its shape the database's (T6).
+**T10. Extract a subset of a Variant column (the user, 2026-09-27) -- DONE 2026-09-28.** A
+sub-object, an array, or an array's first element becomes a JSON column of its own, typed Variant by
+the compiler, and is read and extracted from again like any JSON column. Proven through the real app
+(`test/json-read`): customer -> its tier; items -> their count; items' first element -> its sku.
+Added: "first element, as JSON" for an array of objects.
 
 Order: T1, then T2 and T3 (independent), then T4, T5, T6, T7, T8, then T9 and T10. Legs B (one state owner) and the
 remaining audit legs are unaffected, except that T4's typed keys remove the key text leg B would
