@@ -50,7 +50,10 @@ import { LegendEngineExecutor } from '../src/engine-remote.ts';
 import { levelWithValues } from '../src/plan.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
-import { casesFor } from './engine-cases.mjs';
+import { TRADES_KINDS, casesFor, typeDifference } from './engine-cases.mjs';
+import { sourceColumns } from '../src/source-columns.ts';
+import { isFractional, isNumeric, plainType } from '../src/types.ts';
+import { asDecimal, decimalText } from '../src/values.ts';
 
 const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
   .replace(/\/$/, '');
@@ -134,30 +137,34 @@ async function localPlane(rows) {
 
 // ---- comparison ----------------------------------------------------
 
-/** A ResultTable as rows of strings, so two backends compare by VALUE. */
+/** A ResultTable as rows of strings, so two backends compare by VALUE, read by TYPE. */
 function normalise(table) {
   const cols = table.columns;
   const out = [];
   for (let r = 0; r < table.rowCount; r += 1) {
-    out.push(cols.map((c) => cell(c.values[r])));
+    out.push(cols.map((c) => cell(c.values[r], c.type)));
   }
-  return { names: cols.map((c) => c.name), rows: out };
+  return { names: cols.map((c) => c.name), types: cols.map((c) => c.type), rows: out };
 }
 
 /**
- * One cell, as text.
+ * One cell, as text, read by its column's COMPILER type -- never by its JavaScript one.
  *
- * Numbers round to 6 decimals: the two backends compute the same
- * aggregate in binary floating point through different expression
- * trees, so the last bits differ on values that are equal in every
- * sense a cube cares about. BigInt and null are spelled explicitly so
- * a null never compares equal to the string "null" from the other side.
+ * A Float rounds to 6 decimals: the two backends compute the same aggregate in binary
+ * floating point through different expression trees, so the last bits differ on values that
+ * are equal in every sense a cube cares about. An Integer or a Decimal is EXACT: its digits,
+ * whether it arrived as a number, a bigint or decimal text, trailing zeros dropped. Null is
+ * spelled explicitly so it never compares equal to the string "null" from the other side.
  */
-function cell(v) {
+function cell(v, type) {
   if (v === null || v === undefined) return '\u0000null';
-  if (typeof v === 'bigint') return v.toString();
-  if (typeof v === 'number') {
-    return Number.isInteger(v) ? String(v) : v.toFixed(6);
+  if (isNumeric(type)) {
+    if (isFractional(type) && plainType(type) !== 'Decimal') {
+      const n = Number(v);
+      return Number.isInteger(n) ? String(n) : n.toFixed(6);
+    }
+    const d = asDecimal(v);
+    if (d !== null) return decimalText(d.unscaled, d.scale).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
   }
   return String(v);
 }
@@ -184,6 +191,13 @@ function compare(local, remote, ordered, sortKeys) {
   if (mismatch.length > 0) {
     return `column NAMES differ: ${mismatch
       .map(([a, b]) => `${a} vs ${b}`).join('; ')}`;
+  }
+  // THE COMPILER'S TYPES: a drop-in plane types every result column as the other does.
+  const typed = local.types
+    .map((t, i) => [local.names[i], t, remote.types[i]])
+    .filter(([, a, b]) => a !== b);
+  if (typed.length > 0) {
+    return `column TYPES differ: ${typed.map(([n, a, b]) => `${n} ${a} vs ${b}`).join('; ')}`;
   }
   if (local.rows.length !== remote.rows.length) {
     return `row COUNT differs: local ${local.rows.length}`
@@ -256,8 +270,17 @@ const executor = new LegendEngineExecutor({
   runtime: 'trades::h2::RT',
 });
 
-const localCases = casesFor(LOCAL_SOURCE);
-const engineCases = casesFor(ENGINE_SOURCE);
+// Each plane's table as ITS OWN compiler types it -- and the two must agree before a single
+// case is compared: rows over differently typed tables prove nothing.
+const localColumns = await sourceColumns(local.planner, LOCAL_SOURCE, TRADES_KINDS);
+const engineColumns = await sourceColumns(executor, ENGINE_SOURCE, TRADES_KINDS);
+const typesDiffer = typeDifference(localColumns, engineColumns);
+if (typesDiffer) {
+  console.error(`the planes type the table differently: ${typesDiffer}`);
+  process.exit(1);
+}
+const localCases = casesFor(LOCAL_SOURCE, localColumns);
+const engineCases = casesFor(ENGINE_SOURCE, engineColumns);
 
 const agreed = [];
 const differed = [];

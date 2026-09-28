@@ -462,6 +462,48 @@ UTC, Tokyo and New York lanes).
 - The demo and verification scripts read the source's relation type before choosing columns, and
   compare typed values, not rendered text.
 
+T8 design (2026-09-28), from the census (G10 verify-features 56 rows, G8/G9 the rest):
+- A. `engine-cases.mjs` holds no column list (two copies of 8 hand-written types today): each
+  harness asks its own plane's compiler (`sourceColumns` over the wasm planner, or legend-engine's
+  `lambdaRelationType` through `LegendEngineExecutor`), with `year` DECLARED a dimension (a host's
+  kind, not a type). Where both planes answer, the harness asserts they give the same types.
+- B. `torture.mjs`: its 11 hand-written types and its `SAMPLE` type-to-text table are deleted;
+  columns come from the compiler, pivot values are values the database holds.
+- C. `grid-invariants.mjs`: a column is temporal by the view's compiler type
+  (`controller.view.rows`), not by a regex over the panel's type label.
+- D. `verify-smoke.mjs`: a sample is written under its own format (the JSONL sample was written
+  as `.csv` and sniffed as CSV).
+- E. `verify-features.mjs`: the sample's relation type is ASSERTED first; dimensions, measures,
+  the group column and the heatmap column are chosen by type; every figure compared (pivot totals,
+  calculated columns, sorts, filters, negative colours, Ad Hoc sums) is a typed value read from
+  the view and compared exactly (bigints and decimal text included), never a number parsed out of
+  rendered text; change stamps survive a bigint. Rendered text stays only where the claim IS the
+  rendering (formats, case, labels).
+
+T8 state (2026-09-28): DONE, every harness RUN, not only edited:
+- `verify_features` 171/171 (was 148/170 at HEAD: 22 checks had drifted from the product -- a pivot
+  is two plain queries since Leg A, so there is no `pivot(` to grep; D3 made every numeric column a
+  measure, so `year` is no pivot key and an Integer defaults to measure; the calc editor takes the
+  whole `x|...` lambda, as upstream's; `controller.query` is `runQuery` over protocol). The new first
+  check asserts the sample's twelve compiler types; group, heatmap and Column Kind columns are
+  chosen by type; sorts, cell filters, pivot totals, calculated and window columns, negative
+  colours and Ad Hoc sums compare typed values (`demo/typed-view.mjs`); pivots are read from the
+  view's own pivot facts. C4 now forbids TEXT operators on a Boolean only: ordering is offered
+  because Pure defines it on Boolean (legend-pure `boolean/inequality/lessThan.pure`), per T5.
+- `verify_smoke` 16/16, printing each sample's compiler types; the JSONL sample now really loads
+  (it was written as .csv, then read before its slower ingest landed: the wait now waits for the
+  status line to CHANGE); grouping is checked on the database's group keys.
+- `torture` all clear against legend-lite's server, now over a real WEIRD table with weird rows:
+  pivot keys come from the values query, columns from the compiler.
+- `verify_engine` 61/61, `verify_engine_differential` 58/58 (now also comparing every result
+  column's TYPE, and numbers by type: exact for Integer and Decimal), `verify_calc_vocabulary`
+  21/21 -- against legend-engine 4.145.0 on :6300; both planes type the trades table identically.
+- FOUND, run against legend-engine (recorded, not fixed here): upstream types torture's `flag BIT`
+  as Integer (its TinyInt; the precise-types gap above), so a real `false` key is refused as an
+  Integer literal -- the old hand-written `flag: Boolean` hid it; and upstream refuses
+  `$x.n_float * 2` on a nullable column ("Collection element must have a multiplicity [1]") where
+  legend-lite accepts it -- lite is more permissive than upstream there.
+
 **T9. Sources (the user, 2026-09-27), after T8.** Every source is a database or file whose model
 comes from its catalog (T2) and whose types come from the compiler (T1):
 - files: CSV, Parquet, JSON, and Excel workbooks; pasted clipboard data;

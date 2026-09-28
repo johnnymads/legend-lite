@@ -11,12 +11,20 @@
 // and run after every state change. Thirty operations times these
 // assertions is most of the coverage for a fraction of the code.
 //
-// It runs inside the page, so it must not close over anything in Node.
+// It runs inside the page, so it must not close over anything in Node: what it needs from
+// Node comes in as its argument (`page.evaluate(gridInvariants, TEMPORAL_TYPES)`).
+
+import { TYPE_FACTS } from '../src/generated/lite-facts.ts';
+
+/** The temporal type names, from legend-lite's own type lattice (generated), for the page. */
+export const TEMPORAL_TYPES = [...new Set(Object.values(TYPE_FACTS)
+  .filter((f) => f.family === 'temporal').map((f) => f.plain))];
 
 /**
+ * @param {string[]} temporalTypes the lattice's temporal type names (`TEMPORAL_TYPES`)
  * @returns {string[]} one message per broken invariant, empty if sound
  */
-export function gridInvariants() {
+export function gridInvariants(temporalTypes) {
   const bad = [];
   const round = (n) => Math.round(n);
   // THE GRID ON SCREEN. Ad Hoc Analysis mode keeps the cube's grid,
@@ -91,17 +99,17 @@ export function gridInvariants() {
   //    Date, so the failure mode is a 13-digit number or "Invalid
   //    Date"; a value object reaching textContent prints
   //    "[object Object]".
-  //    The digit rule is scoped to TEMPORAL columns by declared type,
-  //    because it fired on the "numbers at the edges" sample, where a
-  //    nineteen-digit integer is the point of the data rather than an
-  //    unformatted date. An invariant that cries wolf on valid data
-  //    gets switched off, and then it is not an invariant.
-  const typeOf = new Map();
-  for (const r of document.querySelectorAll('.dc-tool-panel-row')) {
-    typeOf.set(r.dataset.column,
-      (r.querySelector('.dc-tool-panel-type')?.textContent ?? '').trim());
-  }
-  const temporal = (name) => /Date|Time/.test(typeOf.get(name) ?? '');
+  //    The digit rule is scoped to TEMPORAL columns by the COMPILER's
+  //    type of what is on screen -- the Ad Hoc table in that mode, else
+  //    the cube's view -- because it fired on the "numbers at the edges"
+  //    sample, where a nineteen-digit integer is the point of the data
+  //    rather than an unformatted date. (It read a regex over the
+  //    panel's type LABEL once: a display string is not a type.)
+  const app = window.__dataCube;
+  const table = app?.adhoc ? app.adhoc.view?.table : app?.controller.view?.rows;
+  if (!table) bad.push('no typed result on the page (window.__dataCube) to read types from');
+  const typeOf = new Map((table?.columns ?? []).map((c) => [c.name, c.type]));
+  const temporal = (name) => temporalTypes.includes(typeOf.get(name));
   const junk = [];
   for (const r of rows.slice(0, 12)) {
     for (const c of r.querySelectorAll('.dc-cell')) {

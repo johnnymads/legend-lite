@@ -20,7 +20,11 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright';
 
-import { gridInvariants } from './grid-invariants.mjs';
+import { TEMPORAL_TYPES, gridInvariants } from './grid-invariants.mjs';
+import {
+  closeTyped, compareTyped, isNegative, orderBreak, readColumn, readView, sameTyped, stamp, sumTyped,
+} from './typed-view.mjs';
+import { isNumeric } from '../src/types.ts';
 import { sampleCsv } from '../src/samples.ts';
 import { fileURLToPath } from 'node:url';
 import { servedPath } from './static-files.ts';
@@ -170,7 +174,7 @@ async function gap(name, why, fn) {
 
 /** Run the invariants and attribute any break to `where`. */
 async function invariants(where) {
-  const broken = await page.evaluate(gridInvariants);
+  const broken = await page.evaluate(gridInvariants, TEMPORAL_TYPES);
   for (const b of broken) {
     record(`INVARIANT after ${where}`, false, b);
   }
@@ -330,11 +334,6 @@ const openMenu = () => page.evaluate(() =>
  *   only ever a speed hint: each check asserts its own outcome, so
  *   getting it wrong costs time, never correctness.
  */
-/** A negative as the grid shows it: a minus, or upstream's parentheses. */
-function isNegativeText(t) {
-  return typeof t === 'string' && (t.startsWith('-') || /^\(.*\)$/.test(t));
-}
-
 /** Press a button on upstream's export warning. */
 async function answerExport(label) {
   const button = page.locator('.dc-alert-action', { hasText: label }).first();
@@ -459,8 +458,39 @@ async function burger(label) {
 
 let loaded = 'the built-in demo cube';
 let heatCol = 1;
-// `region` in the sample; column 3 of the demo cube is a dimension too.
-const GROUP_COL = 3;
+/**
+ * The column a check groups by: the first TEXT column on screen, by the compiler's type
+ * (`region` in the sample). Set once the file is open; never a position taken on trust.
+ */
+let GROUP_COL = -1;
+
+/**
+ * THE SAMPLE'S TYPES, as the compiler must give them (the generated sample: DuckDB sniffs the
+ * CSV, the model is written from its catalog, the compiler types the relation). Asserted
+ * before any check, so every choice below by NAME rests on a type that was checked, and a
+ * sniffer or compiler change fails here, by name, instead of as fifty puzzling checks.
+ */
+const SAMPLE_TYPES = {
+  trade_id: 'Integer', trade_date: 'StrictDate', booked_at: 'DateTime', region: 'String',
+  desk: 'String', book: 'String', year: 'Integer', quarter: 'String', notional: 'Float',
+  pnl: 'Float', quantity: 'Integer', settled: 'Boolean',
+};
+
+/**
+ * The pivot the view is showing, as the cube planned it: the columns it makes (cells, then
+ * totals) with the measure each aggregates. Read from the view, not from the Pure text -- a
+ * pivot is two plain queries (values, then conditional aggregates), with no `pivot(` in it.
+ */
+const pivotOf = () => page.evaluate(() => {
+  const p = window.__dataCube.controller.view?.pivot;
+  return p ? p.columns.map((c) => ({
+    name: c.name, measure: c.measure.name, total: c.tuple === null, tuple: c.tuple,
+  })) : [];
+});
+
+/** The on-screen header names, in grid order. */
+const headerNames = () => page.evaluate(() =>
+  [...document.querySelectorAll('.dc-th[data-column]')].map((e) => e.dataset.column));
 /**
  * A cube in a known state: the page loaded, the file opened.
  *
@@ -503,6 +533,27 @@ try {
   if (!start.rows.length) throw new Error('nothing rendered at all');
   await invariants('loading the data');
 
+  await check('the source is typed by the compiler, as the sample declares', async () => {
+    const columns = await page.evaluate(() =>
+      window.__dataCube.snapshot.columns.map((c) => ({ name: c.name, type: c.type ?? null })));
+    const shown = columns.map((c) => `${c.name}:${c.type}`).join(', ');
+    const untyped = columns.filter((c) => c.type === null);
+    if (untyped.length) throw new Error(`untyped: ${untyped.map((c) => c.name).join(', ')}`);
+    if (!process.env.DATA) {
+      const wrong = Object.entries(SAMPLE_TYPES)
+        .filter(([n, t]) => columns.find((c) => c.name === n)?.type !== t)
+        .map(([n, t]) => `${n} is not ${t}`);
+      if (wrong.length || columns.length !== Object.keys(SAMPLE_TYPES).length) {
+        throw new Error(`${wrong.join('; ') || 'the column set differs'} (${shown})`);
+      }
+    }
+    const view = await readView(page);
+    GROUP_COL = (await headerNames()).findIndex((n) =>
+      view.find((c) => c.name === n)?.type === 'String');
+    if (GROUP_COL < 0) throw new Error(`no text column on screen to group by (${shown})`);
+    return shown;
+  });
+
   // ---- reading the data ---------------------------------------------
 
   await check('grid renders rows and headers', async () => {
@@ -521,26 +572,28 @@ try {
     const s = await state();
     if (!/sort\(/.test(s.pure)) throw new Error('no sort in the Pure');
     if (!/ORDER BY/i.test(s.sql)) throw new Error('no ORDER BY in the SQL');
-    const col = s.rows.map((r) => r[0]);
-    const sorted = [...col].sort((a, b) => a.localeCompare(b, undefined,
-      { numeric: true }));
-    if (col.join('|') !== sorted.join('|')) {
-      throw new Error(`rows are not ascending: ${col.slice(0, 4).join(', ')}`);
+    // the VALUES in the database's order, by the column's compiler type -- not the rendered
+    // text re-sorted, which misjudges "1,234", "(5.00)" and "Mar 01, 2024"
+    const c = await readColumn(page, (await headerNames())[0]);
+    const at = orderBreak(c.values, c.type, 'asc');
+    if (at >= 0) {
+      throw new Error(`${c.name} (${c.type}) is not ascending at row ${at}:`
+        + ` ${c.values.slice(Math.max(0, at - 1), at + 1).map(String).join(', ')}`);
     }
-    return `${col.slice(0, 3).join(', ')}...`;
+    return `${c.name} (${c.type}): ${c.values.slice(0, 3).map(String).join(', ')}...`;
   });
 
   await check('sort descending', async () => {
     await menu(['Sort', 'Descending']);
     const s = await state();
     if (!/desc/i.test(s.sql)) throw new Error('no DESC in the SQL');
-    const col = s.rows.map((r) => r[0]);
-    const sorted = [...col].sort((a, b) => b.localeCompare(a, undefined,
-      { numeric: true }));
-    if (col.join('|') !== sorted.join('|')) {
-      throw new Error(`rows are not descending: ${col.slice(0, 4).join(', ')}`);
+    const c = await readColumn(page, (await headerNames())[0]);
+    const at = orderBreak(c.values, c.type, 'desc');
+    if (at >= 0) {
+      throw new Error(`${c.name} (${c.type}) is not descending at row ${at}:`
+        + ` ${c.values.slice(Math.max(0, at - 1), at + 1).map(String).join(', ')}`);
     }
-    return `${col.slice(0, 3).join(', ')}...`;
+    return `${c.name} (${c.type}): ${c.values.slice(0, 3).map(String).join(', ')}...`;
   });
 
   await check('clear all sorts', async () => {
@@ -695,19 +748,22 @@ try {
   // ---- filtering ------------------------------------------------------
 
   await check('add filter from a cell', async () => {
-    const wanted = (await state()).rows[0][0];
+    // the clicked cell's VALUE: equal text is not equal values (a Float rounded to two
+    // places, a timestamp shown to the minute)
+    const name = (await headerNames())[0];
+    const wanted = (await readColumn(page, name)).values[0];
     // The entry carries the clicked value in its own label.
     await menu(['Filter', /^Add Filter: \S+ = /]);
     const s = await state();
-    const label = `= ${wanted}`;
     if (!/filter\(/.test(s.pure)) throw new Error('no filter in the Pure');
     if (!/WHERE/i.test(s.sql)) throw new Error('no WHERE in the SQL');
-    const off = s.rows.filter((r) => r[0] !== wanted);
-    if (off.length) {
-      throw new Error(`${off.length} rows do not match the filter`
-        + ` (wanted ${JSON.stringify(wanted)})`);
+    const c = await readColumn(page, name);
+    const off = c.values.filter((v) => !sameTyped(v, wanted, c.type));
+    if (off.length || c.values.length === 0) {
+      throw new Error(`${off.length} of ${c.values.length} rows do not match the filter`
+        + ` (wanted ${stamp(wanted)}, got ${stamp(off.slice(0, 3))})`);
     }
-    return `${label} -> ${s.rows.length} rows`;
+    return `${name} = ${String(wanted)} (${c.type}) -> ${c.values.length} rows`;
   });
 
   await check('clear all filters', async () => {
@@ -1109,7 +1165,7 @@ try {
     if (at < 0) throw new Error(`${on} is not on screen to right-click`);
     await menu(['Pivot', /^Horizontal Pivot on/], { col: at });
     const s = await state();
-    if (!/pivot\(/.test(s.pure)) throw new Error('no pivot in the Pure');
+    if ((await pivotOf()).length === 0) throw new Error('the view makes no pivot columns');
     if (s.headers.length < 2) throw new Error('pivot produced no columns');
     // A pivot puts the VALUES across the top, so the header must
     // gain a level: one row of pivot values above the measures.
@@ -1167,29 +1223,13 @@ try {
       throw new Error(`the header is ${levels} level(s) deep, so the pivot`
         + ' values are not across the top');
     }
-    if (!/pivot\(~\[/.test(s.pure)) throw new Error('no pivot in the Pure');
-
-    // THE MECHANISM IS THE SECOND STAGE, not a narrow projection.
-    //
-    // This check first asserted the opposite -- that the deeper row
-    // dimensions stay OUT of the projection -- because that was the
-    // only way to keep the grouping before the outer groupBy
-    // existed, and it cost every other column. Now the projection is
-    // wide, the pivot's intermediate is fine-grained, and the
-    // groupBy collapses it: pivot, cast, groupBy, in that order.
-    const after2 = /->pivot\(/.test(s.pure)
-      ? s.pure.slice(s.pure.indexOf('->pivot('))
-      : '';
-    if (!/->cast\(@Relation</.test(after2)) {
-      throw new Error('no cast after the pivot, so a groupBy naming its'
-        + ` columns would be refused: ${after2.slice(0, 120)}`);
+    // THE MECHANISM: a pivot is two plain queries since Leg A -- its values, then one
+    // conditional aggregate per value under the row groupBy -- so the groups survive by
+    // construction. What is checked is the view's own pivot: columns it made, per measure.
+    if ((await pivotOf()).filter((c) => !c.total).length === 0) {
+      throw new Error('the view makes no pivot columns');
     }
-    if (!/->groupBy\(~\[/.test(after2)) {
-      throw new Error(`no groupBy after the pivot: ${after2.slice(0, 160)}`);
-    }
-    if (after2.indexOf('->cast(') > after2.indexOf('->groupBy(')) {
-      throw new Error('the cast must come BEFORE the groupBy that needs it');
-    }
+    if (!/->groupBy\(~\[/.test(s.pure)) throw new Error(`no row groupBy: ${s.pure.slice(0, 160)}`);
 
     // AND THE OTHER COLUMNS MUST BE BACK. Losing them was the
     // complaint: "you fixed the groupby but lost all the other
@@ -1203,8 +1243,9 @@ try {
     const shown = await page.evaluate(() =>
       [...document.querySelectorAll('.dc-th[data-column]')]
         .map((e) => e.dataset.column));
+    // (the key pivoted ACROSS is spread over the top, so it is not a column)
     const missing = ['trade_id', 'quarter', 'settled']
-      .filter((n) => dims.includes(n) && !shown.includes(n));
+      .filter((n) => dims.includes(n) && n !== across && !shown.includes(n));
     if (missing.length) {
       throw new Error(`${missing.join(', ')} did not survive the pivot;`
         + ` the grid shows ${shown.join(',')}`);
@@ -1301,9 +1342,9 @@ try {
           }))
           .sort((a, b) => a.x - b.x)
           .map((c) => c.name));
-      const firstRow = async () => (await page.locator('.dc-row').first()
-        .locator('.dc-cell').allTextContents())
-        .map((t) => Number(t.replace(/[^0-9.-]/g, '')));
+      // the first row's VALUES, by column: a figure parsed out of "(1,234.00)" loses its sign
+      const firstRow = async () => new Map((await readView(page))
+        .map((c) => [c.name, { value: c.values[0] ?? null, type: c.type }]));
 
       await menu(['Pivot', 'Clear All Vertical Pivots']).catch(() => {});
       await menu(['Pivot', 'Clear All Horizontal Pivots']).catch(() => {});
@@ -1312,9 +1353,8 @@ try {
       const across = ['year', 'quarter'].find((n) => dims.includes(n));
       if (!groupBy || !across) throw new Error(`need dimensions, have ${dims}`);
       await menu(['Pivot', /^Vertical Pivot on/], { col: await needCol(groupBy) });
-      const flat = await byPosition();
-      const want = (await firstRow())[flat.indexOf('notional')];
-      if (!(want > 0)) throw new Error(`no grouped notional to compare: ${want}`);
+      const want = (await firstRow()).get('notional');
+      if (!want || want.value === null) throw new Error('no grouped notional to compare');
 
       await menu(['Pivot', /^Horizontal Pivot on/], { col: await needCol(across) });
       await page.waitForTimeout(1200);
@@ -1338,19 +1378,18 @@ try {
         throw new Error(`a total sits inside the pivot: ${cols.join(', ')}`);
       }
       const row = await firstRow();
-      const got = row[at];
-      if (Math.abs(got - want) / want > 0.0005) {
-        throw new Error(`total ${got} is not the unpivoted ${want}`);
+      const got = row.get(total);
+      if (!got || !closeTyped(got.value, want.value, got.type)) {
+        throw new Error(`total ${String(got?.value)} is not the unpivoted ${String(want.value)}`);
       }
-      const cells = cols
-        .map((c, i) => (c.endsWith('__|__notional') && c !== total ? row[i] : 0))
-        .reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
-      if (Math.abs(cells - got) / got > 0.001) {
-        throw new Error(`the pivot's cells add to ${cells}, the total says ${got}`);
+      const cells = sumTyped([...row].filter(([c]) => c.endsWith('__|__notional') && c !== total)
+        .map(([, v]) => v.value), got.type);
+      if (!closeTyped(cells, got.value, got.type)) {
+        throw new Error(`the pivot's cells add to ${String(cells)}, the total says ${String(got.value)}`);
       }
       const s = await state();
       if (/Error|refus/i.test(s.status)) throw new Error(`status: ${s.status}`);
-      return `${groupBy} x ${across}: total ${got} = unpivoted ${want}`;
+      return `${groupBy} x ${across}: total ${String(got.value)} = unpivoted ${String(want.value)} (${got.type})`;
     });
 
   await check('a measure kept out of the pivot shows its real figure', async () => {
@@ -1359,12 +1398,12 @@ try {
     // rows -- and before that it was aggregated as `unique`, which is
     // blank for any group of two or more. Kept out of the pivot, its
     // figure is the unpivoted cube's, exactly.
-    const cell = (name) => page.evaluate((n) => {
-      const c = [...document.querySelector('.dc-row')
-        ?.querySelectorAll('.dc-cell') ?? []]
-        .find((e) => e.dataset.column === n);
-      return c ? Number((c.textContent ?? '').replace(/[^0-9.-]/g, '')) : NaN;
-    }, name);
+    // the first row's VALUE: pnl carries negatives, which a digit strip of "(1,234.00)"
+    // turned positive on both sides of the comparison
+    const cell = async (name) => {
+      const c = await readColumn(page, name);
+      return { value: c.values[0] ?? null, type: c.type };
+    };
     await menu(['Pivot', 'Clear All Vertical Pivots']).catch(() => {});
     await menu(['Pivot', 'Clear All Horizontal Pivots']).catch(() => {});
     const dims = await dimensionNames();
@@ -1372,9 +1411,7 @@ try {
     const across = ['year', 'quarter'].find((n) => dims.includes(n));
     await menu(['Pivot', /^Vertical Pivot on/], { col: await needCol(groupBy) });
     const want = await cell('pnl');
-    if (!Number.isFinite(want) || want === 0) {
-      throw new Error(`no grouped pnl to compare: ${want}`);
-    }
+    if (want.value === null) throw new Error('no grouped pnl to compare');
     await menu(['Pivot', /^Horizontal Pivot on/], { col: await needCol(across) });
     await page.waitForTimeout(800);
     const pivotedPnl = await page.evaluate(() =>
@@ -1386,20 +1423,19 @@ try {
       { col: await needCol(pivotedPnl) });
     await page.waitForTimeout(800);
     const got = await cell('pnl');
-    if (Math.abs(got - want) > Math.max(0.01, Math.abs(want) * 0.0005)) {
-      throw new Error(`pnl kept out of the pivot reads ${got};`
-        + ` the unpivoted cube says ${want}`);
+    if (!closeTyped(got.value, want.value, got.type)) {
+      throw new Error(`pnl kept out of the pivot reads ${String(got.value)};`
+        + ` the unpivoted cube says ${String(want.value)}`);
     }
-    return `${groupBy} x ${across}, pnl excluded: ${got} = ${want}`;
+    return `${groupBy} x ${across}, pnl excluded: ${String(got.value)} = ${String(want.value)} (${got.type})`;
   });
 
   await check('clear all horizontal pivots', async () => {
-    if (!/pivot\(/.test((await state()).pure)) {
+    if ((await pivotOf()).length === 0) {
       throw new Error('could not set up: nothing is pivoted');
     }
     await menu(['Pivot', 'Clear All Horizontal Pivots']);
-    const s = await state();
-    if (/pivot\(/.test(s.pure)) throw new Error('pivot survived the clear');
+    if ((await pivotOf()).length > 0) throw new Error('pivot survived the clear');
     return 'pivot gone';
   });
 
@@ -1525,13 +1561,11 @@ try {
     const before = await page.evaluate(() =>
       [...document.querySelectorAll('.dc-cell')]
         .filter((c) => c.style.backgroundColor).length);
-    // A MEASURE column: a heatmap over text or dates has nothing to
-    // scale, so aiming at one would prove nothing either way.
-    const measure = await page.evaluate(() => {
-      const names = [...document.querySelectorAll('.dc-th[data-column]')]
-        .map((e) => e.dataset.column);
-      return names.findIndex((n) => /notional|pnl|amount|price/i.test(n));
-    });
+    // A NUMERIC column, by the compiler's type: a heatmap over text or
+    // dates has nothing to scale, so aiming at one would prove nothing.
+    const view = await readView(page);
+    const measure = (await headerNames()).findIndex((n) =>
+      isNumeric(view.find((c) => c.name === n)?.type));
     if (measure < 0) throw new Error('no measure column to shade');
     heatCol = measure;
     await menu(['Heatmap', /^Add Heatmap/], { col: heatCol });
@@ -1980,9 +2014,11 @@ try {
     if (!(await chooser.count())) throw new Error('no column chooser');
     const opts = await chooser.evaluate((e) =>
       [...e.options].map((o) => o.value));
-    const want = ['quantity', 'year', 'trade_id'].find(
-      (n) => opts.includes(n));
-    if (!want) throw new Error(`no integer column among ${opts.join(',')}`);
+    // An INTEGER column, by the compiler's type: numeric, so a measure by default (D3,
+    // upstream's rule) -- and the first one is the id, which a person makes a dimension.
+    const view = await readView(page);
+    const want = opts.find((n) => view.find((c) => c.name === n)?.type === 'Integer');
+    if (!want) throw new Error(`no Integer column among ${opts.join(',')}`);
     await chooser.selectOption(want);
     await page.waitForTimeout(250);
     // Upstream's one ADVANCED setting.
@@ -1991,10 +2027,10 @@ try {
 
     const kind = page.locator('.dc-field', { hasText: 'Column Kind:' })
       .first().locator('select').first();
-    if ((await kind.inputValue()) !== 'dimension') {
-      throw new Error(`${want} is already a ${await kind.inputValue()}`);
+    if ((await kind.inputValue()) !== 'measure') {
+      throw new Error(`${want} (Integer) defaults to ${await kind.inputValue()}, not measure`);
     }
-    await kind.selectOption('measure');
+    await kind.selectOption('dimension');
     await page.waitForTimeout(200);
     await applyEditor();
 
@@ -2002,21 +2038,19 @@ try {
     // the query is the claim.
     const isMeasure = await page.evaluate((n) =>
       document.querySelector(`.dc-tool-panel-row[data-column="${n}"]`)
-        ?.classList.contains('dc-measure') ?? false, want);
-    if (!isMeasure) throw new Error(`the panel still lists ${want} as a`
-      + ' dimension');
+        ?.classList.contains('dc-measure') ?? true, want);
+    if (isMeasure) throw new Error(`the panel still lists ${want} as a measure`);
 
     await menu(['Pivot', /^Vertical Pivot on/], { col: GROUP_COL });
     const sql = (await state()).sql.replace(/\s+/g, ' ');
     const summed = new RegExp(`SUM\\(t0\\.${want}\\)`, 'i').test(sql);
     const unique = new RegExp(
       `CASE WHEN COUNT\\(DISTINCT t0\\.${want}\\)`, 'i').test(sql);
-    if (!summed) {
-      throw new Error(`${want} is a measure but does not sum`
-        + `${unique ? ' — it still takes its unique value' : ''}`);
+    if (summed || !unique) {
+      throw new Error(`${want} is a dimension but ${summed ? 'still sums' : 'does not take its unique value'}`);
     }
     await menu(['Pivot', 'Clear All Vertical Pivots']);
-    return `${want} now sums`;
+    return `${want}: measure by type, a dimension once set -- its unique value, not a sum`;
   });
 
   await check('a display name changes the label, not the identity', async () => {
@@ -2479,7 +2513,7 @@ try {
       await menu(['Pivot', 'Clear All Horizontal Pivots'],
         { requery: false }).catch(() => {});
       await settle();
-      await addCalc(0, 'uplift', '$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
       await settle();
       await page.keyboard.press('Escape');
       const s2 = await state();
@@ -2494,20 +2528,19 @@ try {
       if (!cols.includes('uplift')) {
         throw new Error(`not in the grid: ${cols.join(', ')}`);
       }
-      // THE ARITHMETIC. notional x 1.1, read off the same row.
-      const cells = await page.locator('.dc-row').first()
-        .locator('.dc-cell').allTextContents();
-      const num = (i) => Number((cells[i] ?? '').replace(/[^0-9.-]/g, ''));
-      const at = cols.indexOf('notional');
-      const up = cols.indexOf('uplift');
-      if (at < 0 || up < 0) throw new Error('columns missing for the check');
-      const want = num(at) * 1.1;
-      const got = num(up);
-      if (want === 0 || Math.abs(got - want) / want > 0.001) {
-        throw new Error(`uplift is ${got}, expected ${want}`);
+      // THE ARITHMETIC. notional x 1.1, the same row's VALUES -- typed as the compiler says
+      const notional = await readColumn(page, 'notional');
+      const uplift = await readColumn(page, 'uplift');
+      if (uplift.type !== 'Float') {
+        throw new Error(`uplift is typed ${uplift.type}; notional * 1.1 is a Float`);
+      }
+      const want = Number(notional.values[0]) * 1.1;
+      const got = uplift.values[0];
+      if (!closeTyped(got, want, uplift.type)) {
+        throw new Error(`uplift is ${String(got)}, expected ${want}`);
       }
       const detail = `${cols.length} columns, uplift = notional x 1.1`
-        + ` = ${got}`;
+        + ` = ${String(got)} (${uplift.type})`;
       await clearCalcs();
       return detail;
     });
@@ -2528,7 +2561,7 @@ try {
       await menu(['Pivot', 'Clear All Horizontal Pivots'],
         { requery: false }).catch(() => {});
       await settle();
-      await addCalc(1, 'doubled', '$x.notional * 2');
+      await addCalc(1, 'doubled', 'x|$x.notional * 2');
       await settle();
       await closeCalc();
       const s2 = await state();
@@ -2553,30 +2586,32 @@ try {
       if (!cols.includes('doubled')) {
         throw new Error(`not in the grid: ${cols.join(', ')}`);
       }
-      // notional x 2, off the same row.
-      const cells = await page.locator('.dc-row').first()
-        .locator('.dc-cell').allTextContents();
-      const num = (i) => Number((cells[i] ?? '').replace(/[^0-9.-]/g, ''));
-      const at = cols.indexOf('notional');
-      const got = num(cols.indexOf('doubled'));
-      const want = num(at) * 2;
-      if (at < 0 || want === 0 || Math.abs(got - want) / want > 0.001) {
-        throw new Error(`doubled is ${got}, expected ${want}`);
+      // notional x 2, the same row's VALUES
+      const notional = await readColumn(page, 'notional');
+      const doubled = await readColumn(page, 'doubled');
+      const want = Number(notional.values[0]) * 2;
+      const got = doubled.values[0];
+      if (!closeTyped(got, want, doubled.type)) {
+        throw new Error(`doubled is ${String(got)}, expected ${want}`);
       }
-      const detail = `extend after groupBy, doubled = ${got}`;
+      const detail = `extend after groupBy, doubled = ${String(got)} (${doubled.type})`;
       await clearCalcs();
       return detail;
     });
 
-  await check('a calculated column learns its TYPE from the result',
+  await check('a calculated column is typed by the COMPILER, and formats by that type',
     async () => {
-      // Nothing here infers the type from the expression -- it comes
-      // back from the query. Until it does, the aggregate default
-      // reads no type and a numeric column groups as `unique`, which
-      // renders blank rather than failing.
-      await addCalc(0, 'uplift', '$x.notional * 1.1');
+      // The type is the compiler's answer for the extended relation, asked before the
+      // column's first query (T1) -- never learned from a result. Untyped, the aggregate
+      // default read no type and a numeric column grouped as `unique`: a blank column.
+      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
       await settle();
       try {
+      const typed = await page.evaluate(() =>
+        (window.__dataCube.snapshot.derived ?? []).find((d) => d.name === 'uplift')?.type ?? null);
+      if (typed !== 'Float') {
+        throw new Error(`the compiler's type for uplift is ${typed}; notional * 1.1 is a Float`);
+      }
       // The type the result reported, as Column Properties shows it: a
       // Float shows the number section with upstream's 2 decimals.
       await page.click('.dc-status-properties');
@@ -2597,7 +2632,7 @@ try {
         : `(no Decimals field; sections: ${(await page.locator('.dc-app-overlay .dc-section-title').allTextContents()).join(', ')})`;
       if (decimals !== '2') {
         throw new Error(`uplift shows no Float number format (decimals ${decimals}) —`
-          + ' the type never came back from the result');
+          + ' its type did not reach the format defaults');
       }
       return 'uplift: Float, 2 decimals';
       } finally {
@@ -2612,7 +2647,7 @@ try {
       // Compiled as it is typed, as upstream's: the refusal is in the
       // window, OK stays disabled, and the running cube is never touched.
       const before = await state();
-      const check = await addCalc(0, 'bogus', '$x.notional->nosuchfunction()');
+      const check = await addCalc(0, 'bogus', 'x|$x.notional->nosuchfunction()');
       const ok = await page.locator('.dc-coleditor .dc-calc-ok').isDisabled();
       await closeCalc();
       if (check.state !== 'refused' || !/nosuchfunction/.test(check.text)) {
@@ -2657,7 +2692,7 @@ try {
     const probe = offered.filter((n) => !dims.includes(n)).slice(0, 6);
     const refused = [];
     for (const n of probe) {
-      const ref = /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? `$x.${n}` : `$x.'${n}'`;
+      const ref = /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? `x|$x.${n}` : `x|$x.'${n}'`;
       await page.fill('.dc-coleditor .dc-calc-input-expr', ref);
       const verdict = await compiledCheck();
       if (verdict.state === 'refused') refused.push(`${n}: ${verdict.text.slice(0, 80)}`);
@@ -2669,7 +2704,7 @@ try {
 
   await check('removing a calculated column takes it out of the query',
     async () => {
-      await addCalc(0, 'uplift', '$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
       await settle();
       // From its own window, as upstream: Edit Column uplift... > Delete.
       await menu(['Extended Columns', 'Edit Column uplift...'],
@@ -2701,7 +2736,7 @@ try {
       // named a column that really was not there. With the checks
       // cleaning up after themselves it passes, and the suite said so
       // -- which is what the gap mechanism is for.
-      await addCalc(0, 'uplift', '$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
       await settle();
       await closeCalc();
       const s2 = await state();
@@ -2789,7 +2824,7 @@ try {
       await flatten();
       await menu(['Pivot', /^Vertical Pivot on/],
         { col: await needCol('region') });
-      await addCalc(0, 'uplift', '$x.notional * 1.1', null);
+      await addCalc(0, 'uplift', 'x|$x.notional * 1.1', null);
       await settle();
       await closeCalc();
       const s2 = await state();
@@ -2817,7 +2852,7 @@ try {
     // calculated column was never a dimension: "Vertical Pivot" came
     // up disabled and the drag zones refused it.
     await flatten();
-    await addCalc(0, 'big', '$x.notional > 500000', 'dimension');
+    await addCalc(0, 'big', 'x|$x.notional > 500000', 'dimension');
     await settle();
     await closeCalc();
     const listed = await page.evaluate(() =>
@@ -2848,18 +2883,19 @@ try {
     // so a calculated measure vanished from a pivoted cube with no
     // error -- the query was the same as with no calculated column.
     await flatten();
-    await addCalc(0, 'uplift', '$x.notional * 1.1', 'measure');
+    await addCalc(0, 'uplift', 'x|$x.notional * 1.1', 'measure');
     await settle();
     await closeCalc();
-    await menu(['Pivot', 'Horizontal Pivot on year'],
-      { col: await needCol('year') });
-    const s2 = await state();
-    const pivot = s2.pure.match(/pivot\([^\n]*/)?.[0] ?? '';
+    // across a TEXT dimension (quarter, String by the asserted schema): `year` is an
+    // Integer, so a measure by default (D3), and not offered as a pivot key
+    await menu(['Pivot', 'Horizontal Pivot on quarter'],
+      { col: await needCol('quarter') });
+    const pivot = await pivotOf();
     const cols = await gridColumns();
     await flatten();
     await clearCalcs();
-    if (!/uplift/.test(pivot)) {
-      throw new Error(`the pivot aggregates no uplift: ${pivot.slice(0, 200)}`);
+    if (!pivot.some((c) => c.measure === 'uplift')) {
+      throw new Error(`the pivot aggregates no uplift: ${pivot.map((c) => c.name).slice(0, 8).join(', ')}`);
     }
     const shown = cols.filter((c) => /uplift/.test(c));
     if (shown.length === 0) {
@@ -2873,9 +2909,12 @@ try {
       // A check that failed earlier cannot leave its columns behind.
       await clearCalcs();
       // C4. With no type found, the menu fell back to String and
-      // offered "big contains true" on a Boolean.
+      // offered "big contains true" on a Boolean. Ordering IS offered:
+      // Pure defines it on Boolean (legend-pure's lessThan.pure has the
+      // Boolean overloads), and operators are what the compiler accepts
+      // (T5) -- so the claim is no TEXT operator, never no ordering.
       await flatten();
-      await addCalc(0, 'big', '$x.notional > 500000', 'dimension');
+      await addCalc(0, 'big', 'x|$x.notional > 500000', 'dimension');
       await settle();
       await closeCalc();
       const items = await menuAt(await needCol('big'));
@@ -2884,9 +2923,9 @@ try {
         .filter((l) => /^Add Filter: big/.test(l));
       if (filters.length === 0) throw new Error('no filter entries for big');
       const textual = filters.filter((l) =>
-        /contains|starts with|ends with|<|>/.test(l));
+        /contains|starts with|ends with/.test(l));
       if (textual.length > 0) {
-        throw new Error(`text or ordering operators on a Boolean: ${textual.join(' / ')}`);
+        throw new Error(`text operators on a Boolean: ${textual.join(' / ')}`);
       }
       return filters.join(' / ');
     });
@@ -2898,7 +2937,7 @@ try {
       // C5. The refusal reverted the snapshot and the editor with it:
       // the column and its text were gone, and the reason was on the
       // status line, away from the form it was about.
-      await addCalc(0, 'bogus', '$x.nope * 2', 'measure');
+      await addCalc(0, 'bogus', 'x|$x.nope * 2', 'measure');
       const form = await page.evaluate(() => ({
         open: document.querySelectorAll('.dc-coleditor').length,
         name: document.querySelector('.dc-coleditor .dc-calc-input-name')?.value ?? null,
@@ -2908,7 +2947,7 @@ try {
       await closeCalc();
       await clearCalcs();
       if (!form.open) throw new Error('the form closed on a refusal');
-      if (form.name !== 'bogus' || form.expr !== '$x.nope * 2') {
+      if (form.name !== 'bogus' || form.expr !== 'x|$x.nope * 2') {
         throw new Error(`the typed text was lost: ${JSON.stringify(form)}`);
       }
       if (!/nope/.test(form.problem)) {
@@ -2948,12 +2987,11 @@ try {
     await settle(before);
     await closeCalc();
   };
-  /** The view's columns by name: the assembled table the grid draws. */
-  const viewColumns = (...names) => page.evaluate((wanted) => {
-    const t = window.__dataCube.controller.view.rows;
-    return Object.fromEntries(wanted.map((n) => [n, t.columns.find((c) => c.name === n)?.values ?? null]));
-  }, names);
-  const near = (a, b) => Math.abs(Number(a) - Number(b)) <= 1e-6 * Math.max(1, Math.abs(Number(a)), Math.abs(Number(b)));
+  /** The view's columns by name, typed: the assembled table the grid draws. */
+  const viewColumns = async (...names) => {
+    const view = await readView(page);
+    return Object.fromEntries(names.map((n) => [n, view.find((c) => c.name === n) ?? null]));
+  };
 
   await check('window column: a group-level running total and previous value, down the grid', async () => {
     await freshCube();
@@ -2965,19 +3003,23 @@ try {
       if (!/extend\(over\(/.test(pure)) throw new Error(`no window in the query: ${pure.slice(0, 200)}`);
       const v = await viewColumns('notional', 'running', 'previous');
       if (!v.notional || !v.running || !v.previous) throw new Error(`columns ${Object.keys(v).filter((k) => !v[k])} missing`);
-      let acc = 0;
+      // by the compiler's types: a running sum of a Float is a Float, the previous value is
+      // the measure's own type -- compared as values of those types
       const bad = [];
-      v.notional.forEach((n, i) => {
-        acc += Number(n ?? 0);
-        if (!near(v.running[i], acc)) bad.push(`row ${i}: running ${v.running[i]} vs ${acc}`);
-        const want = i === 0 ? null : v.notional[i - 1];
-        if (want === null ? v.previous[i] !== null : !near(v.previous[i], want)) {
-          bad.push(`row ${i}: previous ${v.previous[i]} vs ${want}`);
+      v.notional.values.forEach((_n, i) => {
+        const acc = sumTyped(v.notional.values.slice(0, i + 1), v.notional.type);
+        if (!closeTyped(v.running.values[i], acc, v.running.type)) {
+          bad.push(`row ${i}: running ${String(v.running.values[i])} vs ${String(acc)}`);
+        }
+        const want = i === 0 ? null : v.notional.values[i - 1];
+        if (!sameTyped(v.previous.values[i], want, v.previous.type)) {
+          bad.push(`row ${i}: previous ${String(v.previous.values[i])} vs ${String(want)}`);
         }
       });
-      if (v.notional.length < 2) throw new Error('too few groups to prove anything');
+      if (v.notional.values.length < 2) throw new Error('too few groups to prove anything');
       if (bad.length) throw new Error(bad.slice(0, 3).join('; '));
-      return `${v.notional.length} desks: running ends at ${acc.toFixed(2)}, each previous is the row above`;
+      return `${v.notional.values.length} desks (${v.running.type}): running ends at`
+        + ` ${String(v.running.values.at(-1))}, each previous is the row above`;
     } finally {
       await freshCube();
     }
@@ -2990,7 +3032,7 @@ try {
         partition: ['region'], order: [{ column: 'trade_id', direction: 'asc' }], frame: 'running' });
       const result = await page.evaluate(async () => {
         const c = window.__dataCube.controller;
-        const raw = await c.query(`${c.snapshot.source.expression}->select(~[trade_id, region, quantity])`, c.snapshot);
+        const raw = (await c.runQuery(await c.parse(`${(await c.print({ _type: 'lambda', parameters: [], body: [c.snapshot.source.query] })).trim()}->select(~[trade_id, region, quantity])`), c.snapshot)).rows;
         const col = (t, n) => t.columns.find((x) => x.name === n).values;
         const ids = col(raw, 'trade_id'); const regions = col(raw, 'region'); const qty = col(raw, 'quantity');
         const order = ids.map((_v, i) => i).sort((a, b) => Number(ids[a]) - Number(ids[b]));
@@ -3030,13 +3072,17 @@ try {
         order: [{ column: 'notional', direction: 'desc' }] });
       const v = await viewColumns('notional', 'rank_notional');
       const bad = [];
-      v.notional.forEach((n, i) => {
-        const want = 1 + v.notional.filter((m) => Number(m) > Number(n)).length;
-        if (Number(v.rank_notional[i]) !== want) bad.push(`row ${i}: rank ${v.rank_notional[i]} vs ${want}`);
+      const n = v.notional;
+      n.values.forEach((x, i) => {
+        // rank = 1 + how many are strictly greater, by the measure's type; the rank is an Integer
+        const want = 1 + n.values.filter((m) => m !== null && x !== null && compareTyped(m, x, n.type) > 0).length;
+        if (!sameTyped(v.rank_notional.values[i], want, v.rank_notional.type)) {
+          bad.push(`row ${i}: rank ${String(v.rank_notional.values[i])} vs ${want}`);
+        }
       });
-      if (v.notional.length < 3) throw new Error('too few groups to rank');
+      if (n.values.length < 3) throw new Error('too few groups to rank');
       if (bad.length) throw new Error(bad.slice(0, 3).join('; '));
-      return `${v.notional.length} books ranked by notional`;
+      return `${n.values.length} books ranked by notional (${v.rank_notional.type})`;
     } finally {
       await freshCube();
     }
@@ -3084,7 +3130,7 @@ try {
         const region = rows.find((r) => r.level === 1 && rows.some((x) => x.level === 2 && x.path[0] === r.path[0]));
         const desks = rows.filter((x) => x.level === 2 && x.path[0] === region.path[0]);
         // The trades' own minimum per desk, from the raw rows.
-        const raw = await c.query(`${c.snapshot.source.expression}->select(~[region, desk, notional])`, c.snapshot);
+        const raw = (await c.runQuery(await c.parse(`${(await c.print({ _type: 'lambda', parameters: [], body: [c.snapshot.source.query] })).trim()}->select(~[region, desk, notional])`), c.snapshot)).rows;
         const rr = col(raw, 'region'); const rd = col(raw, 'desk'); const rn = col(raw, 'notional');
         const minTrade = new Map();
         rr.forEach((r, i) => {
@@ -3111,7 +3157,7 @@ try {
         throw new Error(`${result.region}: ${result.regionChildren} children, ${result.deskTotals.length} desks shown`);
       }
       const bad = result.desks.filter((d) => !near(d.weakest, d.trade));
-      if (bad.length) throw new Error(`desk minimum vs its trades: ${JSON.stringify(bad.slice(0, 2))}`);
+      if (bad.length) throw new Error(`desk minimum vs its trades: ${stamp(bad.slice(0, 2))}`);
       return `${result.region}: weakest desk ${smallestDesk.toFixed(2)} of ${result.deskTotals.length};`
         + ` each desk's own = its smallest trade`;
     } finally {
@@ -3153,7 +3199,7 @@ try {
         expr: document.querySelector('.dc-coleditor .dc-calc-input-expr')?.value,
         kind: document.querySelector('.dc-coleditor .dc-calc-level')?.value,
       }));
-      if (seeded.expr !== '$x.notional' || seeded.kind !== 'measure') {
+      if (seeded.expr !== 'x|$x.notional' || seeded.kind !== 'measure') {
         throw new Error(`Extend seeded ${JSON.stringify(seeded)}`);
       }
       await page.fill('.dc-coleditor .dc-calc-input-name', 'n2');
@@ -3196,18 +3242,18 @@ try {
       const both = await page.locator('.dc-coleditor').count();
       await closeCalc();
       if (both !== 2) throw new Error(`${both} editor windows, expected 2`);
-      await addCalc(0, 'uplift', '$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
       await settle();
       const edit = async () => menu(['Extended Columns', 'Edit Column uplift...'],
         { col: await needCol('uplift'), requery: false });
       await edit();
-      await page.fill('.dc-coleditor .dc-calc-input-expr', '$x.notional * 9');
+      await page.fill('.dc-coleditor .dc-calc-input-expr', 'x|$x.notional * 9');
       // Reset, as upstream's: back to what the column had.
       await page.locator('.dc-coleditor .dc-calc-reset').click();
       const expr = await page.inputValue('.dc-coleditor .dc-calc-input-expr');
       await closeCalc();
       await clearCalcs();
-      if (expr !== '$x.notional * 1.1') throw new Error(`Reset left ${expr}`);
+      if (expr !== 'x|$x.notional * 1.1') throw new Error(`Reset left ${expr}`);
       return '2 new windows together; Edit opens the column, Reset restores it';
     });
 
@@ -3328,11 +3374,14 @@ try {
   await check('a column pivot flips to measures first, and back', async () => {
     await flatten();
     await menu(['Pivot', 'Add Vertical Pivot on region'], { col: await needCol('region') });
-    await menu(['Pivot', 'Horizontal Pivot on year'], { col: await needCol('year') });
+    await menu(['Pivot', 'Horizontal Pivot on quarter'], { col: await needCol('quarter') });
     const rows = () => page.evaluate(() =>
       [1, 2].map((r) => [...document.querySelectorAll(
         `.dc-head-row[aria-rowindex="${r}"] .dc-th`)].map((e) => e.textContent?.trim() ?? '')));
-    const year = (t) => /^20\d\d$/.test(t);
+    // a pivot VALUE, as the database returned it for the key (the view's pivot facts), not
+    // a pattern guessed for how one looks
+    const keys = new Set((await pivotOf()).flatMap((c) => c.tuple ?? []).map(String));
+    const year = (t) => keys.has(t);
     const [top0, second0] = await rows();
     await menu(['Pivot', 'Measures First in Column Headers'], { requery: false });
     await page.waitForTimeout(400);
@@ -4421,8 +4470,13 @@ try {
           width: Math.round(el.getBoundingClientRect().width), filter: x.filter,
           cls: el.className };
       };
+      // the same rows' VALUES and the column's compiler type: whether a cell is negative is
+      // a fact about its value, not about its text
+      const typed = window.__dataCube.controller.view?.rows.columns.find((c) => c.name === name);
       return {
         texts: cells.map((c) => c?.textContent?.trim() ?? null),
+        values: (typed?.values ?? []).slice(0, 6).map((v) => (typeof v === 'bigint' ? String(v) : v)),
+        type: typed?.type ?? null,
         styles: cells.map(style),
         rowBg: [...document.querySelectorAll('.dc-row')].slice(0, 4)
           .map((r) => getComputedStyle(r).backgroundColor),
@@ -4538,7 +4592,7 @@ try {
     await control('Default normal foreground', { act: general(() => put(sectionOf('Default Colors').locator('input[title="Normal foreground"]'), '#aa00aa')),
       expect: (b, a) => (a.styles.some((x, i) => x?.color !== b.styles[i]?.color) ? null : 'no cell recoloured') });
     await control('Default negative foreground', { act: general(() => put(sectionOf('Default Colors').locator('input[title="Negative foreground"]'), '#aa00aa')),
-      expect: (b, a) => (a.styles.some((x, i) => isNegativeText(a.texts[i]) && x?.color !== b.styles[i]?.color) ? null : 'no negative recoloured') });
+      expect: (b, a) => (a.styles.some((x, i) => isNegative(a.values[i] ?? null, a.type) && x?.color !== b.styles[i]?.color) ? null : 'no negative recoloured') });
     await control('Default normal background', { act: general(() => put(sectionOf('Default Colors').locator('input[title="Normal background"]'), '#ffeeaa')),
       expect: (b, a) => (a.styles.some((x, i) => x?.bg !== b.styles[i]?.bg) ? null : 'no background') });
     await control('Show drag zones, off', { act: general(() => boxOf('Show drag zones').uncheck()),
@@ -4559,8 +4613,8 @@ try {
         await fieldOf('Weight column:').locator('select').selectOption('quantity');
       }),
       expect: (b, a) => (/wavgRowMapper\(\$x\.quantity\)/.test(a.pure) ? null : 'no wavg') });
-    await control('Pivot sort direction', { setup: async () => menu(['Pivot', 'Horizontal Pivot on year'], { col: await needCol('year') }),
-      act: column('year', () => fieldOf('Pivot sort direction:').locator('select').selectOption('desc')),
+    await control('Pivot sort direction', { setup: async () => menu(['Pivot', 'Horizontal Pivot on quarter'], { col: await needCol('quarter') }),
+      act: column('quarter', () => fieldOf('Pivot sort direction:').locator('select').selectOption('desc')),
       expect: (b, a) => (a.headers[0] !== b.headers[0] ? null : `headers ${a.headers.slice(0, 3)}`) });
     await control('Decimals', { act: column('pnl', () => put(fieldOf('Decimals:').locator('input[type=number]').first(), 0)),
       expect: (b, a) => (a.texts.every((t) => !/\.\d/.test(t ?? '')) ? null : `pnl ${a.texts}`) });
@@ -4602,7 +4656,7 @@ try {
     await control('Column font bold', { act: column('pnl', () => page.locator(`${O} button[title="Bold"]`).first().click()),
       expect: styleChanged('weight') });
     await control('Column negative foreground', { act: column('pnl', () => put(page.locator(`${O} input[title="Negative foreground"]`).first(), '#0000ff')),
-      expect: (b, a) => (a.styles.some((x, i) => isNegativeText(a.texts[i]) && x?.color !== b.styles[i]?.color) ? null : 'no negative recoloured') });
+      expect: (b, a) => (a.styles.some((x, i) => isNegative(a.values[i] ?? null, a.type) && x?.color !== b.styles[i]?.color) ? null : 'no negative recoloured') });
   }
 
   // ---- Ad Hoc Analysis mode ----------------------------------------------
@@ -4622,7 +4676,10 @@ try {
         columns: a.session.grid.columns.map((r) => r.dimension),
         pov: a.session.grid.pov,
         labels: v ? v.table.columns[0].values.map((x) => String(x ?? '').trim()) : [],
-        first: v ? v.table.columns[v.rowDimensions.length]?.values ?? [] : [],
+        // the first measure column's VALUES and compiler type (a bigint crosses as text)
+        first: v ? (v.table.columns[v.rowDimensions.length]?.values ?? [])
+          .map((x) => (typeof x === 'bigint' ? String(x) : x)) : [],
+        firstType: v ? v.table.columns[v.rowDimensions.length]?.type ?? null : null,
       };
     });
     /** Wait until the mode has answered something other than `was`. */
@@ -4630,20 +4687,21 @@ try {
       await page.waitForFunction((prev) => {
         const a = window.__dataCube?.adhoc;
         if (!a || a.busy || !a.view) return false;
-        const now = JSON.stringify([a.session.grid, a.view.table.columns.map((c) => c.values)]);
+        const now = JSON.stringify([a.session.grid, a.view.table.columns.map((c) => c.values)],
+          (_k, x) => (typeof x === 'bigint' ? `${x}n` : x));
         return now !== prev;
       }, was, { timeout: 20_000 });
       return adhoc();
     };
-    const stamp = () => page.evaluate(() => {
+    /** What the mode answers now, as text a bigint survives (JSON.stringify throws on one). */
+    const answered = () => page.evaluate(() => {
       const a = window.__dataCube?.adhoc;
-      return a?.view ? JSON.stringify([a.session.grid, a.view.table.columns.map((c) => c.values)]) : '';
+      return a?.view ? JSON.stringify([a.session.grid, a.view.table.columns.map((c) => c.values)],
+        (_k, x) => (typeof x === 'bigint' ? `${x}n` : x)) : '';
     });
     const cellOf = (text) => page.locator('.dc-adhoc-grid .dc-cell', {
       hasText: new RegExp(`^\\s*${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`),
     }).first();
-    const sum = (xs) => xs.reduce((n, x) => n + Number(x ?? 0), 0);
-    const close = (a, b) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
     const enter = async () => {
       await freshCube();
       await burger('Ad Hoc Analysis');
@@ -4681,7 +4739,7 @@ try {
       if (JSON.stringify(a.rows) !== JSON.stringify([on])) throw new Error(`rows ${a.rows}`);
       if (on in a.pov) throw new Error(`${on} is on the POV as well`);
       // Zoomed once, the members are the groups the cube showed.
-      const was = await stamp();
+      const was = await answered();
       await cellOf(on).dblclick();
       const b = await changed(was);
       return `${on} down the rows; zoomed: ${b.labels.length - 1} members (cube showed ${cubeRows} rows)`;
@@ -4689,34 +4747,37 @@ try {
 
     await check('ad hoc analysis: double-click zooms in; the children add up to their parent', async () => {
       const a = await enter();
-      const was = await stamp();
+      const was = await answered();
       await cellOf(a.labels[0]).dblclick();
       const b = await changed(was);
       if (b.labels.length < 2) throw new Error(`labels ${b.labels}`);
-      const total = Number(b.first[0]);
-      const children = sum(b.first.slice(1));
-      if (!close(total, children)) throw new Error(`top ${total} vs children ${children}`);
-      return `${b.labels.length - 1} children summing to ${total}`;
+      // by the measure's compiler type: exact for an Integer or a Decimal
+      const total = b.first[0];
+      const children = sumTyped(b.first.slice(1), b.firstType);
+      if (!closeTyped(total, children, b.firstType)) {
+        throw new Error(`top ${String(total)} vs children ${String(children)} (${b.firstType})`);
+      }
+      return `${b.labels.length - 1} children summing to ${String(total)} (${b.firstType})`;
     });
 
     await check('ad hoc analysis: Keep Only, Zoom Out and undo from the menu and the keyboard', async () => {
       const a = await enter();
-      let was = await stamp();
+      let was = await answered();
       await cellOf(a.labels[0]).dblclick();
       const b = await changed(was);
       const child = b.labels[1];
-      was = await stamp();
+      was = await answered();
       await cellOf(child).click({ button: 'right' });
       await page.locator('.dc-menu-item', { hasText: 'Keep Only' }).first().click();
       const c = await changed(was);
       if (JSON.stringify(c.labels) !== JSON.stringify([child])) throw new Error(`kept ${c.labels}`);
-      if (!close(Number(c.first[0]), Number(b.first[1]))) throw new Error(`${c.first[0]} vs ${b.first[1]}`);
-      was = await stamp();
+      if (!sameTyped(c.first[0], b.first[1], c.firstType)) throw new Error(`${c.first[0]} vs ${b.first[1]}`);
+      was = await answered();
       await cellOf(child).click({ button: 'right' });
       await page.locator('.dc-menu-item', { hasText: 'Zoom Out' }).first().click();
       const d = await changed(was);
       if (JSON.stringify(d.labels) !== JSON.stringify([a.labels[0]])) throw new Error(`zoomed out to ${d.labels}`);
-      was = await stamp();
+      was = await answered();
       await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
       const e = await changed(was);
       if (JSON.stringify(e.labels) !== JSON.stringify([child])) throw new Error(`undo gave ${e.labels}`);
@@ -4735,13 +4796,13 @@ try {
       const pick = win.locator('.dc-adhoc-member').nth(1);
       const member = (await pick.locator('.dc-adhoc-member-label').textContent())?.trim();
       await pick.locator('.dc-adhoc-member-pick').check();
-      const was = await stamp();
+      const was = await answered();
       await win.locator('.dc-adhoc-members-ok').click();
       const b = await changed(was);
       if (JSON.stringify(b.pov[dimension]) !== JSON.stringify([member])) {
         throw new Error(`POV ${JSON.stringify(b.pov)}`);
       }
-      if (!(Number(b.first[0]) <= Number(a.first[0]) || b.first[0] === null)) {
+      if (!(b.first[0] === null || compareTyped(b.first[0], a.first[0], b.firstType) <= 0)) {
         throw new Error(`${member} gave ${b.first[0]}, more than the whole ${a.first[0]}`);
       }
       const text = await chip.textContent();
@@ -4751,19 +4812,19 @@ try {
 
     await check('ad hoc analysis: Options re-place the answers, and Exit restores the cube', async () => {
       const a = await enter();
-      let was = await stamp();
+      let was = await answered();
       await cellOf(a.labels[0]).dblclick();
       const b = await changed(was);
       await page.locator('.dc-adhoc-tool', { hasText: 'Options...' }).click();
       const win = page.locator('.dc-app-overlay[data-window="Ad Hoc Options"]');
       await win.waitFor({ timeout: 5000 });
       await win.locator('input[name="dc-adhoc-indentation"][value="none"]').check();
-      was = await stamp();
+      was = await answered();
       await win.locator('.dc-adhoc-options-ok').click();
       const c = await changed(was);
       const raw = await page.evaluate(() => window.__dataCube.adhoc.view.table.columns[0].values);
       if (raw.some((v) => /^\s/.test(String(v)))) throw new Error(`still indented: ${JSON.stringify(raw)}`);
-      if (JSON.stringify(c.first) !== JSON.stringify(b.first)) throw new Error('the figures changed');
+      if (stamp(c.first) !== stamp(b.first)) throw new Error('the figures changed');
       await page.locator('.dc-adhoc-tool', { hasText: 'Exit' }).click();
       await page.waitForFunction(() => !window.__dataCube?.adhoc, null, { timeout: 5000 });
       if (await page.locator('.dc-adhoc').count()) throw new Error('the mode is still on screen');

@@ -13,19 +13,26 @@
 
 import { col, gt, lambda, lit } from '../../pure-protocol/src/index.ts';
 
-/** Every case, over `source` (a relation, as protocol). */
-export function casesFor(SOURCE) {
-  const COLUMNS = [
-    { name: 'region', type: 'String' },
-    { name: 'desk', type: 'String' },
-    { name: 'book', type: 'String' },
-    { name: 'year', type: 'Integer', kind: 'dimension' },
-    { name: 'qtr', type: 'String' },
-    { name: 'notional', type: 'Float' },
-    { name: 'pnl', type: 'Float' },
-    { name: 'qty', type: 'Integer' },
-  ];
+/**
+ * What a host DECLARES about the trades table: `year` is a dimension. A kind, never a type --
+ * every type comes from the plane's own compiler (`sourceColumns`).
+ */
+export const TRADES_KINDS = [{ name: 'year', kind: 'dimension' }];
 
+/**
+ * Two planes' compilers on the same table: the same names and the same types, or what
+ * differs. A drop-in plane types the data as the other does.
+ */
+export function typeDifference(a, b) {
+  const show = (cols) => cols.map((c) => `${c.name}:${c.type}`).join(', ');
+  return show(a) === show(b) ? null : `${show(a)}  vs  ${show(b)}`;
+}
+
+/**
+ * Every case, over `source` (a relation, as protocol) whose columns are `COLUMNS` -- as the
+ * plane's compiler typed them (`sourceColumns`), never a list written here.
+ */
+export function casesFor(SOURCE, COLUMNS) {
   const BASE = {
     source: { query: SOURCE },
     columns: COLUMNS,
@@ -205,15 +212,3 @@ export function casesFor(SOURCE) {
   ];
   return CASES;
 }
-
-/** The table as the cube sees it, on either plane. */
-export const ENGINE_COLUMNS = [
-  { name: 'region', type: 'String' },
-  { name: 'desk', type: 'String' },
-  { name: 'book', type: 'String' },
-  { name: 'year', type: 'Integer', kind: 'dimension' },
-  { name: 'qtr', type: 'String' },
-  { name: 'notional', type: 'Float' },
-  { name: 'pnl', type: 'Float' },
-  { name: 'qty', type: 'Integer' },
-];

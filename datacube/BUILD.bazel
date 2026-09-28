@@ -594,6 +594,7 @@ _HARNESS_HELPERS = [
     "demo/torture.pure",
     "demo/trades.pure",
     "demo/trades-h2.pure",
+    "demo/typed-view.mjs",
 ]
 
 _HARNESSES = [

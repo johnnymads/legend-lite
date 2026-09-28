@@ -27,10 +27,10 @@ const API = `${ENGINE}/api/pure/v1`;
 const ONLY = process.env.ONLY;
 const RUNTIME = 'trades::RT';
 
-/** The demo model's table, as the cube sees it. */
-import { ENGINE_COLUMNS, casesFor } from './engine-cases.mjs';
+import { sourceColumns } from '../src/source-columns.ts';
+import { TRADES_KINDS, casesFor } from './engine-cases.mjs';
 
-const CASES = casesFor(accessor('trades::DB', 'TRADES'));
+const SOURCE = accessor('trades::DB', 'TRADES');
 
 async function post(path, body, text = false) {
   const response = await fetch(`${API}${path}`, {
@@ -84,6 +84,15 @@ try {
     + ' re-run.');
   process.exit(2);
 }
+
+// The table's columns AS THIS ENGINE'S COMPILER TYPES THEM (`lambdaRelationType`), never a
+// list written in a harness: a case is built on what the plane under test says it holds.
+const CASES = casesFor(SOURCE, await sourceColumns(new LegendEngineExecutor({
+  baseUrl: ENGINE,
+  model: await readFile(new URL('./trades.pure', import.meta.url), 'utf8'),
+  runtime: RUNTIME,
+}), SOURCE, TRADES_KINDS));
+console.log(`the engine types the table: ${CASES[0].snapshot.columns.map((c) => `${c.name}:${c.type}`).join(', ')}`);
 
 const COMPILED = CASES.flatMap((c) => {
   // A pivoted case is two queries: its values query compiles too.
@@ -143,9 +152,10 @@ if (!ONLY || 'server mode'.includes(ONLY.toLowerCase())) {
       model: h2Model,
       runtime: 'trades::h2::RT',
     });
+    const h2Source = accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES');
     const snapshot = {
-      source: { query: accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES') },
-      columns: ENGINE_COLUMNS,
+      source: { query: h2Source },
+      columns: await sourceColumns(executor, h2Source, TRADES_KINDS),
       derived: [],
       rows: ['region'],
       pivotOn: [],

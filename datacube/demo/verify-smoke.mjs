@@ -24,8 +24,9 @@ import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright';
 
-import { SAMPLES } from '../src/samples.ts';
-import { gridInvariants } from './grid-invariants.mjs';
+import { SAMPLES, sampleFileName } from '../src/samples.ts';
+import { kindOf } from '../src/snapshot.ts';
+import { TEMPORAL_TYPES, gridInvariants } from './grid-invariants.mjs';
 import { fileURLToPath } from 'node:url';
 import { servedPath } from './static-files.ts';
 
@@ -95,7 +96,7 @@ function fail(sample, where, detail) {
 
 /** Run the shared invariants and attribute breaks to this state. */
 async function invariants(sample, where) {
-  for (const b of await page.evaluate(gridInvariants)) {
+  for (const b of await page.evaluate(gridInvariants, TEMPORAL_TYPES)) {
     fail(sample, `${where} — invariant`, b);
   }
   for (const e of pageErrors) {
@@ -107,7 +108,9 @@ async function invariants(sample, where) {
 const summary = [];
 try {
   for (const sample of wanted) {
-    const file = join(dir, `${sample.id}.csv`);
+    // under its OWN format: a JSONL sample written as .csv was sniffed as CSV, so the shape
+    // under test was not the one the picker offers
+    const file = join(dir, sampleFileName(sample));
     const rows = ROWS ?? Math.min(sample.defaultRows ?? 2000, ROW_CAP);
     await writeFile(file, sample.build(rows), 'utf8');
     console.log(`\n${sample.id} — ${sample.label} (${rows} rows)`);
@@ -118,13 +121,19 @@ try {
     pageErrors = [];
     await page.goto(`http://127.0.0.1:${port}/demo/index.html`);
     await page.waitForSelector('.dc-row', { timeout: 90_000 });
+    // THE FILE'S answer, not the built-in cube's: its status line already reads "... rows",
+    // so waiting for /rows/ alone read a slower ingest (the JSONL sample) before it landed and
+    // checked the built-in cube in its place. Wait for the line to CHANGE.
+    const before = await page.evaluate(() =>
+      document.querySelector('.dc-status-timing')?.textContent ?? '');
     await page.setInputFiles('input[type=file]', file);
     await page.waitForFunction(
-      () => /rows/.test(
-        document.querySelector('.dc-status-timing')?.textContent ?? '')
-        || /could not|error/i.test(
-          document.getElementById('status')?.textContent ?? ''),
-      undefined, { timeout: 90_000 },
+      (was) => {
+        const line = document.querySelector('.dc-status-timing')?.textContent ?? '';
+        return (line !== was && /rows/.test(line))
+          || /could not|error/i.test(document.getElementById('status')?.textContent ?? '');
+      },
+      before, { timeout: 90_000 },
     ).catch(() => {});
     await page.waitForTimeout(400);
 
@@ -152,22 +161,40 @@ try {
     }
     await invariants(sample.id, 'loading');
 
+    // THE SOURCE'S TYPES, as the compiler gave them to the cube: printed, so a sniffer
+    // change shows in the log, and the ground for every choice below.
+    const schema = await page.evaluate(() => window.__dataCube.snapshot.columns
+      .map((c) => ({ name: c.name, type: c.type ?? null, kind: c.kind ?? null })));
+    console.log(`    types: ${schema.map((c) => `${c.name}:${c.type}`).join(', ')}`);
+    for (const c of schema.filter((c) => c.type === null)) {
+      fail(sample.id, 'loading', `the compiler did not type column ${c.name}`);
+    }
+
     // GROUP BY THE FIRST DIMENSION, from the panel. Double-click is
     // the keyboard-and-trackpad path and a different route into the
     // same snapshot change than the context menu, so a fault in one
-    // does not hide a fault in the other.
-    const groupable = page.locator('.dc-tool-panel-row:not(.dc-measure)');
-    if (await groupable.count()) {
-      const name = await groupable.first().getAttribute('data-column');
+    // does not hide a fault in the other. The dimension is chosen from
+    // the typed columns (its kind, which the type defaults), never by
+    // reading the panel's classes.
+    const dimension = schema.find((c) => kindOf({ name: c.name, type: c.type, ...(c.kind ? { kind: c.kind } : {}) }) === 'dimension');
+    const groupable = dimension === undefined ? null
+      : page.locator(`.dc-tool-panel-row[data-column="${dimension.name.replace(/["\\]/g, '\\$&')}"]`);
+    if (groupable && await groupable.count()) {
+      const name = dimension.name;
       await groupable.first().dblclick();
       await page.waitForTimeout(900);
-      const grouped = await page.evaluate(() => ({
-        sql: document.getElementById('sql')?.textContent ?? '',
-        pure: document.getElementById('pure')?.textContent ?? '',
-        rows: [...document.querySelectorAll('.dc-row')].map(
-          (r) => r.querySelector('.dc-cell')?.textContent?.trim() ?? ''),
-        headers: document.querySelectorAll('.dc-th[data-column]').length,
-      }));
+      // the group KEYS as the database returned them (each first-level row's path), not the
+      // cells' rendered text: two values a format shows alike are still two groups
+      const grouped = await page.evaluate(() => {
+        const view = window.__dataCube.controller.view;
+        return {
+          sql: document.getElementById('sql')?.textContent ?? '',
+          pure: document.getElementById('pure')?.textContent ?? '',
+          rows: (view?.treeRows ?? []).filter((r) => r.level === 1)
+            .map((r) => (r.path[0] === null ? '\u0000null' : String(r.path[0]))),
+          headers: document.querySelectorAll('.dc-th[data-column]').length,
+        };
+      });
       console.log(`    grouped by ${name}: ${grouped.rows.length} rows,`
         + ` ${grouped.headers} columns`);
 

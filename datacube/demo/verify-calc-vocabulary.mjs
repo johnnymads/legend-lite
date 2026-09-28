@@ -26,7 +26,8 @@ import { LegendEngineExecutor } from '../src/engine-remote.ts';
 import { levelLambda } from '../src/query.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
-import { ENGINE_COLUMNS } from './engine-cases.mjs';
+import { sourceColumns } from '../src/source-columns.ts';
+import { TRADES_KINDS, typeDifference } from './engine-cases.mjs';
 
 const HERE = new URL('.', import.meta.url);
 const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
@@ -36,10 +37,10 @@ const ENGINE = (process.env.ENGINE ?? 'http://127.0.0.1:6300')
  * The example as a snapshot: one derived column, nothing else. The example is
  * text a person types, so the plane's compiler parses it (`parse`).
  */
-async function snapshotFor(fn, source, parse) {
+async function snapshotFor(fn, source, columns, parse) {
   return {
     source: { query: source },
-    columns: ENGINE_COLUMNS,
+    columns,
     derived: [{ name: 'calc', lambda: await parse(`x|${fn.example}`) }],
     rows: [],
     pivotOn: [],
@@ -83,11 +84,21 @@ try {
     + ' Start one to check both.');
 }
 
+// Each plane's table as ITS compiler types it; two planes must agree.
+const LOCAL_SOURCE = accessor('trades::DB', 'TRADES');
+const ENGINE_SOURCE = accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES');
+const localColumns = await sourceColumns(planner, LOCAL_SOURCE, TRADES_KINDS);
+const engineColumns = executor ? await sourceColumns(executor, ENGINE_SOURCE, TRADES_KINDS) : null;
+const typesDiffer = engineColumns ? typeDifference(localColumns, engineColumns) : null;
+if (typesDiffer) {
+  console.log(`\nTHE PLANES TYPE THE TABLE DIFFERENTLY: ${typesDiffer}`);
+}
+
 for (const fn of CALC_FUNCTIONS) {
   const row = { name: fn.name, local: null, engine: null };
 
   try {
-    const localSnap = await snapshotFor(fn, accessor('trades::DB', 'TRADES'), (t) => planner.parse(t));
+    const localSnap = await snapshotFor(fn, LOCAL_SOURCE, localColumns, (t) => planner.parse(t));
     await planner.plan(levelLambda(localSnap));
   } catch (e) {
     row.local = String(e.message ?? e).replace(/\s+/g, ' ').slice(0, 150);
@@ -96,7 +107,7 @@ for (const fn of CALC_FUNCTIONS) {
   if (executor) {
     try {
       const engineSnap = await snapshotFor(
-        fn, accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES'), (t) => executor.parse(t));
+        fn, ENGINE_SOURCE, engineColumns, (t) => executor.parse(t));
       // EXECUTED, not just planned: the case-insensitive filters
       // compiled on the engine and then failed to render, so planning
       // alone is not the question.
@@ -131,7 +142,7 @@ if (broken.length > 0) {
   }
 }
 
-const bad = localOnly.length + broken.length;
+const bad = localOnly.length + broken.length + (typesDiffer ? 1 : 0);
 console.log(`\n${ok.length}/${results.length} offered functions lower`
   + `${executor ? ' on both planes' : ' locally'}`);
 console.log(bad === 0

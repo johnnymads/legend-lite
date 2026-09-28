@@ -9,30 +9,24 @@
 // claims for a normal cube. This tries to break it. A failure here
 // is either a bug or a wall that should exist and does not.
 //
+// The table's columns are what the COMPILER says it holds (`sourceColumns`), and a pivot's
+// keys are values the database holds: the WEIRD table, with weird rows, lives in a DuckDB in
+// this process, and every pivot's values query is planned by the engine and run there -- the
+// product's own path (`levelWithValues`), never a key invented per type name.
+//
 // Run: bazel run //datacube:torture   (needs `bazel run //core:server`)
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { PlanError, UpstreamPlanner } from '../src/planner.ts';
-import { levelLambda, pivotValuesLambda } from '../src/query.ts';
-import { accessor, col, lambda, lit, times } from '../../pure-protocol/src/index.ts';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 
-/**
- * A pivoted shape's values, for a harness that only PLANS: one typed
- * value per key and a NULL, which is every form a cell's condition takes
- * (an equality of the key's type, and isEmpty). The values query itself
- * is planned too (`planned` below).
- */
-const SAMPLE = {
-  String: 'a', Integer: '1', Float: '1.5', Decimal: '1.5', Number: '1',
-  Boolean: 'true', StrictDate: '2021-01-02', Date: '2021-01-02T00:00:00',
-  DateTime: '2021-01-02T03:04:05',
-};
-function sampled(snap) {
-  if ((snap.pivotOn ?? []).length === 0) return undefined;
-  const types = new Map([...snap.columns, ...(snap.derived ?? [])].map((c) => [c.name, c.type]));
-  return { tuples: [snap.pivotOn.map((k) => SAMPLE[types.get(k)] ?? 'a'), snap.pivotOn.map(() => null)] };
-}
+import { DuckDbEngine } from '../src/duckdb.ts';
+import { levelWithValues } from '../src/plan.ts';
+import { PlanError, UpstreamPlanner } from '../src/planner.ts';
+import { pivotValuesLambda } from '../src/query.ts';
+import { sourceColumns } from '../src/source-columns.ts';
+import { accessor, col, lambda, lit, times } from '../../pure-protocol/src/index.ts';
 import { buildColumnModel } from '../src/grid/columns.ts';
 import { CubeRefusal } from '../src/snapshot.ts';
 
@@ -88,32 +82,43 @@ const shown = async (query) => (await PLANNER.print(query, 'STANDARD')).slice(0,
 async function plan(query) {
   try {
     // the query is protocol, as the product sends it (E9)
-    return { sql: await PLANNER.plan(query), error: undefined };
+    return { sql: (await PLANNER.plan(query)).sql, error: undefined };
   } catch (e) {
     if (e instanceof PlanError) return { sql: undefined, error: e.message };
     throw e;
   }
 }
 
-/** Every column the torture table has, with its declared type. */
-const COLUMNS = [
-  { name: 'plain', type: 'String' },
-  { name: 'with space', type: 'String' },
-  { name: "quo'te", type: 'String' },
-  { name: 'Ünïcødé', type: 'String' },
-  { name: 'select', type: 'String' },
-  { name: 'nulls', type: 'String' },
-  { name: 'n_int', type: 'Integer' },
-  { name: 'n_float', type: 'Float' },
-  { name: 'n_neg', type: 'Float' },
-  { name: 'when', type: 'Date' },
-  { name: 'flag', type: 'Boolean' },
-];
-
 const SRC = accessor('torture::DB', 'WEIRD');
+
+/** The WEIRD table as torture.pure declares it, in a DuckDB here, holding weird rows. */
+async function weirdTable() {
+  const require = createRequire(import.meta.url);
+  const duckdb = require('@duckdb/duckdb-wasm/blocking');
+  const dist = path.dirname(require.resolve('@duckdb/duckdb-wasm/blocking'));
+  const db = await duckdb.createDuckDB({
+    mvp: { mainModule: path.join(dist, 'duckdb-mvp.wasm'), mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs') },
+    eh: { mainModule: path.join(dist, 'duckdb-eh.wasm'), mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs') },
+  }, new duckdb.VoidLogger(), duckdb.NODE_RUNTIME);
+  await db.instantiate();
+  const engine = new DuckDbEngine(db.connect());
+  await engine.run(`CREATE TABLE WEIRD (plain VARCHAR, "with space" VARCHAR, "quo'te" VARCHAR,
+    "Ünïcødé" VARCHAR, "select" VARCHAR, nulls VARCHAR, n_int INTEGER, n_float DOUBLE,
+    n_neg DOUBLE, "when" DATE, flag BOOLEAN)`, 0);
+  await engine.run(`INSERT INTO WEIRD VALUES
+    ('a', 'b c', 'it''s', 'Ünï', 'select', NULL, 1, 1.5, -2.5, DATE '2021-01-02', true),
+    ('', ' lead', '''', '%_\\', 'from', NULL, -7, 0.1, -0.0, DATE '0045-12-31', false),
+    (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`, 0);
+  return engine;
+}
+const DUCK = await weirdTable();
+/** A pivot's values query: planned by the engine, run on the WEIRD table here. */
+const runValues = async (query) => DUCK.execute(await PLANNER.plan(query), 1);
+
 const base = {
   source: { query: SRC },
-  columns: COLUMNS,
+  // what the COMPILER says the table holds
+  columns: await sourceColumns(PLANNER, SRC),
   derived: [],
   rows: [],
   pivotOn: [],
@@ -252,7 +257,7 @@ console.log('--- shapes ---');
 for (const [name, snap] of cases) {
   let pure;
   try {
-    pure = levelLambda(snap, { level: Math.max(1, snap.rows.length), parent: [], limit: 50 }, sampled(snap));
+    pure = await levelWithValues(snap, { level: Math.max(1, snap.rows.length), parent: [], limit: 50 }, runValues);
   } catch (e) {
     check(name, e instanceof CubeRefusal, `refused: ${e.message}`);
     continue;
@@ -276,7 +281,7 @@ const deep = {
 };
 for (let level = 0; level <= deep.rows.length; level++) {
   const parent = ['a', 'b', 'c', 'd'].slice(0, Math.max(0, level - 1));
-  const pure = levelLambda(deep, { level, parent, limit: 50 }, sampled(deep));
+  const pure = await levelWithValues(deep, { level, parent, limit: 50 }, runValues);
   const { sql, error } = await plan(pure);
   check(`level ${level} of ${deep.rows.length}`, Boolean(sql), error ?? '');
 }
@@ -286,7 +291,7 @@ console.log('\n--- wide ---');
 for (const n of [1, 10, 40]) {
   const measures = Array.from({ length: n }, (_, i) => sum(`m${i}`, 'n_float'));
   const wide = { ...base, rows: ['plain'], pivotOn: ['flag'], measures };
-  const pure = levelLambda(wide, { level: 1, parent: [], limit: 50 }, sampled(wide));
+  const pure = await levelWithValues(wide, { level: 1, parent: [], limit: 50 }, runValues);
   const { sql, error } = await plan(pure);
   check(`${n} measures under a pivot`, Boolean(sql), error ?? `${sql?.length} chars of SQL`);
 }
@@ -336,11 +341,11 @@ console.log('\n--- scale ---');
     const t0 = process.hrtime.bigint();
     let pure;
     try {
-      pure = levelLambda(snap, {
+      pure = await levelWithValues(snap, {
         level: Math.max(1, snap.rows.length),
         parent: [],
         limit: 50,
-      }, sampled(snap));
+      }, runValues);
     } catch (e) {
       check(name, e instanceof CubeRefusal, `refused: ${e.message}`);
       continue;
