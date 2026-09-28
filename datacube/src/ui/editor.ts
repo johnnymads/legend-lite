@@ -99,6 +99,8 @@ export class CubeEditor {
   readonly #panelState: Record<string, unknown> = {};
   /** The draft as it was when opened or last applied: Cancel, and the base of a merge. */
   #opened: CubeDraft;
+  /** An Apply is running: another press waits for it, it does not start a second. */
+  #applying = false;
 
   constructor(root: HTMLElement, draft: CubeDraft, options: EditorOptions) {
     this.#doc = root.ownerDocument;
@@ -170,12 +172,25 @@ export class CubeEditor {
    * forgotten by another.
    */
   async apply(options: { close?: boolean } = {}): Promise<boolean> {
+    // ONE AT A TIME: a double-click on OK started two overlapping applies.
+    if (this.#applying) return false;
     const snapshot = applyToSnapshot(this.#draft.snapshot, this.#draft.config);
-    this.#draft = { ...this.#draft, snapshot };
-    const took = await this.#options.onApply(this.#draft, this.#opened);
+    // WHAT IS SENT is what becomes the base once it lands -- not the draft
+    // as it is after the wait. The panels stay live while the query runs,
+    // and an edit made meanwhile was recorded as already applied, so the
+    // next Apply sent nothing of it (P2-170).
+    const sent: CubeDraft = { ...this.#draft, snapshot };
+    this.#draft = sent;
+    this.#applying = true;
+    let took: boolean;
+    try {
+      took = await this.#options.onApply(sent, this.#opened);
+    } finally {
+      this.#applying = false;
+    }
     // Refused: the draft stays in the editor, the editor stays open.
     if (!took) return false;
-    this.#opened = this.#draft;
+    this.#opened = sent;
     if (options.close) this.#options.onClose();
     return true;
   }
@@ -362,9 +377,11 @@ export function sortLabel(name: string): string {
 
 const sortsPanel: PanelBuilder = (ctx) => {
   const draft = ctx.draft();
-  const directions = new Map(
-    draft.snapshot.sorts.map((s) => [s.column, s.direction]),
-  );
+  // READ LIVE on every render of a row: a map built with the panel showed a
+  // direction the draft no longer held once a sort was removed and added
+  // back, or another row was clicked (P2-171).
+  const directionOf = (name: string): SortSpec['direction'] =>
+    ctx.draft().snapshot.sorts.find((s) => s.column === name)?.direction ?? 'asc';
   const body = selectorInto(
     ctx,
     {
@@ -387,7 +404,7 @@ const sortsPanel: PanelBuilder = (ctx) => {
       actionFor: (name) =>
         dropdown(
           ctx.doc,
-          directions.get(name) ?? 'asc',
+          directionOf(name),
           SORT_DIRECTIONS,
           (direction) => {
             const s = ctx.draft().snapshot;

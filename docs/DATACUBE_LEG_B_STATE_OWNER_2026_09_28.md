@@ -46,13 +46,13 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-114 | fire-and-forget calls: unhandled rejections; failed presentation changes keep the new config | **closed B1b**: presentation runs no query; `change` never throws (it returns an outcome). "a presentation change runs no query…" (red before) |
 | P2-127 | the host TOGGLES instead of applying the requested expand state | **closed B1b**: `tree.setOpen(path, expanded)`. "two quick clicks … leave it open" (red with the toggle put back) |
 | P2-131 | drill-through has no stale-result guard | **closed B3**: drills are latest-wins. "two drill-throughs: the LATER one is shown" (red before: the earlier answer, arriving last, took the window) |
-| P2-144 | the Filters window keeps an old copy and its Apply overwrites newer changes | open |
-| P2-150 | reopening Filters rewrites '' / numeric-looking / quoted values | to re-test (T4c typed the values; the reopen path may still coerce) |
-| P2-152 | a serializer refusal throws from compile: the column editor hangs, Apply silently does nothing | open |
+| P2-144 | the Filters window keeps an old copy and its Apply overwrites newer changes | **closed B4**: the Filters window follows the filter the cube HAS (`FilterEditor.rebase` on every state event): unedited it shows it; with edits kept, the next OK says the cube's filter changed, the one after replaces it knowingly. `test/cube-transactions.test.ts` both orders (red before: OK dropped the condition added elsewhere) |
+| P2-150 | reopening Filters rewrites '' / numeric-looking / quoted values | **closed B4** (re-tested first: T4c had fixed numeric-looking strings and decimals; `''`, blanks and quoted text still broke): values are written back the way a person types them (`asTyped`), so reopening gives back exactly the filter. `test/filter-editor.test.ts` "reopening a filter gives back exactly the filter" (red before on 3 of 5) |
+| P2-152 | a serializer refusal throws from compile: the column editor hangs, Apply silently does nothing | **closed B4**: a refusal while BUILDING the queries is returned (`{refusal}`, no query to show); other failures stay failures and are reported (column editor, Properties Apply). `test/cube-transactions.test.ts` + `test/column-editor.test.ts` "a compile that FAILS" (red before: a rejected promise; "Compiling…" forever) |
 | P2-169 | an Apply that also changes root aggregation / expand level loses its row, pivot and sort edits | **fixed by B1b** (86bc9f06e: the Apply is one transaction, tree included); pinned in B1c by "a Properties Apply is ONE transaction" (lands and refuses whole) — passes on B1b's code, not re-run against the code before it |
-| P2-170 | edits made while an Apply runs are recorded as applied | open (`#opened = this.#draft` after the await) |
-| P2-171 | the Sorts tab's direction dropdown reads a stale map | open |
-| P2-187 | the Dimensions editor loses hierarchy edits on rename/Add | open |
+| P2-170 | edits made while an Apply runs are recorded as applied | **closed B4**: the editor records what it SENT, and ignores Apply while one runs. `test/editors-live.test.ts` (red before: a second Apply ran; the edit made meanwhile never reached the cube) |
+| P2-171 | the Sorts tab's direction dropdown reads a stale map | **closed B4**: the Sorts dropdown reads the draft on every render. `test/editors-live.test.ts` (red before: showed Descending for a sort the draft held ascending) |
+| P2-187 | the Dimensions editor loses hierarchy edits on rename/Add | **closed B4**: every Dimensions handler reads the draft live; the count badge follows the hierarchy. `test/editors-live.test.ts` (red before) |
 | P2-210 | a result arriving mid column-resize leaves the drag stuck | **closed B3**: `setColumns` ends a drag in progress, keeping the width dragged so far. `test/grid-resize.test.ts` (red before: the drag never ended and the width stuck) |
 | P2-220 | every toolbar rebuild adds a document keydown listener | **closed B1b** (pulled forward: B1b repaints the title bar on every event): `#listenForKeys`, once. "one Ctrl-Z is ONE undo step" (red with the per-rebuild listener put back) |
 | P2-221 | Escape in a text field closes the whole window and drops its draft | **closed B3**: Escape in a text field stays in the field. "Escape in a text field stays in the field" (red before) |
@@ -225,6 +225,8 @@ B3 LANDED: P2-105, 131, 210, 221 closed (P2-220 went with B1b).
 
 - **B4 — editors on live state.** Filters, Sorts, Dimensions, Apply re-entry, compile refusals.
   P2-144, 150 (after its re-test), 152, 170, 171, 187.
+B4 LANDED: P2-144, 150, 152, 170, 171, 187 closed.
+
 - **B5 — Ad Hoc under the same rules**, and the shell's routing while it is on. P2-259–261, 268–270,
   280, 282–284, 287–291 (and the Cubes window in Ad Hoc, P2-288's successor).
 - **B6 — the host page.** Open sequence, re-sign-in, the leave guard for any work. P2-297, 330, 334, 337.

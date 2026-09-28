@@ -56,6 +56,12 @@ export const dimensionsPanel: PanelBuilder = (ctx) => {
     ctx.setDimensions(next);
     ctx.refresh();
   };
+  // EVERY HANDLER READS THE DRAFT AS IT IS NOW. `dimensions` above is the
+  // draft when this panel was built; the hierarchy selector writes the draft
+  // without rebuilding the panel, so a rename or Add built from the old array
+  // threw the hierarchy edits away (P2-187).
+  const live = (): readonly Dimension[] => ctx.draft().dimensions;
+  const counts: HTMLElement[] = [];
 
   const list = doc.createElement('div');
   list.className = 'dc-dimension-list';
@@ -77,6 +83,7 @@ export const dimensionsPanel: PanelBuilder = (ctx) => {
     const count = doc.createElement('span');
     count.className = 'dc-dimension-count';
     count.textContent = `${d.columns.length}`;
+    counts[i] = count;
     row.append(label, count);
     row.addEventListener('click', () => {
       cursor.index = i;
@@ -96,17 +103,15 @@ export const dimensionsPanel: PanelBuilder = (ctx) => {
   controls.className = 'dc-dimension-controls';
   controls.append(
     button(doc, 'Add', () => {
-      cursor.index = dimensions.length;
-      setDimensions([
-        ...dimensions,
-        { name: freshName(dimensions), columns: [] },
-      ]);
+      const now = live();
+      cursor.index = now.length;
+      setDimensions([...now, { name: freshName(now), columns: [] }]);
     }),
     button(
       doc,
       'Delete',
       () => {
-        setDimensions(dimensions.filter((_, i) => i !== cursor.index));
+        setDimensions(live().filter((_, i) => i !== cursor.index));
       },
       { disabled: dimensions.length === 0 },
     ),
@@ -140,11 +145,7 @@ export const dimensionsPanel: PanelBuilder = (ctx) => {
             ctx.refresh();
             return;
           }
-          setDimensions(
-            dimensions.map((d, i) =>
-              i === cursor.index ? { ...d, name } : d,
-            ),
-          );
+          setDimensions(live().map((d, i) => (i === cursor.index ? { ...d, name } : d)));
         },
         { width: 240 },
       ),
@@ -160,11 +161,10 @@ export const dimensionsPanel: PanelBuilder = (ctx) => {
       ctx,
       { all: groupableColumns(draft), selected: active.columns },
       (columns) => {
-        ctx.setDimensions(
-          dimensions.map((d, i) =>
-            i === cursor.index ? { ...d, columns: [...columns] } : d,
-          ),
-        );
+        ctx.setDimensions(live().map((d, i) => (i === cursor.index ? { ...d, columns: [...columns] } : d)));
+        // the list's count follows the hierarchy (the panel is not rebuilt)
+        const count = counts[cursor.index];
+        if (count) count.textContent = `${columns.length}`;
       },
       { selectedLabel: 'Hierarchy (coarsest first):' },
     );

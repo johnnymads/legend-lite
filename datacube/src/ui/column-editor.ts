@@ -360,8 +360,15 @@ export class ColumnEditor {
     let outcome: CompileOutcome | undefined;
     try {
       outcome = await this.#options.compile(this.#candidate(parsed.lambda), abort.signal);
-    } catch {
-      return; // aborted: a newer compile owns the form
+    } catch (error: unknown) {
+      // Aborted: a newer compile owns the form. Anything else is an answer
+      // the person must see -- treating every failure as an abort left the
+      // form on "Compiling..." with OK disabled for good (P2-152).
+      if (abort.signal.aborted || this.#inflight !== abort) return;
+      this.#inflight = null;
+      this.#check = { state: 'refused', message: error instanceof Error ? error.message : String(error) };
+      this.#paint();
+      return;
     }
     if (abort.signal.aborted || this.#inflight !== abort) return;
     this.#inflight = null;

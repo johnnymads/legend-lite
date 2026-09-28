@@ -47,6 +47,8 @@ let applied: { row: readonly DerivedColumn[]; group: readonly DerivedColumn[];
 let applyRefusal: string | null;
 let closed: number;
 let canCompile: boolean;
+/** Set: the compile FAILS (not a refusal, not an abort) with this. */
+let compileFails: Error | null;
 
 function open(start: ColumnEditorStart): ColumnEditor {
   return new ColumnEditor(root, {
@@ -57,6 +59,7 @@ function open(start: ColumnEditorStart): ColumnEditor {
     print: litePrint,
     compile: async (candidate): Promise<CompileOutcome | undefined> => {
       compiled.push(candidate);
+      if (compileFails) throw compileFails;
       return canCompile ? { query: someQuery(), refusal: refuse } : undefined;
     },
     apply: async (row, group, rename) => {
@@ -89,6 +92,7 @@ beforeEach(() => {
   applyRefusal = null;
   closed = 0;
   canCompile = true;
+  compileFails = null;
 });
 
 describe('a new column', () => {
@@ -452,3 +456,12 @@ describe('picking a JSON field', () => {
   });
 });
 
+describe('a compile that FAILS (P2-152)', () => {
+  it('says so, and never sits on "Compiling..." with OK disabled for good', async () => {
+    compileFails = new Error("cannot pivot on 'meta': it holds JSON");
+    open({ expression: 'x|$x.notional * 2' });
+    await settle();
+    assert.match($('.dc-calc-check').textContent ?? '', /holds JSON/);
+    assert.doesNotMatch($('.dc-calc-check').textContent ?? '', /Compiling/);
+  });
+});

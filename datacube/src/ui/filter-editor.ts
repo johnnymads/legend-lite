@@ -611,16 +611,42 @@ function textOf(value: FilterValue | readonly FilterValue[] | undefined): string
   return scalarText(value as FilterValue);
 }
 
-/** One list entry as its item editor shows it: no quoting needed. */
+/**
+ * A filter as the window's draft. A filter that is already a top-level
+ * group keeps that group rather than being nested inside a fresh one, or
+ * every reopen adds a level of brackets to a filter nobody changed.
+ */
+function seed(value: FilterNode | undefined): DraftGroup {
+  if (!value) return newGroup();
+  const seeded = fromFilterNode(value);
+  return seeded.kind === 'group' && !seeded.not ? seeded : newGroup([seeded]);
+}
+
+/** One list entry as its item editor shows it. */
 function itemText(value: FilterValue): string {
-  if (isJsonValue(value)) return value.json;
-  return isRelativeDate(value) ? `${value.relative}()` : String(value);
+  return scalarText(value);
 }
 
 function scalarText(value: FilterValue): string {
   if (isRelativeDate(value)) return `${value.relative}()`;
   if (isJsonValue(value)) return value.json;
-  return String(value);
+  return typeof value === 'string' ? asTyped(value) : String(value);
+}
+
+/**
+ * A text value written the way a person TYPES it, so reading it back
+ * (`parseTyped`) gives back exactly it. Typed text is trimmed, empty
+ * means no value, and quotes around it are stripped -- so '' reopened as
+ * nothing (the condition dropped), and "N/A" in quotes lost them; the
+ * next Apply published the damaged filter (P2-150). Such a value is
+ * wrapped in the quote it does not start with: '' , '  ', '"N/A"'.
+ */
+function asTyped(value: string): string {
+  const t = value.trim();
+  const quoted = t.length > 1
+    && ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"')));
+  if (t !== '' && !quoted) return value;
+  return t.startsWith("'") ? `"${value}"` : `'${value}'`;
 }
 
 export interface FilterEditorOptions {
@@ -685,19 +711,17 @@ export class FilterEditor {
   #problem: string | null = null;
   /** The list condition whose value popover is open. */
   #openList: string | null = null;
+  /**
+   * The cube's filter changed elsewhere while this window held edits: the
+   * next Apply says so instead of silently replacing it (P2-144).
+   */
+  #stale = false;
 
   constructor(container: HTMLElement, options: FilterEditorOptions) {
     this.#root = container;
     this.#options = options;
     this.#types = new Map(options.columns.map((c) => [c.name, c.type]));
-    if (options.value) {
-      // A seeded filter that is already a top-level group keeps that
-      // group rather than being nested inside a fresh one, or every
-      // reopen adds a level of brackets to a filter nobody changed.
-      const seeded = fromFilterNode(options.value);
-      this.#tree =
-        seeded.kind === 'group' && !seeded.not ? seeded : newGroup([seeded]);
-    }
+    this.#tree = seed(options.value);
     this.#applied = JSON.stringify(this.filter ?? null);
     this.#root.classList.add('dc-filters');
     this.render();
@@ -727,6 +751,32 @@ export class FilterEditor {
   /** Whether the draft differs from what the cube is running. */
   get dirty(): boolean {
     return JSON.stringify(this.filter ?? null) !== this.#applied;
+  }
+
+  /**
+   * The cube's filter, whenever it changes -- a menu entry, an undo, a
+   * refusal, this window's own Apply. The window kept the copy it opened
+   * on, and its OK replaced whatever the cube had gained since
+   * (P2-144). Now: with no edits here it shows the cube's filter; with
+   * edits, they are kept and the next Apply says the cube's filter
+   * changed (the one after replaces it, knowingly).
+   */
+  rebase(value: FilterNode | undefined): void {
+    const tree = seed(value);
+    const now = JSON.stringify(toFilter(tree, this.#typeOf) ?? null);
+    if (now === this.#applied) return;
+    const draft = JSON.stringify(this.filter ?? null);
+    if (draft === now || !this.dirty) {
+      // the cube holds exactly this draft (its own Apply), or there is nothing here to keep
+      if (draft !== now) this.#tree = tree;
+      this.#applied = now;
+      this.#stale = false;
+      this.render();
+      return;
+    }
+    this.#applied = now;
+    this.#stale = true;
+    this.render();
   }
 
   select(id: string | null): void {
@@ -835,6 +885,13 @@ export class FilterEditor {
    */
   async apply(): Promise<boolean> {
     if (!this.dirty) return true;
+    if (this.#stale) {
+      this.#stale = false;
+      this.#problem = 'The cube\u2019s filter changed while this window was open. Your edits are kept: '
+        + 'Apply again to replace it with them, or Cancel to keep the cube\u2019s.';
+      this.render();
+      return false;
+    }
     const filter = this.filter;
     const refused = await this.#options.onApply(filter);
     if (typeof refused === 'string') {

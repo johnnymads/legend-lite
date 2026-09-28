@@ -50,8 +50,11 @@ export interface RunState {
 
 /** What compiling a cube found: the query refused (or the first), and why. */
 export interface CompileOutcome {
-  /** The refused query, or the first one when all compile. */
-  readonly query: Lambda;
+  /**
+   * The refused query, or the first one when all compile. Absent when the
+   * refusal came while BUILDING the queries: there is no query to show.
+   */
+  readonly query?: Lambda;
   /** The compiler's refusal; null when every query compiles. */
   readonly refusal: string | null;
 }
@@ -288,22 +291,34 @@ export class CubeController {
     // keys (their literals have the types the draft's will), and none
     // otherwise -- the level still compiles its Totals and carried
     // columns, and the cell form is the same for every value.
-    const valuesQuery = pivotValuesLambda(s);
-    const facts: PivotFacts | undefined = s.pivotOn.length === 0
-      ? undefined
-      : pinnedPivotFacts(s)
-        ?? (shown?.pivot && shown.snapshot.pivotOn.join('\u0000')
-          === s.pivotOn.join('\u0000') ? shown.pivot.facts : { tuples: [] });
-    // Each level's own query, then its child-group aggregates' -- a
-    // column whose own query the planner refuses must not pass.
-    const queries = [
-      ...(valuesQuery !== null ? [valuesQuery] : []),
-      ...scopes.flatMap((scope) => {
-        const child = scope ? childAggregateLambda(s, scope) : null;
-        const level = levelLambda(s, scope, facts);
-        return child ? [level, child.query] : [level];
-      }),
-    ];
+    // BUILT INSIDE THE REFUSAL NET: building a query can refuse too (a
+    // pivot on a JSON column, a rank with nothing to order by), and a
+    // refusal thrown from here rejected the promise -- the column editor
+    // sat on "Compiling..." and Properties Apply did nothing, saying
+    // nothing (P2-152). A refusal is an answer.
+    let queries: Lambda[];
+    try {
+      const valuesQuery = pivotValuesLambda(s);
+      const facts: PivotFacts | undefined = s.pivotOn.length === 0
+        ? undefined
+        : pinnedPivotFacts(s)
+          ?? (shown?.pivot && shown.snapshot.pivotOn.join('\u0000')
+            === s.pivotOn.join('\u0000') ? shown.pivot.facts : { tuples: [] });
+      // Each level's own query, then its child-group aggregates' -- a
+      // column whose own query the planner refuses must not pass.
+      queries = [
+        ...(valuesQuery !== null ? [valuesQuery] : []),
+        ...scopes.flatMap((scope) => {
+          const child = scope ? childAggregateLambda(s, scope) : null;
+          const level = levelLambda(s, scope, facts);
+          return child ? [level, child.query] : [level];
+        }),
+      ];
+    } catch (error: unknown) {
+      // a refusal is an answer; anything else is a failure, and stays one
+      if (!(error instanceof CubeRefusal)) throw error;
+      return { refusal: error.message };
+    }
     for (const query of queries) {
       try {
         await runner.compile(query, s, signal);

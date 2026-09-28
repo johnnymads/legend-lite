@@ -694,3 +694,29 @@ describe('operatorsFor a Variant', () => {
     }
   });
 });
+
+// Leg B / B4, P2-150: reopening the Filters window turned each stored value into display text and
+// read it back, and the round trip lost information: '' vanished, a numeric-looking string on a
+// String column changed, a quoted value lost its quotes. Reopening must give back EXACTLY the
+// filter the cube has, whatever its values.
+describe('reopening a filter gives back exactly the filter (P2-150)', () => {
+  const colType = (c: string): string | undefined => ({ region: 'String', desk: 'String', notional: 'Decimal' } as Record<string, string>)[c];
+  const node = (column: string, value: string): FilterNode =>
+    ({ kind: 'condition', column, operator: 'equal', value } as FilterNode);
+  for (const [what, filter] of [
+    ['an empty string', node('region', '')],
+    ['a numeric-looking string on a String column', node('region', '00123')],
+    ['a value that is itself quoted', node('desk', '"N/A"')],
+    ['a decimal with a trailing zero', node('notional', '12.30')],
+    ['blanks only', node('region', '  ')],
+    ['a value quoted in single quotes', node('desk', "'x'")],
+    ['all of them, grouped', { kind: 'and', children: [node('region', ''), node('region', '00123'),
+      node('desk', '"N/A"'), node('notional', '12.30')] } as FilterNode],
+  ] as const) {
+    it(`${what}`, () => {
+      const root = fromFilterNode(filter);
+      const tree = root.kind === 'group' ? root : newGroup([root]);
+      assert.deepEqual(toFilter(tree, colType), filter);
+    });
+  }
+});

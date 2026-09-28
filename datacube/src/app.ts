@@ -368,6 +368,8 @@ export class CubeApp {
   readonly #unsubscribe: () => void;
   /** Set by `dispose`: nothing reaches the host, the screen or a window after it. */
   #disposed = false;
+  /** The open Filters window, told whenever the cube's filter changes (P2-144). */
+  #filters: FilterEditor | null = null;
   /** Drill-throughs, latest wins: an earlier one answering late is dropped (P2-131). */
   #drills = 0;
   #selection: CellRange | null = null;
@@ -739,6 +741,8 @@ export class CubeApp {
   #onState(event: OwnerEvent): void {
     this.#setBusy(this.#owner.busy);
     this.#paintState();
+    // the Filters window follows the filter the cube HAS
+    this.#filters?.rebase(this.#owner.committed.snapshot.filter);
     switch (event.kind) {
       case 'pending':
         return;
@@ -2482,7 +2486,7 @@ export class CubeApp {
 
   openFilters(): void {
     this.#showOverlay('Filters', (host, close) => {
-      new FilterEditor(host, {
+      this.#filters = new FilterEditor(host, {
         // Row-stage calculated columns filter like any other, and each
         // column brings its TYPE: it decides the operators offered and
         // the value editor shown.
@@ -2490,7 +2494,8 @@ export class CubeApp {
         // operators and editor would be a guess
         columns: rowColumns(this.#snapshot).flatMap((c) =>
           c.type === undefined ? [] : [{ name: c.name, type: c.type }]),
-        ...(this.#snapshot.filter ? { value: this.#snapshot.filter } : {}),
+        // the filter the cube HAS, as every rebase after
+        ...(this.#owner.committed.snapshot.filter ? { value: this.#owner.committed.snapshot.filter } : {}),
         onApply: (filter) => this.#applyFilter(filter),
         onClose: close,
       });
@@ -2566,16 +2571,26 @@ export class CubeApp {
     // running falls to the transaction's own refusal, never to a guess.
     const endValidate = this.#startTask('Validating query...');
     const target = merge(this.#owner.current);
-    const checked = await this.#controller.compile({
-      snapshot: applyToSnapshot(target.snapshot, target.configuration),
-      tree: target.tree,
-    }, this.#view).finally(endValidate);
+    let checked: Awaited<ReturnType<CubeController['compile']>>;
+    try {
+      checked = await this.#controller.compile({
+        snapshot: applyToSnapshot(target.snapshot, target.configuration),
+        tree: target.tree,
+      }, this.#view);
+    } catch (error: unknown) {
+      // A compile that could not run at all is said, never swallowed: the
+      // Apply button's promise has nobody waiting on it (P2-152).
+      this.#reportFailure(error);
+      return false;
+    } finally {
+      endValidate();
+    }
     if (checked && checked.refusal !== null) {
       const refused = checked.refusal;
       this.#status(refused, 'error');
       this.#codeCheckAlert(
         "Query Validation Failure: Can't safely apply changes. Check the query code below for more details.",
-        refused, await this.#queryText(checked.query));
+        refused, checked.query ? await this.#queryText(checked.query) : '');
       return false;
     }
     // ONE TRANSACTION: it lands whole, or is refused and everything --
@@ -2772,6 +2787,7 @@ export class CubeApp {
 
   /** Close one window, by its title. */
   #closeWindow(key: string): void {
+    if (key === 'Filters') this.#filters = null;
     const win = this.#open.get(key);
     if (!win) return;
     win.remove();
