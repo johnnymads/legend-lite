@@ -103,9 +103,22 @@ export async function listObjects(session: WarehouseSession, catalog = 'main'): 
   return await r.json() as CatalogObject[];
 }
 
+/**
+ * Sign in AND list what the user may read, as one step: the session comes back only with its
+ * own tables. Signing in, then listing separately, left one user's table list beside another
+ * user's session when the listing failed (P2-334).
+ */
+export async function connect(baseUrl: string, user: string, password: string, catalog = 'main'):
+Promise<{ readonly session: WarehouseSession; readonly objects: CatalogObject[] }> {
+  const session = await signIn(baseUrl, user, password);
+  const objects = await listObjects(session, catalog);
+  return { session, objects };
+}
+
 export class WarehouseEngine implements QueryEngine {
   readonly name = 'warehouse';
-  readonly #session: WarehouseSession;
+  /** Renewed in place when the same user signs in again (`renew`). */
+  #session: WarehouseSession;
   readonly #catalog: string;
 
   constructor(session: WarehouseSession, catalog = 'main') {
@@ -116,6 +129,21 @@ export class WarehouseEngine implements QueryEngine {
   /** The signed-in user, for the plane badge. */
   get principal(): string {
     return this.#session.principal;
+  }
+
+  /**
+   * A fresh token for the SAME user at the same warehouse: the open cube goes on with it. The
+   * engine kept the token it was built with for its whole life, so signing in again after
+   * expiry -- as the error asked -- never reached the cube (P2-297). Anyone else's session is
+   * refused: what a cube reads is its user's, and it never changes hands quietly.
+   */
+  renew(session: WarehouseSession): void {
+    if (session.principal !== this.#session.principal
+      || session.baseUrl.replace(/\/+$/, '') !== this.#session.baseUrl.replace(/\/+$/, '')) {
+      throw new Error(`this cube reads the warehouse as ${this.#session.principal}; `
+        + `signed in as ${session.principal}, open a table to work as ${session.principal}`);
+    }
+    this.#session = session;
   }
 
   /**

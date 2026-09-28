@@ -41,6 +41,12 @@ const URL_BASE = `http://127.0.0.1:${port}`;
 const dir = await mkdtemp(join(tmpdir(), 'dc-cubes-'));
 const csv = join(dir, 'trades.csv');
 const lossy = join(dir, 'trades-no-notional.csv');
+// a LARGE file picked first and a small one straight after (P2-330): the small one must win
+const big = join(dir, 'big-trades.csv');
+await writeFile(big, 'region,desk,notional,qty\n'
+  + Array.from({ length: 400_000 }, (_, i) => `R${i % 97},D${i % 13},${i},${i % 7}`).join('\n') + '\n');
+const small = join(dir, 'small-trades.csv');
+await writeFile(small, 'region,desk,notional,qty\nEMEA,Rates,1,1\nAMER,FX,2,2\n');
 await writeFile(lossy, 'region,desk,qty\n'
   + Array.from({ length: 60 }, (_, i) => `${['EMEA', 'AMER', 'APAC'][i % 3]},${['Rates', 'Credit', 'FX'][i % 5 % 3]},${i}`).join('\n') + '\n');
 await writeFile(csv, 'region,desk,notional,qty\n'
@@ -237,6 +243,37 @@ try {
     const rows = await page.locator('#cubelib .dc-lib-row').allTextContents();
     if (rows.some((r) => r.includes('Sample trades'))) throw new Error('still listed');
     return `${rows.length} left`;
+  });
+
+  await check('the LAST file picked wins, however long the first takes to read (P2-330)', async () => {
+    await load();
+    const answer = (d) => { void d.accept(); };
+    page.on('dialog', answer); // "open anyway?" -- yes, both times
+    try {
+      await page.setInputFiles('#uploadfile', big);
+      await page.setInputFiles('#uploadfile', small);
+      // both reads finish: the note stops saying "reading", then a moment for a late one to land
+      await page.waitForFunction(() => !/reading/.test(document.querySelector('#note')?.textContent ?? ''),
+        undefined, { timeout: 120_000 });
+      await page.waitForTimeout(4000);
+    } finally {
+      page.off('dialog', answer);
+    }
+    const title = await page.evaluate(() => window.__dataCube.configuration.reportTitle ?? '');
+    if (!/small-trades/.test(title)) throw new Error(`the cube on screen is "${title}", not the file picked last`);
+    return `on screen: ${title}`;
+  });
+
+  await check('choosing another plane with a file open asks first; No stays (P2-337)', async () => {
+    const here = page.url();
+    let asked = '';
+    page.once('dialog', (d) => { asked = d.message(); void d.dismiss(); });
+    await page.click('.dc-titlebar-menu');
+    await page.locator('.dc-menu .dc-menu-item', { hasText: 'Plan remote' }).first().click();
+    await page.waitForTimeout(1500);
+    if (!asked) throw new Error('it navigated away without asking: the opened file would be lost');
+    if (page.url() !== here) throw new Error(`it left for ${page.url()} after No`);
+    return `asked: "${asked.slice(0, 60)}…", stayed`;
   });
 
   await check('no page errors', async () => {

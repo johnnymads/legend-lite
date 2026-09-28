@@ -71,11 +71,11 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-289 | cube-only entries offered in Ad Hoc re-query the hidden cube | **closed B5b**: the cube's own entries (Properties, drag zones, dimensions, Ctrl-E, Filters, column editor) are disabled or refused in Ad Hoc (`#cubeOnly`); Settings > Reload reloads Ad Hoc. `test/cube-transactions.test.ts` (red before) |
 | P2-290 | the status bar shows the hidden cube's counts under Ad Hoc | **closed B5b**: the status bar shows Ad Hoc's own counts (`#renderAdHocStatus`, fed by the mode's `onView`). `test/cube-transactions.test.ts` (red before) |
 | P2-291 | entering Ad Hoc during a pending filter carries a filter later refused | **closed B5c**: Ad Hoc is built from the cube ON SCREEN (`owner.committed`), never a change in flight. `test/cube-transactions.test.ts` (red before: EMEA pinned from an unaccepted filter) |
-| P2-297 | re-sign-in never reaches the open cube (old token) | open |
+| P2-297 | re-sign-in never reaches the open cube (old token) | **closed B6**: `WarehouseEngine.renew` takes a fresh token for the same user (anyone else refused, said); the host renews the open cube's engine on Connect. `test/warehouse-session.test.ts` (red before: no way to renew; the engine kept its first token). The host wiring has no warehouse in the harness: reviewed, not driven |
 | P2-299 | the shared model parse is tied to the first query's signal | **overtaken**: the engine client sends the model per request (E8); nothing shared is parsed |
-| P2-330 | concurrent file opens have no ordering guard | open (the host's `openFile` has no sequence) |
-| P2-334 | a failed warehouse re-sign-in keeps the previous user's tables | open |
-| P2-337 | choosing a plane navigates away, losing work | **partial**: the leave-page guard (48f7df1e1) asks when a saved-cube-capable cube has unsaved changes; a warehouse session or an unsaved file cube without changes is still lost silently |
+| P2-330 | concurrent file opens have no ordering guard | **did not reproduce** (a large file then a small one: DuckDB serialises the two reads, so the first picked finishes first); the latest-wins guard is added anyway -- nothing else guarantees the order -- and pinned by `demo/verify-cubes.mjs` "the LAST file picked wins"; not claimed |
+| P2-334 | a failed warehouse re-sign-in keeps the previous user's tables | **closed B6**: `connect` signs in and lists as ONE step; the host clears the previous listing first and takes nothing until both succeed. `test/warehouse-session.test.ts` (red before: no one-step sign-in). Host wiring reviewed, not driven (no warehouse in the harness) |
+| P2-337 | choosing a plane navigates away, losing work | **closed B6**: leaving the page OR switching plane asks whenever the tab holds work (an opened file, a warehouse session, unsaved changes), and a plane switch carries the query string. `demo/verify-cubes.mjs` "choosing another plane with a file open asks first" (red before: it navigated away) |
 
 Saved views (T5's P2-70–79) are closed by their replacement: the saved cube (789227f08) saves and
 opens the whole cube, versioned, as a replacement not a merge.
@@ -238,6 +238,8 @@ same questions, the answers placed again.
 B5b + B5c LANDED: P2-283, 284, 287, 288, 289, 290, 280, 291 closed. Leg B's Ad Hoc slice done.
 
 - **B6 — the host page.** Open sequence, re-sign-in, the leave guard for any work. P2-297, 330, 334, 337.
+
+B6 LANDED: P2-297, 334, 337 closed; P2-330 did not reproduce (guard added, pinned).
 
 Leg B is done when every row of §2 has a test and a commit, the guardrail holds for the app AND the
 controller, and B5 and B6 have landed — not before.

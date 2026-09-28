@@ -47,8 +47,7 @@ import { CubeLibrary } from '../src/ui/cube-library.ts';
 import { inferModel, type CatalogBuilder } from '../src/infer.ts';
 import { pageConfig } from './page-config.ts';
 import {
-  listObjects,
-  signIn,
+  connect,
   WarehouseEngine,
   type CatalogObject,
   type WarehouseSession,
@@ -128,7 +127,8 @@ export function planeMenu(): MenuItem[] {
 export function goToPlane(id: string | undefined): boolean {
   const found = PLANES.find((plane) => plane.id === id);
   if (!found) return false;
-  location.href = found.page;
+  // the page's settings go with it (?remote=, ?warehouse=, ...)
+  location.href = found.page + location.search;
   return true;
 }
 
@@ -393,6 +393,16 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     { name: 'Calendar', columns: ['year', 'qtr'] },
   ];
 
+  /**
+   * WORK THIS TAB HOLDS that leaving would lose: each part of the page adds what it knows (an
+   * opened file lives only in this tab's database; a warehouse session only in memory; unsaved
+   * changes). Asked before leaving the page and before switching plane (P2-337).
+   */
+  const work: (() => string | undefined)[] = [];
+  const workInTab = (): string | undefined => work.map((w) => w()).find((w) => w !== undefined);
+  /** Set once the person has agreed to leave: the browser's own question is not asked twice. */
+  let leaving = false;
+
   function makeApp(
     snap: CubeSnapshot,
     config: CubeConfiguration,
@@ -479,6 +489,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // falling back to a demo shim -- it hid three real bugs for
         // the life of the project. The choice is still which bundle
         // the page loads; this only saves knowing the file names.
+        if (PLANES.some((plane) => plane.id === item.id)) {
+          const lost = workInTab();
+          if (lost && !window.confirm(`Switching plane loads another page: ${lost} will be lost. Switch anyway?`)) return;
+          leaving = true;
+        }
         goToPlane(item.id);
       },
       dimensions: dims,
@@ -620,6 +635,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const whOpen = must('whopen');
       const whNote = must('whnote');
       let session: WarehouseSession | undefined;
+      /** The open cube's warehouse engine, renewed on a sign-in as the same user. */
+      let liveEngine: WarehouseEngine | undefined;
       let objects: CatalogObject[] = [];
       // Which warehouse to offer: the deployment's (config.json, ?warehouse=),
       // else the last one this browser signed in to. A convenience kept in this
@@ -638,18 +655,40 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         whNote.classList.toggle('bad', bad);
         whNote.textContent = text;
       };
-      must('whconnect').addEventListener('click', () => {
+      work.push(() => (session ? `the warehouse session (${session.principal})` : undefined));
+      const whConnect = must('whconnect') as HTMLButtonElement;
+      whConnect.addEventListener('click', () => {
         void (async () => {
           say('signing in…');
+          // NOTHING of the previous sign-in stays on offer while this one runs, and nothing is
+          // taken from it until its table list has loaded: one user's tables were left beside
+          // another's session when the listing failed (P2-334).
+          objects = [];
+          whTable.replaceChildren();
+          whTable.hidden = true;
+          whOpen.hidden = true;
+          whConnect.disabled = true;
           try {
-            session = await signIn(whUrl.value.trim(), whUser.value.trim(), whPass.value);
+            const connected = await connect(whUrl.value.trim(), whUser.value.trim(), whPass.value);
+            session = connected.session;
             whPass.value = ''; // the token is what is kept, in memory, never the password
             try {
               window.localStorage.setItem(REMEMBERED, session.baseUrl);
             } catch {
               // storage refused: not remembered, nothing else changes
             }
-            objects = await listObjects(session);
+            // THE OPEN CUBE goes on with the renewed token when it is the same user: it kept the
+            // old one, and signing in again as the error asked never reached it (P2-297)
+            let renewed = '';
+            if (liveEngine) {
+              try {
+                liveEngine.renew(session);
+                renewed = '; the open cube goes on with the new sign-in';
+              } catch (e) {
+                renewed = ` — ${e instanceof Error ? e.message : String(e)}`;
+              }
+            }
+            objects = connected.objects;
             whTable.replaceChildren(...objects.map((o, i) => {
               const opt = document.createElement('option');
               opt.value = String(i);
@@ -658,11 +697,13 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             }));
             whTable.hidden = objects.length === 0;
             whOpen.hidden = objects.length === 0;
-            say(objects.length === 0
+            say((objects.length === 0
               ? `signed in as ${session.principal}: nothing is granted to you yet`
-              : `signed in as ${session.principal}: ${objects.length} table(s) you may read`);
+              : `signed in as ${session.principal}: ${objects.length} table(s) you may read`) + renewed);
           } catch (e) {
             say(e instanceof Error ? e.message : String(e), true);
+          } finally {
+            whConnect.disabled = false;
           }
         })();
       });
@@ -695,7 +736,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
                   },
               [],
               {
-                live: new WarehouseEngine(session as WarehouseSession),
+                live: (liveEngine = new WarehouseEngine(session as WarehouseSession)),
                 snapTarget: { schema: chosen.schema, table: chosen.name, source: m.source },
               },
             );
@@ -744,8 +785,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       library?.sync();
     };
     // Leaving the page with unsaved changes asks, the browser's way.
+    work.push(() => (dirty() ? 'unsaved changes' : undefined));
+    work.push(() => (current.source && !current.source.sample
+      ? `the file opened in this tab (${current.source.name})` : undefined));
     window.addEventListener('beforeunload', (event) => {
-      if (!dirty()) return;
+      if (leaving || !workInTab()) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -754,6 +798,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      * Read a file into this tab and build a cube over it: a fresh one, or -- `saved` -- a
      * saved cube reconciled with what the file holds NOW.
      */
+    let opens = 0;
     async function openFile(
       file: File,
       how: {
@@ -767,13 +812,18 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         && !window.confirm(`The cube on screen has unsaved changes. Open ${file.name} anyway?`)) {
         return [];
       }
+      // LATEST WINS: each open takes a number (once it is going ahead), and one overtaken by a
+      // newer open stops at its next wait, before it touches the model or the cube (P2-330).
+      const opening = (opens += 1);
       note.classList.remove('bad');
       note.textContent = `reading ${file.name}…`;
       try {
         const opened = await ingestFile(engine, db, file, local.fromCatalog);
+        if (opening !== opens) return [];
         local.use(opened.model, opened.runtime);
         const columns = await sourceColumns(planner, opened.source);
         const source = await fileSource(file, formatOf(file.name), columns, how.sample);
+        if (opening !== opens) return [];
         const saved = how.saved;
         let snap: CubeSnapshot;
         let config: CubeConfiguration;
