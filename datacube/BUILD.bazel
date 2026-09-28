@@ -36,6 +36,9 @@ js_library(
         # Arrow JS: the warehouse's result chunks are Arrow IPC streams (warehouse.ts). The same
         # 17.0.0 DuckDB-WASM already brings, so the bundle carries one copy.
         ":node_modules/apache-arrow",
+        # Apache ECharts: the chart windows (src/chart-render.ts is its one importer; only
+        # the charts and components used are registered, via echarts/core).
+        ":node_modules/echarts",
     ],
 )
 
@@ -152,6 +155,7 @@ typescript.tsc_test(
         ":node_modules/@duckdb/duckdb-wasm",
         ":node_modules/@types/jsdom",
         ":node_modules/apache-arrow",
+        ":node_modules/echarts",
         ":node_modules/@types/node",
         ":node_modules/jsdom",
         ":node_modules/playwright",

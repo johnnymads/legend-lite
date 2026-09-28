@@ -2247,3 +2247,65 @@
 .dc-lib-unsaved { color: var(--tw-amber-700, #b45309); white-space: nowrap; }
 .dc-lib-unsaved[hidden] { display: none; }
 .dc-lib-ask { white-space: pre-line; }
+
+/* The chart window (ui/chart-panel.ts): options left, the chart right.
+   The --dc-chart-* tokens are the dataviz reference palette (light); the
+   renderer reads them (chart-render.ts themeOf), since canvas cannot. */
+.dc-chartpanel {
+  --dc-chart-surface: #fcfcfb;
+  --dc-chart-ink: #0b0b0b;
+  --dc-chart-ink-secondary: #52514e;
+  --dc-chart-muted: #898781;
+  --dc-chart-grid: #e1e0d9;
+  --dc-chart-axis: #c3c2b7;
+  --dc-chart-series: #2a78d6, #eb6834, #1baf7a, #eda100, #e87ba4, #008300, #4a3aa7, #e34948;
+  --dc-chart-sequential: #cde2fb, #86b6ef, #3987e5, #256abf, #184f95, #0d366b;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.dc-overlay-body.dc-chartpanel { padding: 0; }
+
+.dc-chartpanel-form {
+  flex: 0 0 220px;
+  overflow: auto;
+  padding: var(--dc-pad-2);
+  border-right: 1px solid var(--dc-line);
+}
+
+/* a narrow column: each label above its control, the control full width */
+.dc-chartpanel-form .dc-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+.dc-chartpanel-form .dc-field-label {
+  width: auto;
+  text-align: left;
+  color: var(--dc-muted-strong);
+}
+.dc-chartpanel-form .dc-field-body > * { flex: 1 1 auto; }
+.dc-chartpanel-form .dc-select,
+.dc-chartpanel-form .dc-input { width: 100%; }
+
+.dc-chartpanel-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--dc-chart-surface);
+}
+
+.dc-chartpanel-chart { flex: 1 1 auto; min-height: 0; }
+
+.dc-chartpanel-status {
+  flex: none;
+  padding: 4px var(--dc-pad-2);
+  color: var(--dc-muted);
+  font-size: var(--dc-text-sm-size);
+  border-top: 1px solid var(--dc-line-faint);
+}
+
+.dc-chartpanel-status.dc-chartpanel-bad { color: var(--tw-red-600, #dc2626); }

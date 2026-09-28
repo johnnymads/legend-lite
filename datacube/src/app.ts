@@ -64,6 +64,8 @@ import { pivotLabel, type PivotColumn } from './query.ts';
 import { toHtml, toSpreadsheetML } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
 import { toBarChart, toTreemap } from './chart.ts';
+import type { MarkKey } from './chart-option.ts';
+import { ChartPanel } from './ui/chart-panel.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
@@ -353,6 +355,9 @@ export class CubeApp {
   #settings: SettingValues;
   /** The open calculated-column editors, by window key. */
   readonly #columnEditors = new Map<string, ColumnEditor>();
+  /** Open chart windows, by window key: each follows the cube. */
+  readonly #charts = new Map<string, ChartPanel>();
+  #chartWindows = 0;
   #newColumns = 0;
   /** Alerts are many and untitled, so each gets its own window key. */
   #alerts = 0;
@@ -967,6 +972,8 @@ export class CubeApp {
       ms: view.rows.elapsedMs, snapshot: view.snapshot });
     // Open column editors compile against the cube as it is now.
     for (const editor of this.#columnEditors.values()) editor.recheck();
+    // Open charts follow the cube: a new filter or calculated column redraws them.
+    for (const chart of this.#charts.values()) chart.refresh();
     this.#paintView(view);
     this.#reportSchemaChanges(view);
     // The host LAST, once the app has taken the view in: told first, it read the app one view
@@ -1737,7 +1744,7 @@ export class CubeApp {
         this.#confirmExport(() => void this.#email('pdf'));
         return;
       case 'chart.plot':
-        this.#chart('plot');
+        this.openChart();
         return;
       case 'chart.treemap':
         this.#chart('treemap');
@@ -2116,6 +2123,48 @@ export class CubeApp {
       if (label !== c.name) out[c.name] = label;
     }
     return out;
+  }
+
+  /**
+   * A chart of the cube, in a window of its own: the cube's query regrouped
+   * by the chart's options, drawn by ECharts (`ui/chart-panel.ts`). It
+   * follows the cube -- a filter added to the grid narrows it -- and a
+   * click on a mark filters the cube to that mark.
+   */
+  openChart(): void {
+    this.#chartWindows += 1;
+    const key = `chart:${this.#chartWindows}`;
+    this.#showOverlay(this.#chartWindows === 1 ? 'Chart' : `Chart ${this.#chartWindows}`, (host) => {
+      this.#charts.set(key, new ChartPanel(host, {
+        snapshot: () => this.#snapshot,
+        run: async (query, snapshot, signal) =>
+          (await this.#controller.runQuery(query, snapshot, undefined, signal)).rows,
+        label: (value, column, type) => this.#formatters.format(value, this.#formats[column], type),
+        onPick: (mark) => this.#filterToMark(mark),
+      }));
+    }, {
+      key,
+      size: { x: 80, y: 80, width: 900, height: 520, minWidth: 480, minHeight: 320, center: false },
+    });
+  }
+
+  /**
+   * Filter the cube to a chart mark's values: one condition per column, ANDed on,
+   * as ONE change (one undo step; refused as a whole).
+   */
+  #filterToMark(mark: MarkKey): void {
+    const conditions = Object.entries(mark).map(([column, raw]) => {
+      // a big integer as its digits, as the context menu's value filters do
+      const value = typeof raw === 'bigint' ? raw.toString() : raw;
+      return value === null
+        ? { id: 'filter.add' as const, label: '', column, operator: 'isEmpty' as const }
+        : { id: 'filter.add' as const, label: '', column, operator: 'equal' as const, value };
+    });
+    if (conditions.length === 0) return;
+    void this.#query(
+      (s) => conditions.reduce((acc, item) => applyMenuAction(acc, item), s),
+      'filter to chart mark',
+    );
   }
 
   /**
@@ -2862,6 +2911,8 @@ export class CubeApp {
     if (key.startsWith('alert:')) this.#windows.delete(key);
     this.#columnEditors.get(key)?.dispose();
     this.#columnEditors.delete(key);
+    this.#charts.get(key)?.dispose();
+    this.#charts.delete(key);
     if (key === 'Properties') this.#editor = null;
   }
 

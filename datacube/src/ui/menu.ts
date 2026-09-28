@@ -681,7 +681,7 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
   // views OF the cube rather than operations ON a column, so they do
   // not belong in the column-scoped groups above.
   push('', [
-    { id: 'chart.plot', label: 'Plot' },
+    { id: 'chart.plot', label: 'Chart...' },
     { id: 'chart.treemap', label: 'Treemap' },
   ]);
 
