@@ -225,6 +225,59 @@ describe('the app', () => {
     item.click();
   };
 
+  describe('value filters on a group row', () => {
+    /**
+     * A measure shown under its OWN column's name -- how every uploaded
+     * file's measures appear -- so the menu knows its type and would
+     * offer a value filter. (A measure named apart from its column, as
+     * `total` above, has no type to offer operators for.)
+     */
+    class OwnNameEngine extends FakeEngine {
+      readonly name = 'own-name';
+      async answer(_sql: string, epoch: number): Promise<ResultTable> {
+        return {
+          columns: [
+            { name: 'region', type: 'String', values: ['EMEA', 'AMER'] },
+            { name: 'notional', type: 'Float', values: [600, 400] },
+          ],
+          rowCount: 2, epoch, elapsedMs: 1,
+        };
+      }
+    }
+    let host: HTMLElement;
+    beforeEach(async () => {
+      host = dom.window.document.createElement('div');
+      dom.window.document.body.append(host);
+      const own = new CubeApp(host, {
+        ...SNAPSHOT,
+        measures: [{ name: 'notional', column: 'notional', fn: 'sum' }],
+      }, { engine: new OwnNameEngine(), planner });
+      await own.open();
+    });
+    /** The grid cell showing `text`, right-clicked. */
+    const rightClickCell = (text: string): void => {
+      const cell = [...host.querySelectorAll<HTMLElement>('.dc-cell')]
+        .find((c) => c.textContent?.trim().replace(/^[▸▾]/, '').startsWith(text));
+      assert.ok(cell, `no cell '${text}'`);
+      cell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true }));
+    };
+    const filters = (): string[] => menuItems()
+      .map((i) => i.querySelector('.dc-menu-label')?.textContent ?? '')
+      .filter((t) => t.startsWith('Add Filter:'));
+
+    it('offers none on a measure: the cell is the group\'s sum, filters run on rows', () => {
+      // `notional = 600` would keep the trades whose own notional is 600
+      // -- almost always none -- not the group showing 600.
+      rightClickCell('600');
+      assert.deepEqual(filters(), []);
+    });
+
+    it('still offers one on the group key', () => {
+      rightClickCell('EMEA');
+      assert.ok(filters().some((t) => t.includes('EMEA')), filters().join(' | '));
+    });
+  });
+
   it('renders the title bar, the drag zones, the grid and the status line', () => {
     // A TITLE BAR, not a toolbar. DataCube has no row of buttons
     // over the grid: everything lives in the right-click menu.

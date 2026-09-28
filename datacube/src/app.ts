@@ -1403,6 +1403,19 @@ export class CubeApp {
           && (this.#snapshot.groupDerived ?? []).some((d) => d.name === column)) {
           value = undefined;
         }
+        // A GROUP or TOTAL row shows aggregates, and every filter runs on
+        // source rows, before them. A measure's cell there is its sum
+        // (or average...): `notional = <the group's sum>` ran, and kept
+        // the trades whose own notional happened to equal it -- almost
+        // always none. A dimension's cell is the group's one shared value
+        // (a fine filter), or blank for "several", which is not "empty".
+        // The group keys themselves are the tree column's, above.
+        if (column !== undefined && column !== TREE_COLUMN && meta !== undefined
+          && !meta.isDetail && (this.#snapshot.rows.length > 0 || meta.isTotal)
+          && !this.#snapshot.rows.includes(column)
+          && (this.#kindOf(column) === 'measure' || value === null)) {
+          value = undefined;
+        }
       }
       // FROM A HEADER, Properties... opens on that column (its measure,
       // for a pivot result or a pivot total), as upstream's does.
