@@ -392,6 +392,11 @@ class JdbcSurfaceCensusTest {
             "core/src/test/java/com/legend/integration/M2MChainIntegrationTest.java",
             "core/src/test/java/com/legend/integration/M2MIntegrationTest.java",
             "core/src/test/java/com/legend/integration/PivotCheckerTest.java",
+            // 2026-09-28, a raw pivot joined to a static relation: the
+            // join-resolution witness MUST execute on the real backend
+            // (tenet #1 -- the defect was DuckDB refusing the SQL: a
+            // column qualified with the wrong side of a join)
+            "core/src/test/java/com/legend/integration/PivotJoinColumnTest.java",
             "core/src/test/java/com/legend/integration/RelationApiIntegrationTest.java",
             // foundation probe 2026-09-01: the mapping-seam window rule
             // (a Relation ~func extent's window is an evaluation

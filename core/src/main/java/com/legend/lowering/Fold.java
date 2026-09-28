@@ -951,6 +951,18 @@ final class Fold {
                 // survives the filter).
                 SqlExpr.Column left = sourceColumn(j.left(), column,
                         rejected);
+                // The side that NAMES the column wins over one that only
+                // claims any name. A raw pivot (or a late-bound grid)
+                // claims every name, so left-first sent a column only
+                // the right side has -- a pivot LEFT-joined to its
+                // totals, then ordered by the total -- to the pivot's
+                // alias, and the database refused it ("t2 does not
+                // have a column named ..."). Left-first still decides
+                // when neither side, or both, name it.
+                if (left != null && !listsExactly(j.left(), column)
+                        && listsExactly(j.right(), column)) {
+                    left = null;
+                }
                 SqlExpr.Column c = left != null ? left
                         : sourceColumn(j.right(), column, rejected);
                 if (c == null) {
@@ -963,6 +975,18 @@ final class Fold {
                         ? c.asNullable() : c;
             }
         };
+    }
+
+    /** Does this side's stamped schema contain {@code column} by name?
+     * False for a side with no stamped outputs (a late-bound grid) — it
+     * claims names, it does not list them. */
+    private static boolean listsExactly(SqlSource side, String column) {
+        for (OutputCol c : side.outputs()) {
+            if (c.name().equals(column)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Does the WHERE null-reject any column of this side's subtree

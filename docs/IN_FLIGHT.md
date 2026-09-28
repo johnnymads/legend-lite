@@ -71,6 +71,13 @@ full chain run first:**
   callee). New `core/src/test/java/com/legend/exec/ContainsOverloadTest.java` (rows are the verdict),
   registered in `JdbcSurfaceCensusTest`. Pins moved with dated reasons: `ImplementationTableTest` kinds
   (Body 2194 -> 2193, Intrinsic 664 -> 665), `OwnCorpusParityTest` MIN_MATCHED 2571 -> 2572.
+**Bug fixes before T6 (2026-09-28), one cross-area edit:** `core/src/main/java/com/legend/lowering/Fold.java`
+`sourceColumn`, Join arm -- the side whose stamped outputs list a column exactly wins over a raw pivot
+that claims every name (a pivot joined to a static relation, then sorted by a right-only column, was
+qualified with the pivot's alias; DuckDB refused it). New `core/src/test/java/com/legend/integration/
+PivotJoinColumnTest.java` (red without the fix), registered in `JdbcSurfaceCensusTest`;
+`OwnCorpusParityTest` MIN_MATCHED re-pinned with a dated note.
+
 ## The rules both sides follow
 
 1. **Before pushing, `git fetch` and rebase on `origin/main`; never force-push; never bare `git stash`.**
