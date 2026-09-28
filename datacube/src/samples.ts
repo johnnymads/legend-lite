@@ -66,14 +66,23 @@ const SKUS = [
 ];
 const TAGS = ['gift', 'express', 'b2b', 'promo', 'returning'];
 const TIERS = ['gold', 'silver', 'bronze'];
+const DISCOUNTS = [{ code: 'SPRING', pct: 10 }, { code: 'LOYALTY', pct: 5 }, { code: 'BULK', pct: 15 }];
+const COLORS = ['red', 'blue', 'black', 'white'];
+const SIZES = ['S', 'M', 'L', 'XL'];
+const CITIES = ['London', 'Paris', 'New York', 'Tokyo', 'Berlin'];
+const CARRIERS = ['DHL', 'UPS', 'FedEx'];
+const STATUSES = ['label_created', 'picked_up', 'in_transit', 'delivered'];
 const CUSTOMERS = ['Acme', 'Globex', 'Initech', 'Umbrella', 'Hooli',
   'Stark', 'Wayne', 'Wonka'];
 
 /**
  * Orders as newline-delimited JSON: flat fields beside a nested
  * object, an array of objects and an array of strings -- the three
- * shapes semi-structured data comes in. Each nested field arrives as
- * a Variant column.
+ * shapes semi-structured data comes in -- nested inside one another
+ * too: a customer's addresses (an array in an object), each line's
+ * discounts and its attributes' sizes (arrays in array elements), and
+ * shipments whose tracking events are an array of objects in an array
+ * of objects. Each nested field arrives as a Variant column.
  */
 export function sampleOrdersJsonl(
   options: { rows?: number; seed?: number } = {},
@@ -86,12 +95,23 @@ export function sampleOrdersJsonl(
     const lines = Array.from({ length: 1 + Math.floor(rand() * 4) }, () => {
       const p = pick(SKUS);
       return { sku: p.sku, category: p.category,
-        qty: 1 + Math.floor(rand() * 5), price: p.price };
+        qty: 1 + Math.floor(rand() * 5), price: p.price,
+        // an array of objects inside each element, sometimes empty
+        discounts: DISCOUNTS.filter(() => rand() < 0.2),
+        // an object inside each element, holding an array
+        attributes: { color: pick(COLORS), sizes: SIZES.filter(() => rand() < 0.5) } };
     });
     const tags = TAGS.filter(() => rand() < 0.25);
     const month = String(1 + Math.floor(rand() * 12)).padStart(2, '0');
     const day = String(1 + Math.floor(rand() * 28)).padStart(2, '0');
     const name = pick(CUSTOMERS);
+    const shipments = Array.from({ length: 1 + Math.floor(rand() * 2) }, (_, n) => ({
+      carrier: pick(CARRIERS),
+      // an array of objects inside an array of objects
+      events: STATUSES.slice(0, 1 + Math.floor(rand() * STATUSES.length)).map((status, k) => ({
+        status, at: `2025-${month}-${day}T${String(8 + n * 4 + k).padStart(2, '0')}:00:00`,
+      })),
+    }));
     out[i] = JSON.stringify({
       order_id: 5000 + i,
       region: REGIONS[i % REGIONS.length],
@@ -99,9 +119,13 @@ export function sampleOrdersJsonl(
       customer: { name, tier: TIERS[name.length % TIERS.length],
         // Only some customers have a contact: a key that is sometimes
         // absent, which is what `get` returning nothing is for.
-        ...(i % 3 === 0 ? { contact: { email: `${name.toLowerCase()}@example.com` } } : {}) },
+        ...(i % 3 === 0 ? { contact: { email: `${name.toLowerCase()}@example.com` } } : {}),
+        // an array inside the object: billing always, shipping sometimes elsewhere
+        addresses: [{ kind: 'billing', city: pick(CITIES) },
+          ...(rand() < 0.5 ? [{ kind: 'shipping', city: pick(CITIES) }] : [])] },
       items: lines,
       tags,
+      shipments,
       total: Number(lines.reduce((t, l) => t + l.qty * l.price, 0).toFixed(2)),
     });
   }
@@ -308,9 +332,10 @@ export const SAMPLES: readonly Sample[] = [
   {
     id: 'orders-json',
     label: 'Orders — nested JSON',
-    about: 'Newline-delimited JSON: a customer object, an array of line '
-      + 'items and an array of tags beside flat fields. The nested ones '
-      + 'arrive as Variant columns.',
+    about: 'Newline-delimited JSON: a customer object (with an array of '
+      + 'addresses), line items (each with discounts and attributes), tags '
+      + 'and shipments (each with tracking events) beside flat fields. The '
+      + 'nested ones arrive as Variant columns.',
     defaultRows: 2000,
     format: 'jsonl',
     build: (rows, seed) =>

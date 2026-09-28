@@ -14,7 +14,7 @@ import { sampleById, sampleFileName } from '../src/samples.ts';
 import { ingestFile, type DuckDbFiles } from '../src/upload.ts';
 import { build, plannerFor } from './catalog-builder.ts';
 import {
-  asc, col as column, derive, fn, from, lambda, lit, to, type, type ValueSpecification,
+  asc, col as column, derive, fn, from, lambda, lit, to, toMany, type, type ValueSpecification,
 } from '../../pure-protocol/src/index.ts';
 
 let engine: DuckDbEngine;
@@ -165,8 +165,37 @@ describe('ingestFile with JSON', () => {
     assert.equal(r.rowCount, 200);
     for (const [column, sql] of [['order_id', 'BIGINT'], ['region', 'VARCHAR'], ['placed_on', 'DATE'],
       ['customer', 'SEMISTRUCTURED'], ['items', 'SEMISTRUCTURED'], ['tags', 'SEMISTRUCTURED'],
-      ['total', 'DOUBLE']] as const) {
+      ['shipments', 'SEMISTRUCTURED'], ['total', 'DOUBLE']] as const) {
       assert.match(r.model, new RegExp(`${column} ${sql}`), column);
     }
+  });
+
+  it('reaches through the orders sample\'s nested arrays: in an object, in elements, in elements of elements', async () => {
+    const sample = sampleById('orders-json')!;
+    const text = sample.build(50);
+    const r = await ingestFile(engine, files, picked(sampleFileName(sample), text), build);
+    const planner = plannerFor(r.model, r.runtime);
+    const get = (v: ValueSpecification, key: string | number): ValueSpecification =>
+      fn('get', v, typeof key === 'number' ? lit.integer(key) : lit.string(key));
+    const x = (c: string) => column('x', c);
+    const plan = await planner.plan(from(r.source)
+      .extend([
+        derive('first_event', lambda(['x'], to(get(get(get(get(x('shipments'), 0), 'events'), 0), 'status'), type('String')))),
+        derive('billing_city', lambda(['x'], to(get(get(get(x('customer'), 'addresses'), 0), 'city'), type('String')))),
+        derive('first_sizes', lambda(['x'], fn('size', toMany(get(get(get(x('items'), 0), 'attributes'), 'sizes'), type('Variant'))))),
+      ])
+      .select(['order_id', 'first_event', 'billing_city', 'first_sizes'])
+      .sort([asc('order_id')])
+      .lambda());
+    const out = await engine.execute(plan, 0);
+    const col = (n: string) => out.columns.find((c) => c.name === n)!.values;
+    const docs = text.trim().split('\n').map((l) => JSON.parse(l) as {
+      shipments: { events: { status: string }[] }[];
+      customer: { addresses: { city: string }[] };
+      items: { attributes: { sizes: string[] } }[];
+    });
+    assert.deepEqual(col('first_event'), docs.map((d) => d.shipments[0]!.events[0]!.status));
+    assert.deepEqual(col('billing_city'), docs.map((d) => d.customer.addresses[0]!.city));
+    assert.deepEqual(col('first_sizes').map(Number), docs.map((d) => d.items[0]!.attributes.sizes.length));
   });
 });

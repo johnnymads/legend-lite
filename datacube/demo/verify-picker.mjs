@@ -90,7 +90,7 @@ try {
   await page.selectOption('#samplepick', 'orders-json');
   await page.fill('#samplerows', '300');
   await page.click('#sampleopen');
-  await page.waitForFunction(() => /300 rows, 7 columns/.test(
+  await page.waitForFunction(() => /300 rows, 8 columns/.test(
     document.getElementById('uploadnote')?.textContent ?? ''),
   null, { timeout: 60_000 });
   console.log(`opened: ${await page.textContent('#uploadnote')}`);
