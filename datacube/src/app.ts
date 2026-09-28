@@ -67,7 +67,7 @@ import { toBarChart, toTreemap } from './chart.ts';
 import type { MarkKey } from './chart-option.ts';
 import { ChartPanel } from './ui/chart-panel.ts';
 import { Board, BOARD_COLUMNS } from './layout/board.ts';
-import { below } from './layout/tile-layout.ts';
+import { addToRow, below } from './layout/tile-layout.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
@@ -2182,6 +2182,7 @@ export class CubeApp {
     });
     this.#charts.set(id, panel);
     this.#selections.set(id, { chip, conditions: [], key: '' });
+    const before = board.layout;
     board.add({
       id,
       title: `Chart ${this.#chartCount}`,
@@ -2190,7 +2191,14 @@ export class CubeApp {
       minW: 3,
       minH: TILE_MIN_ROWS,
     }, { w: 6, h: 10 });
-    this.#arrange();
+    if (this.#board?.auto) {
+      this.#arrange();
+    } else {
+      // arranged by hand: at the end of the bottom row of charts, or a row of its own
+      board.setLayout(addToRow(before, id, BOARD_COLUMNS, BOARD_ROWS - GRID_ROWS_ABOVE_CHARTS,
+        CHARTS_PER_ROW, 3));
+    }
+    board.reveal(id);
   }
 
   /**

@@ -95,6 +95,8 @@ export class Board {
   /** What is on screen: the saved layout, or the one a gesture in flight proposes. */
   #shown: Tile[] = [];
   #narrow = false;
+  /** A tile just revealed: shown again if the rows change in the next moment. */
+  #revealing: { scroll: () => void; until: number } | null = null;
   /** The gesture in flight, if any: its tile, what it is, the layout it started from. */
   #gesture: { id: string; kind: 'move' | 'resize'; base: Tile[] } | null = null;
 
@@ -190,6 +192,24 @@ export class Board {
     this.#commit(resizeTile(this.#layout, id, w, h, this.#cols));
   }
 
+  /** Scroll a tile into view (a new one below the screen's fold). */
+  reveal(id: string): void {
+    const root = this.#tiles.get(id)?.root;
+    if (!root) return;
+    // the board is the scroller: bring the whole tile inside it -- now, after
+    // the frame, and again if the rows are re-measured in the next moment
+    // (the page settling around a chart as it mounts)
+    const scroll = (): void => {
+      const box = this.#host.getBoundingClientRect();
+      const tile = root.getBoundingClientRect();
+      if (tile.bottom > box.bottom) this.#host.scrollTop += tile.bottom - box.bottom + this.#gap;
+      else if (tile.top < box.top) this.#host.scrollTop -= box.top - tile.top + this.#gap;
+    };
+    scroll();
+    this.#doc.defaultView?.requestAnimationFrame?.(scroll);
+    this.#revealing = { scroll, until: Date.now() + 1000 };
+  }
+
   /** Rename a tile, as a double click on its title does. */
   rename(id: string, title: string): void {
     const p = this.#tiles.get(id);
@@ -260,13 +280,16 @@ export class Board {
 
   #measure(): void {
     const fit = this.#options.fitRows;
-    const height = this.#host.clientHeight;
+    // the box's own height, scrollbars included: a scrollbar coming and going
+    // must not change the rows (and shift every tile under the pointer)
+    const height = this.#host.offsetHeight || this.#host.clientHeight;
     if (fit !== undefined && height > 0) {
       const least = this.#options.rowHeight ?? 16;
       const row = Math.max(least, Math.floor((height - this.#gap * (fit - 1)) / fit));
       if (row !== this.#rowHeight) {
         this.#rowHeight = row;
         this.#grid.style.gridAutoRows = `${row}px`;
+        if (this.#revealing && Date.now() < this.#revealing.until) this.#revealing.scroll();
       }
     }
     const width = this.#host.clientWidth;

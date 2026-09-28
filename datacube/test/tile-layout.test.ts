@@ -9,6 +9,7 @@ import {
   type Layout,
   type Tile,
   beside,
+  addToRow,
   below,
   dragTile,
   liftTile,
@@ -470,10 +471,13 @@ describe('dragTile: nothing moves unless the pointer is on it', () => {
   });
 
   it('never squeezes a tile to less than half its width to make room beside it', () => {
-    // the grid is 7 wide: a 5-wide chart on its edge would leave it 2
+    // the grid is 7 wide: a 5-wide chart on its edge is narrowed to 3, the grid keeps 4
     const l = beside('grid', ['c1', 'c2', 'c3'], 12, 24, 7, 6);
     const r = dragTo(l, 'c1', [6, 7]);
-    assert.equal(r.find((t) => t.id === 'grid')!.w, 7);
+    assert.deepEqual([pos(r).grid, pos(r).c1], [[0, 0, 4, 24], [4, 0, 3, 24]]);
+    // with the chart's minimum 4, it cannot: it goes below the grid instead
+    const min4 = l.map((t) => (t.id === 'c1' ? { ...t, minW: 4 } : t));
+    assert.equal(pos(dragTo(min4, 'c1', [6, 7])).grid![2], 7);
   });
 
   // the moves a user made, from a grid with its charts stacked beside it
@@ -520,5 +524,57 @@ describe('liftTile / removeTile', () => {
     const l = beside('grid', ['c1', 'c2'], 12, 24, 7, 6);
     // c1 goes, c2 floats up into its place: the grid stays 7
     assert.deepEqual(pos(removeTile(l, 'c1', 12)).grid, [0, 0, 7, 24]);
+  });
+});
+
+describe('the side column', () => {
+  const side = dragTo(DEFAULT, 'c3', [11, 6]); // grid 8 wide, c3 beside it, c1 c2 6 wide below
+
+  it('takes a wider chart beside the grid, narrowed to fit', () => {
+    const l = dragTo(side, 'c1', [7, 6]);
+    assert.deepEqual(pos(l).grid, [0, 0, 4, 14]);
+    assert.deepEqual(pos(l).c1, [4, 0, 4, 14]);
+    assert.deepEqual(problems(l, 12), []);
+  });
+
+  it('stacks a chart under the side chart, splitting its height', () => {
+    const l = dragTo(side, 'c1', [10, 10]);
+    assert.deepEqual(pos(l), {
+      grid: [0, 0, 8, 14], c3: [8, 0, 4, 7], c1: [8, 7, 4, 7], c2: [0, 14, 12, 10],
+    });
+  });
+
+  it('and above it, from its upper half', () => {
+    const l = dragTo(side, 'c1', [10, 2]);
+    assert.deepEqual(pos(l).c1, [8, 0, 4, 7]);
+    assert.deepEqual(pos(l).c3, [8, 7, 4, 7]);
+  });
+
+  it('becomes one tile again when either half leaves', () => {
+    const l = dragTo(side, 'c1', [10, 10]);
+    assert.deepEqual(pos(removeTile(l, 'c1', 12)).c3, [8, 0, 4, 14]);
+    assert.deepEqual(pos(removeTile(l, 'c3', 12)).c1, [8, 0, 4, 14]);
+  });
+});
+
+describe('addToRow', () => {
+  it('puts a new chart at the end of the bottom row, the row sharing the width', () => {
+    const l = removeTile(DEFAULT, 'c3', 12); // c1 c2 at 6 wide
+    assert.deepEqual(pos(addToRow(l, 'n', 12, 10)), {
+      grid: [0, 0, 12, 14], c1: [0, 14, 4, 10], c2: [4, 14, 4, 10], n: [8, 14, 4, 10],
+    });
+  });
+
+  it('shares the bottom row with a lone chart, however wide', () => {
+    const l = [T('grid', 0, 0, 12, 14), T('a', 0, 14, 12, 10)];
+    assert.deepEqual(pos(addToRow(l, 'n', 12, 10)), { grid: [0, 0, 12, 14], a: [0, 14, 6, 10], n: [6, 14, 6, 10] });
+  });
+
+  it('starts a new row when the bottom row is full, or is only the grid', () => {
+    const four = below('grid', ['a', 'b', 'c', 'd'], 12, 24, 14, 4, 6);
+    assert.deepEqual(pos(addToRow(four, 'n', 12, 10)).n, [0, 24, 12, 10]);
+    assert.deepEqual(pos(addToRow([T('grid', 0, 0, 12, 24)], 'n', 12, 10)).n, [0, 24, 12, 10]);
+    // the grid with a chart beside it is the top row, not one to join
+    assert.deepEqual(pos(addToRow([T('grid', 0, 0, 8, 14), T('s', 8, 0, 4, 14)], 'n', 12, 10)).n, [0, 14, 12, 10]);
   });
 });
