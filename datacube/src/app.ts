@@ -34,7 +34,6 @@ import {
   toColumnLayout,
   renderFormats,
   leafFormats,
-  toFormats,
   DEFAULT_MAX_ROWS,
   renameColumnConfig,
   withColumn,
@@ -74,7 +73,7 @@ import {
   type ColumnLayout,
   type LeafColumn,
 } from './grid/columns.ts';
-import { load, save, toJson, treeOf } from './persist.ts';
+import { cubeToJson, writeCube, type CubeDocument, type CubeSource } from './cube-document.ts';
 import { selectionStats, selectionTable, type CellRange } from './selection.ts';
 import type { ResultTable, Scalar } from './result.ts';
 import type { JsonColumnReader } from './ui/json-fields.ts';
@@ -190,8 +189,12 @@ export interface CubeAppBaseOptions {
    */
   readonly hostMenu?: () => readonly MenuItem[];
   readonly onHostMenu?: (item: MenuItem) => void;
-  /** Where saved views live. Absent means they are not offered. */
-  readonly storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  /**
+   * Where the cube's rows come from, as a saved cube names it (a file by its fingerprint).
+   * Given, the cube can write itself down (`cubeDocument`, Export > Cube File); absent, it
+   * cannot -- a cube over a model waits for the model home.
+   */
+  readonly cubeSource?: CubeSource;
   readonly writeClipboard?: (text: string) => void | Promise<void>;
   /**
    * Hand a file to the user.
@@ -243,8 +246,6 @@ export interface CubeAppBaseOptions {
  * it does not compile.
  */
 export type CubeAppOptions = CubeAppBaseOptions & CubeAppQuerySource;
-
-const VIEW_KEY = 'datacube.savedView';
 
 /** DataCube's --ag-row-height. Kept beside the CSS token in theme.css. */
 const DATACUBE_ROW_HEIGHT = 20;
@@ -1449,6 +1450,7 @@ export class CubeApp {
         // A host mailer, or upstream's way: a .eml draft to download.
         canEmail: this.#options.email !== undefined
           || this.#options.download !== undefined,
+        canSaveCube: this.#options.cubeSource !== undefined,
         ...(column !== undefined && this.#config.columns[column]?.pinned
           ? { pinned: this.#config.columns[column]?.pinned as 'left' | 'right' }
           : {}),
@@ -2153,77 +2155,32 @@ export class CubeApp {
       return;
     }
     const title = this.#config.reportTitle ?? 'cube';
-    download(
-      `${exportFileName(title, new Date())}.json`,
-      'application/json',
-      toJson(
-        save({
-          name: title,
-          snapshot: view.snapshot,
-          tree: this.#controller.tree,
-          columns: {
-            ...(this.#config.columnOrder
-              ? { order: this.#config.columnOrder }
-              : {}),
-            formats: toFormats(this.#config),
-          },
-        }),
-      ),
-    );
-  }
-
-
-  // -- saved views --------------------------------------------------------
-
-  saveView(name: string): void {
-    const storage = this.#options.storage;
-    if (!storage) return;
-    storage.setItem(
-      VIEW_KEY,
-      toJson(
-        save({
-          name,
-          snapshot: this.#snapshot,
-          tree: this.#controller.tree,
-          columns: {
-            ...(this.#config.columnOrder
-              ? { order: this.#config.columnOrder }
-              : {}),
-            formats: toFormats(this.#config),
-          },
-        }),
-      ),
-    );
-    this.#status(`saved "${name}"`, 'ok');
-  }
-
-  async loadView(): Promise<void> {
-    const storage = this.#options.storage;
-    const raw = storage?.getItem(VIEW_KEY);
-    if (!raw) {
-      this.#status('no saved view', 'warn');
+    const doc = this.cubeDocument(title);
+    if (!doc) {
+      this.#status('this cube does not know its source, so it cannot be written down', 'warn');
       return;
     }
-    // A malformed or future view is reported, not thrown past the
-    // user: a saved view is the one artefact a colleague hands over,
-    // and "nothing happened" is the worst response to a bad one.
-    try {
-      const view = load(raw);
-      this.#snapshot = view.snapshot;
-      this.#config = fromSnapshot(view.snapshot, this.#config);
-      this.#renderChrome();
-      // ADOPT, do not set: `setTree` refreshes, and that refresh runs
-      // the controller's own snapshot -- the one being replaced --
-      // then pushes it back through `onView`, which reassigns
-      // `this.#snapshot`. The load reported success and restored
-      // nothing, because the query that followed used the shape the
-      // user had just abandoned. One refresh, both halves in place.
-      this.#controller.adoptTree(treeOf(view));
-      await this.#refresh();
-      this.#status(`loaded "${view.name}"`, 'ok');
-    } catch (e) {
-      this.#status(e instanceof Error ? e.message : String(e), 'error');
-    }
+    download(`${exportFileName(title, new Date())}.json`, 'application/json', cubeToJson(doc));
+  }
+
+  // -- the saved cube -------------------------------------------------------
+
+  /**
+   * The cube as a saved-cube document (docs/DATACUBE_SAVE_SHARE_2026_09_28.md): its
+   * definition, what the user set, the open rows, and its source by identity -- never its
+   * data. Undefined when the host gave no source.
+   */
+  cubeDocument(name: string, unknown?: Readonly<Record<string, unknown>>): CubeDocument | undefined {
+    const source = this.#options.cubeSource;
+    if (!source) return undefined;
+    return writeCube({
+      name,
+      source,
+      snapshot: this.#snapshot,
+      configuration: this.#config,
+      tree: this.#controller.tree,
+      ...(unknown ? { unknown } : {}),
+    });
   }
 
   /**
@@ -2960,12 +2917,6 @@ export class CubeApp {
           ...(this.#adhoc ? { checked: true } : {}),
         },
       ];
-      if (this.#options.storage) {
-        items.push(
-          { id: 'view.save', label: 'Save View' },
-          { id: 'view.load', label: 'Load View' },
-        );
-      }
       for (const d of availableDimensions(this.#snapshot, this.#dimensions())) {
         items.push({ id: 'view.dimension', label: d.name, column: d.name });
       }
@@ -3088,12 +3039,6 @@ export class CubeApp {
       case 'view.adhoc':
         if (this.#adhoc) this.exitAdHoc();
         else void this.enterAdHoc();
-        return true;
-      case 'view.save':
-        this.saveView(this.#config.reportTitle ?? 'view');
-        return true;
-      case 'view.load':
-        void this.loadView();
         return true;
       case 'view.dimension': {
         const found = this.#dimensions().find((d) => d.name === item.column);

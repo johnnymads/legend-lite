@@ -202,6 +202,15 @@
     </div>
   </div>
 
+  <!-- The saved cubes: saved in THIS browser (the cube's definition and its file's identity,
+       never the data); opening one reopens its file. -->
+  <div id="cubeswin" class="hostwin" hidden>
+    <div class="hostwin-head"><span>Cubes</span>
+      <button type="button" class="hostwin-close" data-win="cubeswin"
+              aria-label="Close">&times;</button></div>
+    <div class="hostwin-body"><div id="cubelib"></div></div>
+  </div>
+
   <div id="querywin" class="hostwin" hidden>
     <div class="hostwin-head"><span>Generated Pure &amp; SQL</span>
       <button type="button" class="hostwin-close" data-win="querywin"

@@ -85,6 +85,8 @@ export interface MenuContext {
    * silently lacks an action a colleague's build has is confusing.
    */
   readonly canEmail?: boolean;
+  /** Whether the host knows where the cube's rows come from, so the cube can be written down. */
+  readonly canSaveCube?: boolean;
   /**
    * The column is a pivot TOTAL. It exists only in the grid -- joined
    * in from a second query -- so no query can sort, filter or pivot
@@ -222,8 +224,6 @@ export type MenuActionId =
   // Host-level entries, which live in the title bar's menu rather
   // than the grid's. DataCube reserves that menu for the embedding
   // application the same way.
-  | 'view.save'
-  | 'view.load'
   | 'view.dimension'
   | 'view.undo'
   | 'view.redo'
@@ -386,7 +386,9 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
         { id: 'export.csv', label: 'CSV (Grid)' },
         { id: 'export.text', label: 'Plain Text' },
         { id: 'export.pdf', label: 'PDF' },
-        { id: 'export.specification', label: 'DataCube Specification' },
+        // the cube itself, as a saved-cube document: offered when the host knows its source
+        { id: 'export.specification', label: 'Cube File (JSON)',
+          ...(ctx.canSaveCube ? {} : { disabled: true }) },
       ],
     },
     {

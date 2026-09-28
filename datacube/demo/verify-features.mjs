@@ -1621,7 +1621,7 @@ try {
 
   for (const [label, ext] of [['CSV (Grid)', 'csv'], ['Excel (Grid)', 'xls'],
     ['HTML', 'html'], ['Plain Text', 'txt'], ['PDF', 'pdf'],
-    ['DataCube Specification', 'json']]) {
+    ['Cube File (JSON)', 'json']]) {
     await check(`export ${label}`, async () => {
       const wait = page.waitForEvent('download', { timeout: 15_000 });
       await menu(['Export', label], { requery: false });
@@ -1631,6 +1631,10 @@ try {
       const path = await dl.path();
       const body = await readFile(path);
       if (!body.length) throw new Error('the file is empty');
+      // the cube file is the cube's definition, never its rows
+      if (ext === 'json' && !/"kind":"datacube\.cube"/.test(body.toString('utf8'))) {
+        throw new Error('the cube file is not a saved cube');
+      }
       const name = dl.suggestedFilename();
       if (!name.endsWith(`.${ext}`)) {
         throw new Error(`downloaded ${name}, expected .${ext}`);
@@ -2089,34 +2093,10 @@ try {
     return `${want} shows as "RENAMED" and is still ${pair.id}`;
   });
 
-  // ---- saving and loading a view -----------------------------------------
-
-  await check('a saved view is restored when loaded', async () => {
-    // The unit test covers the restore; this covers the WIRING -- the
-    // two title-bar entries, the storage the host supplies, and the
-    // dialog-free path between them. The old test asserted that
-    // something was written to storage and then clicked Load with no
-    // assertion, so loading restored nothing for as long as anyone
-    // had been looking.
-    await menu(['Pivot', /^Vertical Pivot on/], { col: GROUP_COL });
-    const wanted = await fullState();
-    if (!/groupBy\(~\[/.test(wanted.pure)) {
-      throw new Error('could not set up: the cube did not group');
-    }
-    await burger('Save View');
-
-    await menu(['Pivot', 'Clear All Vertical Pivots']);
-    const cleared = await fullState();
-    if (firstDifference(wanted, cleared) === null) {
-      throw new Error('could not set up: clearing changed nothing');
-    }
-
-    await burger('Load View');
-    const back = await fullState();
-    const diff = firstDifference(wanted, back);
-    if (diff) throw new Error(`loading did not restore ${diff}`);
-    return 'the grouped cube came back';
-  });
+  // ---- saving and opening a cube -----------------------------------------
+  //
+  // Driven end to end -- save, reload the page, open, the same typed values -- by its own
+  // harness, `bazel run //datacube:verify_cubes`, which needs a fresh page per step.
 
   // ---- getting rid of a menu ---------------------------------------------
   //
@@ -2513,6 +2493,9 @@ try {
       await menu(['Pivot', 'Clear All Horizontal Pivots'],
         { requery: false }).catch(() => {});
       await settle();
+      // GROUPED, set up here: the SUM asserted below is the groupBy's. This check leaned on
+      // the grouped cube a saved-view check used to leave behind.
+      await menu(['Pivot', /^Vertical Pivot on/], { col: GROUP_COL });
       await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
       await settle();
       await page.keyboard.press('Escape');

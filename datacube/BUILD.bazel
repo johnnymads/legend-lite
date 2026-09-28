@@ -123,6 +123,7 @@ test_suite(
         ":typecheck_test",
         ":pivot_rows_test",
         ":json_read_test",
+        ":cube_open_test",
         ":typed_values_test",
         ":typed_values_tokyo_test",
         ":typed_values_new_york_test",
@@ -348,6 +349,32 @@ js_test(
         "//wasm:planner",
     ],
     entry_point = "test/json-read/json-read.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--experimental-wasm-exnref",
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=./test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+)
+
+# SAVE A CUBE, OPEN IT IN A FRESH APP (docs/DATACUBE_SAVE_SHARE_2026_09_28.md): the real
+# app over the real WASM planner and DuckDB-WASM, a file read the way the page reads one.
+js_test(
+    name = "cube_open_test",
+    size = "medium",
+    chdir = package_name(),
+    data = [
+        "test/cube-open/cube-open.ts",
+        "test/strict-reporter.mjs",
+        ":node_modules/@duckdb/duckdb-wasm",
+        ":node_modules/jsdom",
+        ":src",
+        "//wasm:planner",
+    ],
+    entry_point = "test/cube-open/cube-open.ts",
     node_options = [
         "--experimental-strip-types",
         "--experimental-wasm-exnref",
@@ -605,6 +632,7 @@ _HARNESSES = [
     "shots",
     "torture",
     "verify-calc-vocabulary",
+    "verify-cubes",
     "verify-engine",
     "verify-engine-differential",
     "verify-features",

@@ -101,7 +101,6 @@ async function main(): Promise<void> {
       name: d.name,
       columns: [...d.columns],
     })),
-    storage: window.localStorage,
     showColumnZone: true,
     hostStatus: (slot) => slot.append(status),
     hostMenu: () => [

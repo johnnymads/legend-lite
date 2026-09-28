@@ -142,26 +142,12 @@ class PivotEngine extends FakeEngine {
   }
 }
 
-class MemoryStorage {
-  readonly map = new Map<string, string>();
-  getItem(k: string): string | null {
-    return this.map.get(k) ?? null;
-  }
-  setItem(k: string, v: string): void {
-    this.map.set(k, v);
-  }
-  removeItem(k: string): void {
-    this.map.delete(k);
-  }
-}
-
 describe('the app', () => {
   let dom: JSDOM;
   let root: HTMLElement;
   let app: CubeApp;
   let engine: StubEngine;
   let planner: StubPlanner;
-  let storage: MemoryStorage;
   let downloads: [string, string, string][];
   let clipboard: string[];
   let statuses: [string, string][];
@@ -176,14 +162,12 @@ describe('the app', () => {
     root = dom.window.document.getElementById('r') as HTMLElement;
     engine = new StubEngine();
     planner = new StubPlanner();
-    storage = new MemoryStorage();
     downloads = [];
     clipboard = [];
     statuses = [];
     app = new CubeApp(root, SNAPSHOT, {
       engine,
       planner,
-      storage,
       dimensions: [{ name: 'Geography', columns: ['region', 'desk'] }],
       showColumnZone: true,
       onStatus: (text, kind) => statuses.push([text, kind]),
@@ -547,13 +531,11 @@ describe('the app', () => {
       'HTML',
       'Excel (Grid)',
       'CSV (Grid)',
-      'DataCube Specification',
     ]) {
       rightClick();
       pick(label);
-      // The data leaves only after the attestation; the specification
-      // carries no rows and needs none.
-      if (label !== 'DataCube Specification') answer('Accept');
+      // The data leaves only after the attestation.
+      answer('Accept');
     }
     assert.deepEqual(
       downloads.map((d) => d[1]),
@@ -561,7 +543,6 @@ describe('the app', () => {
         'text/html',
         'application/vnd.ms-excel',
         'text/csv',
-        'application/json',
       ],
     );
     // SpreadsheetML rather than CSV, so numbers arrive as numbers.
@@ -689,47 +670,46 @@ describe('the app', () => {
     );
   });
 
-  it('saves a view and loads it back, from the title bar menu', () => {
-    hamburger();
-    pick('Save View');
-    assert.equal(storage.map.size, 1);
-    hamburger();
-    pick('Load View');
+  it('offers the cube file only when the host says where its rows come from', () => {
+    rightClick();
+    const exportMenu = menuItems().find((i) =>
+      i.querySelector('.dc-menu-label')?.textContent === 'Export') as HTMLElement;
+    const entry = [...exportMenu.querySelectorAll('.dc-menu-item')].find((i) =>
+      i.querySelector('.dc-menu-label')?.textContent === 'Cube File (JSON)') as HTMLElement;
+    assert.ok(entry, 'no Cube File entry');
+    assert.ok(entry.classList.contains('dc-disabled'), 'offered without a source to name');
+    assert.equal(app.cubeDocument('x'), undefined);
   });
 
-  it('LOADING A VIEW RESTORES THE QUERY, not just the status line', async () => {
-    // The test above asserted that something was stored and then
-    // clicked Load with no assertion at all, so it passed while
-    // loading restored NOTHING. The status line said `loaded "..."`
-    // either way, which is the only thing anyone checked.
-    //
-    // The cause: `loadView` set the app's snapshot and then called
-    // `setTree`, which refreshes -- and that refresh ran the
-    // CONTROLLER's snapshot, the one being replaced, then handed the
-    // resulting view back through `onView`, which assigns
-    // `this.#snapshot = view.snapshot`. The freshly loaded snapshot
-    // was overwritten by the stale one before the real refresh ran.
-    await app.applyConfiguration({ maxRows: 123 });
-    const saved = { ...app.controller.snapshot };
-    app.saveView('a view worth keeping');
-
-    // Move AWAY from the saved shape, so restoring has work to do.
-    const now = app.controller.snapshot;
-    assert.ok(now);
-    await app.controller.update({ ...now, rows: [], epoch: now.epoch + 1 });
-    assert.deepEqual(app.controller.snapshot?.rows, [],
-      'could not set up: the cube is still grouped');
-
-    await app.loadView();
-
-    assert.equal(statuses.at(-1)?.[1], 'ok', 'it reported success');
-    assert.deepEqual(
-      app.controller.snapshot?.rows,
-      saved.rows,
-      'the row dimensions came back',
-    );
-    assert.equal(app.controller.snapshot?.maxRows, 123,
-      'and the configuration the view was saved with');
+  it('writes the cube down: its definition, what the user set, the open rows -- never its data', async () => {
+    root.replaceChildren();
+    const withSource = new CubeApp(root, SNAPSHOT, {
+      engine,
+      planner,
+      cubeSource: {
+        _type: 'file', name: 'trades.csv', format: 'csv', size: 10, sha256: 'ab',
+        columns: [{ name: 'region', type: 'String' }],
+      },
+      download: (n, m, t) => downloads.push([n, m, t]),
+    });
+    await withSource.open();
+    await withSource.applyConfiguration({ maxRows: 123 });
+    const doc = withSource.cubeDocument('mine');
+    assert.ok(doc);
+    assert.equal(doc.kind, 'datacube.cube');
+    assert.deepEqual(doc.query.rows, ['region']);
+    assert.deepEqual(doc.query.measures, SNAPSHOT.measures);
+    assert.equal(doc.configuration['maxRows'], 123, 'what the user set');
+    assert.equal(doc.configuration['showTitleBar'], undefined, 'a default is not written down');
+    assert.equal('source' in doc.query, false, 'the relation is derived from the source on open');
+    assert.doesNotMatch(JSON.stringify(doc), /"values"/, 'no rows in a saved cube');
+    // and from the menu, as a file: no attestation, since no rows leave
+    rightClick();
+    pick('Cube File (JSON)');
+    const [name, mime, text] = downloads.at(-1) ?? [];
+    assert.equal(mime, 'application/json');
+    assert.match(name ?? '', /\.json$/);
+    assert.match(text ?? '', /"kind":"datacube\.cube"/);
   });
 
   it('the columns PANEL follows the grid order, not the declared one', async () => {
@@ -754,12 +734,6 @@ describe('the app', () => {
 
     assert.deepEqual(named(), moved,
       'the panel must read in the order the grid does');
-  });
-
-  it('reports a bad saved view rather than throwing past the user', async () => {
-    storage.setItem('datacube.savedView', '{ not json');
-    await app.loadView();
-    assert.equal(statuses.at(-1)?.[1], 'error');
   });
 
   it('offers each named dimension in the title bar menu', () => {

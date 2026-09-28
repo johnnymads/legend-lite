@@ -18,7 +18,31 @@ import {
 import type { Planner } from '../src/cube.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { mountRemote } from '../src/remote.ts';
-import { ingestFile } from '../src/upload.ts';
+import { formatOf, ingestFile } from '../src/upload.ts';
+import {
+  fileSource,
+  openCube,
+  readCube,
+  type CubeDocument,
+  type CubeSource,
+  type FileSource,
+} from '../src/cube-document.ts';
+import {
+  BrowserRecords,
+  MemoryRecords,
+  RuleStore,
+  openCubeDatabase,
+  persistStorage,
+  type CubeStore,
+} from '../src/cube-store.ts';
+import {
+  FileHandles,
+  canKeepHandles,
+  pickDataFile,
+  readHandle,
+  type FileHandle,
+} from '../src/file-handles.ts';
+import { CubeLibrary } from '../src/ui/cube-library.ts';
 import { inferModel, type CatalogBuilder } from '../src/infer.ts';
 import { pageConfig } from './page-config.ts';
 import {
@@ -38,6 +62,7 @@ import {
 } from '../src/samples.ts';
 import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
+import type { TreeState } from '../src/tree.ts';
 import { isNumeric } from '../src/types.ts';
 import { sourceColumns } from '../src/source-columns.ts';
 import { accessor, type ValueSpecification } from '../../pure-protocol/src/index.ts';
@@ -377,6 +402,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     place: {
       readonly live?: WarehouseEngine;
       readonly snapTarget?: SnapTarget;
+      /** A file's cube can be saved: the file, by identity (never its data). */
+      readonly cubeSource?: CubeSource;
     } = {},
   ): CubeApp {
     // PARK THE STATUS TEXT FIRST.
@@ -408,7 +435,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       } : {}),
       configuration: config,
       snapTarget: place.snapTarget ?? snapTarget,
-      storage: window.localStorage,
+      ...(place.cubeSource ? { cubeSource: place.cubeSource } : {}),
       showColumnZone: true,
       // THE HOST'S TEXT, IN THE STATUS BAR. Planner progress during
       // boot and errors afterwards -- the cube states its own row,
@@ -422,7 +449,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // fixed model -- and an entry that opens a panel of dead
         // controls is the dead-button fault one layer up.
         ...(models
-          ? [{ id: 'host.data' as const, label: 'Data\u2026' }]
+          ? [
+            { id: 'host.data' as const, label: 'Data\u2026' },
+            // saved cubes: in this browser, over the files they were built on
+            { id: 'host.cubes' as const, label: 'Cubes\u2026' },
+          ]
           : []),
         { id: 'host.query', label: 'Generated Pure & SQL\u2026' },
         // The planes, as entries rather than a control: the bar is
@@ -433,6 +464,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       ],
       onHostMenu: (item) => {
         if (item.id === 'host.data') toggleHostWindow('datawin');
+        if (item.id === 'host.cubes') showCubes?.();
         if (item.id === 'host.query') toggleHostWindow('querywin');
         // A NAVIGATION, not a switch. Each page loads exactly one
         // arrangement, statically, and test/guardrails.test.ts holds
@@ -515,6 +547,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     return created;
   }
 
+  /** Opens the saved cubes' window; set once the page can open files. */
+  let showCubes: (() => void) | undefined;
   let app = makeApp(snapshot, configuration, DEMO_DIMENSIONS);
 
   await app.open();
@@ -682,20 +716,61 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         })();
       });
     }
-    async function openFile(file: File): Promise<void> {
+    // THE CUBE ON SCREEN, as a saved cube sees it: the file it reads (by identity, and the
+    // File itself so a cube saved over the same file reopens without asking), the handle the
+    // browser gave for it (to reopen it from where it was picked), and the saved cube it
+    // came from (a Save then saves over it).
+    let library: CubeLibrary | undefined;
+    let current: {
+      source?: FileSource;
+      file?: File;
+      handle?: FileHandle;
+      cubeId?: string;
+      name?: string;
+      unknown?: Readonly<Record<string, unknown>>;
+    } = {};
+
+    /**
+     * Read a file into this tab and build a cube over it: a fresh one, or -- `saved` -- a
+     * saved cube reconciled with what the file holds NOW.
+     */
+    async function openFile(
+      file: File,
+      how: {
+        readonly handle?: FileHandle;
+        readonly sample?: { readonly id: string; readonly rows: number };
+        readonly saved?: { readonly doc: CubeDocument; readonly id?: string };
+      } = {},
+    ): Promise<readonly string[]> {
       note.classList.remove('bad');
       note.textContent = `reading ${file.name}…`;
       try {
         const opened = await ingestFile(engine, db, file, local.fromCatalog);
         local.use(opened.model, opened.runtime);
         const columns = await sourceColumns(planner, opened.source);
-        // A freshly opened file groups by nothing: show the rows as
-        // they are and let the user build the cube up. Guessing at
-        // dimensions and measures would be wrong more often than
-        // the guess is worth.
-        app.dispose();
-        app = makeApp(
-          {
+        const source = await fileSource(file, formatOf(file.name), columns, how.sample);
+        const saved = how.saved;
+        let snap: CubeSnapshot;
+        let config: CubeConfiguration;
+        let notes: readonly string[] = [];
+        let tree: TreeState | undefined;
+        if (saved) {
+          const cube = openCube(saved.doc, { query: opened.source }, columns);
+          snap = cube.snapshot;
+          config = cube.configuration;
+          tree = cube.tree;
+          notes = [
+            ...(source.sha256 !== saved.doc.source.sha256
+              ? [`${file.name} is not the file this cube was saved over (its contents differ)`]
+              : []),
+            ...cube.notes,
+          ];
+        } else {
+          // A freshly opened file groups by nothing: show the rows as
+          // they are and let the user build the cube up. Guessing at
+          // dimensions and measures would be wrong more often than
+          // the guess is worth.
+          snap = {
             source: { query: opened.source },
             columns,
             derived: [],
@@ -704,28 +779,187 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             measures: [],
             sorts: [],
             epoch: 1,
-          },
-          {
+          };
+          config = {
             ...DEFAULT_CONFIGURATION,
             reportTitle: opened.fileName,
             columns: keyLikeFormats(columns),
-          },
-          [],
-        );
+          };
+        }
+        app.dispose();
+        app = makeApp(snap, config, [], { cubeSource: source });
+        if (tree) app.controller.adoptTree(tree);
+        current = {
+          source,
+          file,
+          ...(how.handle ? { handle: how.handle } : {}),
+          ...(saved?.id ? { cubeId: saved.id } : {}),
+          ...(saved ? { name: saved.doc.name } : {}),
+          ...(saved?.doc.unknown ? { unknown: saved.doc.unknown } : {}),
+        };
         // open() is what runs the first query; without it the
         // chrome renders and the grid stays empty.
         await app.open();
         note.textContent = `${opened.fileName}: `
           + `${opened.rowCount.toLocaleString()} rows, `
           + `${columns.length} columns`;
+        library?.sync();
+        return notes;
       } catch (e) {
         // Say what failed and about which file. An uploaded file is
         // the one input the user can actually fix.
         note.classList.add('bad');
         note.textContent = `could not open ${file.name}: `
           + (e instanceof Error ? e.message : String(e));
+        throw e;
       }
     }
+
+    // SAVED CUBES, in this browser: IndexedDB when the browser gives it, else memory (this
+    // visit only, and said so). One database holds the cubes and their files' handles.
+    let store: CubeStore;
+    let handles: FileHandles | undefined;
+    let persistent = false;
+    try {
+      const database = openCubeDatabase();
+      await database;
+      store = new RuleStore(new BrowserRecords(database), 'this browser');
+      handles = new FileHandles(database);
+    } catch {
+      store = new RuleStore(new MemoryRecords(), 'this browser');
+    }
+
+    /**
+     * The file a saved cube needs, got the least intrusive way that works: a sample is
+     * rebuilt; the file already open is reused when it IS that file; a kept handle is read
+     * (asking for the browser's permission takes a click, so the window offers one);
+     * otherwise the user is asked for it.
+     */
+    async function fileFor(
+      doc: CubeDocument,
+      id: string | undefined,
+    ): Promise<{ file: File; handle?: FileHandle } | undefined> {
+      const src = doc.source;
+      if (src.sample) {
+        const s = sampleById(src.sample.id);
+        if (s) {
+          return { file: new File([s.build(src.sample.rows)], src.name, { type: mimeOf(s) }) };
+        }
+      }
+      if (current.file && current.source?.sha256 === src.sha256) {
+        return { file: current.file, ...(current.handle ? { handle: current.handle } : {}) };
+      }
+      const kept = id !== undefined ? await handles?.get(id) : undefined;
+      if (kept) {
+        const read = await readHandle(kept, false);
+        if (read.state === 'file') return { file: read.file, handle: kept };
+        if (read.state === 'needs-click') {
+          return new Promise((resolve) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = `Open ${kept.name}`;
+            button.addEventListener('click', () => {
+              void readHandle(kept, true).then(async (again) => {
+                library?.ask(undefined);
+                resolve(again.state === 'file' ? { file: again.file, handle: kept } : await chooseFile(doc));
+              });
+            });
+            library?.ask([`"${doc.name}" reads ${kept.name} from where you picked it. The browser wants you to allow it:`, button]);
+          });
+        }
+      }
+      return chooseFile(doc);
+    }
+
+    /** Ask the user for the file, naming the one the cube was saved over. */
+    function chooseFile(doc: CubeDocument): Promise<{ file: File; handle?: FileHandle } | undefined> {
+      return new Promise((resolve) => {
+        const src = doc.source;
+        const choose = document.createElement('button');
+        choose.type = 'button';
+        choose.textContent = 'Choose file…';
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.csv,.parquet,.json,.jsonl,.ndjson';
+        input.hidden = true;
+        input.className = 'dc-lib-choose';
+        input.addEventListener('change', () => {
+          const file = input.files?.[0];
+          library?.ask(undefined);
+          resolve(file ? { file } : undefined);
+        });
+        choose.addEventListener('click', () => {
+          if (!canKeepHandles()) {
+            input.click();
+            return;
+          }
+          void pickDataFile().then((picked) => {
+            library?.ask(undefined);
+            resolve(picked);
+          });
+        });
+        const cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', () => {
+          library?.ask(undefined);
+          resolve(undefined);
+        });
+        library?.ask([
+          `"${doc.name}" was built over ${src.name} (${bytes(src.size)}). Choose that file:`,
+          choose, cancel, input,
+        ]);
+      });
+    }
+
+    /** Open a saved cube (from the store, or a file someone handed over). */
+    async function openDocument(doc: CubeDocument, id: string | undefined): Promise<void> {
+      const got = await fileFor(doc, id);
+      if (!got) {
+        library?.say('not opened: no file chosen', 'warn');
+        return;
+      }
+      const notes = await openFile(got.file, {
+        ...(got.handle ? { handle: got.handle } : {}),
+        ...(doc.source.sample ? { sample: doc.source.sample } : {}),
+        saved: { doc, ...(id !== undefined ? { id } : {}) },
+      });
+      if (id !== undefined && got.handle) await handles?.put(id, got.handle);
+      library?.say(notes.length === 0
+        ? `opened "${doc.name}"`
+        : `opened "${doc.name}", with changes since it was saved:\n${notes.map((n) => `- ${n}`).join('\n')}`,
+      notes.length === 0 ? 'ok' : 'warn');
+    }
+
+    library = new CubeLibrary(must('cubelib'), store, {
+      saveName: () => (current.source ? current.name ?? app.configuration.reportTitle ?? current.source.name : undefined),
+      currentId: () => current.cubeId,
+      save: async (name, asNew) => {
+        const doc = app.cubeDocument(name, current.unknown);
+        if (!doc) throw new Error('this cube cannot be saved yet: only cubes over a file are');
+        const id = !asNew && current.cubeId !== undefined ? current.cubeId : crypto.randomUUID();
+        const record = { id, name, content: doc as unknown as Record<string, unknown> };
+        if (id === current.cubeId) await store.update(id, record);
+        else await store.create(record);
+        if (current.handle) await handles?.put(id, current.handle);
+        current = { ...current, cubeId: id, name };
+        if (!persistent) persistent = await persistStorage();
+      },
+      open: async (id) => openDocument(readCube((await store.get(id)).content), id),
+      openText: async (text) => openDocument(readCube(text), undefined),
+      forget: async (id) => {
+        await handles?.remove(id);
+        if (current.cubeId === id) {
+          const { cubeId: _gone, ...rest } = current;
+          current = rest;
+        }
+      },
+    });
+    showCubes = () => {
+      toggleHostWindow('cubeswin');
+      library?.sync();
+      void library?.refresh();
+    };
 
     // Build the chosen sample. No row cap: the one hard limit is the
     // browser's longest string (about 512M characters, some millions
@@ -765,7 +999,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         }
         if (!built) return;
         void openFile(new File([built.text], built.name,
-          { type: mimeOf(built.s) }));
+          { type: mimeOf(built.s) }), { sample: { id: built.s.id, rows: built.rows } }).catch(() => {});
       }, 0);
     });
 
@@ -797,7 +1031,16 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
     input.addEventListener('change', () => {
       const file = input.files?.[0];
-      if (file) void openFile(file);
+      if (file) void openFile(file).catch(() => {});
+    });
+    // Where the browser can keep a handle to the picked file, pick THROUGH it: a saved cube
+    // then reopens its file from where it was picked (file-handles.ts).
+    input.addEventListener('click', (event) => {
+      if (!canKeepHandles()) return;
+      event.preventDefault();
+      void pickDataFile().then((picked) => {
+        if (picked) void openFile(picked.file, { handle: picked.handle }).catch(() => {});
+      });
     });
   }
 }
@@ -810,6 +1053,13 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
  * ones it did not: dragged by its header, resized from any edge, and
  * remembering where it was left.
  */
+/** A size in words: 2.1 MB. */
+function bytes(n: number): string {
+  if (n < 1024) return `${n} bytes`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const hostWindows = new Map<string, WindowSpec>();
 
 function toggleHostWindow(id: string): void {
