@@ -48,7 +48,7 @@ import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
 import { isBoolean, isNumeric, isTemporal, isVariant } from './types.ts';
 
 /** What the grand total's synthetic key holds. Upstream's value. */
-const ROOT_VALUE = '[ROOT]';
+export const ROOT_VALUE = '[ROOT]';
 
 /** Identifiers that are not plain alphanumerics need quoting. */
 const PLAIN_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -486,7 +486,7 @@ export function windowExtend(name: string, w: WindowSpec): string {
   return `extend(${over}, ~[${ident(name)}:${fn}])`;
 }
 
-const WINDOW_META = new Map(WINDOW_FUNCTIONS.map((f) => [f.fn, f]));
+export const WINDOW_META = new Map(WINDOW_FUNCTIONS.map((f) => [f.fn, f]));
 
 function sortClause(sorts: readonly SortSpec[]): string {
   const keys = sorts.map(
@@ -577,7 +577,7 @@ export function memberConditions(
   return parentConditions({ ...snapshot, rows: columns }, path);
 }
 
-function parentConditions(
+export function parentConditions(
   snapshot: CubeSnapshot,
   parent: RowPath,
 ): FilterNode[] {
@@ -806,7 +806,7 @@ export function pivotValuesQuery(s: CubeSnapshot): string | null {
  * `{"items": [...]}__|__qty`. The question is always about a value INSIDE
  * the document, so say how to get it -- before either step runs.
  */
-function refuseUnpivotable(s: CubeSnapshot): void {
+export function refuseUnpivotable(s: CubeSnapshot): void {
   const specOf = columnSpecs(s);
   for (const name of effectivePivotOn(s)) {
     if (isVariant(specOf.get(name)?.type)) {
@@ -849,7 +849,7 @@ function tupleCondition(s: CubeSnapshot, tuple: readonly string[]): string {
  * them, under its own name. Before, these came from a second query
  * joined in by key; now they are columns of the level's own.
  */
-function carriedMeasures(s: CubeSnapshot, groupCols: readonly string[]): Measure[] {
+export function carriedMeasures(s: CubeSnapshot, groupCols: readonly string[]): Measure[] {
   const excluded = excludedFromPivot(s);
   const isKey = new Set([...groupCols, ...effectivePivotOn(s)]);
   const spread = spreadMeasures(s);
@@ -878,7 +878,7 @@ function carriedMeasures(s: CubeSnapshot, groupCols: readonly string[]): Measure
  * produces simple text that a human can read in a bug report.
  */
 /** No grouping, no pivot, no measures: rows straight through. */
-function isDetail(s: CubeSnapshot): boolean {
+export function isDetail(s: CubeSnapshot): boolean {
   return (
     s.rows.length === 0 && s.pivotOn.length === 0 && s.measures.length === 0
   );
@@ -893,7 +893,7 @@ function isDetail(s: CubeSnapshot): boolean {
  * Source columns win a name collision, which cannot happen anyway --
  * `nameProblem` refuses it in the editor.
  */
-interface SpecLike {
+export interface SpecLike {
   readonly name: string;
   readonly type?: string;
   readonly kind?: ColumnKind;
@@ -901,7 +901,7 @@ interface SpecLike {
   readonly aggregateWeight?: string;
 }
 
-function columnSpecs(s: CubeSnapshot): Map<string, SpecLike> {
+export function columnSpecs(s: CubeSnapshot): Map<string, SpecLike> {
   const out = new Map<string, SpecLike>();
   for (const d of [...s.derived, ...(s.groupDerived ?? [])]) {
     // The DECLARED kind wins over the type, exactly as it does for a
@@ -927,7 +927,7 @@ function columnSpecs(s: CubeSnapshot): Map<string, SpecLike> {
  * it: Column Properties > Aggregation when set (census §2 -- the
  * dropdown reached no query before), else the kind's default.
  */
-function defaultMeasure(
+export function defaultMeasure(
   name: string,
   spec: SpecLike | undefined,
   fallback: AggregateFn,
@@ -953,7 +953,7 @@ function defaultMeasure(
  * (region:String[0..1], ...)". Every group-stage calculated column
  * was unusable for as long as that line was here.
  */
-function detailColumns(s: CubeSnapshot): string[] {
+export function detailColumns(s: CubeSnapshot): string[] {
   return [
     ...s.columns.map((c) => c.name),
     ...s.derived.map((d) => d.name),
@@ -967,7 +967,7 @@ function detailColumns(s: CubeSnapshot): string[] {
  * False for a detail query, which also has no grouping but returns
  * every row, and therefore very much wants a sort and a cap.
  */
-function isSingleRow(
+export function isSingleRow(
   s: CubeSnapshot,
   groupCols: readonly string[],
   grandTotal = false,
