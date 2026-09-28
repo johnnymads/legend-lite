@@ -1,0 +1,2 @@
+import { AgCharts, ModuleRegistry, BarSeriesModule, LineSeriesModule, AreaSeriesModule, ScatterSeriesModule, PieSeriesModule, DonutSeriesModule, CategoryAxisModule, NumberAxisModule, LegendModule } from 'ag-charts-community'; 
+try{ModuleRegistry.registerModules([BarSeriesModule, LineSeriesModule, AreaSeriesModule, ScatterSeriesModule, PieSeriesModule, DonutSeriesModule, CategoryAxisModule, NumberAxisModule, LegendModule]);}catch(e){} window.x=AgCharts;
