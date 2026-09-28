@@ -363,14 +363,15 @@ type names, parity with upstream checked:
 - Aggregates: offered when the compiler accepts the level query and the result stays in the column's
   family. min/max compile on EVERY type on both compilers (Pure's `collection::min<X>`), and stay
   offered (the user: don't lose them; JSON orders by its text in the database).
-- Operators: offered when the condition compiles AND the compiler resolved the operator's name to the
-  function the operator means. `query.ts` `OPERATOR_FUNCTION` states each operator's function by path
-  (as upstream DataCube defines them); the query spells it short -- human readable, as a person writes
-  it and as upstream sends it (the user, 2026-09-28) -- and the generator reads the resolved function
-  off the typed tree. So "contains" (text containment) is not offered on a number, where the same name
-  resolves to collection membership. (A first design had a meaning table COMPENSATING for lite's wrong
-  resolution; the user asked why it was not fixed properly: lite was fixed first, below. A second sent
-  the full path, sound but unreadable in the error dialogs that print the query.)
+- Operators: offered when the condition compiles. That is the whole answer because the query names
+  the function the operator means where Pure's name is ambiguous: the text "contains" is
+  `meta::pure::functions::string::contains` -- the one operator function whose name Pure also
+  declares for collections (`contains(Any[*], Any[1])` takes a number, as membership). Every other
+  operator's short name resolves to its one function or is refused (measured). The full name shows
+  only in the error dialogs that print the whole query; the user, 2026-09-28: long names there are
+  fine. (Rejected on the way: a table of meant functions compensating for lite's wrong resolution --
+  "why hack more stuff instead of fixing properly" -- and short names plus a build-time check of the
+  resolved function, extra code only to shorten error text.)
 - Two lite defects fixed at the source (the user: "make both yourself"): legend-engine's
   `string::contains(String[0..1], String[1])` registered through the membership table (lite had the
   startsWith/endsWith forms, and its lowering inlined this one's body under the COLLECTION callee); and

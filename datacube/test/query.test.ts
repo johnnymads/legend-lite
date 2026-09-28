@@ -605,7 +605,7 @@ describe('the full filter vocabulary', () => {
     } as never);
 
   it('renders negated string tests', () => {
-    assert.equal(cond('notContains', { value: 'X' }), "x|!$x.region->contains('X')");
+    assert.equal(cond('notContains', { value: 'X' }), "x|!$x.region->meta::pure::functions::string::contains('X')");
     assert.equal(
       cond('notStartsWith', { value: 'X' }),
       "x|!$x.region->startsWith('X')",
@@ -652,7 +652,7 @@ describe('the full filter vocabulary', () => {
     // and the differential (verify:engine:diff) is what found it.
     assert.equal(
       cond('containsCaseInsensitive', { value: 'Em' }),
-      "x|$x.region->toOne()->toLower()->contains('em')",
+      "x|$x.region->toOne()->toLower()->meta::pure::functions::string::contains('em')",
     );
     assert.equal(
       cond('startsWithCaseInsensitive', { value: 'LAT' }),

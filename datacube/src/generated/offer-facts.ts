@@ -9,7 +9,7 @@ import type { AggregateFn, FilterOperator } from '../snapshot.ts';
 export interface OfferFact {
   /** Each aggregate: the type the level query gives the measure; null, refused. */
   readonly aggregates: Readonly<Record<AggregateFn, string | null>>;
-  /** Each filter operator: whether its condition compiles and calls the function the operator means. */
+  /** Each filter operator: whether its condition compiles. */
   readonly operators: Readonly<Record<FilterOperator, boolean>>;
 }
 

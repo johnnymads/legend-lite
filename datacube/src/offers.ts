@@ -24,9 +24,9 @@ export function takesAggregate(fn: AggregateFn, type: string): boolean {
 }
 
 /**
- * Whether a column of this type takes the filter operator: its condition compiles and the
- * compiler resolved the operator's name to the function it means (query.ts
- * `OPERATOR_FUNCTION`; checked at build time, tools/offer-facts).
+ * Whether a column of this type takes the filter operator: its condition compiles. The query
+ * names the function the operator means where Pure's name is ambiguous (query.ts: the text
+ * "contains" is `string::contains`), so compiling is the whole answer.
  */
 export function takesOperator(op: FilterOperator, type: string): boolean {
   return factsOf(type)?.operators[op] ?? false;

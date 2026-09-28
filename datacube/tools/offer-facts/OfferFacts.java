@@ -9,7 +9,6 @@ import com.legend.compiler.element.ModelContext;
 import com.legend.compiler.element.TypedFunction;
 import com.legend.compiler.element.TypedParameter;
 import com.legend.compiler.element.type.Type;
-import com.legend.compiler.spec.typed.TypedFilter;
 import com.legend.compiler.spec.typed.TypedNativeCall;
 import com.legend.compiler.spec.typed.TypedSpec;
 import com.legend.parser.SpecParser;
@@ -35,10 +34,9 @@ import java.util.TreeMap;
  * (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T5): DataCube's own queries (written by
  * {@code emit.ts} with the product's query builder) compiled, and for each probe column
  * each aggregate's answer -- the type the level query gives its measure, or refused; each
- * filter operator's -- whether its condition compiles AND the compiler resolved the
- * operator's name to the function the operator means (query.ts {@code OPERATOR_FUNCTION}:
- * the query spells "contains" short, as a person writes it, and on a number column that name
- * resolves to collection membership, not text containment); and
+ * filter operator's -- whether its condition compiles (the query names the function the
+ * operator means where Pure's name is ambiguous: query.ts's text "contains" is
+ * {@code string::contains}, refused on a number); and
  * for each function the calculated-column editor offers, the function as the compiler
  * resolves its name and every declared overload of it (the signatures the editor shows),
  * once its example has compiled (the example is the proof: one that does not compile
@@ -74,12 +72,11 @@ public final class OfferFacts {
             if (line.isEmpty()) {
                 continue;
             }
-            String[] f = line.split("\t", 5);
+            String[] f = line.split("\t", 4);
             String kind = f[0];
             String probe = f[1];
             String name = f[2];
-            String meaning = f[3];
-            String query = f[4];
+            String query = f[3];
             switch (kind) {
                 case "column" -> declared.put(probe, name);
                 case "type" -> {
@@ -88,7 +85,7 @@ public final class OfferFacts {
                     }
                 }
                 case "agg" -> facts(byProbe, probe).aggregates().put(name, measureType(model, query));
-                case "op" -> facts(byProbe, probe).operators().put(name, means(model, query, meaning));
+                case "op" -> facts(byProbe, probe).operators().put(name, compiles(model, query));
                 case "calc" -> calcs.put(name, calc(model, ctx, name, query));
                 default -> throw new IllegalArgumentException("unknown line kind: " + kind);
             }
@@ -206,38 +203,14 @@ public final class OfferFacts {
         return ProtocolReader.lambda(json);
     }
 
-    /**
-     * Whether a filter's query compiles AND its condition calls {@code function}: the compiler
-     * resolved the short name the query spells to the function the operator means.
-     */
-    private static boolean means(String model, String query, String function) {
-        TypedSpec typed;
+    /** Whether the compiler accepts a query. */
+    private static boolean compiles(String model, String query) {
         try {
             Compiler.resultType(model, lambda(query));
-            typed = Compiler.compileQuery(model, lambda(query));
+            return true;
         } catch (RuntimeException refused) {
             return false;
         }
-        ArrayDeque<TypedSpec> work = new ArrayDeque<>(List.of(typed));
-        int filters = 0;
-        boolean calls = false;
-        while (!work.isEmpty()) {
-            TypedSpec n = work.poll();
-            if (n instanceof TypedFilter filter) {
-                filters++;
-                ArrayDeque<TypedSpec> inside = new ArrayDeque<>(List.of(filter.predicate()));
-                while (!inside.isEmpty()) {
-                    TypedSpec m = inside.poll();
-                    calls |= m instanceof TypedNativeCall c && c.callee().qualifiedName().equals(function);
-                    inside.addAll(m.children());
-                }
-            }
-            work.addAll(n.children());
-        }
-        if (filters != 1) {
-            throw new IllegalStateException("expected one filter in the query, found " + filters + ": " + query);
-        }
-        return calls;
     }
 
     /** The measure's type in a level query, or null when the compiler refuses the query. */
@@ -268,7 +241,7 @@ public final class OfferFacts {
                 .append("export interface OfferFact {\n")
                 .append("  /** Each aggregate: the type the level query gives the measure; null, refused. */\n")
                 .append("  readonly aggregates: Readonly<Record<AggregateFn, string | null>>;\n")
-                .append("  /** Each filter operator: whether its condition compiles and calls the function the operator means. */\n")
+                .append("  /** Each filter operator: whether its condition compiles. */\n")
                 .append("  readonly operators: Readonly<Record<FilterOperator, boolean>>;\n")
                 .append("}\n\n")
                 .append("/** By the type the compiler gives a column (the probe it was measured on in a comment). */\n")
