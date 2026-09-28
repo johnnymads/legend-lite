@@ -11,10 +11,12 @@ import {
 import { print } from './lite-compiler.ts';
 
 /** Every extraction under a field, by default column name: its lambda as the compiler prints it. */
-function byName(fields: readonly Field[]): Map<string, { expression: string; type: string }> {
-  const out = new Map<string, { expression: string; type: string }>();
+function byName(fields: readonly Field[]): Map<string, { expression: string; type: string; unnest?: boolean }> {
+  const out = new Map<string, { expression: string; type: string; unnest?: boolean }>();
   const walk = (f: Field): void => {
-    for (const e of f.extractions) out.set(e.name, { expression: print(e.lambda), type: e.type });
+    for (const e of f.extractions) {
+      out.set(e.name, { expression: print(e.lambda), type: e.type, ...(e.unnest ? { unnest: true } : {}) });
+    }
     f.children.forEach(walk);
   };
   fields.forEach(walk);
@@ -141,6 +143,10 @@ describe('as JSON', () => {
       "x|$x.d->get('items')->toMany(@Variant)->map(e|$e->get('sku'))->toVariant()");
     // An array inside each element: its values from every element.
     assert.equal(f.get('d_items_tags')?.type, 'Variant');
+    // one row per element (explode): the element a JSON column of its own
+    const each = f.get('d_items_element');
+    assert.deepEqual([each?.expression, each?.type, each?.unnest],
+      ["x|$x.d->get('items')->toMany(@Variant)", 'Variant', true]);
     // one element, whole (T10): a JSON column of its own
     assert.deepEqual([f.get('d_items_first')?.expression, f.get('d_items_first')?.type],
       ["x|$x.d->get('items')->get(0)", 'Variant']);

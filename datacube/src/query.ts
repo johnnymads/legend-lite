@@ -10,7 +10,7 @@
 // meaning, made and proven there.
 
 import {
-  agg, and, asc, collection, derive, desc, fn, from, lambda, lit, not, or, property, variable,
+  agg, and, asc, collection, derive, desc, flatten, fn, from, lambda, lit, not, or, property, variable,
   type AppliedFunction, type ColSpec, type Lambda, type Relation, type ValueSpecification,
 } from '../../pure-protocol/src/index.ts';
 import {
@@ -207,6 +207,14 @@ interface LevelWindow {
 function extendDerived(rel: Relation, d: DerivedColumn, level?: LevelWindow): Relation {
   if (!d.window) {
     if (!d.lambda) throw new CubeRefusal(`the calculated column '${d.name}' has no expression`);
+    if (d.unnest) {
+      // each row once per element of the collection: `lateral(x|<collection>->flatten(~name))`
+      const [body] = d.lambda.body;
+      if (body === undefined || d.lambda.body.length !== 1) {
+        throw new CubeRefusal(`the exploded column '${d.name}' needs one expression, the collection to explode`);
+      }
+      return rel.lateral(lambda(d.lambda.parameters, flatten(body, d.name)));
+    }
     return rel.extend([derive(d.name, d.lambda)]);
   }
   let w: WindowSpec = d.window;

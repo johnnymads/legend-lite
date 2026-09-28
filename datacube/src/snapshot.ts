@@ -341,6 +341,13 @@ export interface DerivedColumn {
   /** An aggregate of the child groups instead: see `ChildAggregate`. */
   readonly childAggregate?: ChildAggregate;
   /**
+   * EXPLODE: `lambda` yields a collection, and each row is repeated once per element, the
+   * element being this column (`lateral(x|<collection>->flatten(~name))`, upstream Pure's
+   * unnest). Row stage only. A row's own figures then appear once per element, so summing
+   * one counts it again.
+   */
+  readonly unnest?: boolean;
+  /**
    * The Pure type of the expression, AS THE COMPILER TYPES IT.
    *
    * Nothing here infers it -- `$x.a * 2` is a Float and `$x.a->toUpper()`

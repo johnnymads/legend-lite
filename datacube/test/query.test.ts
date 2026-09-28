@@ -423,6 +423,15 @@ describe('a level query', () => {
   });
 });
 
+describe('an exploded calculated column', () => {
+  it('is a lateral flatten: each row once per element, the element the column', () => {
+    const s = snap({ pivotOn: [], rows: [],
+      derived: [{ name: 'tag', lambda: row("$x.doc->get('tags')->toMany(@meta::pure::metamodel::variant::Variant)"), unnest: true }] });
+    assert.match(level(s),
+      /->lateral\(x\|\$x\.doc->get\('tags'\)->toMany\(@meta::pure::metamodel::variant::Variant\)->flatten\(~tag\)\)/);
+  });
+});
+
 describe('a level query at a level scope', () => {
   it('groups the grand total by nothing at all', () => {
     // level 0: every grouping column dropped, which is exactly what

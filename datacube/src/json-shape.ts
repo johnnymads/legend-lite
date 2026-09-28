@@ -261,6 +261,8 @@ export interface Extraction {
   /** The Pure type it will have. */
   readonly type: string;
   readonly kind: 'dimension' | 'measure';
+  /** Each row once per element of the collection `lambda` yields (`DerivedColumn.unnest`). */
+  readonly unnest?: boolean;
 }
 
 /** A position in the documents, with what can be made of it. */
@@ -369,6 +371,10 @@ export function fieldsOf(column: string, sample: Sample): Field[] {
 function arrayExtractions(shape: Shape, expr: ValueSpecification, names: readonly string[]): Extraction[] {
   const out: Extraction[] = [];
   const many = toMany(expr, type('Variant'));
+  // EXPLODE: each row once per element -- the element a JSON column of its own, extracted from
+  // again (its fields side by side give the tuples, e.g. an address's kind and city)
+  out.push({ name: nameOf([...names, 'element']), label: 'one row per element (explode)',
+    lambda: ofRow(many), type: 'Variant', kind: 'dimension', unnest: true });
   out.push({ name: nameOf([...names, 'count']), label: 'number of elements',
     lambda: ofRow(fn('size', many)), type: 'Integer', kind: 'measure' });
   const el = shape.element;

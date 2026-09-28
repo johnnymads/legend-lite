@@ -178,7 +178,8 @@ export function buildJsonFields(host: HTMLElement, options: JsonFieldsOptions): 
     b.className = 'dc-jsonfields-add';
     b.textContent = e.label;
     // The Pure it writes, on hover: nothing hidden about what it does.
-    b.title = `${e.name}: ${e.type}`;
+    b.title = `${e.name}: ${e.type}` + (e.unnest
+      ? ' -- one row per element: a figure of the row itself then counts once per element' : '');
     b.addEventListener('click', () => {
       for (const other of tree.querySelectorAll('.dc-jsonfields-picked')) {
         other.classList.remove('dc-jsonfields-picked');

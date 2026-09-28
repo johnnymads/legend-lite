@@ -307,9 +307,9 @@ describe('picking a JSON field', () => {
   const EVERY_ROW = [[CELLS[0]], [CELLS[1], '{"tier":"bronze","since":2020}']];
 
   /** A reader over those cells; `all` can be made to wait until it is cancelled. */
-  function reader(sampled: string[], column: string, wait = false): JsonColumnReader {
+  function reader(sampled: string[], column: string, wait = false, cells: readonly string[] = CELLS): JsonColumnReader {
     return {
-      sample: async () => { sampled.push(column); return { cells: CELLS, total: 3 }; },
+      sample: async () => { sampled.push(column); return { cells, total: 3 }; },
       all: (onChunk, signal) => new Promise<void>((resolve, reject) => {
         if (wait) {
           signal?.addEventListener('abort', () => reject(new Error('aborted')));
@@ -321,7 +321,8 @@ describe('picking a JSON field', () => {
     };
   }
 
-  function openJson(start: ColumnEditorStart, sampled: string[] = [], wait = false): ColumnEditor {
+  function openJson(start: ColumnEditorStart, sampled: string[] = [], wait = false,
+    cells: readonly string[] = CELLS): ColumnEditor {
     return new ColumnEditor(root, {
       snapshot: () => ORDERS,
       start,
@@ -334,7 +335,7 @@ describe('picking a JSON field', () => {
       },
       apply: async (row, group) => { applied.push({ row, group }); return null; },
       onClose: () => { closed += 1; },
-      readJson: (column) => reader(sampled, column, wait),
+      readJson: (column) => reader(sampled, column, wait, cells),
     });
   }
   const button = (label: string): HTMLButtonElement => {
@@ -376,6 +377,21 @@ describe('picking a JSON field', () => {
     await settle();
     assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value,
       "x|$x.customer->get('contact')");
+  });
+
+  it('explodes: the checkbox is set by the pick, and the column is applied as an explode', async () => {
+    openJson({ json: 'customer' }, [], false, ['{"addresses":[{"city":"Paris"}]}']);
+    await settle();
+    const explode = $<HTMLInputElement>('.dc-calc-input-explode');
+    assert.equal(explode.checked, false);
+    button('one row per element (explode)').click();
+    await settle();
+    assert.equal(explode.checked, true);
+    $<HTMLButtonElement>('.dc-calc-ok').click();
+    await settle();
+    const added = applied.at(-1)?.row.at(-1);
+    assert.equal(added?.name, 'customer_addresses_element');
+    assert.equal(added?.unnest, true);
   });
 
   it('keeps a name the user typed', async () => {

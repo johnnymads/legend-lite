@@ -115,8 +115,9 @@ before(async () => {
   // T10's documents: a nested object and an array of objects
   await local.run('CREATE TABLE O (id INTEGER, doc JSON)', 0);
   await local.run(`INSERT INTO O VALUES
-    (1, '{"customer":{"tier":"gold","contact":{"email":"a@x"}},"items":[{"sku":"A","q":2},{"sku":"B","q":1}]}'),
-    (2, '{"customer":{"tier":"silver","contact":{"email":"b@x"}},"items":[{"sku":"C","q":5}]}')`, 0);
+    (1, '{"customer":{"tier":"gold","contact":{"email":"a@x"},"addresses":[{"kind":"billing","city":"Paris"},{"kind":"shipping","city":"Tokyo"}]},"items":[{"sku":"A","q":2},{"sku":"B","q":1}]}'),
+    (2, '{"customer":{"tier":"silver","contact":{"email":"b@x"},"addresses":[{"kind":"billing","city":"Paris"}]},"items":[{"sku":"C","q":5}]}'),
+    (3, '{"customer":{"tier":"gold","contact":{"email":"c@x"},"addresses":[{"kind":"billing","city":"London"}]},"items":[{"sku":"A","q":1}]}')`, 0);
   planner = new WasmPlanner({ model: MODEL, runtime: 'j::RT', assetBaseUrl: MODULE_DIR, cache: false });
 });
 
@@ -204,8 +205,8 @@ describe('a part of a document as a JSON column of its own', () => {
     // the new column is a JSON column like any: its own fields, extracted again
     await extract(app, doc, 'doc_customer', 'doc_customer_tier');
     assert.equal(app.snapshot.derived.find((d) => d.name === 'doc_customer_tier')?.type, 'String');
-    await until(() => valuesOf(app, 'doc_customer_tier').length === 2, 'the tiers in the grid');
-    assert.deepEqual(valuesOf(app, 'doc_customer_tier').sort(), ['gold', 'silver']);
+    await until(() => valuesOf(app, 'doc_customer_tier').length === 3, 'the tiers in the grid');
+    assert.deepEqual(valuesOf(app, 'doc_customer_tier').sort(), ['gold', 'gold', 'silver']);
     assert.deepEqual(errors, []);
   });
 
@@ -214,8 +215,8 @@ describe('a part of a document as a JSON column of its own', () => {
     await extract(app, doc, 'doc', 'doc_items_first');
     assert.equal(app.snapshot.derived.find((d) => d.name === 'doc_items_first')?.type, 'Variant');
     await extract(app, doc, 'doc_items_first', 'doc_items_first_sku');
-    await until(() => valuesOf(app, 'doc_items_first_sku').length === 2, 'the first skus in the grid');
-    assert.deepEqual(valuesOf(app, 'doc_items_first_sku').sort(), ['A', 'C']);
+    await until(() => valuesOf(app, 'doc_items_first_sku').length === 3, 'the first skus in the grid');
+    assert.deepEqual(valuesOf(app, 'doc_items_first_sku').sort(), ['A', 'A', 'C']);
     assert.deepEqual(errors, []);
   });
 
@@ -224,8 +225,47 @@ describe('a part of a document as a JSON column of its own', () => {
     await extract(app, doc, 'doc', 'doc_items');
     assert.equal(app.snapshot.derived.find((d) => d.name === 'doc_items')?.type, 'Variant');
     await extract(app, doc, 'doc_items', 'doc_items_count');
-    await until(() => valuesOf(app, 'doc_items_count').length === 2, 'the counts in the grid');
-    assert.deepEqual(valuesOf(app, 'doc_items_count').map(Number).sort(), [1, 2]);
+    await until(() => valuesOf(app, 'doc_items_count').length === 3, 'the counts in the grid');
+    assert.deepEqual(valuesOf(app, 'doc_items_count').map(Number).sort(), [1, 1, 2]);
+    assert.deepEqual(errors, []);
+  });
+
+  it('explode: one row per address, its kind and city side by side, the id hidden, then the distinct pairs', async () => {
+    const { app, doc, errors } = await openApp(ORDERS);
+    await extract(app, doc, 'doc', 'doc_customer_addresses_element');
+    const element = app.snapshot.derived.find((d) => d.name === 'doc_customer_addresses_element');
+    assert.equal(element?.unnest, true, 'an explode');
+    assert.equal(element?.type, 'Variant', 'each element a JSON column, typed by the compiler');
+    await extract(app, doc, 'doc_customer_addresses_element', 'doc_customer_addresses_element_kind');
+    await extract(app, doc, 'doc_customer_addresses_element', 'doc_customer_addresses_element_city');
+    const KIND = 'doc_customer_addresses_element_kind';
+    const CITY = 'doc_customer_addresses_element_city';
+
+    // the database's own unnest is the truth
+    const truth = await new DuckDbEngine(conn).run(`SELECT a->>'kind' AS kind, a->>'city' AS city
+      FROM O, UNNEST(CAST(doc->'customer'->'addresses' AS JSON[])) AS u(a)`, 0);
+    const pairs = (kinds: readonly unknown[], cities: readonly unknown[]): string[] =>
+      kinds.map((k, i) => `${String(k)}/${String(cities[i])}`).sort();
+    const expected = pairs(truth.columns[0]!.values, truth.columns[1]!.values);
+    assert.deepEqual(expected, ['billing/London', 'billing/Paris', 'billing/Paris', 'shipping/Tokyo']);
+    await until(() => valuesOf(app, KIND).length === 4, 'one row per address');
+    assert.deepEqual(pairs(valuesOf(app, KIND), valuesOf(app, CITY)), expected);
+
+    // drop the id and the JSON: just (kind, city)
+    await app.applyConfiguration({ columns: Object.fromEntries(
+      ['id', 'doc', 'doc_customer_addresses_element'].map((c) => [c, { hidden: true }])) });
+    // what the grid shows: its header cells
+    const headers = (): string[] => [...doc.querySelectorAll<HTMLElement>('.dc-th[data-column]')]
+      .map((th) => th.dataset['column'] ?? '').filter((c) => c !== '' && !c.startsWith('__'));
+    await until(() => !headers().includes('id'), `the id hidden: ${headers().join(', ')}`);
+    assert.deepEqual(headers(), [KIND, CITY]);
+
+    // grouped: each pair once, and how many rows it covers
+    await app.controller.update({ ...app.snapshot, rows: [KIND, CITY], leafCount: true });
+    await app.controller.toggle(['billing']);
+    await until(() => (app.controller.view?.treeRows ?? []).some((r) => r.path.length === 2), 'the pairs under billing');
+    const leaves = (app.controller.view?.treeRows ?? []).filter((r) => r.path.length === 2).map((r) => r.path.join('/'));
+    assert.deepEqual(leaves.sort(), ['billing/London', 'billing/Paris']);
     assert.deepEqual(errors, []);
   });
 });

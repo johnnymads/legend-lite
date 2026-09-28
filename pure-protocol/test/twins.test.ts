@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  accessor, agg, and, asc, col, collection, derive, desc, divide, element, enumValue, eq, fn, from, ge, gt,
+  accessor, agg, and, asc, col, collection, derive, desc, divide, element, enumValue, eq, flatten, fn, from, ge, gt,
   lambda, lit, minus, ne, not, or, over, parameter, plus, relationType, times, to, toMany, type, variable,
   ExactNumber, ONE, MANY, ProtocolError, readLambda, toJson, type Lambda,
 } from '../src/index.ts';
@@ -38,6 +38,10 @@ const TWINS: readonly (readonly [string, () => Lambda, string])[] = [
   ['sort, limit, distinct', () => from(T).sort([asc('a'), desc('b')]).limit(10).distinct().lambda(),
     '|#>{a::DB.s.T}#->sort([~a->ascending(), ~b->descending()])->limit(10)->distinct()'],
   ['rename', () => from(T).rename('a', 'b').lambda(), '|#>{a::DB.s.T}#->rename(~a, ~b)'],
+  ['lateral flatten: each row once per element', () => from(T)
+    .lateral(lambda(['x'], flatten(toMany(fn('get', col('x', 'doc'), lit.string('items')), type('meta::pure::metamodel::variant::Variant')), 'item')))
+    .lambda(),
+    "|#>{a::DB.s.T}#->lateral(x|$x.doc->get('items')->toMany(@meta::pure::metamodel::variant::Variant)->flatten(~item))"],
   ['join and concatenate', () => from(T).join(from(accessor('a::DB', 'U')), 'LEFT', lambda(['a', 'b'], eq(col('a', 'k'), col('b', 'k'))))
     .concatenate(from(accessor('a::DB', 'V'))).lambda(),
     '|#>{a::DB.s.T}#->join(#>{a::DB.U}#, meta::pure::functions::relation::JoinKind.LEFT, {a, b|$a.k == $b.k})->concatenate(#>{a::DB.V}#)'],

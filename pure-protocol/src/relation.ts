@@ -161,6 +161,14 @@ export class Relation {
     return this.#then('join', other.node, enumValue('meta::pure::functions::relation::JoinKind', kind), condition);
   }
 
+  /**
+   * `->lateral(x|<relation>)`: each row joined to the relation its function makes -- with
+   * `flatten`, each row once per element of a collection (an explode, an unnest).
+   */
+  lateral(each: Lambda): Relation {
+    return this.#then('lateral', each);
+  }
+
   /** `->concatenate(other)`. */
   concatenate(other: Relation): Relation {
     return this.#then('concatenate', other.node);
@@ -188,6 +196,11 @@ export class Relation {
   lambda(): Lambda {
     return makeLambda([], this.node);
   }
+}
+
+/** `values->flatten(~name)`: a collection as a one-column relation (for `lateral`). */
+export function flatten(values: ValueSpecification, name: string): AppliedFunction {
+  return fn('flatten', values, colSpec(name));
 }
 
 /** A relation from a source: an accessor, a function's result, another query's body. */

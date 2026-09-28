@@ -102,6 +102,8 @@ interface Draft {
   mode: 'expression' | 'window' | 'children';
   /** The whole lambda as the person edits it, `x|$x.a * 2` (upstream's editor shows the same). */
   expression: string;
+  /** EXPLODE: the expression is a collection, and each row repeats once per element (`DerivedColumn.unnest`). */
+  unnest: boolean;
   window: WindowSpec;
   child: ChildAggregate;
 }
@@ -160,7 +162,7 @@ export class ColumnEditor {
       this.#original = start.edit;
       printing = found?.lambda;
       this.#initial = found?.draft ?? {
-        name: start.edit, level: 'measure', mode: 'expression', expression: '',
+        name: start.edit, level: 'measure', mode: 'expression', expression: '', unnest: false,
         window: NEW_WINDOW, child: NEW_CHILD,
       };
     } else {
@@ -171,6 +173,7 @@ export class ColumnEditor {
         level: start.level ?? 'measure',
         mode: 'expression',
         expression: start.expression ?? 'x|',
+        unnest: false,
         window: NEW_WINDOW,
         child: NEW_CHILD,
       };
@@ -245,6 +248,8 @@ export class ColumnEditor {
     const next: DerivedColumn = {
       name: d.name.trim(),
       ...(d.mode === 'expression' && lambda ? { lambda } : {}),
+      // explode: row stage only (after grouping there are no source rows to repeat)
+      ...(d.mode === 'expression' && d.unnest && d.level !== 'group' ? { unnest: true } : {}),
       ...(d.mode === 'window' ? { window: this.#window() } : {}),
       ...(d.mode === 'children' ? { childAggregate: { ...d.child } } : {}),
       // A group-level column is already past the aggregation, so it has
@@ -497,6 +502,8 @@ export class ColumnEditor {
       exprBox.hidden = this.#draft.mode !== 'expression';
       // JSON columns are source-row values: nothing to pick at Group Level.
       jsonBox.hidden = this.#draft.level === 'group';
+      // explode repeats source rows: none left at Group Level
+      explodeRow.hidden = this.#draft.level === 'group';
       winBox.hidden = this.#draft.mode !== 'window';
       childBox.hidden = this.#draft.mode !== 'children';
     };
@@ -519,6 +526,8 @@ export class ColumnEditor {
       }
       this.#draft.level = e.kind;
       level.value = e.kind;
+      this.#draft.unnest = e.unnest === true;
+      explode.checked = this.#draft.unnest;
       // the extraction is a tree; the person edits the compiler's print of it
       void this.#options.print(e.lambda).then((text) => {
         this.#draft.expression = text;
@@ -537,6 +546,19 @@ export class ColumnEditor {
     expr.placeholder = 'x|$x.notional * 1.05';
     expr.addEventListener('input', () => {
       this.#draft.expression = expr.value;
+      this.#edited();
+    });
+
+    // EXPLODE: the expression yields a collection; each row repeats once per element.
+    const explodeRow = el(doc, 'label', 'dc-calc-explode', exprBox);
+    const explode = el(doc, 'input', 'dc-calc-input-explode', explodeRow) as HTMLInputElement;
+    explode.type = 'checkbox';
+    explode.checked = this.#draft.unnest;
+    explodeRow.append(doc.createTextNode(' One row per element (explode)'));
+    explodeRow.title = 'Each row repeats once per element of the collection the expression yields. '
+      + 'A figure of the row itself (an order total) then appears once per element: summing it counts it again.';
+    explode.addEventListener('change', () => {
+      this.#draft.unnest = explode.checked;
       this.#edited();
     });
 
@@ -939,6 +961,7 @@ function findColumn(s: CubeSnapshot, name: string): { readonly draft: Draft; rea
         level: row.kind ?? defaultKind(row.type),
         mode: row.window ? 'window' : 'expression',
         expression: '',
+        unnest: row.unnest === true,
         window: row.window ?? NEW_WINDOW,
         child: NEW_CHILD,
       },
@@ -951,7 +974,7 @@ function findColumn(s: CubeSnapshot, name: string): { readonly draft: Draft; rea
       draft: {
         name, level: 'group',
         mode: group.childAggregate ? 'children' : group.window ? 'window' : 'expression',
-        expression: '', window: group.window ?? NEW_WINDOW,
+        expression: '', unnest: false, window: group.window ?? NEW_WINDOW,
         child: group.childAggregate ?? NEW_CHILD,
       },
       ...(group.lambda ? { lambda: group.lambda } : {}),

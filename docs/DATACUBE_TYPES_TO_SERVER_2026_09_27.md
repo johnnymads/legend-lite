@@ -409,8 +409,8 @@ corpus/PCT measured first; due when either (1) is pinned byte-for-byte or relati
 
 **T6. JSON shape: the sampler, made robust (REVISED 2026-09-28, the user).** D5 (the database's
 JSON-structure function over the whole column) was measured and set aside: upstream Pure has no
-function that lists a document's keys (its Variant functions are fromJson, to, toMany, toVariant,
-get, flatten), so a lite-only native would break the field browser on the legend-engine plane
+function that reports a column's structure (a document's KEYS it can list, `to(@Map<String,
+Variant>)->keys()`, a correction recorded below), so a lite-only native would break the field browser on the legend-engine plane
 ("same client code on both"), and DuckDB's `json_group_structure` loses what users have (dates,
 presence, common values). The browser only SUGGESTS which `to(@T)` to write; the compiler types
 every column it makes. So the sampler stays client side, and becomes robust:
@@ -456,6 +456,19 @@ sub-object, an array, or an array's first element becomes a JSON column of its o
 the compiler, and is read and extracted from again like any JSON column. Proven through the real app
 (`test/json-read`): customer -> its tier; items -> their count; items' first element -> its sku.
 Added: "first element, as JSON" for an array of objects.
+
+**Explode (the user, 2026-09-28: "all cities explode ... all tuples of city+kind").** A calculated
+column marked `unnest` is each row once per element of the collection its expression yields:
+`lateral(x|<collection>->flatten(~name))`, upstream Pure's own unnest (`lateral` and `flatten` are
+upstream functions; lite lowers them to `CROSS JOIN LATERAL (... UNNEST ...)`). The element is a JSON
+column of its own, extracted from again, so an address's kind and city sit side by side; the Columns
+panel hides the id to leave just (kind, city), and grouping by both gives each pair once. The field
+browser offers "one row per element (explode)" on every array, and the column editor a checkbox,
+row stage only, warning that a row's own figures then count once per element. Proven through the
+real app (`test/json-read`) against DuckDB's own UNNEST. pure-protocol gained `Relation.lateral` and
+`flatten`, twinned byte for byte with lite's parse. Also measured on the way: upstream Pure CAN list a
+document's keys (`to(@Map<String, Variant>)->keys()`), which an earlier T6 note denied; a database
+key census is possible, and kept for later -- the streamed full read already gives every field.
 
 Order: T1, then T2 and T3 (independent), then T4, T5, T6, T7, T8, then T9 and T10. Legs B (one state owner) and the
 remaining audit legs are unaffected, except that T4's typed keys remove the key text leg B would
