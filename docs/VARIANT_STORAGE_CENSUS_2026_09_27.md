@@ -106,7 +106,8 @@ range, CLI and WASM); for a native LIST it is the correct element instead of the
 is a latent silent wrong answer today for anyone who declares a native LIST column as
 `SEMISTRUCTURED` by hand, so it stands on its own. Cost: SQL text pinned with the subscript changes.
 
-**V2. A whole Variant column value is read as JSON where it is used whole.** Where a stored Variant
+**V2. A whole Variant column value is read as JSON where it is used whole** (landed as
+`CAST(col AS JSON)`, see "As landed"). Where a stored Variant
 column reference reaches the outermost select list, a grouping/ordering/distinct key, or a comparison,
 the DuckDB dialect renders it `to_json(col)`. Navigation is untouched (it already casts). That removes
 D2 and D3 for native storage and makes both storages group and compare by the same JSON text. For JSON
@@ -136,6 +137,30 @@ tests pin text). If any row other than JSON whitespace changes, stop and report.
     cast, `CAST(to_json(t0.NUMS) AS BIGINT[])`. A `to`/`toMany` cast of a whole value is a navigation
     form too (it works on a native LIST directly: `CAST([1,2] AS BIGINT[])`), so V2 leaves casts alone.
 - The applied change is kept out of the tree (the job's scratch patch); nothing landed.
+
+### As landed (2026-09-27, user "go")
+
+- **V1** as proposed: `DuckDb.variantGet` renders every key with the arrow.
+- **V2, with two corrections found while landing it:**
+  - the whole-value read is `CAST(col AS JSON)`, not `to_json(col)`. `to_json` of JSON TEXT held in a
+    VARCHAR (the storage several of lite's own tests use for a `SEMISTRUCTURED` column) quotes it as a
+    JSON string (`"{\"a\": 1}"`); `CAST AS JSON` parses it, passes DuckDB JSON through untouched (no
+    re-serialization, so JSON storage's text does not change at all), and turns a STRUCT/LIST/MAP into
+    the same JSON `to_json` would. NULL stays NULL.
+  - a `to`/`toMany` cast of a whole value reads the column as it is (the measurement's miss), except a
+    cast to text, which reads it as JSON first (D4: a native value would print in DuckDB's syntax);
+    `toVariant` of a stored column is `to_json(col)` once, as before.
+  - Rendering: `AnsiSqlRenderer.columnRef` (a hook), `DuckDb.columnRef`/`projection` (a bare projected
+    column keeps its name, `CAST(t0.V AS JSON) AS V`), `navigated` for the navigation operands.
+- **V3** as proposed: `DuckDb.catalogType` reads STRUCT/LIST/MAP/UNION as `SEMISTRUCTURED`, no
+  conversion. Uploads keep DuckDB's nested storage; a read-only warehouse table's nested columns appear
+  (S3a of the typed-values design is met).
+- **Proof on native storage, not only JSON:** `LowerRelationTest` runs the get chain (a key, an index,
+  `->>` under a cast) over a STRUCT holding a LIST of STRUCTs, `toMany(@Variant)->map->fold` and
+  `toMany(@Integer)->fold` over a native INTEGER[], and `wholeVariantReadsAsJsonInEveryStorage`
+  projects and groups one column stored as VARCHAR text, as JSON and as a STRUCT -- identical rows; the
+  DataCube upload test plans an index, a key and a whole value through the WASM planner over an
+  upload kept as STRUCTs, in DuckDB-WASM.
 
 ### Rejected alternatives
 

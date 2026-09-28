@@ -450,16 +450,17 @@ public class GetCheckerTest {
         }
 
         @Test
-        @DisplayName("index access generates array subscript")
+        @DisplayName("index access takes the JSON arrow, never a subscript")
         void testIndexSqlGen() {
             String generatedSql = sql("""
                     #>{store::EventDatabase.T_EVENTS}#
                         ->extend(~first: _ | $_.PAYLOAD->get('items')->get(0))
                         ->select(~[ID, first])
                     """);
-            // Should contain array index access (e.g., [0] or [1] depending on dialect)
-            assertTrue(generatedSql.contains("[") || generatedSql.contains("json_extract"),
-                    "Index access should generate subscript. SQL: " + generatedSql);
+            // the arrow is 0-based on JSON and on a native LIST alike; a subscript is 1-based
+            // on a native LIST (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md, D1)
+            assertTrue(generatedSql.contains("-> 0)") && !generatedSql.contains("[0]"),
+                    "Index access should take the arrow. SQL: " + generatedSql);
         }
     }
 }

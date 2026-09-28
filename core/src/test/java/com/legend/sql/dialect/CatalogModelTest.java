@@ -77,25 +77,34 @@ class CatalogModelTest {
     void aTypeTheDdlCannotSayIsConvertedAtTheSource_named() {
         CatalogModel.Database db = CatalogModel.database("t::DB", "s", "orders", List.of(
                 new CatalogModel.Column("id", "BIGINT"),
-                new CatalogModel.Column("items", "STRUCT(sku VARCHAR)[]"),
+                new CatalogModel.Column("at", "TIMESTAMP WITH TIME ZONE"),
                 new CatalogModel.Column("big", "UBIGINT")), new DuckDb(), true);
-        assertEquals(List.of(new CatalogModel.Conversion("items", "to_json(\"items\")"),
+        assertEquals(List.of(new CatalogModel.Conversion("at", "CAST(timezone('UTC', \"at\") AS TIMESTAMP)"),
                 new CatalogModel.Conversion("big", "CAST(\"big\" AS DECIMAL(20,0))")), db.conversions());
         assertTrue(db.text().contains("Schema s"), db.text());
-        assertTrue(db.text().contains("items SEMISTRUCTURED"), db.text());
         assertEquals("#>{t::DB.s.orders}#", db.accessor());
+    }
+
+    @Test
+    void aNestedColumnIsAVariantAsStored_evenOnAReadOnlySource() {
+        CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", List.of(
+                new CatalogModel.Column("items", "STRUCT(sku VARCHAR)[]"),
+                new CatalogModel.Column("attrs", "MAP(VARCHAR, INTEGER)")), new DuckDb(), false);
+        assertEquals(List.of(), db.conversions());
+        assertEquals(List.of(), db.excluded());
+        assertTrue(db.text().contains("items SEMISTRUCTURED") && db.text().contains("attrs SEMISTRUCTURED"), db.text());
     }
 
     @Test
     void aReadOnlySourceLeavesOutWhatItCannotConvert_namingIt() {
         CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", List.of(
                 new CatalogModel.Column("id", "BIGINT"),
-                new CatalogModel.Column("items", "STRUCT(sku VARCHAR)[]")), new DuckDb(), false);
-        assertEquals(List.of("items"), db.excluded());
+                new CatalogModel.Column("at", "TIMESTAMPTZ")), new DuckDb(), false);
+        assertEquals(List.of("at"), db.excluded());
         assertEquals(List.of(), db.conversions());
-        assertTrue(!db.text().contains("items"), db.text());
+        assertTrue(!db.text().contains("at "), db.text());
         assertThrows(IllegalArgumentException.class, () -> CatalogModel.database("t::DB", null, "T",
-                List.of(new CatalogModel.Column("items", "INTEGER[]")), new DuckDb(), false));
+                List.of(new CatalogModel.Column("at", "TIMESTAMPTZ")), new DuckDb(), false));
     }
 
     @Test

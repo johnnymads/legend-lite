@@ -719,12 +719,57 @@ class LowerRelationTest {
                         + " $x.PAYLOAD->get('items')->get(0)->get('sku')->to(@String))"));
         String sql = new DuckDb().render(q);
         // -> hops parenthesize (the JSON arrow collides with DuckDB's lambda
-        // arrow inside list lambdas) and INTEGER keys render as subscripts.
+        // arrow inside list lambdas); an INTEGER key takes the arrow too, never a
+        // subscript (a native LIST's subscript is 1-based: VARIANT_STORAGE_CENSUS D1).
         assertTrue(sql.contains(
-                "CAST((((t0.PAYLOAD -> 'items'))[0] ->> 'sku') AS VARCHAR) AS sku"),
-                "-> hops, subscript index, ->> at the conversion: " + sql);
+                "CAST((((t0.PAYLOAD -> 'items') -> 0) ->> 'sku') AS VARCHAR) AS sku"),
+                "-> hops, arrow index, ->> at the conversion: " + sql);
         assertEquals(List.of("1|A-7", "2|B-2"),
                 exec("SELECT ID, sku FROM (" + sql + ")\nORDER BY ID"));
+
+        // the same Pure over the same data stored NATIVELY (a STRUCT holding a LIST of
+        // STRUCTs), declared SEMISTRUCTURED alike: the same rows
+        try (var st = conn.createStatement()) {
+            st.execute("CREATE TABLE T_DOCS_N AS SELECT ID, CAST(PAYLOAD AS"
+                    + " STRUCT(items STRUCT(sku VARCHAR)[], qty INTEGER)) AS PAYLOAD FROM T_DOCS");
+        }
+        String nativeSql = new DuckDb().render(new Lowerer(com.legend.lowering.PlatformRegistrations.catalogTable())
+                .lower(Compiler.compileQuery(model.replace("T_DOCS", "T_DOCS_N"),
+                        "#>{test::DB.T_DOCS_N}#->extend(~sku : x |"
+                                + " $x.PAYLOAD->get('items')->get(0)->get('sku')->to(@String))")));
+        assertEquals(List.of("1|A-7", "2|B-2"),
+                exec("SELECT ID, sku FROM (" + nativeSql + ")\nORDER BY ID"), "native storage: " + nativeSql);
+    }
+
+    @Test
+    @DisplayName("a whole stored Variant reads as JSON whatever the storage: VARCHAR text, JSON, a native STRUCT")
+    void wholeVariantReadsAsJsonInEveryStorage() throws SQLException {
+        try (var st = conn.createStatement()) {
+            st.execute("CREATE TABLE T_VS (ID INTEGER NOT NULL, V VARCHAR)");
+            st.execute("INSERT INTO T_VS VALUES (1, '{\"a\":1,\"b\":\"x\"}'), (2, '{\"a\":1,\"b\":\"x\"}'),"
+                    + " (3, '{\"a\":2,\"b\":null}')");
+            st.execute("CREATE TABLE T_VJ AS SELECT ID, CAST(V AS JSON) AS V FROM T_VS");
+            st.execute("CREATE TABLE T_VN AS SELECT ID, CAST(V AS STRUCT(a INTEGER, b VARCHAR)) AS V FROM T_VS");
+        }
+        List<List<String>> answers = new ArrayList<>();
+        for (String table : List.of("T_VS", "T_VJ", "T_VN")) {
+            String model = "###Relational\nDatabase test::DB ( Table " + table
+                    + " (ID INTEGER NOT NULL, V SEMISTRUCTURED) )\n";
+            String projected = new DuckDb().render(new Lowerer(com.legend.lowering.PlatformRegistrations.catalogTable())
+                    .lower(Compiler.compileQuery(model, "#>{test::DB." + table + "}#->select(~[ID, V])")));
+            // the whole value is read as JSON, under its own name; navigation is not
+            assertTrue(projected.contains("CAST(t0.V AS JSON) AS V"), projected);
+            String grouped = new DuckDb().render(new Lowerer(com.legend.lowering.PlatformRegistrations.catalogTable())
+                    .lower(Compiler.compileQuery(model,
+                            "#>{test::DB." + table + "}#->groupBy(~[V], ~[n : x | $x.ID : y | $y->count()])")));
+            List<String> rows = new ArrayList<>(exec("SELECT ID, CAST(V AS VARCHAR) FROM (" + projected + ") ORDER BY ID"));
+            rows.addAll(exec("SELECT CAST(V AS VARCHAR), n FROM (" + grouped + ") ORDER BY n DESC"));
+            answers.add(rows);
+        }
+        assertEquals(List.of("1|{\"a\":1,\"b\":\"x\"}", "2|{\"a\":1,\"b\":\"x\"}", "3|{\"a\":2,\"b\":null}",
+                "{\"a\":1,\"b\":\"x\"}|2", "{\"a\":2,\"b\":null}|1"), answers.get(0));
+        assertEquals(answers.get(0), answers.get(1), "JSON storage");
+        assertEquals(answers.get(0), answers.get(2), "native STRUCT storage");
     }
 
     @Test
@@ -766,6 +811,20 @@ class LowerRelationTest {
                 "typed array cast: " + typed);
         assertEquals(List.of("1|6", "2|10"),
                 exec("SELECT ID, first FROM (" + typed + ")\nORDER BY ID"));
+
+        // the same two over a NATIVE LIST column declared SEMISTRUCTURED: the same rows (a
+        // cast and the JSON[] elements read either storage as it is)
+        try (var st = conn.createStatement()) {
+            st.execute("CREATE TABLE T_CARTS_N AS SELECT ID, CAST(NUMS AS INTEGER[]) AS NUMS FROM T_CARTS");
+        }
+        String nativeModel = model.replace("T_CARTS", "T_CARTS_N");
+        for (String body : List.of("$x.NUMS->toMany(@Variant)->map(i | $i->to(@Integer)->toOne())->fold({e, a | $e + $a}, 0)",
+                "$x.NUMS->toMany(@Integer)->fold({e, a | $e + $a}, 0)")) {
+            String nativeSql = new DuckDb().render(new Lowerer(com.legend.lowering.PlatformRegistrations.catalogTable())
+                    .lower(Compiler.compileQuery(nativeModel, "#>{test::DB.T_CARTS_N}#->extend(~total : x | " + body + ")")));
+            assertEquals(List.of("1|6", "2|10"),
+                    exec("SELECT ID, total FROM (" + nativeSql + ")\nORDER BY ID"), "native storage: " + nativeSql);
+        }
 
         // to(@String) on a BARE variant column extracts the root value's
         // TEXT, as a get(...) access does. Moved 2026-09-26 (datacube

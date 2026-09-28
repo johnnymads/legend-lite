@@ -87,13 +87,22 @@ describe('inferModel', () => {
   });
 
   it('names what the source must convert, or what a read-only source leaves out', async () => {
-    const cols = [{ name: 'id', type: 'BIGINT' }, { name: 'items', type: 'STRUCT(sku VARCHAR)[]' }];
+    const cols = [{ name: 'id', type: 'BIGINT' }, { name: 'at', type: 'TIMESTAMPTZ' }];
     const upload = await inferModel(build, cols, { table: 't', convertible: true });
-    assert.deepEqual(upload.conversions, [{ column: 'items', sql: 'to_json("items")' }]);
-    assert.match(upload.model, /items SEMISTRUCTURED/);
+    assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
+    assert.match(upload.model, /at TIMESTAMP/);
     const warehouse = await inferModel(build, cols, { table: 't', schema: 's', convertible: false });
-    assert.deepEqual(warehouse.excluded, ['items']);
-    assert.doesNotMatch(warehouse.model, /items/);
+    assert.deepEqual(warehouse.excluded, ['at']);
+    assert.doesNotMatch(warehouse.model, / at /);
+  });
+
+  it('declares a nested column a Variant as stored, on any source (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)', async () => {
+    const cols = [{ name: 'items', type: 'STRUCT(sku VARCHAR)[]' }, { name: 'attrs', type: 'MAP(VARCHAR, INTEGER)' }];
+    for (const convertible of [true, false]) {
+      const m = await inferModel(build, cols, { table: 't', convertible });
+      assert.deepEqual([m.conversions, m.excluded], [[], []]);
+      assert.match(m.model, /items SEMISTRUCTURED,\n\s*attrs SEMISTRUCTURED/);
+    }
   });
 });
 

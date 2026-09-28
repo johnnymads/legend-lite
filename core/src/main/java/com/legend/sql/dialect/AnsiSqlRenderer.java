@@ -216,6 +216,11 @@ public class AnsiSqlRenderer implements SqlDialect {
      * projection's DECLARED output ({@code p.out()}) and labels
      * explicitly — the engine's own convention (every golden aliases
      * every projection). */
+    /** A column reference, qualified by its source's alias when it has one. */
+    protected String columnRef(SqlExpr.Column c) {
+        return c.table() == null ? columnName(c) : aliasIdent(c.table()) + "." + columnName(c);
+    }
+
     protected String projection(SqlSelect.Projection p) {
         // the synthetic scalar-map marker (PlatformTypes.SYNTH_MAP_COL)
         // stays IN the execution alias — downstream references are built
@@ -451,8 +456,7 @@ public class AnsiSqlRenderer implements SqlDialect {
             // the QUALIFIER is structurally always a source ALIAS (the
             // lowerer aliases every FROM source) — it spells with the
             // alias rule; the NAME spells by its ORIGIN (columnName)
-            case SqlExpr.Column c -> c.table() == null
-                    ? columnName(c) : aliasIdent(c.table()) + "." + columnName(c);
+            case SqlExpr.Column c -> columnRef(c);
             case SqlExpr.Star s -> s.table() == null ? "*" : aliasIdent(s.table()) + ".*";
             // DuckDB's EXCLUDE spelling (the one PIVOT backend); the dropped
             // names quote UNCONDITIONALLY — the corpus pins the quoted form.

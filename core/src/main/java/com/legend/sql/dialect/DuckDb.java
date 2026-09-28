@@ -75,9 +75,10 @@ public final class DuckDb extends AnsiSqlRenderer {
     /**
      * A DuckDB catalog type (what {@code DESCRIBE} reports) as a Pure Database declares it
      * (T2; the design's step 3 table). Every type the DDL can say is declared as itself; a
-     * type it cannot is converted at the source, explicitly -- nested values to JSON (a
-     * Variant), the unsigned and 128-bit integers to exact decimals, a time of day, a UUID,
-     * an interval, an enum and a bit string to their canonical text. A BLOB, and any type
+     * type it cannot is converted at the source, explicitly -- the unsigned and 128-bit
+     * integers to exact decimals, a zoned timestamp to UTC, a time of day, a UUID,
+     * an interval, an enum and a bit string to their canonical text; a nested value (STRUCT,
+     * LIST, MAP, UNION) is a Variant as stored. A BLOB, and any type
      * this dialect does not know, is refused: never guessed as text.
      */
     @Override
@@ -94,9 +95,11 @@ public final class DuckDb extends AnsiSqlRenderer {
         if (varchar.matches()) {
             return new CatalogType("VARCHAR(" + varchar.group(1) + ")", null);
         }
-        // nested: STRUCT(...), MAP(...), UNION(...), a LIST (T[]) or an ARRAY (T[n])
+        // nested: STRUCT(...), MAP(...), UNION(...), a LIST (T[]) or an ARRAY (T[n]) is a Variant
+        // AS STORED -- no conversion: navigation reads it as it is, and a whole value is read
+        // through to_json where it is used whole (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)
         if (t.matches("^(STRUCT|MAP|UNION)\\s*\\(.*") || t.matches(".*\\[\\d*\\]$")) {
-            return new CatalogType("SEMISTRUCTURED", "to_json(%s)");
+            return new CatalogType("SEMISTRUCTURED", null);
         }
         if (t.startsWith("ENUM(") || t.startsWith("ENUM (")) {
             return new CatalogType("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
@@ -436,7 +439,9 @@ public final class DuckDb extends AnsiSqlRenderer {
 
     @Override
     protected String variantConstruct(List<SqlExpr> a) {
-        return fn("to_json", a);
+        // a stored Variant column is read as it is: to_json converts either storage once
+        return a.size() == 1 && storedVariant(a.get(0))
+                ? "to_json(" + navigated(a.get(0)) + ")" : fn("to_json", a);
     }
 
     /** DuckDB explodes select-list unnest into rows — placement idiom. */
@@ -490,17 +495,51 @@ public final class DuckDb extends AnsiSqlRenderer {
     protected String variantGet(List<SqlExpr> args) {
         // Parenthesized ALWAYS: DuckDB's lambda arrow and the JSON arrow
         // collide inside list lambdas (i -> i -> 'k' fails to parse). An
-        // INTEGER key renders as the array subscript — same extraction,
-        // and the corpus greps for it.
-        if (args.get(1) instanceof SqlExpr.IntLit i) {
-            return "(" + expr(args.get(0), 7) + ")[" + i.value() + "]";
-        }
-        return "(" + expr(args.get(0), 7) + " -> " + expr(args.get(1), 8) + ")";
+        // INTEGER key takes the arrow too, never a subscript: on JSON the two
+        // agree (0-based, -1 the last, past the end NULL), but a native LIST's
+        // subscript is 1-based -- (xs)[1] is the FIRST element there, the
+        // second in JSON (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md, D1).
+        return "(" + navigated(args.get(0)) + " -> " + expr(args.get(1), 8) + ")";
+    }
+
+    /**
+     * A STORED Variant column may hold DuckDB JSON or a native STRUCT/LIST/MAP
+     * (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md). Navigation reads either as it is (it casts to
+     * JSON itself); a whole value used as-is -- projected, grouped, sorted, compared -- is read as
+     * JSON ({@code CAST(col AS JSON)}), so every storage answers alike.
+     */
+    private static boolean storedVariant(SqlExpr e) {
+        return e instanceof SqlExpr.Column c
+                && (c.origin() == com.legend.sql.OutputCol.Origin.PHYSICAL
+                        || c.origin() == com.legend.sql.OutputCol.Origin.PHYSICAL_QUOTED)
+                && c.type() instanceof com.legend.sql.TypeFact.Typed t
+                && t.type() == com.legend.sql.SqlType.Scalar.JSON;
+    }
+
+    /** The operand of a navigation: a stored Variant column as it is. */
+    private String navigated(SqlExpr e) {
+        return storedVariant(e) ? super.columnRef((SqlExpr.Column) e) : expr(e, 7);
+    }
+
+    @Override
+    protected String columnRef(SqlExpr.Column c) {
+        String ref = super.columnRef(c);
+        // CAST AS JSON, not to_json: it passes JSON through untouched, parses JSON text held in
+        // a VARCHAR (to_json would quote it as a string), and turns a STRUCT/LIST/MAP into the
+        // same JSON to_json would
+        return storedVariant(c) ? "CAST(" + ref + " AS JSON)" : ref;
+    }
+
+    @Override
+    protected String projection(com.legend.sql.SqlSelect.Projection p) {
+        String out = super.projection(p);
+        return p.alias() == null && storedVariant(p.expr())
+                ? out + " AS " + aliasIdent(((SqlExpr.Column) p.expr()).name()) : out;
     }
 
     @Override
     protected String variantElements(List<SqlExpr> args) {
-        return "CAST(" + expr(args.get(0), 0) + " AS JSON[])";
+        return "CAST(" + (storedVariant(args.get(0)) ? navigated(args.get(0)) : expr(args.get(0), 0)) + " AS JSON[])";
     }
 
     @Override
@@ -519,9 +558,17 @@ public final class DuckDb extends AnsiSqlRenderer {
     protected String variantAwareCast(SqlExpr.Cast c) {
         if (!(c.target() instanceof com.legend.sql.SqlType.Array)
                 && c.value() instanceof SqlExpr.Call call && call.fn() == SqlFn.VARIANT_GET) {
-            String text = "(" + expr(call.args().get(0), 7) + " ->> "
+            String text = "(" + navigated(call.args().get(0)) + " ->> "
                     + expr(call.args().get(1), 8) + ")";
             return "CAST(" + text + " AS " + castTypeName(c.target()) + ")";
+        }
+        // to/toMany of a whole stored Variant: a cast reads either storage as it is (a native
+        // LIST casts to BIGINT[] directly) -- except to TEXT, where a native value would print in
+        // DuckDB's own syntax ({'sku': ABC}); that one reads it as JSON first
+        if (storedVariant(c.value()) && c.target() != com.legend.sql.SqlType.Scalar.VARCHAR
+                && c.target() != com.legend.sql.SqlType.Scalar.TEMPORAL_TEXT
+                && c.target() != com.legend.sql.SqlType.Scalar.DECIMAL_TEXT) {
+            return "CAST(" + navigated(c.value()) + " AS " + castTypeName(c.target()) + ")";
         }
         return super.variantAwareCast(c);
     }

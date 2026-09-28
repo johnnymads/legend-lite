@@ -12,7 +12,7 @@ import { after, before, describe, it } from 'node:test';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { sampleById, sampleFileName } from '../src/samples.ts';
 import { ingestFile, type DuckDbFiles } from '../src/upload.ts';
-import { build } from './catalog-builder.ts';
+import { build, plannerFor } from './catalog-builder.ts';
 
 let engine: DuckDbEngine;
 let files: DuckDbFiles;
@@ -69,6 +69,11 @@ const ORDERS = [
     shipping: { city: 'Paris', express: false } },
 ];
 
+/** A snapshot for `plan`: the planner reads only the grammar. */
+const SNAPSHOT = {
+  source: { expression: '' }, columns: [], derived: [], rows: [], pivotOn: [], measures: [], sorts: [], epoch: 1,
+};
+
 describe('ingestFile with JSON', () => {
   for (const [label, name, text] of [
     ['an array of records', 'orders.json', JSON.stringify(ORDERS)],
@@ -84,19 +89,27 @@ describe('ingestFile with JSON', () => {
       assert.match(r.model, /items SEMISTRUCTURED/);
       assert.match(r.model, /shipping SEMISTRUCTURED/);
 
-      // The table holds what the model declares: JSON, not a STRUCT.
+      // The table keeps DuckDB's own nested storage -- no rewrite at ingest
+      // (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md) ...
       const described = await engine.run(`DESCRIBE "${r.table}"`, 0);
       const names = described.columns.find((c) => c.name === 'column_name')!;
       const types = described.columns.find((c) => c.name === 'column_type')!;
-      const duck = new Map(names.values.map((n, i) => [n, types.values[i]]));
-      assert.equal(duck.get('items'), 'JSON');
-      assert.equal(duck.get('shipping'), 'JSON');
+      const duck = new Map(names.values.map((n, i) => [n, String(types.values[i])]));
+      assert.match(duck.get('items')!, /^STRUCT\(.*\)\[\]$/);
+      assert.match(duck.get('shipping')!, /^STRUCT\(/);
 
-      // ... and the JSON operators the planner emits work on it.
-      const skus = await engine.run(
-        `SELECT u ->> 'sku' AS sku FROM "${r.table}",
-           UNNEST(CAST(items AS JSON[])) t(u) ORDER BY sku`, 0);
-      assert.deepEqual(skus.columns[0]!.values, ['ABC', 'DEF', 'XYZ']);
+      // ... and the planner's own SQL reads it as a Variant: an index, a key, a whole value.
+      const plan = await plannerFor(r.model, r.runtime).plan(`${r.source}`
+        + `->extend(~[first_sku: x | $x.items->get(0)->get('sku')->to(@String),`
+        + ` city: x | $x.shipping->get('city')->to(@String)])`
+        + `->select(~[id, first_sku, city, shipping])->sort([~id->ascending()])`, SNAPSHOT);
+      const out = await engine.execute(plan, 0);
+      const col = (n: string) => out.columns.find((c) => c.name === n)!;
+      assert.deepEqual(col('first_sku').values, ['ABC', 'DEF']);
+      assert.deepEqual(col('city').values, ['Leeds', 'Paris']);
+      assert.equal(col('shipping').type, 'Variant');
+      assert.deepEqual(col('shipping').values.map((v) => JSON.parse(String(v))),
+        ORDERS.map((o) => o.shipping));
     });
   }
 

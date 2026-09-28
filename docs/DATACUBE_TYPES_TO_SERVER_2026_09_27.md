@@ -167,10 +167,10 @@ that needs one is left out and named in the status. Deleted: `sqlTypeOf`, `isNes
 `quoteIdent`, the upload's own `to_json` rewrite. Proof: `CatalogModelTest` compiles every DuckDB
 type and reads the compiler's type back; `upload.test` runs the conversions in DuckDB-WASM (a
 TIMESTAMPTZ lands in UTC to the microsecond, UBIGINT's maximum exact, UUID and TIME as text);
-typed-values refuses a BLOB by name (S3c). **S3a is NOT met for a warehouse table:** its STRUCT
-column is left out rather than navigable. Closing it needs either the dialect to navigate a native
-STRUCT/LIST (no conversion at all, which also serves remote databases), or a converting view owned
-by the warehouse; recorded for T9 with the HTTP `schemaExploration` endpoint for server databases.
+typed-values refuses a BLOB by name (S3c). S3a was not met at first (a warehouse table's STRUCT
+column was left out); it is now: a native STRUCT/LIST/MAP/UNION is a Variant as stored, read by
+DuckDB's dialect with no conversion (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md, V1-V3). The HTTP
+`schemaExploration` endpoint for server databases stays recorded for T9.
 
 **T3. Exact cells.**
 - Each reader decodes by the compiler's type, not the engine's: a date is a calendar date, a

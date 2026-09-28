@@ -73,6 +73,11 @@ h2-fail-roster.txt`.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-27 warehouse: **Variant over native nested storage (V1-V3,
+  docs/VARIANT_STORAGE_CENSUS_2026_09_27.md, user "go"), pushing**. Cross-area, core:
+  `sql/dialect/DuckDb` (an integer Variant key renders `->`, never a subscript; a stored Variant column
+  used whole renders `to_json(col)`; the catalog reads STRUCT/LIST/MAP/UNION as SEMISTRUCTURED with no
+  conversion) and `sql/dialect/AnsiSqlRenderer` (a `columnRef` hook). Measured first: no row changes.
 - 2026-09-27 warehouse: **quoted schema/table names through `#>{db."s"."t"}#` (user-asked), pushing**. Cross-area, core: `model/FromProtocol` keeps a schema's name BARE (as tables and columns
   already are; joins already looked up bare); `compiler/spec/TableReferenceChecker` reads the
   accessor's parts as relational identifiers (`model/RelationalIdentifier.parts`);

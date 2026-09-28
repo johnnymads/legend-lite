@@ -97,7 +97,7 @@ export async function ingestFile(
     ? `read_parquet('${virtualName}')`
     : format === 'json'
       // Each record's top-level keys become columns; anything nested
-      // below them arrives as a STRUCT or a LIST, converted below.
+      // below them arrives as a STRUCT or a LIST, kept as it is (a Variant).
       ? `read_json('${virtualName}', auto_detect=true)`
       // AUTO_DETECT sniffs delimiter, quoting and types. Upstream's
       // DataCube requires a header row and comma delimiters; DuckDB's
@@ -122,10 +122,11 @@ export async function ingestFile(
     `CREATE OR REPLACE TABLE ${qt} AS SELECT * FROM ${reader}`, 0);
 
   // The compiler reads DESCRIBE's types (T2) and says which columns the
-  // table must convert to hold what the model declares: a nested STRUCT or
-  // LIST becomes JSON (legend-lite navigates a Variant with DuckDB's JSON
-  // operators), a TIMESTAMPTZ its UTC timestamp, a UBIGINT an exact
-  // DECIMAL(20,0). An upload is ours to rewrite, so it is rewritten here.
+  // table must convert to hold what the model declares: a TIMESTAMPTZ its UTC
+  // timestamp, a UBIGINT an exact DECIMAL(20,0), a UUID or TIME its text. A
+  // nested STRUCT or LIST needs none: it is a Variant as stored
+  // (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md). An upload is ours to
+  // rewrite, so it is rewritten here.
   const inferred = await inferModel(build, await describeTable(engine, qt),
     { table, convertible: true });
   if (inferred.conversions.length > 0) {
