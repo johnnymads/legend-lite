@@ -382,6 +382,30 @@ export function problems(layout: Layout, cols: number): string[] {
   return out;
 }
 
+/**
+ * The page a board shows until its user arranges it by hand: the main tile
+ * on the left, `mainW` wide, the others stacked on its right, sharing the
+ * `rows` of one screen evenly -- each at least `minH`, so many of them run
+ * past the screen and scroll rather than shrink to nothing. With nothing
+ * beside it, the main tile takes the whole width.
+ */
+export function beside(
+  main: string, others: readonly string[], cols: number, rows: number, mainW: number, minH = 1,
+): Tile[] {
+  if (others.length === 0) return [{ id: main, x: 0, y: 0, w: cols, h: rows }];
+  const w = Math.min(Math.max(1, mainW), cols - 1);
+  const share = Math.floor(rows / others.length);
+  const out: Tile[] = [];
+  let y = 0;
+  others.forEach((id, i) => {
+    // the rows left over go to the first tiles, one each
+    const h = Math.max(minH, share + (i < rows - share * others.length ? 1 : 0));
+    out.push({ id, x: w, y, w: cols - w, h });
+    y += h;
+  });
+  return [{ id: main, x: 0, y: 0, w, h: rows }, ...out];
+}
+
 /** What a screen reader hears after a step (aria-live): 1-based, in words. */
 export function describe(t: Tile, cols: number): string {
   return `column ${t.x + 1} of ${cols}, row ${t.y + 1}, ${t.w} wide, ${t.h} tall`;

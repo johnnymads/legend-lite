@@ -133,3 +133,24 @@ describe('the board', () => {
     assert.throws(() => board.add(tile('a')), /already on the board/);
   });
 });
+
+describe('a board that fits the screen', () => {
+  it('divides its visible height among its rows', () => {
+    Object.defineProperty(host, 'clientHeight', { value: 24 * 20 + 23 * 8 });
+    new Board(host, { fitRows: 24 });
+    assert.equal(host.querySelector<HTMLElement>('.dc-board-grid')!.style.gridAutoRows, '20px');
+  });
+
+  it('keeps rows readable on a short screen', () => {
+    Object.defineProperty(host, 'clientHeight', { value: 200 });
+    new Board(host, { fitRows: 24, rowHeight: 16 });
+    assert.equal(host.querySelector<HTMLElement>('.dc-board-grid')!.style.gridAutoRows, '16px');
+  });
+
+  it('gives a laid-out tile its own limits back', () => {
+    const board = new Board(host);
+    board.add(tile('a', { minH: 6 }));
+    board.setLayout([{ id: 'a', x: 0, y: 0, w: 4, h: 8 }, { id: 'ghost', x: 0, y: 0, w: 1, h: 1 }]);
+    assert.deepEqual(board.layout, [{ id: 'a', x: 0, y: 0, w: 4, h: 8, minH: 6 }]);
+  });
+});

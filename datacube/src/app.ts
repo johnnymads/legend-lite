@@ -66,7 +66,8 @@ import { toPdf, toPlainText } from './export-doc.ts';
 import { toBarChart, toTreemap } from './chart.ts';
 import type { MarkKey } from './chart-option.ts';
 import { ChartPanel } from './ui/chart-panel.ts';
-import { Board } from './layout/board.ts';
+import { Board, BOARD_COLUMNS } from './layout/board.ts';
+import { beside } from './layout/tile-layout.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
@@ -126,7 +127,11 @@ import {
 import { isVariant } from './types.ts';
 
 /** The grid's height on the board, in rows (32px each). */
-const GRID_TILE_ROWS = 16;
+/** The board's rows on one screen (each row a share of the height), and its tiles' least height. */
+const BOARD_ROWS = 24;
+const TILE_MIN_ROWS = 6;
+/** How wide the grid sits beside its charts, of 12 columns. */
+const GRID_BESIDE_COLS = 7;
 
 /** Rows sampled to infer what a JSON column holds. */
 const JSON_SAMPLE_ROWS = 1000;
@@ -363,7 +368,8 @@ export class CubeApp {
   readonly #charts = new Map<string, ChartPanel>();
   #chartCount = 0;
   /** The board of tiles, once a chart is added; until then the grid sits alone. */
-  #board: { readonly board: Board; readonly host: HTMLElement; readonly edit: HTMLButtonElement } | null = null;
+  /** The board, once a chart is open; `auto` until its layout is arranged by hand. */
+  #board: { readonly board: Board; readonly host: HTMLElement; readonly edit: HTMLButtonElement; auto: boolean } | null = null;
   /** Where the grid lives when there is no board. */
   #middle: HTMLElement | null = null;
   #newColumns = 0;
@@ -2169,15 +2175,22 @@ export class CubeApp {
       element: body,
       actions: [options],
       minW: 3,
-      minH: 6,
+      minH: TILE_MIN_ROWS,
     };
-    if (board.size === 1) {
-      // the first chart sits BESIDE the grid, sharing its height
-      board.resizeTile('grid', 7, GRID_TILE_ROWS);
-      board.add(tile, { x: 7, y: 0, w: 5, h: GRID_TILE_ROWS });
-    } else {
-      board.add(tile, { w: 6, h: 12 });
-    }
+    board.add(tile, { w: 6, h: 12 });
+    this.#arrange();
+  }
+
+  /**
+   * Until the layout is arranged by hand: the grid on the left, the charts
+   * stacked on its right, sharing one screen's height. After, a new chart
+   * goes below and nothing already placed moves.
+   */
+  #arrange(): void {
+    const b = this.#board;
+    if (!b?.auto) return;
+    b.board.setLayout(beside('grid', [...this.#charts.keys()], BOARD_COLUMNS, BOARD_ROWS,
+      GRID_BESIDE_COLS, TILE_MIN_ROWS));
   }
 
   /**
@@ -2185,7 +2198,7 @@ export class CubeApp {
    * a tile is never re-parented after), and a bar above it holds Add chart and
    * the layout's Edit switch.
    */
-  #ensureBoard(): { board: Board; host: HTMLElement; edit: HTMLButtonElement } {
+  #ensureBoard(): { board: Board; host: HTMLElement; edit: HTMLButtonElement; auto: boolean } {
     if (this.#board) return this.#board;
     const doc = this.#doc;
     const host = doc.createElement('div');
@@ -2207,21 +2220,28 @@ export class CubeApp {
     bar.append(add, edit);
     host.append(bar, area);
     (this.#middle ?? this.#els.root).insertBefore(host, this.#els.grid);
-    const board = new Board(area, { onRemove: (tileId) => this.#removeTile(tileId) });
+    const board = new Board(area, {
+      fitRows: BOARD_ROWS,
+      // a short window still fits its screenful; a 6-row tile is then ~110px
+      rowHeight: 12,
+      onRemove: (tileId) => this.#removeTile(tileId),
+      // arranged by hand: from now on the layout is the user's
+      onChange: () => { if (this.#board) this.#board.auto = false; },
+    });
     board.add({
       id: 'grid',
       title: this.#config.reportTitle ?? 'Grid',
       element: this.#els.grid,
       removable: false,
       minW: 3,
-      minH: 6,
-    }, { x: 0, y: 0, w: 12, h: GRID_TILE_ROWS });
+      minH: TILE_MIN_ROWS,
+    }, { x: 0, y: 0, w: BOARD_COLUMNS, h: BOARD_ROWS });
     edit.addEventListener('click', () => {
       board.setEditing(!board.editing);
       edit.setAttribute('aria-pressed', String(board.editing));
       edit.textContent = board.editing ? 'Done' : 'Edit layout';
     });
-    this.#board = { board, host, edit };
+    this.#board = { board, host, edit, auto: true };
     return this.#board;
   }
 
@@ -2232,7 +2252,10 @@ export class CubeApp {
     this.#charts.get(id)?.dispose();
     this.#charts.delete(id);
     b.board.remove(id);
-    if (b.board.size > 1) return;
+    if (b.board.size > 1) {
+      this.#arrange();
+      return;
+    }
     b.board.remove('grid');
     (this.#middle ?? this.#els.root).insertBefore(this.#els.grid, b.host);
     b.board.dispose();

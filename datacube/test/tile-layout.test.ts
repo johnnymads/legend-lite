@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 import {
   type Layout,
   type Tile,
+  beside,
   bottom,
   collides,
   compact,
@@ -377,5 +378,28 @@ describe('scale', () => {
     legal(out, 12);
     assert.ok(perStep < 16, `${perStep.toFixed(2)} ms per drag step`);
     console.log(`# 200 tiles: ${perStep.toFixed(2)} ms per drag step`);
+  });
+});
+
+describe('beside', () => {
+  it('gives the main tile the whole width when it is alone', () => {
+    assert.deepEqual(beside('grid', [], 12, 24, 7), [{ id: 'grid', x: 0, y: 0, w: 12, h: 24 }]);
+  });
+
+  it('stacks the others on its right, sharing the height evenly', () => {
+    const l = beside('grid', ['a', 'b'], 12, 24, 7);
+    assert.deepEqual(l, [
+      { id: 'grid', x: 0, y: 0, w: 7, h: 24 },
+      { id: 'a', x: 7, y: 0, w: 5, h: 12 },
+      { id: 'b', x: 7, y: 12, w: 5, h: 12 },
+    ]);
+    assert.deepEqual(problems(l, 12), []);
+  });
+
+  it('hands the rows left over to the first tiles, and runs past the screen rather than below the least height', () => {
+    assert.deepEqual(beside('g', ['a', 'b', 'c', 'd', 'e'], 12, 24, 7).slice(1).map((t) => t.h), [5, 5, 5, 5, 4]);
+    const tall = beside('g', ['a', 'b', 'c', 'd', 'e'], 12, 24, 7, 6);
+    assert.deepEqual(tall.slice(1).map((t) => t.h), [6, 6, 6, 6, 6]);
+    assert.deepEqual(problems(tall, 12), []);
   });
 });

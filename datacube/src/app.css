@@ -2413,3 +2413,6 @@
 .dc-chart-tile { display: flex; }
 .dc-chart-tile .dc-chartpanel { flex: 1 1 auto; min-width: 0; }
 .dc-chart-tile .dc-chartpanel-form[hidden] { display: none; }
+
+.dc-chartpanel-status[hidden] { display: none; }
+.dc-chartpanel-hint { margin: var(--dc-pad-2) 0 0; color: var(--dc-muted); font-size: var(--dc-text-sm-size); }

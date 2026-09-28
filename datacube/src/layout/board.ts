@@ -41,8 +41,14 @@ export interface BoardTile {
 export interface BoardOptions {
   /** Columns of the full-width board. */
   readonly cols?: number;
-  /** One row's height, in pixels. */
+  /** One row's height, in pixels; with `fitRows`, the least it may be. */
   readonly rowHeight?: number;
+  /**
+   * Rows that fill the board's visible height: each row is that height
+   * divided among them, so a layout that many rows tall fits the screen
+   * exactly, whatever its size, and a taller one scrolls.
+   */
+  readonly fitRows?: number;
   /** Space between tiles, in pixels. */
   readonly gap?: number;
   /** Below this width the board is one column and cannot be edited. */
@@ -69,7 +75,7 @@ export class Board {
   readonly #grid: HTMLElement;
   readonly #live: HTMLElement;
   readonly #cols: number;
-  readonly #rowHeight: number;
+  #rowHeight: number;
   readonly #gap: number;
   readonly #narrowBelow: number;
   readonly #options: BoardOptions;
@@ -155,7 +161,15 @@ export class Board {
 
   /** Put a whole layout (restoring a saved page). Unknown ids are ignored. */
   setLayout(layout: Layout): void {
-    this.#layout = layout.filter((t) => this.#tiles.has(t.id));
+    this.#layout = layout.filter((t) => this.#tiles.has(t.id)).map((t) => {
+      // a tile's limits are its own, whatever the layout handed in says
+      const spec = this.#tiles.get(t.id)!.spec;
+      return {
+        ...t,
+        ...(spec.minW !== undefined ? { minW: spec.minW } : {}),
+        ...(spec.minH !== undefined ? { minH: spec.minH } : {}),
+      };
+    });
     this.#shown = this.#layout;
     this.#paint();
   }
@@ -229,6 +243,16 @@ export class Board {
   }
 
   #measure(): void {
+    const fit = this.#options.fitRows;
+    const height = this.#host.clientHeight;
+    if (fit !== undefined && height > 0) {
+      const least = this.#options.rowHeight ?? 16;
+      const row = Math.max(least, Math.floor((height - this.#gap * (fit - 1)) / fit));
+      if (row !== this.#rowHeight) {
+        this.#rowHeight = row;
+        this.#grid.style.gridAutoRows = `${row}px`;
+      }
+    }
     const width = this.#host.clientWidth;
     const narrow = width > 0 && width < this.#narrowBelow;
     if (narrow !== this.#narrow) {

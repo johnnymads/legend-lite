@@ -216,6 +216,12 @@ export class ChartPanel {
       ] as const, (v) => { if (v) this.#setOption('legend', v); })),
       checkbox(doc, 'Show values', spec.options.labels, (v) => this.#setOption('labels', v)),
     );
+    if (!scatter) {
+      const hint = doc.createElement('p');
+      hint.className = 'dc-chartpanel-hint';
+      hint.textContent = 'Click a mark on the chart to filter the cube to it.';
+      form.append(hint);
+    }
   }
 
   // -- drawing ----------------------------------------------------------------
@@ -233,7 +239,8 @@ export class ChartPanel {
     this.#inflight?.abort();
     const abort = new AbortController();
     this.#inflight = abort;
-    this.#say('Loading…');
+    // busy, not a "Loading" line: a line that comes and goes resizes the chart twice
+    this.#canvas.setAttribute('aria-busy', 'true');
     try {
       const { query, snapshot } = chartQuery(cube, spec);
       const rows = await this.#options.run(query, snapshot, abort.signal);
@@ -245,15 +252,18 @@ export class ChartPanel {
       this.#say([
         ...drawing.notes,
         ...(capped ? [`The first ${spec.options.limit} by the chosen order; raise "At most" to see more.`] : []),
-        spec.mark === 'scatter' ? '' : 'Click a mark to filter the cube to it.',
-      ].filter(Boolean).join(' '));
+      ].join(' '));
     } catch (e) {
       if (abort.signal.aborted || this.#disposed) return;
       this.#say(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      if (this.#inflight === abort) this.#canvas.removeAttribute('aria-busy');
     }
   }
 
   #say(text: string, bad = false): void {
+    // said only when there is something to say: a small chart needs its height
+    this.#status.hidden = text === '';
     this.#status.textContent = text;
     this.#status.classList.toggle('dc-chartpanel-bad', bad);
   }
