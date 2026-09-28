@@ -49,14 +49,16 @@ class EngineHandlersTest {
     }
 
     /** Pinned EXACTLY (audit 2026-09-25: a floor and a ceiling let a stale or
-     *  half-read registry pass), engine 4.145.0: 404 names over 836 ids, 169
+     *  half-read registry pass), engine 4.145.0: 404 names over 836 ids, 168
      *  engine ids the platform declares nowhere. A bump moves the numbers with
-     *  its dated reason; a declaration landing lowers the undeclared count. */
+     *  its dated reason; a declaration landing lowers the undeclared count.
+     *  2026-09-28: 169 -> 168, engine's string::contains(String[0..1], String[1])
+     *  (stringExtension.pure:21) declared (DataCube T5; ContainsOverloadTest). */
     @Test
     void theSurfaceAndItsGapArePinned() {
         int ids = EngineHandlers.names().stream().mapToInt(n -> EngineHandlers.idsOf(n).size()).sum();
         assertEquals(404, EngineHandlers.names().size(), "names");
         assertEquals(836, ids, "engine ids");
-        assertEquals(169, EngineHandlers.undeclaredIds().size(), "undeclared engine ids");
+        assertEquals(168, EngineHandlers.undeclaredIds().size(), "undeclared engine ids");
     }
 }

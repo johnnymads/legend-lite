@@ -140,7 +140,7 @@ concatenate	meta::pure::tds::concatenate_TabularDataSet_1__TabularDataSet_1__Tab
 concatenate	meta::pure::functions::relation::concatenate_Relation_1__Relation_1__Relation_1_	meta::pure::functions::relation::concatenate	engine
 concatenate	meta::pure::functions::collection::concatenate_T_MANY__T_MANY__T_MANY_	meta::pure::functions::collection::concatenate	engine
 contains	meta::pure::functions::string::contains_String_1__String_1__Boolean_1_	meta::pure::functions::string::contains	engine
-contains	meta::pure::functions::string::contains_String_$0_1$__String_1__Boolean_1_		engine
+contains	meta::pure::functions::string::contains_String_$0_1$__String_1__Boolean_1_	meta::pure::functions::string::contains	engine
 contains	meta::pure::functions::collection::contains_Any_MANY__Any_1__Boolean_1_	meta::pure::functions::collection::contains	engine
 containsAll	meta::pure::functions::collection::containsAll_Any_MANY__Any_MANY__Boolean_1_		engine
 containsAny	meta::pure::functions::collection::containsAny_Any_MANY__Any_MANY__Boolean_1_		engine

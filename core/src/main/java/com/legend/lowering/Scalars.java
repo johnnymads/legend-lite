@@ -2011,16 +2011,22 @@ final class Scalars {
         StringPredicates.register(RULES);   // isAlphaNumeric (character-class predicates)
         for (com.legend.model.FunctionId f : com.legend.model.FunctionId.all(Pure.AT_COLLECTION_CONTAINS, Pure.AT_STRING_CONTAINS)) {
             RULES.put(f, (n, args) -> {
-                // COLLECTION-callee c1-LITERALS box (DEEP_AUDIT §3);
                 // dispatch by the RESOLVED CALLEE's param mult (C1
                 // indexOf pattern) — string::contains keeps the scalar.
+                // The COLLECTION callee over a to-one value (a [0..1]
+                // column, a c1-collapsed literal) is membership in a list
+                // of at most one: it boxes, so the SQL is list membership
+                // (`$x.qty->contains(1)` wrote list_contains(t0.qty, 1),
+                // which DuckDB refuses). A [0..1] STRING source no longer
+                // reaches this callee: it resolves to engine's
+                // contains(String[0..1], String[1]) (stringExtension.pure:21).
                 boolean collCallee = !(n.callee().parameters().get(0)
                         .multiplicity() instanceof Multiplicity.Bounded pb0
                         && pb0.upper() != null && pb0.upper() <= 1);
                 if (collCallee) {
                     args = new java.util.ArrayList<>(args);
                     args.set(0, PureSql.asList(args.get(0),
-                            !CollectionLanes.c1Literal(n.args().get(0))));
+                            !isToOne(n.args().get(0))));
                 }
                 // contains(coll, val, comparator): filter by the comparator
                 // against the needle, then non-empty. SQL lambdas are
@@ -2073,12 +2079,12 @@ final class Scalars {
                         && elem != Type.Primitive.STRING) {
                     return CollectionLanes.nullMembership(args.get(0));
                 }
-                if (elem == Type.Primitive.STRING && isToOne(n.args().get(0))) {
-                    // pure [0..1] overload body inlines HERE (engine
-                    // stringExtension.pure:21 contains(String[0..1],
-                    // String[1]) = isNotEmpty && contains) — same guard as
-                    // startsWith/endsWith; STRPOS' accidental NULL>0 was
-                    // filter-equivalent but NULL != false in value position
+                if (!collCallee) {
+                    // string::contains, [1] or engine's [0..1] overload
+                    // (stringExtension.pure:21: isNotEmpty && contains) —
+                    // same guard as startsWith/endsWith; STRPOS' accidental
+                    // NULL>0 was filter-equivalent but NULL != false in value
+                    // position
                     return NullSemantics.optionalOperandGuards(n, args,
                             new SqlExpr.Call(SqlFn.GREATER, List.of(
                                     new SqlExpr.Call(SqlFn.STRPOS, args),

@@ -9,6 +9,7 @@ import com.legend.compiler.element.ModelContext;
 import com.legend.compiler.element.TypedFunction;
 import com.legend.compiler.element.TypedParameter;
 import com.legend.compiler.element.type.Type;
+import com.legend.compiler.spec.typed.TypedFilter;
 import com.legend.compiler.spec.typed.TypedNativeCall;
 import com.legend.compiler.spec.typed.TypedSpec;
 import com.legend.parser.SpecParser;
@@ -33,7 +34,11 @@ import java.util.TreeMap;
  * What DataCube may offer a column of each type, as legend-lite's COMPILER answers it
  * (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T5): DataCube's own queries (written by
  * {@code emit.ts} with the product's query builder) compiled, and for each probe column
- * each aggregate's answer -- the type the level query gives its measure, or refused; and
+ * each aggregate's answer -- the type the level query gives its measure, or refused; each
+ * filter operator's -- whether its condition compiles AND the compiler resolved the
+ * operator's name to the function the operator means (query.ts {@code OPERATOR_FUNCTION}:
+ * the query spells "contains" short, as a person writes it, and on a number column that name
+ * resolves to collection membership, not text containment); and
  * for each function the calculated-column editor offers, the function as the compiler
  * resolves its name and every declared overload of it (the signatures the editor shows),
  * once its example has compiled (the example is the proof: one that does not compile
@@ -51,8 +56,8 @@ public final class OfferFacts {
     private OfferFacts() {
     }
 
-    /** One probe's answers: aggregate to result type (null: refused). */
-    private record Facts(Map<String, String> aggregates) {
+    /** One probe's answers: aggregate to result type (null: refused); operator to whether it compiles. */
+    private record Facts(Map<String, String> aggregates, Map<String, Boolean> operators) {
     }
 
     public static void main(String[] args) throws IOException {
@@ -69,11 +74,12 @@ public final class OfferFacts {
             if (line.isEmpty()) {
                 continue;
             }
-            String[] f = line.split("\t", 4);
+            String[] f = line.split("\t", 5);
             String kind = f[0];
             String probe = f[1];
             String name = f[2];
-            String query = f[3];
+            String meaning = f[3];
+            String query = f[4];
             switch (kind) {
                 case "column" -> declared.put(probe, name);
                 case "type" -> {
@@ -82,6 +88,7 @@ public final class OfferFacts {
                     }
                 }
                 case "agg" -> facts(byProbe, probe).aggregates().put(name, measureType(model, query));
+                case "op" -> facts(byProbe, probe).operators().put(name, means(model, query, meaning));
                 case "calc" -> calcs.put(name, calc(model, ctx, name, query));
                 default -> throw new IllegalArgumentException("unknown line kind: " + kind);
             }
@@ -192,11 +199,45 @@ public final class OfferFacts {
     }
 
     private static Facts facts(Map<String, Facts> byProbe, String probe) {
-        return byProbe.computeIfAbsent(probe, p -> new Facts(new LinkedHashMap<>()));
+        return byProbe.computeIfAbsent(probe, p -> new Facts(new LinkedHashMap<>(), new LinkedHashMap<>()));
     }
 
     private static LambdaFunction lambda(String json) {
         return ProtocolReader.lambda(json);
+    }
+
+    /**
+     * Whether a filter's query compiles AND its condition calls {@code function}: the compiler
+     * resolved the short name the query spells to the function the operator means.
+     */
+    private static boolean means(String model, String query, String function) {
+        TypedSpec typed;
+        try {
+            Compiler.resultType(model, lambda(query));
+            typed = Compiler.compileQuery(model, lambda(query));
+        } catch (RuntimeException refused) {
+            return false;
+        }
+        ArrayDeque<TypedSpec> work = new ArrayDeque<>(List.of(typed));
+        int filters = 0;
+        boolean calls = false;
+        while (!work.isEmpty()) {
+            TypedSpec n = work.poll();
+            if (n instanceof TypedFilter filter) {
+                filters++;
+                ArrayDeque<TypedSpec> inside = new ArrayDeque<>(List.of(filter.predicate()));
+                while (!inside.isEmpty()) {
+                    TypedSpec m = inside.poll();
+                    calls |= m instanceof TypedNativeCall c && c.callee().qualifiedName().equals(function);
+                    inside.addAll(m.children());
+                }
+            }
+            work.addAll(n.children());
+        }
+        if (filters != 1) {
+            throw new IllegalStateException("expected one filter in the query, found " + filters + ": " + query);
+        }
+        return calls;
     }
 
     /** The measure's type in a level query, or null when the compiler refuses the query. */
@@ -222,11 +263,13 @@ public final class OfferFacts {
                 .append("// compiles them with legend-lite) -- DO NOT EDIT. Regenerate: bazel run //datacube:update_generated;\n")
                 .append("// its diff test fails the build if this copy drifts from the compiler.\n")
                 .append("// docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T5.\n\n")
-                .append("import type { AggregateFn } from '../snapshot.ts';\n\n")
+                .append("import type { AggregateFn, FilterOperator } from '../snapshot.ts';\n\n")
                 .append("/** What the compiler answered DataCube's queries over a column of one type. */\n")
                 .append("export interface OfferFact {\n")
                 .append("  /** Each aggregate: the type the level query gives the measure; null, refused. */\n")
                 .append("  readonly aggregates: Readonly<Record<AggregateFn, string | null>>;\n")
+                .append("  /** Each filter operator: whether its condition compiles and calls the function the operator means. */\n")
+                .append("  readonly operators: Readonly<Record<FilterOperator, boolean>>;\n")
                 .append("}\n\n")
                 .append("/** By the type the compiler gives a column (the probe it was measured on in a comment). */\n")
                 .append("export const OFFER_FACTS: Readonly<Record<string, OfferFact>> = {\n");
@@ -236,6 +279,10 @@ public final class OfferFacts {
             for (Map.Entry<String, String> a : e.getValue().aggregates().entrySet()) {
                 out.append("      ").append(a.getKey()).append(": ")
                         .append(a.getValue() == null ? "null" : quote(a.getValue())).append(",\n");
+            }
+            out.append("    },\n    operators: {\n");
+            for (Map.Entry<String, Boolean> o : e.getValue().operators().entrySet()) {
+                out.append("      ").append(o.getKey()).append(": ").append(o.getValue()).append(",\n");
             }
             out.append("    },\n  },\n");
         }

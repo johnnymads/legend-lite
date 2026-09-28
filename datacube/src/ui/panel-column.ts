@@ -35,8 +35,8 @@ import {
   type AggregateFn,
   type ColumnKind,
 } from '../snapshot.ts';
-import { OFFER_FACTS } from '../generated/offer-facts.ts';
-import { defaultKind, familyOf, plainType } from '../types.ts';
+import { takesAggregate } from '../offers.ts';
+import { defaultKind } from '../types.ts';
 import type { CellAppearance, ColourSet } from '../style.ts';
 import type { PinPlacement } from '../grid/columns.ts';
 import {
@@ -88,28 +88,15 @@ export const AGGREGATES: readonly { value: AggregateFn; label: string }[] =
   AGGREGATE_FNS.map((value) => ({ value, label: AGGREGATE_LABELS[value] }));
 
 /**
- * The aggregates a column of this type can take, as the COMPILER answers them (T5,
- * src/generated/offer-facts.ts: DataCube's own level query, compiled per type): one the
- * compiler accepts whose result stays in the column's family -- upstream's "an aggregate
- * keeps the column's type", decided by the compiler's answer rather than a table. So
- * count, whose result is an Integer, is offered on numbers and not on text, and
- * joinStrings on any column the compiler types as text, a calculated one included. By
- * FAMILY, never the exact type: sum over an Integer stays an Integer, an average of one
- * is a Float, and a precise `BigInt` column's sum is an `Integer`. A type with no facts
- * (Pure's Any) takes none; an untyped column (a calculated one not yet typed): all, the
- * compiler judging it on Apply.
+ * The aggregates a column of this type can take, as the compiler answers them
+ * (`takesAggregate`, src/offers.ts). An untyped column (a calculated one not yet typed):
+ * all, the compiler judging it on Apply.
  */
 export function aggregatesFor(
   type: string | undefined,
 ): readonly { value: AggregateFn; label: string }[] {
   if (type === undefined) return AGGREGATES;
-  const facts = OFFER_FACTS[plainType(type)];
-  if (facts === undefined) return [];
-  const family = familyOf(type);
-  return AGGREGATES.filter((a) => {
-    const result = facts.aggregates[a.value];
-    return result !== null && familyOf(result) === family;
-  });
+  return AGGREGATES.filter((a) => takesAggregate(a.value, type));
 }
 
 const FORMAT_KINDS: readonly { value: FormatKind; label: string }[] = [

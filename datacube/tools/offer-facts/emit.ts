@@ -2,14 +2,17 @@
 // (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T5). For one column of every type a cube
 // column can have, EXACTLY the queries DataCube sends -- built by the product's own query
 // builder (src/query.ts), never written by hand -- each aggregate as a level's measure; and
-// the calculated-column editor's curated functions with the example that proves each.
+// each filter operator as a condition; and the calculated-column editor's curated
+// functions with the example that proves each.
 // OfferFacts.java compiles them with legend-lite and writes what the compiler said.
 //
-// Output: the model, and a TSV of `kind<TAB>column<TAB>name<TAB>payload` lines:
-//   column  <probe>  <declared type>  -          a probe column, and the type it was built as
-//   type    -        -                <q>        the cube's columns, typed (checked against the above)
-//   agg     <probe>  <aggregate>      <q>        a level measuring the probe with the aggregate
-//   calc    -        <function>       <example>  the example a person reads, over the table TRADES
+// Output: the model, and a TSV of `kind<TAB>column<TAB>name<TAB>meaning<TAB>payload` lines:
+//   column  <probe>  <declared type>  -           -          a probe column, and the type it was built as
+//   type    -        -                -           <q>        the cube's columns, typed (checked against the above)
+//   agg     <probe>  <aggregate>      -           <q>        a level measuring the probe with the aggregate
+//   op      <probe>  <operator>       <function>  <q>        a level filtering the probe with the operator,
+//                                                            and the function (by path) the operator means
+//   calc    -        <function>       -           <example>  the example a person reads, over the table TRADES
 //
 // Usage: node --experimental-strip-types emit.ts <model-out> <queries-out>
 
@@ -17,8 +20,11 @@ import { writeFileSync } from 'node:fs';
 
 import { accessor, col, fn, lambda, lit, toJson, type Lambda } from '../../../pure-protocol/src/index.ts';
 import { CALC_FUNCTIONS } from '../../src/calc.ts';
-import { levelLambda } from '../../src/query.ts';
-import { AGGREGATE_FNS, type CubeSnapshot, type DerivedColumn } from '../../src/snapshot.ts';
+import { levelLambda, OPERATOR_FUNCTION } from '../../src/query.ts';
+import {
+  AGGREGATE_FNS, FILTER_OPERATORS,
+  type CubeSnapshot, type DerivedColumn, type FilterNode, type FilterOperator, type FilterValue,
+} from '../../src/snapshot.ts';
 
 /** A probe: a column of one type, stored (its DDL) or calculated (its expression). */
 interface Probe {
@@ -54,6 +60,23 @@ const PROBES: readonly Probe[] = [
   { name: 'as_text', type: 'String', lambda: lambda(['x'], fn('toString', fn('toOne', x('integer')))) },
 ];
 
+/** A value of each type, as the filter editor hands it over (exact text). */
+const SAMPLE: Readonly<Record<string, FilterValue>> = {
+  String: 'a',
+  Integer: '1',
+  Float: '1.5',
+  Decimal: '1.5',
+  Number: '1',
+  Boolean: true,
+  StrictDate: '2024-01-02',
+  DateTime: '2024-01-02T03:04:05',
+  Date: '2024-01-02',
+  StrictTime: '03:04:05',
+  Variant: { json: '1' },
+};
+
+/** The column a column operator compares the probe with: its twin, of the same type. */
+const twin = (name: string): string => `${name}_2`;
 const GROUP = 'g';
 const WEIGHT = 'w';
 
@@ -63,7 +86,7 @@ Database offer::DB
     Table T
     (
         ${GROUP} VARCHAR(64), ${WEIGHT} INTEGER,
-        ${PROBES.filter((p) => p.ddl).map((p) => `${p.name} ${p.ddl}`).join(',\n        ')}
+        ${PROBES.filter((p) => p.ddl).map((p) => `${p.name} ${p.ddl}, ${twin(p.name)} ${p.ddl}`).join(',\n        ')}
     )
     // the columns the editor's examples are written over (demo/trades.pure)
     Table TRADES
@@ -74,15 +97,34 @@ Database offer::DB
 )
 `;
 
+const LISTS = new Set<FilterOperator>(['in', 'notIn', 'inCaseInsensitive', 'notInCaseInsensitive']);
+
+function condition(p: Probe, operator: FilterOperator): FilterNode {
+  const value = SAMPLE[p.type];
+  if (value === undefined) throw new Error(`no sample value of type ${p.type}`);
+  return {
+    kind: 'condition',
+    column: p.name,
+    operator,
+    value: LISTS.has(operator) ? [value] : value,
+    ...(operator.endsWith('Column') ? { rightColumn: twin(p.name) } : {}),
+  } as FilterNode;
+}
+
 function cube(): CubeSnapshot {
-  const derived: DerivedColumn[] = PROBES.filter((p) => p.lambda)
-    .map((p) => ({ name: p.name, lambda: p.lambda!, type: p.type }));
+  const derived: DerivedColumn[] = PROBES.filter((p) => p.lambda).flatMap((p) => [
+    { name: p.name, lambda: p.lambda!, type: p.type },
+    { name: twin(p.name), lambda: p.lambda!, type: p.type },
+  ]);
   return {
     source: { query: accessor('offer::DB', 'T') },
     columns: [
       { name: GROUP, type: 'String' },
       { name: WEIGHT, type: 'Integer' },
-      ...PROBES.filter((p) => p.ddl).map((p) => ({ name: p.name, type: p.type })),
+      ...PROBES.filter((p) => p.ddl).flatMap((p) => [
+        { name: p.name, type: p.type },
+        { name: twin(p.name), type: p.type },
+      ]),
     ],
     derived,
     rows: [],
@@ -96,17 +138,20 @@ function cube(): CubeSnapshot {
 /** Every line of the TSV. */
 function lines(): string[] {
   const s = cube();
-  const out: string[] = PROBES.map((p) => `column\t${p.name}\t${p.type}\t-`);
-  out.push(`type\t-\t-\t${toJson(levelLambda(s))}`);
+  const out: string[] = PROBES.map((p) => `column\t${p.name}\t${p.type}\t-\t-`);
+  out.push(`type\t-\t-\t-\t${toJson(levelLambda(s))}`);
   for (const p of PROBES) {
     for (const aggregate of AGGREGATE_FNS) {
       const m = { name: 'm', column: p.name, fn: aggregate, ...(aggregate === 'wavg' ? { weight: WEIGHT } : {}) };
-      out.push(`agg\t${p.name}\t${aggregate}\t${toJson(levelLambda({ ...s, rows: [GROUP], measures: [m] }))}`);
+      out.push(`agg\t${p.name}\t${aggregate}\t-\t${toJson(levelLambda({ ...s, rows: [GROUP], measures: [m] }))}`);
+    }
+    for (const operator of FILTER_OPERATORS) {
+      out.push(`op\t${p.name}\t${operator}\t${OPERATOR_FUNCTION[operator]}\t${toJson(levelLambda({ ...s, filter: condition(p, operator) }))}`);
     }
   }
   for (const f of CALC_FUNCTIONS) {
     if (/[\t\n]/.test(f.example)) throw new Error(`${f.name}'s example must be one line`);
-    out.push(`calc\t-\t${f.name}\t${f.example}`);
+    out.push(`calc\t-\t${f.name}\t-\t${f.example}`);
   }
   return out;
 }

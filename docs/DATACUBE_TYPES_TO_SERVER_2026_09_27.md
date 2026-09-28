@@ -352,41 +352,43 @@ type names, parity with upstream checked:
   (the compiler's lattice), so the rule holds when lite reports precise types (below): upstream's
   `sum` over a `BigInt` column returns `Integer`.
 
-**T5 state (2026-09-28): aggregates and calculated-column functions LANDED; filter operators WAIT on
-one lite catalog entry.**
-- Generator: `datacube/tools/offer-facts/emit.ts` (DataCube's own level queries, by `query.ts`, over
-  a probe column of every type -- stored: VARCHAR, INTEGER, BIGINT, DOUBLE, DECIMAL(20,4), BIT, DATE,
-  TIMESTAMP, SEMISTRUCTURED; calculated: Number, Date, StrictTime, and text made by `toString`) and
-  `OfferFacts.java` (compiles them with legend-lite on the JVM -- the WASM module's same source, the
-  cube differential proves the two agree -- and fails if a probe is not the type it was built as, or
-  if two probes of one type get different answers). Output `src/generated/offer-facts.ts`, diff-tested.
-- Aggregates: `aggregatesFor` = compiles and stays in the column's family. The hand family table is
-  deleted. Measured differences from upstream DataCube, pinned by `test/offer-facts.test.ts` (each
-  named): min/max on text, dates and times (ours, since 2026-09-25); **to review**: min/max/unique on
-  a Boolean and min/max on JSON (new, the compiler's generic `collection::min<X>` accepts them, as
-  upstream's does), and joinStrings on JSON (upstream offers it; the compiler refuses it); median and
-  wavg are ours.
-- The user's requirement: a calculated column `$x.qty->toOne()->toString()` is typed String by the
-  compiler and offered joinStrings (pinned, through the real compiler). `$x.qty->toString()` on a
-  table column is REFUSED -- Pure's `toString(Any[1])` takes one value, a table column may be empty
-  -- exactly as upstream refuses `toLower(Varchar(32)[0..1])`; pinned.
-- Calculated-column functions: `calc.ts` keeps the curated names and examples (an editorial choice
-  and text for a person); the build compiles every example (one that does not compile fails the
-  build -- the proof that lived only in a live-engine script) and the editor shows the compiler's
-  declarations of each function, every overload (`abs(int:Integer[1]):Integer[1] | ...`). The hand
-  signatures and categories are deleted.
-- **Operators: why they wait.** "Compiles" is not "means": Pure's collection `contains(Any[*],
-  Any[1])` accepts a number, so the "contains" filter compiles on numbers, dates, booleans and JSON --
-  as membership, whose SQL `list_contains(t0.integer, 1)` DuckDB then rejects. So an operator's fact
-  is the FUNCTION its condition resolved to (read off the typed tree), and an operator is offered when
-  it compiles and resolves to the function it means. That needs lite to resolve a nullable text
-  column's `contains` as upstream does: legend-engine declares `string::contains(source:String[0..1],
-  val:String[1])` (core/pure/corefunctions/stringExtension.pure:21, beside the startsWith/endsWith
-  forms lite already has, Pure.java:2153); lite lacks it, so a table column's "contains" types as the
-  COLLECTION function (its SQL is still right, `strpos`, by a lowering compensation) and would not be
-  offered. The entry is in the untangle's area (`builtin/`, `lowering/`): asked for in
-  docs/IN_FLIGHT.md. Also measured: `<` on a time of day is refused by lite and by upstream alike (no
-  StrictTime overload), which upstream DataCube offers.
+**T5 state (2026-09-28): COMPLETE.** Half 1 (aggregates, calculated-column functions) 05aef9bde; half 2
+(filter operators) with two lite fixes.
+- Generator: `datacube/tools/offer-facts/emit.ts` (DataCube's own queries, by `query.ts`, over a probe
+  column of every type -- stored: VARCHAR, INTEGER, BIGINT, DOUBLE, DECIMAL(20,4), BIT, DATE, TIMESTAMP,
+  SEMISTRUCTURED; calculated: Number, Date, StrictTime, and text made by `toString`) and
+  `OfferFacts.java` (compiles them with legend-lite on the JVM -- the WASM module's same source -- and
+  fails if a probe is not the type it was built as, or if two probes of one type get different
+  answers). Output `src/generated/offer-facts.ts`, diff-tested. Rules in `src/offers.ts`, naming no type.
+- Aggregates: offered when the compiler accepts the level query and the result stays in the column's
+  family. min/max compile on EVERY type on both compilers (Pure's `collection::min<X>`), and stay
+  offered (the user: don't lose them; JSON orders by its text in the database).
+- Operators: offered when the condition compiles AND the compiler resolved the operator's name to the
+  function the operator means. `query.ts` `OPERATOR_FUNCTION` states each operator's function by path
+  (as upstream DataCube defines them); the query spells it short -- human readable, as a person writes
+  it and as upstream sends it (the user, 2026-09-28) -- and the generator reads the resolved function
+  off the typed tree. So "contains" (text containment) is not offered on a number, where the same name
+  resolves to collection membership. (A first design had a meaning table COMPENSATING for lite's wrong
+  resolution; the user asked why it was not fixed properly: lite was fixed first, below. A second sent
+  the full path, sound but unreadable in the error dialogs that print the query.)
+- Two lite defects fixed at the source (the user: "make both yourself"): legend-engine's
+  `string::contains(String[0..1], String[1])` registered through the membership table (lite had the
+  startsWith/endsWith forms, and its lowering inlined this one's body under the COLLECTION callee); and
+  the collection `contains` over a to-one value (`$x.qty->contains(1)`) boxes it, where it wrote
+  `list_contains(t0.qty, 1)`, which DuckDB refuses.
+- Nothing lost (the user: "do the right thing for users and don't lose functionality"): a test copies
+  the offers before T5 and asserts each is still made; the one exception, `<`/`>` on a time of day,
+  never compiled (Pure declares no order on StrictTime, upstream or lite). Gained, by the compiler's
+  answer: ordering on text and booleans, membership/equality/presence on booleans and times, equality
+  and membership on JSON, min/max on booleans and JSON.
+- The user's requirement: a calculated column `$x.qty->toOne()->toString()` offers joinStrings (pinned
+  through the real compiler); `$x.qty->toString()` on a table column is refused -- `toString(Any[1])`
+  takes one value -- as upstream refuses it.
+- Calculated-column functions: the build compiles every example (a failing one fails the build) and the
+  editor shows the compiler's declarations, every overload.
+- Time of day has no ordering in Pure, looked for properly (2026-09-28): StrictTime appears in 9
+  upstream .pure files (its declaration, literal, representation, protocol, DuckDB/Snowflake type
+  conversion) and no function takes it; none of the engine's 838 handler ids names it. Left (the user).
 
 **Exact-API gap: precise column types (recorded 2026-09-28, the user: "sure").** Upstream types a
 relation accessor's columns as legend-pure's precise primitives (RelationalCompilerExtension

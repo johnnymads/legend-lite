@@ -1393,6 +1393,9 @@ export class CubeApp {
             (c) => c.name === column,
           )?.type;
         }
+        // a JSON cell or key is its JSON text; as a filter value it is a document
+        // (`fromJson`), as query.ts reads a JSON group key
+        if (isVariant(columnType) && typeof value === 'string') value = { json: value };
         // A group-stage calculated column exists only AFTER the
         // groupBy, and every filter runs before it -- so a value
         // filter on one could only ever be refused.

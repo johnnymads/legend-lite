@@ -34,6 +34,7 @@ import {
   type FilterValue,
 } from '../snapshot.ts';
 import { hasTimeOfDay, isBoolean, isNumeric, isTemporal, isTimeOfDay, isVariant } from '../types.ts';
+import { takesOperator } from '../offers.ts';
 
 /** What kind of value input an operator needs. */
 export type OperandKind = 'none' | 'single' | 'list' | 'column';
@@ -118,66 +119,19 @@ function hasTime(type: string | undefined): boolean {
   return hasTimeOfDay(type);
 }
 
-const TEXT = new Set<DataType>(['text']);
-const EQUALITY = new Set<DataType>(['text', 'number', 'date', 'time', 'boolean']);
-const ORDERING = new Set<DataType>(['number', 'date', 'time']);
-const LISTS = new Set<DataType>(['text', 'number', 'date']);
-// A Variant takes only these: whether it is there at all. Comparing a
-// JSON document to a typed-in value compares their JSON text, which
-// is rarely the question -- extract a value first (`get`/`to`) and
-// filter that.
-const NULLS = new Set<DataType>(['text', 'number', 'date', 'time', 'boolean',
-  'variant']);
-const COLUMN_EQUALITY = new Set<DataType>(['text', 'number', 'date', 'time']);
-
 /**
- * Which column types each operator accepts -- upstream's
- * `isCompatibleWithColumn`, operator by operator. "Starts with" on a
- * number or "<" on a boolean is not a question, and offering it is how
- * a user builds a filter the engine refuses.
+ * The operators a column of this type accepts, in the table's order: the compiler's
+ * answer (`takesOperator`, src/offers.ts). "Starts with" on a number or "<" on a JSON
+ * document is refused by the compiler, and offering it is how a user builds a filter the
+ * engine refuses.
  */
-const COMPATIBLE: Readonly<Record<FilterOperator, ReadonlySet<DataType>>> = {
-  equal: EQUALITY,
-  notEqual: EQUALITY,
-  lessThan: ORDERING,
-  lessThanEqual: ORDERING,
-  greaterThan: ORDERING,
-  greaterThanEqual: ORDERING,
-  isEmpty: NULLS,
-  isNotEmpty: NULLS,
-  in: LISTS,
-  notIn: LISTS,
-  contains: TEXT,
-  notContains: TEXT,
-  startsWith: TEXT,
-  notStartsWith: TEXT,
-  endsWith: TEXT,
-  notEndsWith: TEXT,
-  equalCaseInsensitive: TEXT,
-  notEqualCaseInsensitive: TEXT,
-  containsCaseInsensitive: TEXT,
-  startsWithCaseInsensitive: TEXT,
-  endsWithCaseInsensitive: TEXT,
-  inCaseInsensitive: TEXT,
-  notInCaseInsensitive: TEXT,
-  equalColumn: COLUMN_EQUALITY,
-  equalCaseInsensitiveColumn: TEXT,
-  notEqualColumn: COLUMN_EQUALITY,
-  notEqualCaseInsensitiveColumn: TEXT,
-  lessThanColumn: ORDERING,
-  lessThanEqualColumn: ORDERING,
-  greaterThanColumn: ORDERING,
-  greaterThanEqualColumn: ORDERING,
-};
-
-/** The operators a column of this type accepts, in the table's order. */
 export function operatorsFor(type: string | undefined): FilterOperator[] {
-  const t = dataTypeOf(type);
-  return OPERATORS.filter((o) => COMPATIBLE[o.op].has(t)).map((o) => o.op);
+  if (type === undefined) return OPERATORS.map((o) => o.op);
+  return OPERATORS.filter((o) => takesOperator(o.op, type)).map((o) => o.op);
 }
 
 export function isCompatible(op: FilterOperator, type: string | undefined): boolean {
-  return COMPATIBLE[op].has(dataTypeOf(type));
+  return type === undefined || takesOperator(op, type);
 }
 
 /**

@@ -207,25 +207,23 @@ describe('buildMenu', () => {
     assert.ok(items.some((i) => i.id === 'filter.column'));
   });
 
-  it('offers no value filter on a type with no operators', () => {
-    const items = menuItems(
+  it('offers a JSON document what the compiler takes: equality, no order, no text', () => {
+    const labels = menuItems(
       buildMenu({
         snapshot: CUBE,
         column: 'payload',
         columnType: 'Variant',
-        value: 'x',
+        value: { json: '{"a":1}' },
       }),
-    );
-    assert.equal(
-      items.some((i) => i.id === 'filter.add'),
-      false,
-    );
+    ).filter((i) => i.id === 'filter.add').map((i) => i.label);
+    assert.deepEqual(labels,
+      ['Add Filter: payload = {"a":1}', 'Add Filter: payload != {"a":1}']);
   });
 
-  it('filters a BOOLEAN by = and != only, as upstream does', () => {
-    // Upstream's Equal and NotEqual are the only operations that
-    // accept BOOLEAN. This arm was missing, so a Boolean column --
-    // a source flag or a calculated one -- got no value filter.
+  it('filters a BOOLEAN by what the compiler takes: equality and Pure\'s order', () => {
+    // a Boolean column -- a source flag or a calculated one -- gets a value
+    // filter; Pure orders false before true (boolean::lessThan(Boolean, Boolean)),
+    // where upstream DataCube offers = and != only (named in offer-facts.test.ts)
     const labels = menuItems(
       buildMenu({
         snapshot: CUBE,
@@ -234,8 +232,10 @@ describe('buildMenu', () => {
         value: true,
       }),
     ).filter((i) => i.id === 'filter.add').map((i) => i.label);
-    assert.deepEqual(labels,
-      ['Add Filter: flag = true', 'Add Filter: flag != true']);
+    assert.deepEqual(labels, [
+      'Add Filter: flag = true', 'Add Filter: flag != true', 'Add Filter: flag < true',
+      'Add Filter: flag <= true', 'Add Filter: flag > true', 'Add Filter: flag >= true',
+    ]);
   });
 
   it('still offers LAYOUT actions on a column it cannot group by', () => {

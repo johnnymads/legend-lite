@@ -1,7 +1,7 @@
 // T5 (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md): what a column is offered comes from the
-// COMPILER -- src/generated/offer-facts.ts, DataCube's own level queries compiled per type --
-// and one rule naming no type: an aggregate the compiler accepts whose result stays in the
-// column's family.
+// COMPILER -- src/generated/offer-facts.ts, DataCube's own queries compiled per type -- and
+// rules naming no type (src/offers.ts): an aggregate the compiler accepts whose result stays
+// in the column's family; a filter operator whose condition compiles.
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -9,7 +9,9 @@ import { describe, it } from 'node:test';
 import { OFFER_FACTS } from '../src/generated/offer-facts.ts';
 import { typeColumns } from '../src/plan.ts';
 import type { QueryRunner } from '../src/runner.ts';
-import { AGGREGATE_FNS, type AggregateFn, type CubeSnapshot } from '../src/snapshot.ts';
+import { AGGREGATE_FNS, FILTER_OPERATORS, type AggregateFn, type CubeSnapshot, type FilterOperator } from '../src/snapshot.ts';
+import { takesOperator } from '../src/offers.ts';
+import { filterOperatorsFor } from '../src/ui/menu.ts';
 import { aggregatesFor } from '../src/ui/panel-column.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
 import { plannerFor } from './catalog-builder.ts';
@@ -126,17 +128,18 @@ describe('parity with upstream DataCube\'s aggregate offers', () => {
       }
     }
     assert.deepEqual(differences.sort(), [
-      // min/max keep any ordered value's type (Pure's collection::min<X>): "the latest trade
-      // date", the first name alphabetically -- offered here since 2026-09-25 for text and dates
+      // min/max: Pure's collection::min<X>/max<X> take ANY type, on upstream's compiler as on
+      // lite's (the user, 2026-09-28: keep them) -- "the latest trade date", the earliest time
+      // of day, the first name alphabetically. JSON orders by its text in the database.
       'Date max: ours only', 'Date min: ours only',
       'DateTime max: ours only', 'DateTime min: ours only',
       'StrictDate max: ours only', 'StrictDate min: ours only',
       'StrictTime max: ours only', 'StrictTime min: ours only',
       'String max: ours only', 'String min: ours only',
-      // new with T5, the compiler's answer: TO REVIEW (upstream offers a boolean nothing, and
-      // JSON what text takes)
-      'Boolean max: ours only', 'Boolean min: ours only', 'Boolean unique: ours only',
+      'Boolean max: ours only', 'Boolean min: ours only',
       'Variant max: ours only', 'Variant min: ours only',
+      // uniqueValueOnly<T> takes any type; upstream DataCube leaves booleans out
+      'Boolean unique: ours only',
       // the compiler refuses joinStrings of JSON (it takes String): upstream offers a query that fails
       'Variant joinStrings: upstream only',
       // this DataCube's own aggregates
@@ -145,5 +148,141 @@ describe('parity with upstream DataCube\'s aggregate offers', () => {
       'Integer median: ours only', 'Integer wavg: ours only',
       'Number median: ours only', 'Number wavg: ours only',
     ].sort());
+  });
+});
+
+// Filter operators: each upstream DataCubeQueryFilterOperation__*.tsx `isCompatibleWithColumn`
+// (read 2026-09-28) over the same categories. inCaseInsensitive / notInCaseInsensitive are
+// this DataCube's own and not compared.
+describe('parity with upstream DataCube\'s filter operators', () => {
+  type Category = 'Numeric' | 'Text' | 'Date' | 'Time' | 'Boolean';
+  const CATEGORY: Readonly<Record<string, Category>> = {
+    Integer: 'Numeric', Float: 'Numeric', Decimal: 'Numeric', Number: 'Numeric',
+    StrictDate: 'Date', Date: 'Date', DateTime: 'Time', StrictTime: 'Time',
+    Boolean: 'Boolean', String: 'Text', Variant: 'Text',
+  };
+  const ALL: readonly Category[] = ['Text', 'Numeric', 'Date', 'Time', 'Boolean'];
+  const TEXT: readonly Category[] = ['Text'];
+  const ORDER: readonly Category[] = ['Numeric', 'Date', 'Time'];
+  const VALUED: readonly Category[] = ['Text', 'Numeric', 'Date', 'Time'];
+  const LISTED: readonly Category[] = ['Text', 'Numeric', 'Date'];
+  const UPSTREAM: Readonly<Partial<Record<FilterOperator, readonly Category[]>>> = {
+    equal: ALL, notEqual: ALL,
+    lessThan: ORDER, lessThanEqual: ORDER, greaterThan: ORDER, greaterThanEqual: ORDER,
+    isEmpty: VALUED, isNotEmpty: VALUED,
+    contains: TEXT, notContains: TEXT, startsWith: TEXT, notStartsWith: TEXT, endsWith: TEXT, notEndsWith: TEXT,
+    in: LISTED, notIn: LISTED,
+    equalCaseInsensitive: TEXT, notEqualCaseInsensitive: TEXT, containsCaseInsensitive: TEXT,
+    startsWithCaseInsensitive: TEXT, endsWithCaseInsensitive: TEXT,
+    equalColumn: VALUED, notEqualColumn: VALUED, equalCaseInsensitiveColumn: TEXT, notEqualCaseInsensitiveColumn: TEXT,
+    lessThanColumn: ORDER, lessThanEqualColumn: ORDER, greaterThanColumn: ORDER, greaterThanEqualColumn: ORDER,
+  };
+
+  it('differs only where named', () => {
+    const differences: string[] = [];
+    for (const type of Object.keys(OFFER_FACTS)) {
+      const category = CATEGORY[type];
+      assert.ok(category, `no upstream category for ${type}`);
+      for (const op of FILTER_OPERATORS) {
+        const theirs = UPSTREAM[op];
+        if (theirs === undefined) continue;
+        const ours = takesOperator(op, type);
+        if (ours !== theirs.includes(category)) differences.push(`${type} ${op}: ${ours ? 'ours only' : 'upstream only'}`);
+      }
+    }
+    const ordering = ['lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual',
+      'lessThanColumn', 'lessThanEqualColumn', 'greaterThanColumn', 'greaterThanEqualColumn'];
+    const text = ['contains', 'notContains', 'startsWith', 'notStartsWith', 'endsWith', 'notEndsWith',
+      'equalCaseInsensitive', 'notEqualCaseInsensitive', 'containsCaseInsensitive', 'startsWithCaseInsensitive',
+      'endsWithCaseInsensitive', 'equalCaseInsensitiveColumn', 'notEqualCaseInsensitiveColumn'];
+    assert.deepEqual(differences.sort(), [
+      // TO REVIEW -- the compiler takes these and upstream DataCube does not offer them:
+      // Pure orders text and booleans (boolean::lessThan(String|Boolean, ...)),
+      ...ordering.map((op) => `String ${op}: ours only`),
+      ...ordering.map((op) => `Boolean ${op}: ours only`),
+      // and a boolean or a time compares for membership, equality and presence like any value
+      ...['isEmpty', 'isNotEmpty', 'in', 'notIn', 'equalColumn', 'notEqualColumn'].map((op) => `Boolean ${op}: ours only`),
+      'DateTime in: ours only', 'DateTime notIn: ours only',
+      'StrictTime in: ours only', 'StrictTime notIn: ours only',
+      // upstream offers queries its own compiler refuses: Pure declares no order on a time of
+      // day (StrictTime is not a Date; no lessThan takes it), and upstream files JSON under
+      // text, whose operators take a String
+      ...ordering.map((op) => `StrictTime ${op}: upstream only`),
+      ...text.map((op) => `Variant ${op}: upstream only`),
+    ].sort());
+  });
+});
+
+// NOTHING A USER HAD IS LOST (the user, 2026-09-28: "do the right thing for users and don't
+// lose functionality"). The offers before T5 -- the hand tables it deleted (61fa39c43:
+// filter-editor.ts COMPATIBLE, panel-column.ts aggregatesFor, menu.ts filterOperatorsFor),
+// by their own type groups -- are the reference: each must still be offered, unless the
+// compiler refuses the query it builds, which a user could never run. Such an exception
+// is named with its reason.
+describe('nothing a user was offered before T5 is lost', () => {
+  type Group = 'text' | 'number' | 'date' | 'time' | 'boolean' | 'variant';
+  // the old dataTypeOf, by the compiler type's family
+  const GROUP: Readonly<Record<string, Group>> = {
+    String: 'text', Integer: 'number', Float: 'number', Decimal: 'number', Number: 'number',
+    StrictDate: 'date', Date: 'date', DateTime: 'date', StrictTime: 'time', Boolean: 'boolean', Variant: 'variant',
+  };
+  const OLD_AGGREGATES: Readonly<Record<Group, readonly AggregateFn[]>> = {
+    number: ['sum', 'average', 'count', 'min', 'max', 'median', 'stdDevPopulation', 'stdDevSample',
+      'variancePopulation', 'varianceSample', 'wavg', 'unique'],
+    text: ['joinStrings', 'min', 'max', 'unique'],
+    date: ['min', 'max', 'unique'],
+    time: ['min', 'max', 'unique'],
+    boolean: ['unique'],
+    variant: ['unique'],
+  };
+  const g = (...groups: Group[]): ReadonlySet<Group> => new Set(groups);
+  const TEXT = g('text');
+  const EQUALITY = g('text', 'number', 'date', 'time', 'boolean');
+  const ORDERING = g('number', 'date', 'time');
+  const LISTS = g('text', 'number', 'date');
+  const NULLS = g('text', 'number', 'date', 'time', 'boolean', 'variant');
+  const COLUMN_EQUALITY = g('text', 'number', 'date', 'time');
+  const OLD_OPERATORS: Readonly<Record<FilterOperator, ReadonlySet<Group>>> = {
+    equal: EQUALITY, notEqual: EQUALITY,
+    lessThan: ORDERING, lessThanEqual: ORDERING, greaterThan: ORDERING, greaterThanEqual: ORDERING,
+    isEmpty: NULLS, isNotEmpty: NULLS, in: LISTS, notIn: LISTS,
+    contains: TEXT, notContains: TEXT, startsWith: TEXT, notStartsWith: TEXT, endsWith: TEXT, notEndsWith: TEXT,
+    equalCaseInsensitive: TEXT, notEqualCaseInsensitive: TEXT, containsCaseInsensitive: TEXT,
+    startsWithCaseInsensitive: TEXT, endsWithCaseInsensitive: TEXT, inCaseInsensitive: TEXT, notInCaseInsensitive: TEXT,
+    equalColumn: COLUMN_EQUALITY, equalCaseInsensitiveColumn: TEXT, notEqualColumn: COLUMN_EQUALITY,
+    notEqualCaseInsensitiveColumn: TEXT, lessThanColumn: ORDERING, lessThanEqualColumn: ORDERING,
+    greaterThanColumn: ORDERING, greaterThanEqualColumn: ORDERING,
+  };
+  const COMPARISONS: FilterOperator[] = ['equal', 'notEqual', 'lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual'];
+  const OLD_MENU: Readonly<Record<Group, readonly FilterOperator[]>> = {
+    text: [...COMPARISONS, 'contains', 'notContains', 'startsWith', 'notStartsWith', 'endsWith', 'notEndsWith'],
+    number: COMPARISONS, date: COMPARISONS, time: COMPARISONS,
+    boolean: ['equal', 'notEqual'],
+    variant: [],
+  };
+
+  const ordering = ['lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual'];
+  // Pure declares no order on a time of day -- StrictTime is not a Date and no
+  // boolean::lessThan takes it, in legend-pure as in lite -- so these queries were always
+  // refused: offered, never runnable. Ordering times needs that function first.
+  const NEVER_RAN = [
+    ...[...ordering, ...ordering.map((op) => `${op}Column`)].map((op) => `StrictTime ${op} (filter)`),
+    ...ordering.map((op) => `StrictTime ${op} (menu)`),
+  ];
+
+  it('every old offer is still made, or its query never compiled', () => {
+    const lost: string[] = [];
+    for (const type of Object.keys(OFFER_FACTS)) {
+      const group = GROUP[type];
+      assert.ok(group, `no old group for ${type}`);
+      const aggregates = new Set(offered(type));
+      for (const fn of OLD_AGGREGATES[group]) if (!aggregates.has(fn)) lost.push(`${type} ${fn} (aggregate)`);
+      for (const op of FILTER_OPERATORS) {
+        if (OLD_OPERATORS[op].has(group) && !takesOperator(op, type)) lost.push(`${type} ${op} (filter)`);
+      }
+      const menu = new Set(filterOperatorsFor(type));
+      for (const op of OLD_MENU[group]) if (!menu.has(op)) lost.push(`${type} ${op} (menu)`);
+    }
+    assert.deepEqual(lost.sort(), [...NEVER_RAN].sort());
   });
 });

@@ -105,8 +105,11 @@ class ImplementationTableTest {
         // THE KINDS, pinned EXACTLY (audit 2026-09-25: totality alone lets an empty
         // registration set pass) — engine 4.145.0 / pure 5.99.0; a registration
         // that lands moves a row from Body/Unimplemented to Intrinsic/Form, and the
-        // pin follows with its reason (Form 208 -> 217: validate owned, 9 overloads)
-        assertEquals(Map.of("Intrinsic", 664, "Form", 217, "Refused", 20, "Body", 2194, "Unimplemented", 71),
+        // pin follows with its reason (Form 208 -> 217: validate owned, 9 overloads;
+        // 2026-09-28 Body 2194 -> 2193, Intrinsic 664 -> 665: engine's
+        // string::contains(String[0..1], String[1]) declared, beside the startsWith/endsWith
+        // [0..1] forms -- DataCube T5, ContainsOverloadTest)
+        assertEquals(Map.of("Intrinsic", 665, "Form", 217, "Refused", 20, "Body", 2193, "Unimplemented", 71),
                 kinds, "implementation kinds");
     }
 

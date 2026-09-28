@@ -2270,6 +2270,7 @@ public final class Pure {
     public static final NativeFunctionDefinition SUBSTR__STRING_1__INTEGER_1__INTEGER_1 = signature("native function meta::pure::functions::string::substr(str:meta::pure::metamodel::type::String[1], start:meta::pure::metamodel::type::Integer[1], end:meta::pure::metamodel::type::Integer[1]):meta::pure::metamodel::type::String[1];");
     public static final NativeFunctionDefinition IS_DISTINCT__T_MANY__ROOT_GRAPH_FETCH_TREE_1 = signature("native function meta::pure::functions::collection::isDistinct<T>(collection:T[*], graphFetchTree:meta::pure::graphFetch::RootGraphFetchTree<T>[1]):meta::pure::metamodel::type::Boolean[1];");
     public static final NativeFunctionDefinition IS_ALPHA_NUMERIC__STRING_1 = signature("native function meta::pure::functions::string::isAlphaNumeric(string:meta::pure::metamodel::type::String[1]):meta::pure::metamodel::type::Boolean[1];");
+    public static final NativeFunctionDefinition CONTAINS__STRING_0_1__STRING_1 = signature("native function meta::pure::functions::string::contains(source:meta::pure::metamodel::type::String[0..1], val:meta::pure::metamodel::type::String[1]):meta::pure::metamodel::type::Boolean[1];");
     // ---- OVERLOAD GROUPS, generated: the IDENTITIES of every constant declared at one FQN, in constant order, computed once here. A lowering rule registers against these, never a bare name ----
     public static final List<com.legend.model.FunctionId> AT_ALLOY_OBJECT_REFERENCE_DECODE_OBJECT_REFERENCES_AND_GET_PK_MAP = com.legend.model.FunctionId.ofAll(DECODE_OBJECT_REFERENCES__3);
     public static final List<com.legend.model.FunctionId> AT_ALLOY_OBJECT_REFERENCE_GENERATE_OBJECT_REFERENCES = com.legend.model.FunctionId.ofAll(GENERATE_OBJECT_REFERENCES__6);
@@ -2651,7 +2652,7 @@ public final class Pure {
     public static final List<com.legend.model.FunctionId> AT_STRING_ASCII = com.legend.model.FunctionId.ofAll(ASCII__STRING_1);
     public static final List<com.legend.model.FunctionId> AT_STRING_CHAR = com.legend.model.FunctionId.ofAll(CHAR__INTEGER_1);
     public static final List<com.legend.model.FunctionId> AT_STRING_CHUNK = com.legend.model.FunctionId.ofAll(CHUNK__STRING_1__INTEGER_1);
-    public static final List<com.legend.model.FunctionId> AT_STRING_CONTAINS = com.legend.model.FunctionId.ofAll(CONTAINS__STRING_1__STRING_1);
+    public static final List<com.legend.model.FunctionId> AT_STRING_CONTAINS = com.legend.model.FunctionId.ofAll(CONTAINS__STRING_1__STRING_1, CONTAINS__STRING_0_1__STRING_1);
     public static final List<com.legend.model.FunctionId> AT_STRING_DECODE_BASE64 = com.legend.model.FunctionId.ofAll(DECODE_BASE64__STRING_1);
     public static final List<com.legend.model.FunctionId> AT_STRING_ENCODE_BASE64 = com.legend.model.FunctionId.ofAll(ENCODE_BASE64__STRING_1);
     public static final List<com.legend.model.FunctionId> AT_STRING_ENDS_WITH = com.legend.model.FunctionId.ofAll(ENDS_WITH__STRING_1__STRING_1, ENDS_WITH__STRING_0_1__STRING_1);

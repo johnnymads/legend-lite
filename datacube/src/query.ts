@@ -29,6 +29,7 @@ import {
   type CubeSnapshot,
   type DerivedColumn,
   type FilterNode,
+  type FilterOperator,
   type FilterValue,
   type Measure,
   type SortSpec,
@@ -71,20 +72,53 @@ function lowered(r: ValueSpecification): AppliedFunction {
   return fn('toLower', fn('toOne', r));
 }
 
-const COMPARISON: Partial<Record<string, string>> = {
-  equal: 'equal', notEqual: 'equal', lessThan: 'lessThan', lessThanEqual: 'lessThanEqual',
-  greaterThan: 'greaterThan', greaterThanEqual: 'greaterThanEqual',
+const EQUAL = 'meta::pure::functions::boolean::equal';
+const LESS = 'meta::pure::functions::boolean::lessThan';
+const LESS_EQUAL = 'meta::pure::functions::boolean::lessThanEqual';
+const GREATER = 'meta::pure::functions::boolean::greaterThan';
+const GREATER_EQUAL = 'meta::pure::functions::boolean::greaterThanEqual';
+const CONTAINS = 'meta::pure::functions::string::contains';
+const STARTS_WITH = 'meta::pure::functions::string::startsWith';
+const ENDS_WITH = 'meta::pure::functions::string::endsWith';
+const IN = 'meta::pure::functions::collection::in';
+
+/**
+ * The Pure function each filter operator applies to the column, by path -- what the operator
+ * MEANS (upstream DataCube defines its operators the same way, DataCubeFunction). The query
+ * spells it by its short name, as a person writes it and as upstream sends it; the build
+ * checks that the compiler resolves that name to this function wherever the operator is
+ * offered (T5, tools/offer-facts). So "contains" -- text containment -- is not offered on a
+ * number column, where the same name resolves to collection membership.
+ */
+export const OPERATOR_FUNCTION: Readonly<Record<FilterOperator, string>> = {
+  equal: EQUAL, notEqual: EQUAL,
+  lessThan: LESS, lessThanEqual: LESS_EQUAL, greaterThan: GREATER, greaterThanEqual: GREATER_EQUAL,
+  isEmpty: 'meta::pure::functions::collection::isEmpty',
+  isNotEmpty: 'meta::pure::functions::collection::isNotEmpty',
+  contains: CONTAINS, notContains: CONTAINS, containsCaseInsensitive: CONTAINS,
+  startsWith: STARTS_WITH, notStartsWith: STARTS_WITH, startsWithCaseInsensitive: STARTS_WITH,
+  endsWith: ENDS_WITH, notEndsWith: ENDS_WITH, endsWithCaseInsensitive: ENDS_WITH,
+  in: IN, notIn: IN, inCaseInsensitive: IN, notInCaseInsensitive: IN,
+  equalCaseInsensitive: EQUAL, notEqualCaseInsensitive: EQUAL,
+  equalColumn: EQUAL, notEqualColumn: EQUAL, equalCaseInsensitiveColumn: EQUAL, notEqualCaseInsensitiveColumn: EQUAL,
+  lessThanColumn: LESS, lessThanEqualColumn: LESS_EQUAL, greaterThanColumn: GREATER, greaterThanEqualColumn: GREATER_EQUAL,
 };
 
-const COLUMN_COMPARISON: Partial<Record<string, string>> = {
-  equalColumn: 'equal', equalCaseInsensitiveColumn: 'equal', notEqualColumn: 'equal',
-  notEqualCaseInsensitiveColumn: 'equal', lessThanColumn: 'lessThan', lessThanEqualColumn: 'lessThanEqual',
-  greaterThanColumn: 'greaterThan', greaterThanEqualColumn: 'greaterThanEqual',
-};
+/** The operator's function applied, spelled by its short name. */
+function apply(op: FilterOperator, ...args: ValueSpecification[]): AppliedFunction {
+  const path = OPERATOR_FUNCTION[op];
+  return fn(path.slice(path.lastIndexOf(':') + 1), ...args);
+}
 
-/** `a op b`, `!=` being `!(a == b)`. */
-function compare(function_: string, negate: boolean, a: ValueSpecification, b: ValueSpecification): ValueSpecification {
-  const c = fn(function_, a, b);
+const COMPARISONS: ReadonlySet<FilterOperator> = new Set<FilterOperator>(
+  ['equal', 'notEqual', 'lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual']);
+
+const COLUMN_COMPARISONS: ReadonlySet<FilterOperator> = new Set<FilterOperator>(
+  ['equalColumn', 'equalCaseInsensitiveColumn', 'notEqualColumn', 'notEqualCaseInsensitiveColumn',
+    'lessThanColumn', 'lessThanEqualColumn', 'greaterThanColumn', 'greaterThanEqualColumn']);
+
+/** `c`, or `!c` for a negated operator (`!=` is `!(a == b)`). */
+function negated(c: ValueSpecification, negate: boolean): ValueSpecification {
   return negate ? not(c) : c;
 }
 
@@ -108,45 +142,46 @@ export function filterNode(node: FilterNode, param = 'x', typeOf: TypeOf = () =>
       // a text operator's operand is text, whatever the column: lowered here for the case-insensitive ones
       const preLowered = (v: FilterValue): ValueSpecification => lit.string(String(v).toLowerCase());
 
-      const cmp = COMPARISON[node.operator];
-      if (cmp) return compare(cmp, node.operator === 'notEqual', r, one());
+      const op = node.operator;
+      if (COMPARISONS.has(op)) return negated(apply(op, r, one()), op === 'notEqual');
 
-      const colCmp = COLUMN_COMPARISON[node.operator];
-      if (colCmp) {
+      if (COLUMN_COMPARISONS.has(op)) {
         if (!node.rightColumn) {
-          throw new CubeRefusal(`operator '${node.operator}' on '${node.column}' needs a rightColumn`);
+          throw new CubeRefusal(`operator '${op}' on '${node.column}' needs a rightColumn`);
         }
         const right = ref(param, node.rightColumn);
-        const insensitive = node.operator.includes('CaseInsensitive');
-        const negate = node.operator.startsWith('notEqual');
-        return insensitive
-          ? compare(colCmp, negate, lowered(r), lowered(right))
-          : compare(colCmp, negate, r, right);
+        const insensitive = op.includes('CaseInsensitive');
+        return negated(insensitive ? apply(op, lowered(r), lowered(right)) : apply(op, r, right),
+          op.startsWith('notEqual'));
       }
 
-      switch (node.operator) {
-        case 'isEmpty': return fn('isEmpty', r);
-        case 'isNotEmpty': return fn('isNotEmpty', r);
-        case 'contains': return fn('contains', r, one());
-        case 'notContains': return not(fn('contains', r, one()));
-        case 'startsWith': return fn('startsWith', r, one());
-        case 'notStartsWith': return not(fn('startsWith', r, one()));
-        case 'endsWith': return fn('endsWith', r, one());
-        case 'notEndsWith': return not(fn('endsWith', r, one()));
-        case 'in': return fn('in', r, collection(many().map((v) => literalNode(v, type))));
-        case 'notIn': return not(fn('in', r, collection(many().map((v) => literalNode(v, type)))));
+      switch (op) {
+        case 'isEmpty':
+        case 'isNotEmpty':
+          return apply(op, r);
+        case 'contains':
+        case 'startsWith':
+        case 'endsWith':
+          return apply(op, r, one());
+        case 'notContains':
+        case 'notStartsWith':
+        case 'notEndsWith':
+          return not(apply(op, r, one()));
+        case 'in': return apply(op, r, collection(many().map((v) => literalNode(v, type))));
+        case 'notIn': return not(apply(op, r, collection(many().map((v) => literalNode(v, type)))));
         case 'equalCaseInsensitive':
         case 'notEqualCaseInsensitive': {
           const value = fn('toLower', lit.string(String(node.value as FilterValue)));
-          return compare('equal', node.operator === 'notEqualCaseInsensitive', lowered(r), value);
+          return negated(apply(op, lowered(r), value), op === 'notEqualCaseInsensitive');
         }
-        case 'containsCaseInsensitive': return fn('contains', lowered(r), preLowered(node.value as FilterValue));
-        case 'startsWithCaseInsensitive': return fn('startsWith', lowered(r), preLowered(node.value as FilterValue));
-        case 'endsWithCaseInsensitive': return fn('endsWith', lowered(r), preLowered(node.value as FilterValue));
-        case 'inCaseInsensitive': return fn('in', lowered(r), collection(many().map(preLowered)));
-        case 'notInCaseInsensitive': return not(fn('in', lowered(r), collection(many().map(preLowered))));
+        case 'containsCaseInsensitive':
+        case 'startsWithCaseInsensitive':
+        case 'endsWithCaseInsensitive':
+          return apply(op, lowered(r), preLowered(node.value as FilterValue));
+        case 'inCaseInsensitive': return apply(op, lowered(r), collection(many().map(preLowered)));
+        case 'notInCaseInsensitive': return not(apply(op, lowered(r), collection(many().map(preLowered))));
         default: {
-          const never: never = node.operator as never;
+          const never: never = op as never;
           throw new Error(`unhandled filter operator: ${String(never)}`);
         }
       }

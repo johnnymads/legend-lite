@@ -445,8 +445,11 @@ describe('the editor follows the column TYPE', () => {
     editor.setColumn(id(), 'notional');
     assert.ok(!ops().includes('contains'), 'contains offered on a number');
     assert.ok(ops().includes('lessThan'));
+    // a boolean: Pure orders false before true (boolean::lessThan(Boolean, Boolean)), so the
+    // compiler takes the comparisons; the text operators it refuses
     editor.setColumn(id(), 'settled');
-    assert.deepEqual(ops().filter((o) => o.startsWith('less')), []);
+    assert.ok(ops().includes('lessThan'));
+    assert.ok(!ops().includes('startsWith'));
     assert.ok(ops().includes('equal'));
   });
 
@@ -681,12 +684,13 @@ describe('TODAY and NOW', () => {
 });
 
 describe('operatorsFor a Variant', () => {
-  it('offers only presence, in either spelling of the type', () => {
-    // Text operators on JSON compile to nonsense; ordering compares
-    // JSON text. Whether the value is there at all is the question a
-    // Variant answers without extracting anything.
+  it('offers what the compiler takes, in either spelling of the type', () => {
+    // A document compares for equality and membership (fromJson), and is there or not; the
+    // text operators take a String and Pure declares no order on JSON, so the compiler
+    // refuses those. Extract a value (get/to) to filter by its text or its order.
     for (const t of ['Variant', 'meta::pure::metamodel::variant::Variant']) {
-      assert.deepEqual(operatorsFor(t), ['isEmpty', 'isNotEmpty']);
+      assert.deepEqual(operatorsFor(t),
+        ['equal', 'notEqual', 'isEmpty', 'isNotEmpty', 'in', 'notIn', 'equalColumn', 'notEqualColumn']);
     }
   });
 });

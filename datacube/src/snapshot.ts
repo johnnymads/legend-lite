@@ -409,6 +409,19 @@ export type FilterOperator =
   | 'greaterThanColumn'
   | 'greaterThanEqualColumn';
 
+/** Every filter operator, once: exhaustive by construction (a Record over the union). */
+const EVERY_OPERATOR: Readonly<Record<FilterOperator, true>> = {
+  equal: true, notEqual: true, lessThan: true, lessThanEqual: true, greaterThan: true,
+  greaterThanEqual: true, isEmpty: true, isNotEmpty: true, contains: true, notContains: true,
+  startsWith: true, notStartsWith: true, endsWith: true, notEndsWith: true, in: true, notIn: true,
+  equalCaseInsensitive: true, notEqualCaseInsensitive: true, containsCaseInsensitive: true,
+  startsWithCaseInsensitive: true, endsWithCaseInsensitive: true, inCaseInsensitive: true,
+  notInCaseInsensitive: true, equalColumn: true, equalCaseInsensitiveColumn: true, notEqualColumn: true,
+  notEqualCaseInsensitiveColumn: true, lessThanColumn: true, lessThanEqualColumn: true,
+  greaterThanColumn: true, greaterThanEqualColumn: true,
+};
+export const FILTER_OPERATORS: readonly FilterOperator[] = Object.keys(EVERY_OPERATOR) as FilterOperator[];
+
 /** A leaf comparison against a column. */
 export interface FilterCondition {
   readonly kind: 'condition';

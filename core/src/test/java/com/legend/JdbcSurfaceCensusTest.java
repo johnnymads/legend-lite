@@ -316,6 +316,11 @@ class JdbcSurfaceCensusTest {
             "core/src/test/java/com/legend/compiler/PctFunctionSuppressionTest.java",
             "core/src/test/java/com/legend/exec/ExecutorTest.java",
             "core/src/test/java/com/legend/exec/StructValueTest.java",
+            // contains over a table column (2026-09-28, DataCube T5): seeds a
+            // three-row table and runs the platform's own SQL through
+            // Compiler.execute -- the DATABASE decides every row (tenet #1),
+            // the test reads the column back
+            "core/src/test/java/com/legend/exec/ContainsOverloadTest.java",
             // FLIP PROBE (harness-deletion item 1 slice 2): the dual-run
             // agreement instrument — passes the family session's
             // Connection THROUGH to Compiler.executeResolved (the one

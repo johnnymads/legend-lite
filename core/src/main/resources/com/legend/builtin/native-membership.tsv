@@ -631,6 +631,7 @@ CURRENT_USER_ID	meta::pure::functions::runtime::currentUserId	meta::pure::functi
 ASCII__STRING_1	meta::pure::functions::string::ascii	meta::pure::functions::string::ascii(meta::pure::metamodel::type::String[1])
 CHAR__INTEGER_1	meta::pure::functions::string::char	meta::pure::functions::string::char(meta::pure::metamodel::type::Integer[1])
 CHUNK__STRING_1__INTEGER_1	meta::pure::functions::string::chunk	meta::pure::functions::string::chunk(meta::pure::metamodel::type::String[1],meta::pure::metamodel::type::Integer[1])
+CONTAINS__STRING_0_1__STRING_1	meta::pure::functions::string::contains	meta::pure::functions::string::contains(meta::pure::metamodel::type::String[0..1],meta::pure::metamodel::type::String[1])
 CONTAINS__STRING_1__STRING_1	meta::pure::functions::string::contains	meta::pure::functions::string::contains(meta::pure::metamodel::type::String[1],meta::pure::metamodel::type::String[1])
 DECODE_BASE64__STRING_1	meta::pure::functions::string::decodeBase64	meta::pure::functions::string::decodeBase64(meta::pure::metamodel::type::String[1])
 ENCODE_BASE64__STRING_1	meta::pure::functions::string::encodeBase64	meta::pure::functions::string::encodeBase64(meta::pure::metamodel::type::String[1])

@@ -42,7 +42,7 @@ import type {
 import type { CalcStage } from '../calc.ts';
 import { isJsonValue, isRelativeDate } from '../snapshot.ts';
 import { PIVOT_SEPARATOR } from '../grid/columns.ts';
-import { familyOf, isBoolean, isNumeric, isTemporal } from '../types.ts';
+import { takesOperator } from '../offers.ts';
 
 /**
  * A pivoted column's name is a PATH -- `2021__|__notional` -- and a
@@ -278,48 +278,6 @@ export interface MenuGroup {
   readonly items: readonly MenuItem[];
 }
 
-/**
- * Operators offered for a column's type, as theirs are.
- *
- * A string takes the comparisons AND the text predicates; a number
- * or a date takes the comparisons only; anything else -- a boolean
- * -- takes none, because "starts with true" is not a question.
- */
-export function filterOperatorsFor(type: string): FilterOperator[] {
-  // by the compiler type's FAMILY (generated from legend-lite's lattice), never its name
-  if (familyOf(type) === 'text') {
-    return [
-      'equal',
-      'notEqual',
-      'lessThan',
-      'lessThanEqual',
-      'greaterThan',
-      'greaterThanEqual',
-      'contains',
-      'notContains',
-      'startsWith',
-      'notStartsWith',
-      'endsWith',
-      'notEndsWith',
-    ];
-  }
-  if (isNumeric(type) || isTemporal(type)) {
-    return [
-      'equal',
-      'notEqual',
-      'lessThan',
-      'lessThanEqual',
-      'greaterThan',
-      'greaterThanEqual',
-    ];
-  }
-  // Upstream's Equal and NotEqual are the only operations that
-  // accept BOOLEAN. Without this arm a Boolean column -- `settled`,
-  // or any calculated flag -- got no value filter from the menu.
-  if (isBoolean(type)) return ['equal', 'notEqual'];
-  return [];
-}
-
 /** Their label for each operator, for the value-aware filter items. */
 const OPERATOR_LABEL: Readonly<Partial<Record<FilterOperator, string>>> = {
   equal: '=',
@@ -337,6 +295,20 @@ const OPERATOR_LABEL: Readonly<Partial<Record<FilterOperator, string>>> = {
   isEmpty: 'is null',
   isNotEmpty: 'is not null',
 };
+
+/** The operators the menu can apply with the value under the pointer, in its order (theirs). */
+const VALUE_OPERATORS: readonly FilterOperator[] = [
+  'equal', 'notEqual', 'lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual',
+  'contains', 'notContains', 'startsWith', 'notStartsWith', 'endsWith', 'notEndsWith',
+];
+
+/**
+ * The value-aware filters the menu offers on a cell of this type: those of its value
+ * operators the compiler accepts for the type (`takesOperator`, src/offers.ts).
+ */
+export function filterOperatorsFor(type: string): FilterOperator[] {
+  return VALUE_OPERATORS.filter((op) => takesOperator(op, type));
+}
 
 /**
  * "Add Filter: region = EMEA" -- their wording exactly.
