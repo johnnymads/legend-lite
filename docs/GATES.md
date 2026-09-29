@@ -5682,6 +5682,39 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild W0, second batch: the server's doors; splitPart on a plain H2; the H2 design note
+
+**Where.** Branch `compiler/rebuild`, plan rev H1. Four commits; the chain ran on the exact tree.
+
+**What landed.**
+- **W0.1** `/engine/sql` and `QueryService.executeSql` are deleted; tests seed tables in-process through a test-only
+  `server/Seed`, and `QueryServiceDirectTest` (it tested only `executeSql`) is deleted. The server binds the loopback
+  interface unless `LEGEND_LITE_BIND` says otherwise (a warning is printed). Every route refuses, with 403 and before
+  any handler, a request whose `Origin` is outside the allow-list (loopback origins on any port, plus
+  `LEGEND_LITE_ALLOWED_ORIGINS`); the CORS answer names the allowed origin instead of `*`. No custom header is
+  required (datacube's client also talks to the real legend-engine), and connection specs are not filtered per kind
+  (a request's model already runs setup SQL; the boundary is loopback plus Origin): the plan text says why.
+  `LegendHttpServerIntegrationTest`: `/engine/sql` answers 404; a foreign-origin text/plain POST gets 403 and no CORS
+  grant; a loopback page is served with its origin echoed; the allow-list refuses look-alikes. The error-shape pin for
+  `LegendHttpServer` moves 5 → 4 with the deleted handler.
+- **W0.2(a)** The product H2 dialect spelled `splitPart` as `legend_h2_extension_split_part(…)`, a function only the
+  engine's H2 and our harness install. It is now `REGEXP_SUBSTR(s, '[^<chars>]+', 1, part)`, the engine's commons-split
+  meaning; a non-literal separator is refused. `H2SplitPartTest` on a bare H2 session: red before ("Function
+  LEGEND_H2_EXTENSION_SPLIT_PART not found"), green after, for one- and multi-character separators. `EngineStyleH2`
+  keeps the engine's spelling (golden text).
+- **Registers the new files owed** (the first chain was red on three, none on behaviour): `JdbcSurfaceCensusTest`
+  registers `Seed` and `H2SplitPartTest`; `ObservabilityGuardrailTest` lists the two server settings beside `PORT`;
+  `OwnCorpusParityTest` 2575 → 2578 (the H2 test's model joined the own corpus and matched).
+- **H2 (W2.0)** `plan-audit-2026-09-26/h2-resolved-expr-design-2026-09-29.md`: resolved bodies in a side table, a
+  19-variant `ResolvedExpr`, one builder with four scopes, `VarId(body, local)`, W2.3a in four pushes (6–8 sessions).
+  Its six rulings are the plan's D12.
+
+**Chain.** First run red on three registers (above); after the register commit `bazel test //...` 128 of 128 pass
+(5 executed; the rest cached on identical inputs from the run before, both corpus lanes among them with rosters
+unchanged) and `//tools/deps:all` 4 of 4. In-chain times are not timings.
+
+---
+
 ## 2026-09-29 — Rebuild W0, first batch: four defects closed, expected-failure pins, the line guard dropped
 
 **Where.** Branch `compiler/rebuild` (draft PR #8), plan rev H1 (`EXECUTION_PLAN_2026_09_26.md`). One push, five
