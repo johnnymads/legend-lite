@@ -42,6 +42,11 @@ export interface ChartSpec {
   /** A second dimension: one series per value (bar, line, area), the rows of a heatmap. */
   readonly split?: string;
   readonly options: ChartOptions;
+  /**
+   * Frozen: the chart keeps its own grouping. Absent, it is LIVE -- it
+   * follows the cube's pivots (`followCube`) as they change.
+   */
+  readonly frozen?: boolean;
 }
 
 export interface ChartOptions {
@@ -125,6 +130,37 @@ export function defaultChart(s: CubeSnapshot): ChartSpec | null {
       sort: temporal ? { by: 'x', direction: 'asc' } : DEFAULT_OPTIONS.sort,
     },
   };
+}
+
+/**
+ * A live chart, regrouped the way the cube is now: its first row group
+ * across; its second row group -- else its first column label -- as the
+ * split; the cube's own measure plotted, when it has one. The mark and the
+ * options are the chart's; the order follows what is across (a date runs
+ * in time order, anything else leads with the largest). A frozen chart,
+ * a scatter (it plots values, not groups) and a cube with nothing grouped
+ * are left as they are.
+ */
+export function followCube(spec: ChartSpec, s: CubeSnapshot): ChartSpec {
+  if (spec.frozen || spec.mark === 'scatter') return spec;
+  const x = s.rows[0] ?? s.pivotOn[0];
+  if (x === undefined) return spec;
+  const split = s.rows[0] !== undefined ? (s.rows[1] ?? s.pivotOn[0]) : s.pivotOn[1];
+  const configured = s.measures.find((m) => m.fn !== 'wavg');
+  const y = configured ? [{ column: configured.column, fn: configured.fn }] : spec.y;
+  const { split: _old, ...rest } = spec;
+  const sort = x === spec.x ? spec.options.sort
+    : isTemporal(rowColumns(s).find((c) => c.name === x)?.type)
+      ? { by: 'x' as const, direction: 'asc' as const }
+      : { by: 'y' as const, direction: 'desc' as const };
+  const next: ChartSpec = {
+    ...rest,
+    x,
+    y,
+    ...(split !== undefined ? { split } : {}),
+    options: { ...spec.options, sort },
+  };
+  return JSON.stringify(next) === JSON.stringify(spec) ? spec : next;
 }
 
 /** What stops a spec from being drawn, in words; empty when it can be. */

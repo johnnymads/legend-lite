@@ -2164,12 +2164,25 @@ export class CubeApp {
     chip.className = 'dc-tile-chip';
     chip.hidden = true;
     chip.addEventListener('click', () => this.#select(id, null));
+    // live (follows the grid's pivots) until frozen
+    const freeze = doc.createElement('button');
+    freeze.type = 'button';
+    freeze.className = 'dc-tile-button';
+    const paintFreeze = (frozen: boolean): void => {
+      freeze.textContent = frozen ? 'Frozen' : 'Freeze';
+      freeze.setAttribute('aria-pressed', String(frozen));
+      freeze.title = frozen
+        ? 'This chart keeps its own grouping. Click to follow the grid\'s pivots again.'
+        : 'This chart follows the grid\'s pivots. Click to keep its grouping as it is.';
+    };
+    paintFreeze(false);
     const options = doc.createElement('button');
     options.type = 'button';
     options.className = 'dc-tile-button';
     options.textContent = 'Options';
     options.setAttribute('aria-pressed', 'false');
     const panel = new ChartPanel(body, {
+      onFrozen: paintFreeze,
       snapshot: () => this.#snapshot,
       run: async (query, snapshot, signal) =>
         (await this.#controller.runQuery(query, snapshot, undefined, signal)).rows,
@@ -2180,6 +2193,7 @@ export class CubeApp {
     options.addEventListener('click', () => {
       options.setAttribute('aria-pressed', String(panel.toggleForm()));
     });
+    freeze.addEventListener('click', () => panel.setFrozen(!panel.frozen));
     this.#charts.set(id, panel);
     this.#selections.set(id, { chip, conditions: [], key: '' });
     const before = board.layout;
@@ -2187,7 +2201,7 @@ export class CubeApp {
       id,
       title: `Chart ${this.#chartCount}`,
       element: body,
-      actions: [chip, options],
+      actions: [chip, freeze, options],
       minW: 3,
       minH: TILE_MIN_ROWS,
     }, { w: 6, h: 10 });

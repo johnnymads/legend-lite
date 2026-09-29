@@ -13,6 +13,7 @@ import {
   chartProblems,
   chartQuery,
   defaultChart,
+  followCube,
   type ChartMark,
   type ChartSpec,
 } from '../chart-spec.ts';
@@ -39,6 +40,8 @@ export interface ChartPanelOptions {
   readonly debounceMs?: number;
   /** Whether the options start open (a chart tile starts with the chart alone). */
   readonly formOpen?: boolean;
+  /** The chart froze or went live (by the Freeze button, or by an edit to its grouping). */
+  readonly onFrozen?: (frozen: boolean) => void;
 }
 
 export class ChartPanel {
@@ -68,8 +71,29 @@ export class ChartPanel {
     return this.#spec;
   }
 
-  /** The cube changed (a new filter, a new calculated column): draw again. */
+  /** Whether the chart keeps its own grouping, or follows the cube's pivots. */
+  get frozen(): boolean {
+    return this.#spec?.frozen === true;
+  }
+
+  /** Freeze the chart's grouping, or make it live again (it regroups the way the cube is now). */
+  setFrozen(frozen: boolean): void {
+    if (!this.#spec || this.frozen === frozen) return;
+    const { frozen: _was, ...rest } = this.#spec;
+    this.#spec = frozen ? { ...rest, frozen: true } : rest;
+    this.#options.onFrozen?.(frozen);
+    this.refresh(0);
+  }
+
+  /** The cube changed (a new filter, a new pivot, a new calculated column): draw again, regrouped if live. */
   refresh(delay = this.#options.debounceMs ?? 150): void {
+    if (this.#spec) {
+      const followed = followCube(this.#spec, this.#options.snapshot());
+      if (followed !== this.#spec) {
+        this.#spec = followed;
+        this.#paintForm();
+      }
+    }
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => void this.#draw(), delay);
   }
@@ -112,7 +136,12 @@ export class ChartPanel {
 
   #set(change: Partial<ChartSpec>, redrawForm = false): void {
     if (!this.#spec) return;
-    this.#spec = { ...this.#spec, ...change };
+    // a hand on the grouping of a live chart freezes it: the next pivot
+    // change would otherwise undo the choice
+    const grouping = 'x' in change || 'y' in change || 'split' in change;
+    const freeze = grouping && !this.frozen && this.#spec.mark !== 'scatter';
+    this.#spec = { ...this.#spec, ...change, ...(freeze ? { frozen: true } : {}) };
+    if (freeze) this.#options.onFrozen?.(true);
     if (redrawForm) this.#paintForm();
     this.refresh();
   }
@@ -171,7 +200,9 @@ export class ChartPanel {
         (v) => {
           if (!this.#spec) return;
           const { split: _old, ...rest } = this.#spec;
-          this.#spec = v ? { ...rest, split: v } : rest;
+          const freeze = !this.frozen && this.#spec.mark !== 'scatter';
+          this.#spec = { ...(v ? { ...rest, split: v } : rest), ...(freeze ? { frozen: true } : {}) };
+          if (freeze) this.#options.onFrozen?.(true);
           this.refresh();
         },
         { allowNone: spec.mark !== 'heatmap' },

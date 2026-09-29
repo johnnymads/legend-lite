@@ -11,6 +11,7 @@ import {
   chartQuery,
   chartSnapshot,
   defaultChart,
+  followCube,
   measureName,
   type ChartSpec,
 } from '../src/chart-spec.ts';
@@ -248,5 +249,43 @@ describe('the drawing', () => {
     const scatter = chartOption({ ...BAR, mark: 'scatter', x: 'notional', y: [{ column: 'qty', fn: 'sum' }] }, points);
     assert.equal(scatter.keyAt(0, 0), null, 'a point is not a group: nothing to filter to');
     assert.match(chartSvg(scatter), /<svg/);
+  });
+});
+
+describe('a live chart', () => {
+  const live = defaultChart(CUBE)!;
+
+  it('follows the cube\'s pivots: first row group across, the next as the split', () => {
+    const regrouped = followCube(live, { ...CUBE, rows: ['desk'], pivotOn: ['region'] });
+    assert.equal(regrouped.x, 'desk');
+    assert.equal(regrouped.split, 'region', 'the first column label, when there is one row group');
+    const one = followCube(live, { ...CUBE, rows: ['desk'], pivotOn: [] });
+    assert.equal(one.x, 'desk');
+    assert.equal(one.split, undefined);
+  });
+
+  it('runs a date in time order, and a category largest first', () => {
+    const byDate = followCube(live, { ...CUBE, rows: ['trade_date'], pivotOn: [] });
+    assert.deepEqual(byDate.options.sort, { by: 'x', direction: 'asc' });
+    assert.deepEqual(followCube(byDate, { ...CUBE, rows: ['desk'], pivotOn: [] }).options.sort,
+      { by: 'y', direction: 'desc' });
+  });
+
+  it('plots the cube\'s own measure', () => {
+    const m = followCube(live, { ...CUBE, measures: [{ name: 'q', column: 'qty', fn: 'average' }] });
+    assert.deepEqual(m.y, [{ column: 'qty', fn: 'average' }]);
+  });
+
+  it('stays as it is when frozen, a scatter, or when nothing is grouped', () => {
+    const frozen = { ...live, frozen: true };
+    assert.equal(followCube(frozen, { ...CUBE, rows: ['desk'] }), frozen);
+    const scatter: ChartSpec = { ...live, mark: 'scatter' };
+    assert.equal(followCube(scatter, { ...CUBE, rows: ['desk'] }), scatter);
+    assert.equal(followCube(live, { ...CUBE, rows: [], pivotOn: [] }), live);
+  });
+
+  it('answers the same object when nothing changed (no redraw of the form)', () => {
+    const now = followCube(live, CUBE);
+    assert.equal(followCube(now, CUBE), now);
   });
 });
