@@ -83,6 +83,8 @@ public @interface KnownDefect {
             if (!expected.isInstance(thrown)) {
                 throw thrown;
             }
+            // the defect as observed, in the test log: a pin that holds for the wrong reason is visible
+            System.err.println("KNOWN DEFECT (owner " + owner + ") still stands: " + thrown);
         }
     }
 }

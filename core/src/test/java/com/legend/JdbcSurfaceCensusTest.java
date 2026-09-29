@@ -450,6 +450,15 @@ class JdbcSurfaceCensusTest {
             // 2026-09-29, plan W0.1: test-only seeding on a runtime's resolved connection,
             // replacing the deleted product route /engine/sql; DDL/DML only, no value read back
             "core/src/test/java/com/legend/server/Seed.java",
+            // 2026-09-29, plan W0.3: KNOWN-DEFECT probes (@KnownDefect, each naming its owner item).
+            // Each creates a small table by hand on an in-memory DuckDB, runs one compiled
+            // query and reads the rows the database computed: the defect is in the compiler's
+            // output, and the rows are how it shows
+            "core/src/test/java/com/legend/compiler/spec/InlinerMatchCaptureTest.java",
+            "core/src/test/java/com/legend/integration/ServiceTestProvisionKeyTest.java",
+            "core/src/test/java/com/legend/lowering/LowererLetScopeTest.java",
+            "core/src/test/java/com/legend/resolver/NavPrefixCollisionTemporalTest.java",
+            "core/src/test/java/com/legend/resolver/NestedExistsCorrelationStampTest.java",
             "core/src/test/java/com/legend/TabularFunctionTest.java",
             // names java.sql only to assert it ABSENT: runs the planner in a JVM
             // limited to java.base (no connection, no statement)
