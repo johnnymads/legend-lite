@@ -5682,6 +5682,39 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild rev H2: the plan revised after the meta-audit; D13–D18 ruled; the program lands on main
+
+**What.** A six-lens meta-audit of the plan (`docs/plan-audit-2026-09-26/meta-audit-2026-09-29/`, commit `cfbd8a83e`)
+and the user's rulings D13–D18 produced rev H2 of `docs/EXECUTION_PLAN_2026_09_26.md`: a §0 that a fresh session can
+execute from (current item, checklist, registers that name files, commit/push/GATES/receipt conventions); rules 0b.11
+(wrong answers fixed now, D14), 0b.13 (outcomes not mechanism, D15), 0b.14–0b.16; §1 adds recorded instantiations,
+`ExprId`, the query layer, the pass manager, the algebraize option; §1a the program frame (users, a number per wave,
+baselines, checkpoints C1–C5 with a go/no-go before W4.3, the cut list to rule at C1, risks, rollback); §1b the measured
+target map replacing the guessed one; §1c the oracles by what each can see; §1d owners for semantics nobody owned; new
+items W0.6, W0.7, W1.0, W1.0b, W1.1b–d, W1.10–W1.13, W2.2b, W3.4, W3.7, W4.1r, W5.6; D19 opened (D8's fence and helpers).
+`main` fast-forwarded from `caf0cf71f` to the program (`89dc45871`), D18.
+
+**Corrections made in the homework.** The automap trigger: legend-pure calls `isToOne(m, true)` (strict,
+`FunctionExpressionProcessor.java:306, :325, :359`; `Multiplicity.java:78-83`), so a `[0..1]` receiver automaps;
+`kernel-reading-2026-09-26.md` and `reference-matching.md` said the opposite and are corrected in place. The H2 design
+note's `Legacy` text is superseded by a reading guide (form recognition by declaration id moves into W2.3a). New:
+`docs/SEMANTICS_REGISTER.md` (17 rows); `IN_FLIGHT.md` points at the plan; `AGENTS.md` routes to the plan; banners on
+PROGRAM_MAP, ONE_PLATFORM_PLAN, END_TO_END_PLAN_2026_09_08, OPEN_REGISTER, ENGINEERING_LOG's queue; SERVER_PROGRAM
+paused with legs renamed S0–S3.
+
+**Owed from W0.5 (commit `ed85b5166`, 2026-09-29 01:15), recorded here:** deleted DanglingStateGuardTest rule 2 (a guard
+over other guards' comments; rule 1, readers iff writers for every static slot, stays); JdbcSurfaceCensusTest's TEST
+register (tests execute queries by nature; production JDBC is funnelled in bytecode and its register stays);
+ShadowWalkerCensusTest's 15 rows pinned at 0 for methods that no longer exist. Kept, with reasons in the plan:
+ParkedWorkLedgerTest, `preludeIsCurrent`/`signatureTextIsCurrent`, the claims `also` column. 528 lines deleted. Chain
+green at the time (129/129, 5/5).
+
+**Gate.** Documents only; `bazel test //...` and `//tools/deps:all` green on the tree (summary lines in the commit's chain
+run). The cold-read test (W1.0's gate) runs next; its receipt goes in `plan-audit-2026-09-26/cold-read/`.
+
+**Cost.** Meta-audit: six read-only agents plus the parent's synthesis; rev H2: one session. Receipts:
+`~/legend/platform-architecture/receipts/meta-audit-2026-09-29/`.
+
 ## 2026-09-29 — Rebuild W1.1 (1): the reference lane, calls first
 
 **What it is.** `bazel test //spec:reference_lane` (manual; about 8 GB; about 45 s once the reference dump is cached)

@@ -1,5 +1,7 @@
 # THE OPEN REGISTER
 
+> **Superseded 2026-09-29.** This is history, not instructions. The one living plan is `docs/EXECUTION_PLAN_2026_09_26.md` (start at its §0); status lives there and in `docs/IN_FLIGHT.md`.
+
 ONE list of every open item, with its source and size. The PROGRAM-LEVEL map (buckets, arc, audit intake) is docs/PROGRAM_MAP.md — this file holds per-item state. Maintenance
 rule (part of every slice's definition of done): a row moves to the
 CLOSED section IN THE SAME COMMIT that closes it; new deferrals add a

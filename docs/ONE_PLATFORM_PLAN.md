@@ -1,5 +1,7 @@
 # The One-Platform Plan
 
+> **Superseded 2026-09-29.** This is history, not instructions. The one living plan is `docs/EXECUTION_PLAN_2026_09_26.md` (start at its §0); status lives there and in `docs/IN_FLIGHT.md`.
+
 *2026-08-18. The master plan for finishing the foundations: one implementation of Pure
 semantics — ours — with the database doing the work, Java doing the orchestration, and
 every helper that grew up beside the platform either absorbed into it or reduced to a

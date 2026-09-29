@@ -1,5 +1,7 @@
 # THE PROGRAM MAP
 
+> **Superseded 2026-09-29.** This is history, not instructions. The one living plan is `docs/EXECUTION_PLAN_2026_09_26.md` (start at its §0); status lives there and in `docs/IN_FLIGHT.md`.
+
 One document holding the WHOLE plan — the four ratified buckets, the
 work they didn't name, the audit intake, and the longer arc — so "what
 is the plan" is a thirty-second read here, never a chat archaeology.

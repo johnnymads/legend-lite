@@ -1,5 +1,7 @@
 # Engineering Log — the burn, distilled for any session
 
+> **2026-09-29:** the standing tenets here still hold; the active queue is history. Current work: `docs/EXECUTION_PLAN_2026_09_26.md` §0.
+
 > **Purpose:** everything a NEW Claude session (any machine, any user) needs
 > to continue this work. The full narrative lives in the git history — every
 > commit message on `main` documents its design decisions, trade-offs, and

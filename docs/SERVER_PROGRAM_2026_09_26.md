@@ -1,5 +1,7 @@
 # Server program — the warehouse, the SQL API, and DataCube's server modes (2026-09-26)
 
+> **Paused 2026-09-29** while the compiler rebuild runs (`docs/EXECUTION_PLAN_2026_09_26.md`). Its legs are named **S0–S3** from now on, so they are not confused with the rebuild's waves W0–W7 (where this text says W0–W3 for its own legs, read S0–S3).
+
 **Goal (user, 2026-09-26):** a production-grade database server built on
 DuckDB that behaves like a real cloud warehouse, and real server modes for
 DataCube + legend-lite on top of it, ending in full compatibility with

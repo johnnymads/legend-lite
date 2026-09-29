@@ -326,13 +326,22 @@ numbering ("6g", "7a-c") that does **not** map to this list or to
 
 ## Standing documents
 
+**Current work: the compiler rebuild. Start at `docs/EXECUTION_PLAN_2026_09_26.md`
+§0** (the current item, the session checklist, the decisions); `docs/IN_FLIGHT.md`
+says who is working. Every deliberate difference from legend-pure/legend-engine is
+a row of `docs/SEMANTICS_REGISTER.md`. Older plans and queues (PROGRAM_MAP,
+ONE_PLATFORM_PLAN, END_TO_END_PLAN, OPEN_REGISTER, ENGINEERING_LOG's queue,
+REAL_PLAN_2026_09_25) are history, not instructions.
+
 The live process layer. None of it is reachable from any always-loaded file
 otherwise, which is how it drifted:
 
 | Doc | What it is |
 |---|---|
+| `docs/EXECUTION_PLAN_2026_09_26.md` | **The one living plan** (rebuild, rev H2): start at §0 |
+| `docs/SEMANTICS_REGISTER.md` | Every deliberate difference from the reference, with evidence |
 | `docs/GATES.md` | The gate chain. **Read before claiming anything is green.** |
-| `docs/ENGINEERING_LOG.md` | Standing tenets + active queue |
+| `docs/ENGINEERING_LOG.md` | Standing tenets (its active queue is history; the plan above replaced it) |
 | `docs/TENETS.md` | Eager-Knowledge / lazy-Work, the north star |
 | `docs/WORLD_MAP.md` | Java vs Pure vs input: the three kinds of Pure code, the prelude, compare-not-compute, the decision procedure |
 | `docs/AUDITS.md` | Audit index and reading order |

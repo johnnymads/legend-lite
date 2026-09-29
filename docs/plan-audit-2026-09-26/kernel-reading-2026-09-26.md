@@ -1,5 +1,7 @@
 # Kernel reading: legend-pure function matching / inference (pinned tree)
 
+**Correction 2026-09-29 (meta-audit lens 2 F1, verified by the parent in the pinned 5.99.0 tree):** FEP calls `Multiplicity.isToOne(sourceMultiplicity, true)` (STRICT) at `FunctionExpressionProcessor.java:306, :325, :359`; strict to-one requires lower == 1 (`Multiplicity.java:78-83`). So a `[0..1]` receiver is NOT to-one and DOES automap; only `[1]` takes the direct property/column path. The engine agrees (`HelperValueSpecificationBuilder.java:284` automaps any receiver that is not `PureOne`), and `map` has a `T[0..1]` overload (`map.pure:43`). Every statement below that says "strict=false" or "`[0..1]` does not automap" is wrong and is corrected in place.
+
 Read-only reading of the twelve reference methods, 2026-09-26, from
 `M3 = /Users/neemsandv/Library/Caches/bazel/_bazel_neemsandv/646bc514b2e63fa36f2af3ea828e232c/external/+http_archive+legend_pure_src/legend-pure-core/legend-pure-m3-core/src/main/java/org/finos/legend/pure/m3`
 and `RES = …/legend-pure-m3-core/src/main/resources/platform/pure`.
@@ -14,7 +16,7 @@ IS = `M3/navigation/importstub/ImportStub.java`, C3 = `M3/navigation/linearizati
 "GT" = generic type, "ctx" = the current `TypeInferenceContext`.
 
 Helper facts used below (each checked in source):
-- `Multiplicity.isToOne(m, strict)` (`M3/navigation/multiplicity/Multiplicity.java:78-83`): concrete AND (`!strict` OR lower==1) AND upper==1. With `strict=false` (the only way FEP calls it) `[0..1]` IS to-one; a multiplicity parameter `m` is NOT.
+- `Multiplicity.isToOne(m, strict)` (`M3/navigation/multiplicity/Multiplicity.java:78-83`): concrete AND (`!strict` OR lower==1) AND upper==1. FEP always calls it with `strict=true` (:306, :325, :359), so `[0..1]` is NOT to-one [corrected 2026-09-29]; a multiplicity parameter `m` is NOT.
 - `Multiplicity.isMultiplicityConcrete(m)` (:40-43): non-null and `multiplicityParameter == null`.
 - `Type.isTopType`/`isBottomType` (`M3/navigation/type/Type.java:123-138`): identity with `type_TopType()` (Any) / `type_BottomType()` (Nil).
 - `Type.getGeneralizationResolutionOrder` (:150-153) = `C3Linearization.getTypeGeneralizationLinearization`.
@@ -161,10 +163,10 @@ matchFunction(fe):
              fe.functionName := "extractEnumValue", fe.propertyName removed, param 1 gets usageContext offset 1   // :301, :1096-1106
          (foundFunctions stays empty -> falls to the repository search at :384)
       ELIF rawType(sourceGT) is a RelationType:                                   // :303
-         IF isToOne(source.mult, strict=false): foundFunctions += _RelationType.findColumn(rawType, name, fe.src)   // :306-310 (the Column IS the function)
+         IF isToOne(source.mult, strict=true): foundFunctions += _RelationType.findColumn(rawType, name, fe.src)   // :306-310 (the Column IS the function)
          ELSE: AUTOMAP (below) with M3Properties.propertyName; parametersValues re-read; first pass re-run   // :311-320
       ELSE (class-like receiver):
-         IF isToOne(source.mult, strict=false):                                   // :325
+         IF isToOne(source.mult, strict=true):                                   // :325
             propertyFunc = findFunctionForPropertyBasedOnMultiplicity(fe, sourceGT)   // :327 -> :954-1026:
                 property = class_findPropertyUsingGeneralization(sourceType, name)          // :959
                 if null and sourceType is ClassProjection: process the projection, retry    // :962-966
@@ -180,7 +182,7 @@ matchFunction(fe):
          ELSE: AUTOMAP with propertyName; re-read; first pass re-run              // :334-343
     ELIF fe.qualifiedPropertyName != null:                                        // :349-350   ($x.q(args))
       source = parametersValues[0]; name; sourceGT concrete-or-throw (same text)  // :352-355
-      IF isToOne(source.mult, strict=false):                                      // :359
+      IF isToOne(source.mult, strict=true):                                      // :359
          qps = findFunctionsForQualifiedPropertyBasedOnMultiplicity(...)          // :361 -> :1069-1094:
               process a ClassProjection receiver first (:1075-1078)
               firstParam = synthetic VariableExpression(GT = parametersValues[0].GT, mult = PureOne)   // :1080-1082
@@ -547,7 +549,7 @@ Checked each numbered finding of `/Users/neemsandv/legend/legend-lite/.claude/wo
 
 6. **Finding 15 — "first binding wins; a second concrete binding is MERGED" is right for concrete×concrete but wrong in `merge` mode for non-concrete existing.** TIC:467-480: when the existing value is non-concrete, the new one concrete, same target ctx and `merge == true` (the FEP:591 path, all args inferred), NOTHING is recorded — the concrete value is dropped, not merged, not "first wins" in the sense of erroring. Also `registerMul` with two concrete values takes `minSubsumingMultiplicity` (TIC:276-281) — the report has this right.
 
-7. **Finding 11 — automap trigger is stated as "NOT to-one receiver"; precise rule is `isToOne(m, strict=false)`** (Multiplicity.java:78-83): concrete AND upper == 1. So `[0..1]` is to-one (no automap), `[0]` is NOT, and a receiver whose multiplicity is a multiplicity PARAMETER `m` is NOT to-one → automap. The report's `relaxed=true` gloss hides the parameter case.
+7. **Finding 11 — automap trigger is stated as "NOT to-one receiver"; precise rule is `isToOne(m, strict=true)`** [corrected 2026-09-29; earlier text said strict=false] (FEP:306,:325,:359; Multiplicity.java:78-83): concrete AND lower == 1 AND upper == 1. So only `[1]` is to-one; `[0..1]` automaps, `[0]` too, and a receiver whose multiplicity is a multiplicity PARAMETER `m` is NOT to-one → automap. The report's `relaxed=true` gloss hides the parameter case.
 
 8. **Finding 9 — TypeMatch order line ranges are right but the report does not say the Nil check precedes the FunctionType branch** (TM:394-397 before :399): a Nil-typed value against a `Function<…>` target is BOTTOM (a match), not "not a function type → null".
 
@@ -587,7 +589,7 @@ Everything else in findings 1, 2, 3, 6, 7, 10, 12, 14, 17, 18, 20 is supported b
 20. **`handleTypeArgumentTypeInference` does not descend into Relation/Function templates** (FEP:681-701, TODO at :700); `TypeInferenceContext.register` DOES descend into them (TIC:506-523, :562-568) — the two paths bind different things for `Function<{T[1]->Relation<X>[1]}>`-shaped returns.
 21. **Merge mode drops a concrete value over a non-concrete existing binding** (TIC:467-480) — `if<T|m>` is the cited case; do not "fix" it by LUB-ing or your results will diverge from the reference.
 22. **Return type must be concrete or an enclosing type parameter** (FEP:536-542, `isTop` TIC:127-130); otherwise "The system is not capable of inferring the return type (…) of the function '…'. Check your signatures!". Type params unresolved → error only in a root context (TI:85-90); multiplicity params unresolved → always an error (TI:100-103).
-23. **Automap.** Trigger is `!isToOne(receiverMult, strict=false)` = NOT (concrete AND upper==1) (Multiplicity.java:78-83): `[0..1]` does NOT automap; `[0]`, `[2]`, `[*]`, `[1..*]` and a multiplicity PARAMETER do. The rewrite (FEP:1108-1174) produces `map($src, {v_automap | $v_automap.p(args…)})` with the lambda param typed as a copy of the receiver's generic type at `[1]`, the lambda NAMED after the property-name instance, no return type, the SAME propertyName InstanceValue reused in the body, and then a bare repository search for `map` (:384-388). The typed tree therefore contains a `map` the source never spelled; the receiver's `[0..1]` keeps the plain property call.
+23. **Automap.** [corrected 2026-09-29] Trigger is `!isToOne(receiverMult, strict=true)` = NOT (concrete AND lower==1 AND upper==1) (FEP:306,:325,:359; Multiplicity.java:78-83): only `[1]` takes the direct path; `[0..1]`, `[0]`, `[2]`, `[*]`, `[1..*]` and a multiplicity PARAMETER automap. The rewrite (FEP:1108-1174) produces `map($src, {v_automap | $v_automap.p(args…)})` with the lambda param typed as a copy of the receiver's generic type at `[1]`, the lambda NAMED after the property-name instance, no return type, the SAME propertyName InstanceValue reused in the body, and then a bare repository search for `map` (:384-388). The typed tree therefore contains a `map` the source never spelled; only a `[1]` receiver keeps the plain property call.
 24. **Enum value extraction.** `$Enum.VALUE` is recognised by `subTypeOf(receiverGT, Enumeration)` on the RAW type only (FEP:299, GenericType.java:396-399), rewritten to `extractEnumValue(<enum>, 'VALUE')` with the name appended as a processed String literal at parameter index 1 (FEP:1096-1106) and then matched from the repository (:384-388) — `extractEnumValue_Enumeration_1__String_1__T_1_`. Reference usages are added only for that exact name (FEP:786-794).
 25. **Milestoning injection.** A generated milestoned property/qualified property with missing dates is swapped for its dated variant and the date arguments are APPENDED to the call from the propagated context (FEP:328-331, :362-366; MilestoningDatesPropagationFunctions.java:147-157); when no dates are in scope the original stays and the later property lookup produces the "is milestoned with stereotypes … and requires date parameters" text (FEP:986-1005). For simple properties this happens only on the to-one path; on the qualified path only when exactly one qualified property was found (:362).
 26. **Single-argument qualified property via `$x.q`** (no parentheses): resolved as a property only if a qualified property with `typeVariables.size()+1` parameters exists (FEP:975, :1045-1057); otherwise the size-dependent errors at :979-1019.

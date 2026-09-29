@@ -1,5 +1,7 @@
 # End-to-end plan: finish the harness, burn the roster to its honest floor (2026-09-08, v2 after the harness audit)
 
+> **Superseded 2026-09-29.** This is history, not instructions. The one living plan is `docs/EXECUTION_PLAN_2026_09_26.md` (start at its §0); status lives there and in `docs/IN_FLIGHT.md`.
+
 > **v2 (2026-09-08).** The adversarial harness audit — docs/HARNESS_AUDIT_2026_09_07.md and its
 > evidence base docs/harness-audit-2026-09-07/ (referee.md, ambient-state.md, guards.md,
 > roster-and-floor.md, main-residue.md, strength.md, driver.md) — was verified against source

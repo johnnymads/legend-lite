@@ -1,5 +1,7 @@
 # Research line 1: how the reference (legend-pure 5.99.0) binds names and chooses overloads
 
+**Correction 2026-09-29 (meta-audit lens 2 F1, verified by the parent in the pinned 5.99.0 tree):** FEP calls `Multiplicity.isToOne(sourceMultiplicity, true)` (STRICT) at `FunctionExpressionProcessor.java:306, :325, :359`; strict to-one requires lower == 1 (`Multiplicity.java:78-83`). So a `[0..1]` receiver is NOT to-one and DOES automap; only `[1]` takes the direct property/column path. The engine agrees (`HelperValueSpecificationBuilder.java:284` automaps any receiver that is not `PureOne`), and `map` has a `T[0..1]` overload (`map.pure:43`). Every statement below that says "strict=false" or "`[0..1]` does not automap" is wrong and is corrected in place.
+
 Read-only audit of the pinned tree, 2026-09-26. Verbatim findings with file:line. Feeds
 `PLAN_AUDIT_2026_09_26.md` §1 rows 1–6 and the homework for steps #47+A1, B and D.
 
@@ -129,7 +131,7 @@ Parser: `$p.name` → SimpleFunctionExpression with `_propertyName` and receiver
 FEP.matchFunction :289-345: receiver must be concrete else "The type 'T' can't be inferred yet"
 (:1059-1067); Enumeration receiver → rewritten to `extractEnumValue(enum,'name')` (:298-302,
 :1096-1106); RelationType to-one receiver → column (:303-310); NOT to-one receiver (`isToOne(m,
-relaxed=true)`) → **automap**: rewritten to `map($src, x|$x.name)` and re-matched (:311-320,
+strict=true)`, so `[0..1]` automaps [corrected 2026-09-29]) → **automap**: rewritten to `map($src, x|$x.name)` and re-matched (:311-320,
 :1108-1181); class receiver → `class_findPropertyUsingGeneralization`, then single-arg qualified
 property (:954-1026); milestoned property with missing dates → generated qualified property with
 dates propagated from context (:328-331, `M3/compiler/postprocessing/processor/milestoning/
@@ -241,8 +243,9 @@ written. The corrections, each of which changes what the step 3 kernel must do:
 5. **Finding 15 in merge mode**: a concrete value arriving over a NON-concrete existing binding in
    the same context is DROPPED, not merged (TIC:467-480, the FEP:591 path). Finding 5(b)'s tie
    mechanism is the name index's set iteration order (FEM:73, :156), not the HashMap of matches.
-6. **Automap trigger** is `!isToOne(m, strict=false)` = NOT (concrete AND upper == 1)
-   (Multiplicity.java:78-83): `[0..1]` does not automap; a multiplicity-PARAMETER receiver does.
+6. **Automap trigger** [corrected 2026-09-29] is `!isToOne(m, strict=true)` = NOT (concrete AND lower == 1 AND upper == 1)
+   (FEP:306, :325, :359; Multiplicity.java:78-83): only a `[1]` receiver takes the direct path; `[0..1]`, `[0]`, `[*]`, `[1..*]`
+   and a multiplicity-PARAMETER receiver automap. (The earlier text said `strict=false` and that `[0..1]` does not automap: wrong.)
 7. **Nil is checked before the FunctionType branch** in `TypeMatch` (TM:394 before :399): a Nil
    value against a `Function<…>` target is BOTTOM, a match. GTM:236 flips the Any/Nil argument skip
    under contravariance (inside FunctionType parameter positions).

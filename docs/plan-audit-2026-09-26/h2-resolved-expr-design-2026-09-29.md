@@ -40,6 +40,21 @@ references, `grep -rlw` over the 13 body-holding type names) that read resolved 
 push 4 makes the resolver emit the resolved model and deletes the converter; every push keeps CANDIDATES identical by
 (site, candidate set) and the reference lane unchanged.
 
+## Reading guide, 2026-09-29 (after the meta-audit): what §2–§7 mean under the revision
+
+The sections below are the first draft, kept for their inventories. Where they mention `Legacy` (§2's `Call`, `Member`
+and `Error` records, §3's builder output, §4's reader list, §6's push 4, §7's ruling 3), read it as **deleted**: a `Call`
+carries `Candidates(List<FunctionId>)` and `String spelled`, and `spelled` is fenced to diagnostics and printers (a
+guard in W2.3a push 1 fails any other reader). The consequence the meta-audit found (lens 1 finding 8): the 134
+name-dispatching readers (18 `CoreFn.of`, 31 `ResolvedNames`, 85 `.function()`) cannot switch to ids by taking "the"
+FQN, because a candidate set may span packages before the typer picks. So **form recognition by declaration id moves into
+W2.3a**: a table `FunctionId → Form` (the plan's "Form row"), consulted on the candidate set; a set whose members disagree
+on the form is a resolution error, reported, never guessed. This is the work W3.6 was going to do for the typer's 16
+`CoreFn.of` sites, pulled forward; W2.3a's size (9–13) already includes the reader switch but not this table: add about
+one session. Every other statement in §2–§7 stands unless the revision above says otherwise. Also per the meta-audit
+(lens 1 finding 3, lens 4 §4.3): `span` is not part of any record's `equals`; node identity is an explicit `ExprId(body,
+local)` allocated by D beside `VarId` (plan W2.3a), and spans are a table keyed by `ExprId` (types and instantiations live on the typed nodes: plan W1.1b).
+
 ## 0. The decisions on one screen
 
 | | Decision (recommended) | Main evidence |
