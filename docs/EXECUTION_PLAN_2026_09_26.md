@@ -4,7 +4,7 @@
 (`plan-audit-2026-09-26/architecture-review-2026-09-28.md`, evidence in `plan-audit-2026-09-26/stage-readings-2026-09-28/`).
 **Revised 2026-09-29 (rev H1)** after an adversarial audit of every wave against the code
 (`plan-audit-2026-09-26/h1-plan-audit-2026-09-29/`, synthesis in its `README.md`): the target is unchanged; items were
-corrected, split, re-ordered, given gates, and re-sized; decisions D6–D12 were owed (D7 and D10 ruled 2026-09-29).
+corrected, split, re-ordered, given gates, and re-sized; decisions D6–D12 were owed; D6, D7, D10 and D12 were ruled on 2026-09-29, D8 and D9 wait for their waves, D11 waits for a runtime census.
 
 This is the ONE living plan. It replaces the step list of the 2026-09-26 version (steps 0–2 of which are done; their
 records are in `docs/GATES.md` and the old text is in git history at `601995bc2`), `REAL_PLAN_2026_09_25.md`'s order, and
@@ -75,13 +75,13 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 | D3 | A reference lane at the pinned release | **RULED 2026-09-29 (the user): build it.** Spike done (H3): the whole closure compiles from `@maven_upstream` in 35 s at 5.3 GB; no new downloads |
 | D4 | "No tolerant modes" | **RULED 2026-09-28**: rule 0.9 |
 | D5 | Plan the whole program now | **RULED 2026-09-28**: this page |
-| D6 | W0.4: how the corpus certifies product SQL | **OPEN.** Recommendation (revised 2026-09-29): move the scan-order pass out of the product DuckDB dialect into the harness, behind an injected rewriter seam, keeping the per-lane registers that name the 993 affected tests. This honours the user's rulings of 2026-08-29 and 2026-09-20 (the engine's insertion-order emulation is a test-lane feature, never dropped). A product-SQL lane that compares those tests as multisets instead would drop the emulation, so it is offered only as an extra measurement lane [W0-W1 #7] |
+| D6 | W0.4: how the corpus certifies product SQL | **RULED 2026-09-29 (the user), the original intent:** the scan-order ORDER BY lives only in the harness, and only for the tests where an unordered compare cannot be correct (a `first`, `take`, `limit`, `slice`, `at` or positional read over a query with no sort, where WHICH rows come back depends on scan order). Every other test runs the product's exact SQL and compares rows without order, as the 921 unordered-chain tests already do. Today's pass is broader than that intent: it changes 993 tests' SQL from inside the product dialect. W0.4 measures the split, then implements it |
 | D7 | The judge charter | **RULED 2026-09-29 (the user): keep BOTH judges.** The host judge (Java equality over database-fetched values, the reference) and the database judge (the verdict computed in SQL, the product goal) both stay, joined per assert as today (`pinJudgeDifferential`). The charter (C2b/C2c, Z2) stands as written; no roster re-base; the stress lane keeps its host EqualToJson. W6.3 shrinks to the judge SPI |
 | D8 | The shape evaluator's scope | **OPEN.** May compile-time string `+` produce an identifier (a column name)? C6.2 and WORLD_MAP §4 call it COMPUTED; `StaticFold` does it today [W4 F7]. Blocks W4.2 |
 | D9 | The manifest world | **OPEN.** The 2b stdlib question, WORLD_MAP rule 8 (an engine file only if every function passes the deletion test), and whether roadmap test files may be excluded by a named, pinned register [W4 F9]. Blocks W4.4 |
 | D10 | The failure unit under rule 0.9 | **RULED 2026-09-29 (the user): two modes, as the north-star tenet says** (`docs/TENETS.md`: eager Knowledge, demand-driven Work). **Compile-all mode** types the whole world, collects every diagnostic and fails on any: the gate that proves a model sound (a lane, and an API clients call). **User paths** are demand-driven: a query types only what it touches, memoized per model. Rules that keep it sound: demand-driven is an optimisation only (a touched body gives exactly compile-all's diagnostics for it, checked by running the corpus both ways); Knowledge errors (parse, unknown elements, duplicate ids) are eager on every path; nothing is dropped or retried. **The difference from legend-engine is kept:** a query that touches only valid code runs even if the model has a broken body elsewhere (the engine rejects the whole model); engine-equivalent strictness lives in compile-all |
 | D11 | The type of the scalar expressions inside the store resolver's new relational output | **OPEN, not ready to decide.** Static homework done (`d11-homework-2026-09-29.md`): it is not the same as `TypedRelationOp` (a grouping of 16 unary operators for one resolver arm, on both sides of resolution); 22 of the 77 typed kinds are ambiguous between relation and scalar and ~38 lowering sites and a per-node `Space` memo decide at run time. Before deciding: the runtime census that document names (which kinds reach resolver output in scalar position, which ambiguous kinds are ever relational after resolution) |
-| D12 | The six rulings of the `ResolvedExpr` design (H2, `h2-resolved-expr-design-2026-09-29.md` §7) | **OPEN.** Recommendations: (1) resolved bodies in a side table `ResolvedBodies`, not generic records (169 files); (2) freeze candidate sets at resolution if the push-1 probe counts 0 boot-body divergences; (3) today's callee strings ride `Call`/`Member` as a shrink-only `Legacy` field during W2.3a only; (4) W2.3a does not need D10 (an `Error` node replays today's failure lazily; D10 becomes its own flip); (5) port StaticFold and AlphaRename rather than bridge them; (6) identity keys for non-function body slots |
+| D12 | The `ResolvedExpr` design (H2) | **RULED 2026-09-29 (the user):** the resolver lowers the parsed model into a resolved declaration family carrying `ResolvedExpr` (not a side table beside syntax records); readers derive function names from declaration ids (no callee strings on nodes); candidate sets fixed at resolution; W2.3a does not wait for D10; StaticFold and AlphaRename are ported. See the revision at the top of `h2-resolved-expr-design-2026-09-29.md` |
 
 ## 3. Done
 
@@ -139,9 +139,12 @@ names its gate.
   import scope keyed by element FQN (→ W2.2); UTF-16 vs code-point columns (decides W1.2's unit; H4 chose UTF-16);
   `ServiceTestRunner` hashCode keys; `PureDateLiteral` with validation off; the NameResolver NPE; the store resolver's
   alias-prefix temporal bug (→ W4.3).
-- **W0.4 The corpus certifies product SQL**, per D6. Lists the co-work: a dialect injection seam (`Compiler.dialectOf`),
-  `exec/Census.java:92`, `TestLaneOrderGuardrailTest`, the four engine-order registers, and the H2 lane's aliases on its
-  referee session.
+- **W0.4 The corpus certifies product SQL**, per D6 (ruled). First a count: of the 993 tests the scan-order pass changes,
+  which only check row order and which read rows whose identity depends on scan order (`first`, `take`, `limit`, `slice`,
+  `at`, positional reads without a sort). Then: the pass leaves the product DuckDB dialect for a harness-injected rewriter
+  (a dialect seam replacing `Compiler.dialectOf`'s static choice) applied only to the second kind; the first kind runs exact
+  product SQL under the unordered compare. Co-work: `exec/Census.java:92`, `TestLaneOrderGuardrailTest`, the four
+  engine-order registers (re-pinned to the second kind), and the H2 lane's aliases on its referee session.
 - **W0.5 Guard room** (moved from W7) [W0-W1 #17, W5-W7 #12, #24]: drop the 3,500-line guard (every early item edits a
   file at 3,472–3,499); delete the ceremony guards whose invariant no type or test needs (A13 §2: the JDBC
   TEST_REGISTER, DanglingState rule 2, ParkedWork, ShadowWalker zero rows, the claims `also` column, duplicate parity
@@ -197,6 +200,10 @@ names its gate.
   fields across `protocol` and `model`; `FunctionId` lives in `model`); the one builder that makes `ResolvedExpr` from a
   spelling and a scope, used by D, E and G; `Member`, `new`/`copy`, the `infix` and `propertyCall` flags; the binder
   scope and fresh-id supply; the World index lifecycle.
+- **W2.0b The D11 census** (a probe push, inert unless `LL_SHADOW`; `d11-homework-2026-09-29.md` §6): which typed kinds
+  reach the store resolver's output in scalar position, which of the 22 ambiguous kinds are ever relational after
+  resolution, which generic natives carry relations at run time, whether class-level nodes survive resolution, and how
+  the five dual-use operators split by space. It also seeds W1.3's verifier for H. D11 is ruled on its numbers.
 - **W2.1 World tables and the index in three layers** [W2 #9]: a cached boot index, a graph index built before D, an
   extension after E (E's lifted functions are called by E's own mints and the typer). Refuse model↔model duplicate ids
   now; native↔model twins wait for W2.8 [W2 #18]. A collision guard on the mangle (`Pure.java:616`). Gate: CANDIDATES
@@ -205,13 +212,14 @@ names its gate.
   `NameResolver.java:258`; `elementOffsets` has the same key, `ElementParser.java:326,391`); every `elementImports`
   reader switched [W2 #16]. The core group becomes the reference's 29 for Pure source only after a probe of resolutions
   served only by `variant`, `relation`, `precisePrimitives`. Gate: CANDIDATES identical, or the probe's rows explained.
-- **W2.3a The `ResolvedExpr` family with TODAY'S rule** [W2 #4, #5]: calls (`Candidates`), `Member(name)` for every dot
+- **W2.3a The resolved model with TODAY'S rule** [W2 #4, #5]: the resolver lowers the parsed model into the resolved
+  declaration family (D12), whose bodies are `ResolvedExpr`: calls (`Candidates`), `Member(name)` for every dot
   spelling, `new`, the flags; variables and element references still carry names. The merge point's full rule (BareNames
   ENGINE/CORE/FORM tiers) moves inside D unchanged. E's and G's ~595 untyped constructions go through the builder; E.6
   (re-resolution) is deleted; an ArchUnit rule forbids `compiler.spec` constructing `protocol.spec` nodes [W2 #2, #3].
   Every reader of a resolved body (108 files) switches. Poisoning per D10. Gate: CANDIDATES compared by (site, candidate
-  set) identical; poisoned calls counted by diagnostic code against the UNKNOWN-FN baseline [W2 #22]. Size 4–6 (several
-  pushes behind one feature seam; the plan for the seam is in H2).
+  set) identical; poisoned calls counted by diagnostic code against the UNKNOWN-FN baseline [W2 #22]. Size 9–13 (four pushes
+  behind a converter seam, H2 §6), with the resolved declaration family of D12.
 - **W2.3b The reference's candidate rule** (imports ∪ core ∪ Root, no own-package tier; `reference-matching.md` 1–3) for
   Pure source; engine input keeps the engine's Handlers namespace [W2 #6]. The parser's minted and bare names (`col`,
   `agg`, `func`, `olapGroupBy`, `tdsRows`, `tableReference`) each get a declaration or a syntax node D binds [W2 #7].
@@ -261,7 +269,9 @@ names its gate.
   algorithms deleted. Gate: reference lane OVERLOAD rows to the pinned residue; type rows not grown.
 - **W3.5 Kernel rules, second half**: `register`, reverse inference, LUB with variance, `GenericTypeOperation`; checkers
   that existed only for kernel gaps retire (about three) [W3 #17].
-- **W3.6 Forms by a candidate's Form row**; the typer's 16 `CoreFn.of` sites deleted; the other five go with W4 and W6
+- **W3.6 Forms by a candidate's Form row**, and (expected, per D11) **the relational/scalar split**: each ambiguous typed
+  kind becomes two kinds by the overload the typer chose (relation `filter` vs list `filter`, and so on), and
+  `TypedRelationOp` grows to every relational kind; the lowerer's run-time relation checks go one by one; the typer's 16 `CoreFn.of` sites deleted; the other five go with W4 and W6
   [W3 #15].
 
 ### W4 — The middle (≈32–51 sessions). Identity first; the physical IR last.
@@ -333,14 +343,14 @@ names its gate.
   VerdictChannelRegisterTest after W6.3 and D7; JavaEvalLedgerTest's residue register after W6.2/W6.3 and an AGENTS.md
   edit.
 
-**Size (judgment, from the H1 readers):** W0 3–5, W1 9–14, W2 12–18, W3 11–18, W4 32–51, W5 10–16, W6 12–20, W7 2–4 —
-roughly **90–145 working sessions**. W4.3 is the largest and least certain.
+**Size (judgment, from the H1 readers):** W0 3–5, W1 9–14, W2 15–23, W3 11–18, W4 32–51, W5 10–16, W6 12–20, W7 2–4 —
+roughly **95–150 working sessions**. W4.3 is the largest and least certain.
 
 ## 5. Order
 Serial; one owner; nothing in flight against the same rosters (rule 0.5).
 1. W0.0, W0.5, W0.2, W0.1, W0.3; W0.4 once D6 is ruled.
 2. W1.6 → W1.1 → W1.2 → W1.4 → W1.3 → W1.5 → W1.7 (needs W0.4) → W1.8.
-3. W2.0 (H2) → W2.1 → W2.2 → W2.3a (needs D10) → W2.3b → W2.4 → W2.5 → W2.6 → W2.7 → W2.9.
+3. W2.0 (H2, ruled) → W2.0b (D11 census) → W2.1 → W2.2 → W2.3a → W2.3b → W2.4 → W2.5 → W2.6 → W2.7 → W2.9.
 4. W3.1 → W3.2a → W3.2b → W3.3a → W3.3 → W2.8 → W3.5 → W3.6.
 5. W4.0 → W4.4a (D9) → W4.1a → W4.2 (D8) → W4.3 steps 1–6 with W4.1b → W4.3 steps 7–9 (D11) → W4.4b.
 6. W5.1a (may start after W1.7) → W5.1b → W5.1c → W5.2 → W5.3 → W5.4 → W5.5.

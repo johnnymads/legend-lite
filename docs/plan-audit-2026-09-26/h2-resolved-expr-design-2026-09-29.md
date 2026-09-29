@@ -4,19 +4,53 @@ Design note for plan item W2.0, drafted read-only at `compiler/rebuild` @ `23b21
 the drafting agent could not write files). Paths are relative to `core/src/main/java/com/legend/` unless they start with
 `core/` or `docs/`. Every count comes from a grep named beside it. The pinned reference trees were not re-verified and no
 bazel was run. It answers `h1-plan-audit-2026-09-29/W2-resolved-tree.md` findings #1, #2, #3, #4, #9, #11, #14, #15, #20,
-#21 (index in §8). **Status: proposed; §7 lists the rulings it needs.**
+#21 (index in §8). **Status: RULED 2026-09-29 (the user, D12), with the revision below, which supersedes §1, the `Legacy` field in §2 and §7's rulings 1, 3 and 6.**
+
+## Revision, ruled 2026-09-29: a resolved declaration family, not a side table
+
+The first draft of this note recommended a side table (`ResolvedBodies`) beside unchanged parse records, citing rustc. That
+was a cost-driven choice and the citation did not hold: rustc LOWERS its syntax tree into a new tree (HIR) and stores each
+resolved name inside the HIR node; its bodies live in a map owned by the new tree, not beside the syntax. Roslyn binds
+bodies into bound trees and declarations into symbols. Side tables are for facts computed later (rustc's per-expression
+types), not for resolution. A side table would leave syntax records holding stale, unresolved bodies with only a bytecode
+rule to stop a reader using them: the run-time boundary D1 rejected. The user ruled the proper design:
+
+1. **The resolver lowers the parsed model into a resolved model** (`ResolvedModel`, target `//core:compiler_resolved`).
+   Every element whose parse record holds an expression gets a resolved twin carrying `ResolvedExpr`: resolved functions
+   and services, classes (property defaults, derived properties, constraints), measures, associations, and mappings (class
+   mappings, filters, property bindings, aggregate views, model joins, cross-store properties); §1's list of the 19 body
+   slots is the exact inventory. Elements that hold no expression (enumerations, profiles, stores, connections, runtimes)
+   ride through as today's records until W2.6 turns their references into ids. Parse records stay syntax; nothing after
+   the resolver reads them (a bytecode rule pins it, and javac proves it for every body-holding kind).
+2. **Downstream reads only the resolved model.** The normalizer (E) takes resolved mapping records and builds
+   `ResolvedExpr` through the one builder (§3); the element compiler (F) builds `TypedFunction` and friends from resolved
+   declarations; the typer's inputs are `ResolvedExpr` only. The resolved mapping records are what W4.1a later elaborates
+   into the typed mapping IR, so none of this is throwaway.
+3. **No callee strings on the node** (supersedes the `Legacy` field): a `Call` carries its `Candidates`; every reader that
+   dispatches on a name today gets it from the declaration id (`FunctionId`'s FQN), so the 134 name-dispatching readers
+   switch to ids in W2.3a rather than keeping strings for a wave.
+4. **Identity keys (ruling 6) are moot**: bodies live in their resolved declarations.
+5. Rulings 2, 4 and 5 stand: candidate sets are fixed at resolution if push 1's probe counts 0 boot-body divergences; W2.3a
+   does not wait for D10 (an `Error` node replays today's failure; D10's two modes land after); StaticFold and AlphaRename
+   are ported.
+
+**Size:** W2.3a grows from 6–8 sessions to about 9–13: the resolved element family, and the 169 main files (1,958
+references, `grep -rlw` over the 13 body-holding type names) that read resolved bodies, switch in it. The push sequence of
+§6 keeps its shape: push 1 adds the family and a converter used by nobody, push 2 moves the typer, push 3 the normalizer,
+push 4 makes the resolver emit the resolved model and deletes the converter; every push keeps CANDIDATES identical by
+(site, candidate set) and the reference lane unchanged.
 
 ## 0. The decisions on one screen
 
 | | Decision (recommended) | Main evidence |
 |---|---|---|
-| A | **A side table, `ResolvedBodies`, carried beside each layer of the World.** Parse records untouched. Function bodies keyed by `FunctionId`; every other body slot keyed by the identity of its parse root. `ResolvedExpr` in a new target `//core:compiler_resolved` (deps base, error, values, protocol, model). `FunctionId` stays in `model`. | §1 |
-| B | 19 variants, mirroring `ValueSpecification` where the typer needs it, plus `Member`, `New`, `Copy`, `Error`. `Call` carries `Candidates`, `infix`, `propertyForm`, and a **W2.3a-only `Legacy`** (today's callee strings). | §2 |
+| A | **SUPERSEDED by the ruled revision above: a resolved declaration family.** First draft: a side table, `ResolvedBodies`, carried beside each layer of the World. Parse records untouched. Function bodies keyed by `FunctionId`; every other body slot keyed by the identity of its parse root. `ResolvedExpr` in a new target `//core:compiler_resolved` (deps base, error, values, protocol, model). `FunctionId` stays in `model`. | §1 |
+| B | 19 variants, mirroring `ValueSpecification` where the typer needs it, plus `Member`, `New`, `Copy`, `Error`. `Call` carries `Candidates`, `infix`, `propertyForm`. (The first draft's `Legacy` callee strings are superseded: readers derive names from ids.) | §2 |
 | C | One builder, `compiler/Resolve`: NameResolver's call arm and the typer's bare-name path in one method with four scopes reproducing today's four rules. E and G mint through it. E.6 deleted in push 3. | §3 |
 | D | `TypedSpec` construction unchanged. Entry points, `TypedFunction.body`, `Env` aliases, 4 raw-payload HIR fields and all five untyped rewriters ported to `ResolvedExpr` **in one push**. No back-converter. | §4 |
 | E | `VarId(int body, int local)`, rustc `HirId` style. D allocates ids for explicit and implicit binders; the minting side keeps a counter per body. Names stay as display fields. | §5 |
-| F | Four pushes; a converter from D's output is the seam: shadow, then the typer's entries, then E, then deleted when D emits `ResolvedExpr`. **6–8 sessions** (plan: 4–6). | §6 |
-| G | Six rulings for the user. | §7 |
+| F | Four pushes; a converter from D's output is the seam: shadow, then the typer's entries, then E, then deleted when D emits the resolved model. **9–13 sessions** with the ruled revision (first draft: 6–8). | §6 |
+| G | Six rulings: RULED 2026-09-29 with the revision above. | §7 |
 
 ## 1. (A) What holds a resolved body
 
@@ -267,7 +301,7 @@ changes for the 962 single-match rewrites.
 
 **W2.3a totals 6–8 sessions.** D10's switch (failing on undemanded poison) is its own push after W2.3a (G4).
 
-## 7. (G) Rulings for the user
+## 7. (G) Rulings (ruled 2026-09-29: 1, 3 and 6 as revised above; 2, 4, 5 as written)
 
 1. **A side table rather than generic records.** Recommended: the side table (§1). Cost: javac no longer finds stale reads of the
    parse body fields; push 4's accessor rule does. Generic records give javac that proof at 169 files now.
