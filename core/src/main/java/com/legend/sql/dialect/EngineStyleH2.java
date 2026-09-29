@@ -259,8 +259,7 @@ public class EngineStyleH2 extends AnsiSqlRenderer {
                 && c.fn() == com.legend.sql.SqlFn.COALESCE
                 && c.args().size() == 2
                 && c.args().get(1) instanceof SqlExpr.StringLit s
-                && com.legend.compiler.element.type.PlatformTypes
-                        .TDS_NULL_CELL.equals(s.value())) {
+                && SqlExpr.TDS_NULL_CELL.equals(s.value())) {
             inner = c.args().get(0);
         }
         return inner instanceof SqlExpr.Cast cast ? cast.value() : inner;

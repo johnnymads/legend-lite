@@ -26,6 +26,14 @@ public sealed interface SqlExpr
                 SqlAgg.Reducer {
 
     /**
+     * The TDS null-cell sentinel text, {@code "TDSNull"}: real pure's {@code ^TDSNull()} instance prints as this
+     * string (tds.pure), and lowering emits it as a string literal where TDS-row semantics apply. It lives here, in
+     * the leaf {@code sql} package, so a dialect can recognise it without depending on the compiler;
+     * {@code PlatformTypes.TDS_NULL_CELL} is this same constant.
+     */
+    public static final String TDS_NULL_CELL = "TDSNull";
+
+    /**
      * The DIRECT {@link SqlExpr} children, in rebuild order — the ONE
      * structural-recursion contract every expression walker shares. The
      * switch is EXHAUSTIVE with no default arm: a new variant fails

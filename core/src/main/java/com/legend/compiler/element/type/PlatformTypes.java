@@ -47,7 +47,7 @@ public final class PlatformTypes {
      * ordinary collections; we print the sentinel only where TDS-row
      * semantics apply (ledgered in AUDIT_23_SPECIAL_CASING.md).
      */
-    public static final String TDS_NULL_CELL = "TDSNull";
+    public static final String TDS_NULL_CELL = com.legend.sql.SqlExpr.TDS_NULL_CELL;
 
     /** The TDS null-cell CLASS (engine tds.pure:127) — {@code ^TDSNull()}
      * types as an instance of it, stamped [1] (a VALUE, never an empty). */

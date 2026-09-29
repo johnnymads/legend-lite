@@ -82,7 +82,7 @@ java_library(
 java_library(
     name = "sql_dialect",
     srcs = glob(["src/main/java/com/legend/sql/dialect/*.java"]),
-    deps = ["//base", ":compiler_element_type", ":sql"],
+    deps = ["//base", ":sql"],
     javacopts = NULLAWAY_OPTS,
     plugins = [NULLAWAY_PLUGIN],
     visibility = _PRIVATE,
