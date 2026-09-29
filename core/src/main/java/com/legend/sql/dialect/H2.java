@@ -712,11 +712,26 @@ public class H2 extends AnsiSqlRenderer {
         return jdbcValue;
     }
 
-    /** splitPart = the engine's own H2 extension function (commons split:
-     *  adjacent separators collapse, past the end -> NULL) — the golden's spelling. */
+    /** Pure's splitPart with the engine's meaning (commons split: the separator is a SET of
+     *  characters, adjacent separators collapse, 1-based part, NULL past the end) in plain H2:
+     *  the part-th maximal run of non-separator characters, {@code REGEXP_SUBSTR(s, '[^…]+', 1, part)},
+     *  which is NULL when there is no such run. Each separator character is written as
+     *  {@code \x{h…}}, so no character is special inside the class. It used to call
+     *  {@code legend_h2_extension_split_part}, a function only the engine's H2 (and our test
+     *  harness) installs, so product SQL failed on a plain H2 (execution plan W0.2(a)); that
+     *  spelling stays where it belongs, in {@link EngineStyleH2}'s golden text. A separator that
+     *  is not a literal has no spelling here and is refused. */
     @Override
     protected String splitPartCall(java.util.List<SqlExpr> a) {
-        return "legend_h2_extension_split_part(" + expr(a.get(0), 0) + ", "
-                + expr(a.get(1), 0) + ", " + expr(a.get(2), 0) + ")";
+        if (!(a.get(1) instanceof SqlExpr.StringLit sep) || sep.value().isEmpty()) {
+            throw new DialectCapability(
+                    "splitPart on H2 needs a literal, non-empty separator");
+        }
+        StringBuilder cls = new StringBuilder("[^");
+        sep.value().codePoints().forEach(cp ->
+                cls.append("\\x{").append(Integer.toHexString(cp)).append('}'));
+        cls.append("]+");
+        return "REGEXP_SUBSTR(" + expr(a.get(0), 0) + ", " + stringLit(cls.toString())
+                + ", 1, " + expr(a.get(2), 0) + ")";
     }
 }
