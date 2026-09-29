@@ -125,6 +125,11 @@ saved" compares the page.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-28 untangle: **architecture review filed** (`docs/plan-audit-2026-09-26/architecture-review-2026-09-28.md`,
+  docs only): the whole of core read stage by stage, the plan judged against compiler practice, 15 concrete
+  defects listed. One is a SECURITY item outside the untangle's area, for whoever owns `server/`:
+  `/engine/sql` runs arbitrary SQL, the server binds all interfaces and sends `Access-Control-Allow-Origin: *`.
+  Step 3a stays paused on the user's ruling. NOT building.
 - 2026-09-27 warehouse: **T4b step 1 pushing: `pure-protocol/`, a new top-level TypeScript package** (the
   protocol library: typed builders, Relation API only, exact JSON, a validating reader). No npm deps;
   typechecked by DataCube's tsc (datacube/tsconfig.json includes it); nothing in `core/` changes.
