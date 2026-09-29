@@ -1,11 +1,12 @@
 # The execution plan: the whole compiler, rebuilt stage by stage behind the oracles
 
-**Rev H3, 2026-09-29.** This is the ONE living plan. History: rewritten 2026-09-28 after the whole of `core` was read stage by
+**Rev H4, 2026-09-29 — the re-cut.** This is the ONE living plan. History: rewritten 2026-09-28 after the whole of `core` was read stage by
 stage (`plan-audit-2026-09-26/architecture-review-2026-09-28.md`, `stage-readings-2026-09-28/`); rev H1 after an
 adversarial audit of every wave (`plan-audit-2026-09-26/h1-plan-audit-2026-09-29/`); **rev H2 after a six-lens meta-audit
 of the plan itself** (`plan-audit-2026-09-26/meta-audit-2026-09-29/`, synthesis in its `README.md`) and the user's rulings
 D13–D18; **rev H3 after a five-reviewer tractability audit** (`plan-audit-2026-09-26/tractability-2026-09-29/`, synthesis
-and the engineering decisions E1–E13 in its `README.md`). Rev H1's text is in git history at `89dc45871`. Audit findings
+and the engineering decisions E1–E13 in its `README.md`); **rev H4 re-cuts the ORDER after a macro review the user
+approved: fix and learn first, decide at C1, then the middle by risk and value, the front end where it pays (§4).** Rev H1's text is in git history at `89dc45871`. Audit findings
 are cited as `[W2 #5]` (H1 report `W2-resolved-tree.md`, finding 5), `[L3 #4]` (meta-audit lens 3, finding 4) and `[T4]`
 (tractability report 4). **Paths without a module prefix are under `core/src/main/java/com/legend/`.**
 
@@ -18,8 +19,8 @@ Keep it current: when an item lands, move it to §3 with its GATES.md heading, a
 
 **Now (update in every push):** W0.6 push 1 (capture-avoiding substitution). The exact order, scope, design choice, tests
 and gate of every W0.6 push are in `plan-audit-2026-09-26/w0.6-homework/README.md` §"Push list" (homework and a dry run
-against the code done). Open decisions that block only single fixes: D20, D21. After W0.6: W1.0b, W0.4, W0.7, then W1 in
-§5's order.
+against the code done). Open decisions that block only single fixes: D20, D21. Then the rest of **Phase 1** (§4): W1.0b, the mapping-heavy set,
+W1.10c, W1.10a (lite versus the engine), W3.7, W0.7, and **C1**.
 
 **What this program is, in one paragraph.** legend-lite (`core/`, ~229k lines of product Java) is a clean-room
 replacement for legend-pure's compiler and legend-engine's query execution: Pure text → parse → resolve names → type →
@@ -109,11 +110,13 @@ driver [L5 §2]. Every GATES entry logs the item's actual cost; sizes are re-fit
 
 1. **Homework before code, from primary sources**: the pinned trees and our code, by file:line.
 2. **Probe before switch**; the probe's receipt is saved before the switch and the switch is judged against it.
-3. **The gate is the oracles plus the numbers** (§1c): corpus rosters LOST 0 (by name AND failure class once W1.4 lands);
-   the product-SQL snapshot byte-identical for refactor slices (W1.7); the reference lane's disagreement set not grown
-   AND its coverage pins not shrunk (W1.1 (1), W1.1b); the wrong-rows harness green (W1.10, from W4.0 on); the pass-manager
-   verifier and lint green (W1.3); `bazel test //...` and `//tools/deps:all` green; timings read alone and quiet.
-   **Every item states its own gate**; an item without one is not ready.
+3. **The gate is a few oracles plus the numbers** (§1c). The core gates, where they exist: corpus rosters LOST 0 (by the
+   roster files); rows equal to legend-engine's on the mutated fixtures (W1.10, once built); the reference lane's
+   disagreement set not grown and its coverage pins not shrunk (front-end items only); the product-SQL snapshot
+   byte-identical for refactor slices (W1.7, once built); `bazel test //...` and `//tools/deps:all` green; timings read
+   alone and quiet. Tools such as the verifier and lint (W1.3) and the guardrail tests support these; they are not extra
+   ceremony to satisfy (W1.14 prunes the ones that catch nothing). **Every item states its own gate**; an item without
+   one is not ready.
 4. **Deletions land with the switch.** A pin that moves carries a dated reason naming the item.
 5. **One variable at a time.** Names change with the world held constant; the world changes with names held constant; a
    new tree lands with today's rule, and the rule changes in a later push.
@@ -145,6 +148,11 @@ driver [L5 §2]. Every GATES entry logs the item's actual cost; sizes are re-fit
     deleted in the push that switches, not later.
 16. **One source of status:** this page's §0 "Now" line and §3. `docs/IN_FLIGHT.md` points here. A decision is recorded
     once, in §2, with the date, who ruled, and (for OPEN ones) when it must be decided.
+17. **Net deletion** (the re-cut, D17): every GATES entry states the push's net change in product lines (`*/src/main`,
+    W1.0b's counter). From Phase 3 on, an item ends net-negative, or its entry says why it could not; every phase ends
+    net-negative. New code is written to replace old code in the same item, not beside it for later.
+18. **Build, don't re-plan** (the re-cut): no whole-plan audit until C1. Between checkpoints each item is checked by its
+    own homework and gate; the plan is edited only when an item lands or a finding changes a later item.
 
 ---
 
@@ -187,18 +195,16 @@ legend-engine API clients (Studio and services, `server/PureV1Api.java`); model 
 `server/PureLspServer.java`); the planned warehouse/server modes (`docs/SERVER_PROGRAM_2026_09_26.md`, paused while this
 program runs).
 
-**What each wave gives users, and the number that must move** (printed into GATES.md by a tool, never hand-typed):
+**What each phase gives users, and the number that must move** (printed into GATES.md by a tool, never hand-typed):
 
-| wave | user outcome | the number (baseline to be printed by W1.0b unless given) |
+| phase | user outcome | the number (baseline printed by W1.0b unless given) |
 |---|---|---|
-| W0 | no known wrong answers from the pinned defects; the server's raw-SQL door closed (done) | reproduced wrong-results defects open: 7 pinned + the suspects W0.6 confirms → 0 |
-| W1 | the IDE shows positioned diagnostics; wrong rows become detectable | positioned diagnostics % in the LSP; wrong-rows harness cases; reference-lane coverage |
-| W2 | overload and import bugs gone; model memory bounded | CANDIDATES agreement; heap after resolve on `//core:scale_stresstest100k` |
-| W3 | overload picks and types match legend-pure | reference lane: OVERLOAD rows 769 → pinned residue; "reference typed, we FAILED" bodies 1,342 → shrinking; our bodies FAILED 1,521 → shrinking |
-| W4 | routing, joins and milestoning proved on adversarial data | engine-oracle row disagreements → 0 or registered; resolver lines 35,925 → |
-| W5 | dialect correctness; Postgres | PCT fail rosters by class; lowering lines → |
-| W6 | a thin runner; a multi-request-safe server | request-reachable static state sites → 0 |
-| every wave | less code, faster | product lines (229k at `89dc45871`) → down; plan latency p50/p95 over corpus queries; WASM bytes; `//wasm` cold start; 100K-model build time (2.7 s) and heap |
+| 1 | no known wrong answers; we know where the remaining ones are; the middle's design decided | open wrong-results defects 14 → 0; engine-row disagreements on mutated fixtures, found and attributed |
+| 2 | changes can be proven safe cheaply; the IDE shows positioned diagnostics | SQL snapshot and dumps in place; per-push red-chain rate down; positioned diagnostics % |
+| 3 | routing, joins, milestoning and SQL proved on adversarial data; the middle smaller | engine-row disagreements → 0 or registered; resolver lines 35,925 → down; lowering lines → down |
+| 4 | overload picks and types match legend-pure by our own solver; names bound by id | OVERLOAD rows 769 → pinned residue; "reference typed, we FAILED" bodies 1,342 → shrinking; heap after resolve on `//core:scale_stresstest100k` |
+| 5 | a thin runner; a multi-request-safe server; dialect breadth | request-reachable static state → 0 (W0.7 starts it); PCT fail rosters by class |
+| every phase | less code, faster | net product lines (229k at `89dc45871`) → down (rule 0b.17); plan latency p50/p95; WASM bytes; `//wasm` cold start; 100K-model build time (2.7 s) and heap |
 
 Known baselines at `89dc45871`: corpus fail rosters DuckDB 107, H2 361 (`spec/src/test/resources/rcorpus/*-fail-roster.txt`);
 reference lane AGREE 72,081, OVERLOAD 769, ABSENT 68,232, EXTRA 15,825, bodies FAILED 1,521, sources DROPPED 32
@@ -207,26 +213,27 @@ parser 25.2k, lowering 23.7k, sql 14.1k); quiet lane times at `ed85b5166`: corpu
 stress 23.0 s, guardrails 9.5 s. **Budgets** (the numbers a slice may not exceed) are set at checkpoint C1 from W1.0b's
 measurements; until then, a slice may not make any of them worse by more than noise (two quiet runs).
 
-**Checkpoints** (the user reviews at each; the plan is re-cut at each):
-- **C1, end of W1:** gates delivered? sizes re-fitted from logged cost; budgets set; the cut list below ruled.
-- **C2, after W2.3a:** re-plan if W2.3a took more than 15 sessions; heap within budget.
-- **C3a, after W3.7:** D11 ruled on the experiment's report (before W3.6).
-- **C3, end of W3:** OVERLOAD residue and the "reference typed, we FAILED" trend; W4 re-sized from the experiment; D9 and
-  D19 ruled; the W3.5 scope and the M2M/graphFetchChecked/external-format boundaries set.
-- **C4, go/no-go before W4.3** [T4 §4]: if D11 = R, the new H is the algebra rewrite (option 2 is already chosen); if
-  D11 = S, the rule (N and the multiplier confirmed at C3 from W1.10's attributed defects): **stop** — fix the store
-  resolver's defects in place and end the middle rebuild — if at most N defects are attributed to H on the mapping-heavy
-  set plus the engine rows, each fixed in ≤ 1 session with no new special case; else **extract passes** if W4.0–W4.2 ran
-  within 1.5× their re-fitted size; else **a new H behind a per-query router**: a static per-construct table, never a
-  try-new-then-old fallback (AGENTS.md invariant 4), gated on rows.
-- **C5, end of W4;** then per wave. Tag `main` at each checkpoint (`rebuild-C<n>`).
+**Checkpoints** (the user reviews at each; the plan is re-cut at each; §4 places them):
+- **C1, end of Phase 1 — decide:** D11 (on W3.7's report), D9, D19 (and D20/D21 if open); the cut list and the minimum
+  expert compiler below; budgets from W1.0b; C3's thresholds from Phase 1's attributed defect list; the §1d scope
+  boundaries (graphFetchChecked and constraints, M2M, external formats, service tests); every size re-fitted; a cold read.
+- **C2, end of Phase 2:** the core gates exist and run; whether W1.9 stays in Phase 2.
+- **C3, go/no-go before W4.3 steps 1–9** [T4 §4]: if D11 = R, the new H is the algebra rewrite (decided at C1); if D11 = S,
+  the rule (N and the multiplier fixed at C1 from the defect list): **stop** — fix the store resolver's defects in place
+  and end the middle rebuild — if at most N defects are attributed to H, each fixable in ≤ 1 session with no new special
+  case; else **extract passes** if Phase 3's items so far ran within 1.5× their re-fitted size; else **a new H behind a
+  per-query router**: a static per-construct table, never a try-new-then-old fallback (AGENTS.md invariant 4), gated on
+  rows.
+- **C4, end of Phase 3 (the middle);** **C5, end of Phase 4 (the front end);** then at the end. Tag `main` at each
+  checkpoint (`rebuild-C<n>`).
 
-**Cut list, to be ruled at C1** (candidates from [L6 §4], [L1 #11]; nothing is cut before the user rules): W5.5 Postgres
-until a user needs it; W5.4 ANSI split; W6.1's staged plan IR beyond what bind parameters need; carve-outs where no wave
-rewrites the code (keep the no-new-edges test); W2.6 `Ref<Kind>` outside W2.3a push 1a's site list; W7 as a wave. (W3.5's scope is
-ruled at C3, from the new solver's residue; W6.1's minimum is bind parameters, session settings and one transaction.) (fold guard deletions into their owning slices).
+**The minimum expert compiler, proposed for C1** (nothing is cut before the user rules): everything in §4 except the cut
+list, which is: W5.5 Postgres (until a user needs it); W5.4 (per-dialect delivered types beyond what W5.2 needs); W6.1's
+staged plan IR beyond bind parameters, session settings and one transaction; carve-outs where no item rewrites the code
+(the no-new-edges test stays); W2.6 `Ref<Kind>` outside W2.3a push 1a's site list; W1.9 if Phase 3 needs the budget; W7 as
+a separate step (its deletions fold into the owning items). W3.5's scope is ruled after W3.3, from the new solver's residue.
 
-**Risks** (owner is the session; each has a trigger and a response): W4.3 overrun → C4; oracle drift (the reference lane
+**Risks** (owner is the session; each has a trigger and a response): W4.3 overrun → C3; oracle drift (the reference lane
 non-deterministic) → W1.1d; performance/WASM regression → budgets from C1; the other account's machine contention → no
 timings until quiet; CI capacity (macOS runner 7 GB; Linux/Windows public runners 16 GB, not verified) → W1.1d; an
 upstream pin bump → forbidden during the program except as its own slice at a checkpoint.
@@ -283,7 +290,7 @@ ClassDefinition 15; `FunctionId.of` 6; `Temporal.java:87,98,99`, `TypeClassifier
 | engine-input differential (W1.13) | legend-engine's compile of engine-grammar input: accept/reject, chosen function, return type | rows | W2.3b, W3.3, D13 |
 | rejection corpus (W1.1c) | programs legend-pure refuses, by error class | — | W2, W3 |
 | product-SQL snapshot (W1.7) | any change in emitted SQL | whether the old SQL was right | refactor slices W4–W5 |
-| adversarial-data old-vs-new (W1.10a) | refactor-induced row changes on data built to separate right from wrong | a bug present in both | W4.0 on |
+| adversarial-data old-vs-new (W1.10a) | refactor-induced row changes on data built to separate right from wrong | a bug present in both | Phase 1 on (lite vs engine), then per Phase 3 item |
 | metamorphic TLP/NoREC/PQS (W1.10b) | internal inconsistency of filter/project/count under NULL and three-valued logic | a consistent wrong answer | W4.0 on, W5 |
 | legend-engine execution (W1.10c) | the engine's rows for the same model, query and data | engine bugs (registered, not copied) | W4.3, D13 |
 | PCT lanes (`//pct:pct_duckdb`, `//pct:pct_h2`) | per-function value semantics | mapping/routing | W5 |
@@ -297,8 +304,8 @@ ClassDefinition 15; `FunctionId.of` 6; `Temporal.java:87,98,99`, `TypeClassifier
 | area | owner item |
 |---|---|
 | graph fetch output (`serialize` config, `@type`, date/float/decimal JSON forms, property order, nulls) | W4.3 step 8, with a golden JSON class |
-| `graphFetchChecked`, class constraints, defects | scope ruled at C3 (constraint checking must be SQL) |
-| M2M scope boundary (chains, JSON source, union) | W4.4b; boundary written at C3 |
+| `graphFetchChecked`, class constraints, defects | scope ruled at C1 (constraint checking must be SQL) |
+| M2M scope boundary (chains, JSON source, union) | W4.4b; boundary written at C1 |
 | null semantics in SQL (`==` on empty, `NOT IN` with NULL, `sum([])`, `toOne` failure) | W0.6 (reproduced ones), W5.2 (equality kinds as nodes), `EqualityWorldsConformanceTest` as a W5 gate |
 | date/time (partial dates, StrictDate vs DateTime, connection timezone, `now`) | W6.1 session settings; a non-UTC JVM lane (W1.10) |
 | decimal/float (Integer division, rounding, Float computed as DECIMAL, literal magnitude cliff, NaN/Inf) | W5.2; register row "Float computed as DECIMAL" |
@@ -307,7 +314,7 @@ ClassDefinition 15; `FunctionId.of` 6; `Temporal.java:87,98,99`, `TypeClassifier
 | enumeration, embedded, inline, otherwise, merge, inheritance mappings | W4.1a, each with a shadow-probe row |
 | aggregation-aware | W1.10c engine-result lane |
 | service parameters (`[*]` in `in`, nulls, dates and timezone) | W6.1 homework |
-| service tests and mapping testSuites (deleted; Studio's "run tests" fails against lite) | recorded in `SEMANTICS_REGISTER.md`; scope at C3 |
+| service tests and mapping testSuites (deleted; Studio's "run tests" fails against lite) | recorded in `SEMANTICS_REGISTER.md`; scope at C1 |
 | cross-store (walled), external formats | recorded out of scope in `SEMANTICS_REGISTER.md` |
 
 ---
@@ -324,9 +331,9 @@ ClassDefinition 15; `FunctionId.of` 6; `Temporal.java:87,98,99`, `TypeClassifier
 | D6 | How the corpus certifies product SQL | **RULED 2026-09-29 (the user):** the scan-order ORDER BY lives only in the harness, and only for tests where an unordered compare cannot be correct (a `first`, `take`, `limit`, `slice`, `at` or positional read whose rows depend on scan order); every other test runs the product's exact SQL compared without order. W0.4 implements it, including the always-on pass on the assert path the ruling's text missed |
 | D7 | The judge charter | **RULED 2026-09-29 (the user): keep BOTH judges** (host judge and database judge), joined per assert as today (`pinJudgeDifferential`). W6.3 shrinks to the judge SPI |
 | D8 | Computing a query's column names at compile time | **RULED 2026-09-29 (the user): yes, as type checking, very ring-fenced** (TENET_CHARTER C6.2a): only schema positions of `NormalizeRequiredFunction` bodies and column-metadata reads; a closed, pinned operation list; never a row value; anything else a clear error. The database computes every value. Owner W4.2. See D19 for the fence's one open edge |
-| D9 | The manifest world | **OPEN; to be ruled at C3** (it blocks W4.4a). The 2b stdlib question, `docs/WORLD_MAP.md` §8 (the deletion test), and whether roadmap test files may be excluded by a named, pinned register [W4 F9] |
+| D9 | The manifest world | **OPEN; to be ruled at C1** (it blocks W4.4a). The 2b stdlib question, `docs/WORLD_MAP.md` §8 (the deletion test), and whether roadmap test files may be excluded by a named, pinned register [W4 F9] |
 | D10 | The failure unit under rule 0b.9 | **RULED 2026-09-29 (the user): two modes** (`docs/TENETS.md`). Compile-all types the whole world, collects every diagnostic, fails on any (a lane and an API). User paths are demand-driven and memoized per model; demand-driven is an optimisation only (equal by construction through the query layer, W2.2b, and checked by running the corpus both ways); Knowledge errors are eager. **The difference from legend-engine is kept** (a query touching only valid code runs even if another body is broken) and is a row of the semantics register. Sub-rule from the meta-audit [L1 #4]: a declaration-header reference is Knowledge (eager); an unknown name inside a body poisons that body only on user paths and is reported in compile-all |
-| D11 | Where the relational form begins | **RE-SCOPED 2026-09-29; decided by the W3.7 experiment (ruled by the user).** Option R: an explicit algebraize step after G½ turns the query into a logical relational algebra with semantics as node properties, and store resolution becomes rewrites of it. Option S (today's direction): relational only after store resolution, a skeleton with typed-HIR leaves. Pass criteria in W3.7. If S wins, the original narrower question (what type the skeleton's scalar leaves have; homework `d11-homework-2026-09-29.md`) is answered by the D11 census at W4.0 |
+| D11 | Where the relational form begins | **RE-SCOPED 2026-09-29; decided by the W3.7 experiment (ruled by the user), run in Phase 1 and ruled at C1.** Option R: an explicit algebraize step after G½ turns the query into a logical relational algebra with semantics as node properties, and store resolution becomes rewrites of it. Option S (today's direction): relational only after store resolution, a skeleton with typed-HIR leaves. Pass criteria in W3.7. If S wins, the original narrower question (what type the skeleton's scalar leaves have; homework `d11-homework-2026-09-29.md`) is answered by the D11 census at W4.0 |
 | D12 | The `ResolvedExpr` design | **RULED 2026-09-29 (the user):** a resolved declaration family carrying `ResolvedExpr`, not a side table; readers take names from declaration ids; candidate sets fixed at resolution (subject to push 1a's probe, the note's §7 ruling 2); StaticFold and AlphaRename carried
 over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its revision and its reading guide (form recognition by id moves into W2.3a) |
 | D13 | Which overload rule engine input gets | **RULED 2026-09-29 (delegated by the user):** one rule, legend-pure's outcomes, over the engine's namespace (its 32 imports and handler names). The engine's first-match handler order is registration order, not semantics; no second matcher. Gate: W1.13 lists every disagreement before the rule serves engine input; each is classified (engine defect, lite superset, or a real difference ruled case by case) into the register |
@@ -335,7 +342,7 @@ over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its 
 | D16 | The legend-engine SQL text (`EngineStyleH2`, `EngineStyleDB2`, `EngineStyleComposite`) | **RULED 2026-09-29 (the user): a backwards-compatible product dialect**: a printer over the same SQL tree as every dialect (it never re-lowers); rows are its gate (its SQL runs and must return the native dialect's rows); byte differences from engine goldens allowed only as register rows (e.g. D8: lite leaves constants to the database, the engine pre-evaluates them). Owner W5.6 |
 | D17 | The program's goals | **RULED 2026-09-29 (the user): cleaner, more bulletproof, much less code, faster, cruft deleted.** §1a; rule 0b.15 |
 | D18 | Where the rebuild lands | **RULED 2026-09-29 (the user): on `main`**, every gated slice; `compiler/rebuild` kept only as the working branch name, always equal to `main` after a push |
-| D19 | D8's fence and helper functions | **OPEN; to be ruled at C3 (before W4.2's schema evaluator).** The motivating branching sits in an unmarked private helper (`extendMatchColumns`, `tdsExtension.pure:68-94`) called by the marked `rowValueDifference` (declared :22/:29, calls at :39 and :56); name arguments sit inside row lambdas (`$r.isNull($col.name + '_1')` at :73; `$r.getInteger($col.name + '_1')` at :114 inside `columnValueDifference`) [L2 F6, T5]. Recommendation: the fence is "schema positions reachable from a marked call site after inlining its callees", with TDSRow accessor name arguments listed as schema positions; the Relation API constructors among the marked functions (`over`, `rows`, `range`, `ascending`, `descending`, `lead`, `lag`) are already lite natives and fall under WORLD_MAP §8, not D8 |
+| D19 | D8's fence and helper functions | **OPEN; to be ruled at C1 (before W4.2's schema evaluator).** The motivating branching sits in an unmarked private helper (`extendMatchColumns`, `tdsExtension.pure:68-94`) called by the marked `rowValueDifference` (declared :22/:29, calls at :39 and :56); name arguments sit inside row lambdas (`$r.isNull($col.name + '_1')` at :73; `$r.getInteger($col.name + '_1')` at :114 inside `columnValueDifference`) [L2 F6, T5]. Recommendation: the fence is "schema positions reachable from a marked call site after inlining its callees", with TDSRow accessor name arguments listed as schema positions; the Relation API constructors among the marked functions (`over`, `rows`, `range`, `ascending`, `descending`, `lead`, `lag`) are already lite natives and fall under WORLD_MAP §8, not D8 |
 | D20 | `splitPart` with a multi-character separator | **OPEN; blocks only its W0.6 fix.** Pure's `split` doc says the separator is "matched literally" (`split.pure:17-21`) but the interpreter tokenizes on a character set (`Split.java:54-60`, `StringTokenizer`, adjacent separators collapse); the multi-character PCT is commented out as "incorrect behaviour … TODO" (`splitPart.pure:46-54`); engine-H2 uses a character set, engine-DuckDB the whole string. Lite: DuckDB whole string with collapse, H2 character set (report 4 F). Recommendation: the documented literal semantics on every dialect (the reference marks the other behaviour as incorrect), the empty-token rule taken from `split`'s documented contract; a register row for the engine-H2 difference |
 | D21 | Float literals: the magnitude cliff | **OPEN; blocks only its W0.6 fix.** Under NUMERIC_CHARTER Rule 1 literals render bare and the database types them; `AnsiSqlRenderer.plainFloat` (`:1370-1378`) switches to exponent form outside 1e-6..1e15, which DuckDB types DOUBLE, so `i * 0.00000013 == 0.00000039` is false on DuckDB and true on H2 and in the interpreter (report 4 G, ran). Whether the engine's `%s` formatting has the same cliff is not verified. Recommendation: no cliff (a value's kind must not depend on its magnitude, charter C2.2): spell plainly with per-value DECIMAL precision; register the engine difference if the engine has the cliff |
 
@@ -358,15 +365,69 @@ over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its 
 | W0.6 homework | four root-cause reports and the push order; D20, D21 opened | `plan-audit-2026-09-26/w0.6-homework/`; GATES "Rebuild W1.0" |
 | W1.0 | the documents executable: rev H2, the register, routing, banners; the cold read passed after fixes (its 15 contradictions and 12 gaps fixed) | `plan-audit-2026-09-26/cold-read/2026-09-29-rev-H2.md`; GATES "Rebuild W1.0" |
 | rev H3 | the tractability audit (five reviewers) folded in: every W0.6 push dry-run against the code and fully specified; W1 items given tools, spikes, sizes; W2.3a, W3.3, W4.3 decomposed; W3.7 made runnable; C4 given a rule; the consistency sweep's fixes; E1–E13 | `plan-audit-2026-09-26/tractability-2026-09-29/`; GATES "Rebuild rev H3" |
+| rev H4 | the re-cut (approved by the user): phases in §4; learn and decide before building; the middle before the front end; net-deletion and build-don't-re-plan rules; the gate diet | GATES "Rebuild rev H4" |
 
 ---
 
-## 4. The waves
+## 4. The phases (the order) — the re-cut of 2026-09-29
+
+**Why this order** (the macro review the user approved, 2026-09-29): the target (§1) stays; the *order* changes. The old
+order followed the pipeline (front end first, the middle after ~70 sessions). But the type checker already agrees with
+legend-pure on ~72,000 calls (769 differ), while wrong answers and the worst tangle live in the middle (the 36k-line store
+resolver, the SQL builder). And two unknowns decide the rest: where the middle's relational form begins (D11), and where
+the real defects are (only an independent row oracle shows that). So: **fix what is known, learn what is unknown, decide,
+then build by risk and value, with the front end rebuilt where and when it pays.** Item ids (W0.6, W1.10c, W3.7, …) are
+identifiers in the §5 catalogue, not an order; this section is the order.
+
+**Phase 1 — Correctness and knowledge** (≈14–20 sessions). Ends at **C1**.
+1. W0.6, pushes 1–13 (the homework README's push list).
+2. W1.0b baselines, including **net product lines** (rule 0b.17's number).
+3. The mapping-heavy set (the definition part of W1.5 only).
+4. W1.10c, legend-engine as a row oracle (`RowsMain`).
+5. W1.10a, the fixture mutator (spike, then build). **Phase 1 runs it as lite versus the engine** on the mutated fixtures of
+   the mapping-heavy set (the old-vs-new use waits for W1.7): every disagreement attributed to a stage (H, I, J) with the
+   files a fix would touch — the defect list that orders Phase 3. A disagreement that is a small, reproduced wrong answer
+   gets a W0.6-style fix push here; the rest go to the list.
+6. W3.7, the D11 experiment (on the mapping-heavy set, judged by the engine rows from step 4).
+7. W0.7, request-reachable static state.
+**C1 — decide** (the user): D11 on W3.7's report; D9 and D19; D20 and D21 if still open; the cut list and the minimum expert
+compiler (§1a); budgets from W1.0b; C3's thresholds from the defect list; the scope boundaries in §1d; every size re-fitted
+from logged cost; the next cold read.
+
+**Phase 2 — The gates that matter** (≈10–16). Ends at **C2**.
+W0.4 (the corpus certifies product SQL) → W1.5 (determinism, dumps) → W1.7 (the SQL snapshot) → W1.1b (type rows and
+recorded instantiations) → W1.3 (the pass manager: routed entries, verifier, lint) → W1.11 (exhaustiveness, spike first;
+before any kind split) → W1.12 (layering hardened; the store stops reaching into lowering and plan) → W1.10b (metamorphic
+tests) → W1.2(a) (the diagnostics sink, read by the LSP) → W1.14 (the gate diet) → W1.1c and W1.1d (the reference lane's
+rejection bucket and trust) → W1.9 (the syntax targets and the caching proof the user asked for; it may slide to Phase 4
+if Phase 3 needs the session budget, by the user's call at C2).
+
+**Phase 3 — The middle, by risk and value** (≈40–65, re-sized at C1 from D11 and the defect list). Ends at **C4**.
+W4.3 step 0 (explicit state) first → the Phase-1 defect list, worst user impact first, each fixed properly in its stage →
+W4.0 (the H gate) → if D11 = R: W4.1r (algebraize, forms recognised by the `FunctionId` already on typed calls) then W4.1a
+(mappings as views); if S: W4.1a and the D11 census → W3.4 and W4.2 (G½ substitutes, never re-types; one G½; the D8
+schema evaluator — binder uniqueness from W0.6 push 2 stands in for `VarId` until Phase 4) → **C3, go/no-go** → W4.3
+steps 1–9 (structural `NavPath` keys use property names with their owning class until `PropertyId` exists) → W4.4a →
+W5.0 (the dialect fuzzer) → W5.1a → W5.1b → W5.1c → W5.2 (semantic SQL tree: null-strictness, determinism, literal
+typing) → W5.6 (the engine SQL format as a dialect). Every Phase 3 item ends net-negative on product lines (rule 0b.17).
+
+**Phase 4 — The front end made expert** (≈35–55). Ends at **C5**.
+W2.1 → W2.2 → W2.2b(1) → W2.3a pushes 1a…5 (re-plan if more than 15 sessions) → W2.2b(2) → W1.13 (the engine-input lane,
+before the rule changes) → W2.3b → W2.4 → W2.5 (`VarId`; then G½, H and I re-keyed from names to ids) → W2.6 → W2.7 → W2.9
+→ W3.1 → W3.2a → W3.2b → W3.0f → W3.3a → W3.3 (lite's own solver, D15) → W2.8 → W3.5 → W3.6 → W1.2(b–d) → W1.4.
+
+**Phase 5 — The back end and the edges** (≈15–25). W5.3 → W5.4 → W5.5 (cut candidate) → W6.3 → W6.1 → W6.2 → W6.4 → W4.4b
+→ W7 (or folded into the owning items).
+
+**Size (judgement):** about 114–181 sessions in all; the minimum expert compiler (everything but the cut list) about
+100–150. The first week says mechanical items run 3–5× under estimate, so the low end is the likelier; C1 re-fits.
+
+## 5. The items, by id (a catalogue; §4 sets the order)
 
 Each item is one push unless it says otherwise. Sizes are judgement (§0). Every item names its gate, what it deletes,
 and its number; every rewrite ends by carving its stage as a target (rule 0b.12).
 
-### W0 — Correctness and safety now (≈9–13 sessions left, re-cut by the tractability audit)
+### W0 — Correctness and safety (catalogue; order in §4, Phase 1)
 
 - **W0.6 Fix the reproduced wrong-results defects now** (D14). **Homework done** (`plan-audit-2026-09-26/w0.6-homework/`)
   **and dry-run against the code** (`plan-audit-2026-09-26/tractability-2026-09-29/1-…`, `2-…`); the homework README's
@@ -423,7 +484,7 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   single-threadedness. Gate: the computed list in GATES; ArchUnit `staticFieldsAreFinal` still green. Number:
   request-reachable mutable statics → 0. Size ~1.
 
-### W1 — Gates and foundations (≈29–45 sessions, re-cut by the tractability audit). Everything later is judged by these.
+### W1 — Gates and foundations (catalogue; order in §4, Phases 1, 2 and 4)
 
 - **W1.0 This page executable** — done (rev H2, the cold read and its fixes, rev H3). Repeat the cold read at every
   checkpoint.
@@ -539,6 +600,11 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   return type). Expected differences: `between` only for Date, Number, String (`Handlers.java:2847-2849`); user overloads
   first-registered; 32 imports, not 29. Gate: the lane runs; every disagreement classified into register row S3's
   sub-rows. Size 2–3.
+- **W1.14 The gate diet** (the re-cut, D17): every guardrail test, register and ledger under `core/src/test` classified by
+  what it has caught (its git history of red chains): *catches real defects* (kept), *invariant now held by a type, target
+  or test* (deleted, the holder named), *ceremony* (deleted). `JavaEvalLedgerTest` and anything `AGENTS.md` names as an
+  enforcement changes only with an `AGENTS.md` edit in the same push. Gate: the classification table in GATES; the chain
+  green; the pre-chain lanes' time down. Number: guardrail lines and per-push red-chain rate. Size 1–2.
 - **W1.10 The wrong-rows harness** (before W4.0) [L3 #4, L2 F3, L1 #6c, T3]:
   - (a) **adversarial-data old-vs-new, spike first**: `testdatagen` extracts minimal supporting rows
     (`testdatagen/TestDataGenerator.java:26-48`); it does not mutate. Build a mutator over `DatabaseDefinition` (joins as
@@ -559,11 +625,13 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
     Central's shaded server jar stops at 4.138.5: not the oracle.) Size 2–3.
   - A non-UTC lane: `-Duser.timezone=` in the target's `jvm_flags` and an explicit DuckDB `SET TimeZone` (`.bazelrc:15`
     sets `TZ=GMT` for every test; do not rely on a target `env` overriding `--test_env`).
+  - **Phase 1 runs (a) and (c) together as lite versus the engine on the mutated fixtures** (the knowledge step, §4); the
+    old-vs-new use of (a) starts once W1.7 stores the baseline SQL.
   - Every disagreement is recorded with its **attributed stage (H, I or J), the files and lines a fix touched, and whether
-    the fix added a special case** (C4's data). Gate: all three run on the mapping-heavy set, disagreements pinned by
+    the fix added a special case** (C3's data). Gate: all three run on the mapping-heavy set, disagreements pinned by
     class; each is a W0.6-style fix push or a register row, budgeted at C1.
 
-### W2 — The resolved tree (≈18–28 sessions)
+### W2 — The resolved tree (catalogue; order in §4, Phase 4)
 
 - **W2.0 = the ResolvedExpr note (H2)**, ruled (D12). Read its revision and reading guide.
 - **W2.1 World tables, the index in three layers, and the `ids`, `catalog`, `types` targets** [W2 #9, L4]: a cached
@@ -639,7 +707,7 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   only; `isPlatformOwnedFunction`, the PCT stereotype check and `SUPPRESSED_ONCE` deleted; broken overloads reported
   (`FunctionCompiler.java:139-158`). Gate: OVERLOADS and PICK rows identical. Size ~1.
 
-### W3 — Lite's own expert typer (≈16–26 sessions)
+### W3 — Lite's own expert typer (catalogue; W3.7 in Phase 1, W3.4 in Phase 3, the rest in Phase 4)
 
 - **W3.1 TDS inventory and the carrier decision**: ~100 relation readers, `TdsErasure.refineResult`
   (`InferenceKernel.java:1050`), `eraseTdsRow`/`TDS_ROW`, `TypeAnnotations:152-163`, `CastChecker:33-39`, the
@@ -687,7 +755,7 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
 - **W3.5 Kernel rules, second half** (owner of LUB with variance): `register`, LUB with variance, `GenericTypeOperation`;
   checkers that existed only for kernel gaps retire; scope ruled after W3.3 from the new solver's type-row residue. Gate:
   reference lane type rows; the retired checkers deleted. Size 1–2.
-- **W3.7 The D11 experiment** (ruled 2026-09-29) [L1 #9, T4] — runs **before W3.6**, on a throwaway branch `spike/d11`
+- **W3.7 The D11 experiment** (ruled 2026-09-29) [L1 #9, T4] — runs **in Phase 1** (§4), on a throwaway branch `spike/d11`
   (never merged; its report committed to `docs/plan-audit-2026-09-26/d11-experiment/`). Time box 5 sessions; failure or
   timeout means option S, with the report. Build: a sealed algebra family (Scan over a class, Filter, Project, Join,
   Aggregate, plus the nodes §1 row R lists: Window, Sort, Slice, SetOp, Unnest) and a sealed scalar family; an algebraize
@@ -703,13 +771,13 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   normalised JSON trees; where today's rows differ, W1.10c's engine rows adjudicate (equal to the engine is a pass and a
   W0.6-style defect in today's code). Pass: all three cases. Record per case the nodes used, the rewrite rules and their
   lines, any new node kind, whether a scalar leaf needed a relational child (d11 homework open question 1), and a size
-  estimate for W4.1r plus W4.3-under-R. **C3a:** D11 is ruled on the report. Size 3–5 (narrowed cases).
-- **W3.6 Forms by declaration**, after C3a [W3 #15]: the Form table (W2.3a) drives the typer. If D11 = R the typer emits
+  estimate for W4.1r plus W4.3-under-R. D11 is ruled on the report at **C1**. Size 3–5 (narrowed cases).
+- **W3.6 Forms by declaration** [W3 #15]: the Form table (W2.3a) drives the typer. If D11 = R the typer emits
   uniform calls and algebraize (W4.1r) recognises forms; if S, each ambiguous typed kind splits into relation and scalar
   kinds by the chosen overload and `TypedRelationOp` grows to every relational kind. Gate: the lowerer's run-time relation
   checks counted and shrinking; rosters. Size 1–3.
 
-### W4 — The middle (≈30–50 sessions; re-sized at C3)
+### W4 — The middle (catalogue; order in §4, Phase 3)
 
 - **W4.0 The H gate**: W1.7's snapshot plus a post-H dump over the mapping-heavy set; W1.10 green on it; any open W0.6
   store-resolver pins listed. If D11 = S: the D11 census (`d11-homework-2026-09-29.md`, the questions after §6; hooks
@@ -729,7 +797,7 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   nullability — the equality kind node already exists from W0.6 push 10); the lowerer's ~38 run-time relation/scalar
   decisions deleted as their kinds disappear. Gate: snapshot reviewed; W1.10 (a, b, c) green on the mapping-heavy set.
   Size from W3.7's estimate.
-- **W4.2 One G½ and the schema evaluator** (after W2.5, W3.1/3.3a/3.4/3.6 and D19, which is ruled at C3): one hygienic engine over the typed
+- **W4.2 One G½ and the schema evaluator** (after W3.4 and D19, ruled at C1; keyed by names under W0.6 push 2's binder uniqueness until W2.5 re-keys it by `VarId`): one hygienic engine over the typed
   HIR by `VarId`, replacing SourceSubst, UserCallInliner, `StaticFold.inlineUserCall`, AlphaRename, StatementInline,
   LiteralMapUnroll and the resolver's private inliners, one slice each [W4 F8]; source-level β-expansion during typing
   ends. The D8 schema evaluator replaces `StaticFold`: folds only in schema positions over the pinned operation list;
@@ -737,7 +805,7 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   differ: 55 marked functions vs 97 applications in 38 files [L2 F11]). Gates: fold results identical per test; the
   snapshot byte-identical; the operation-list pin; the never-a-row-value test; `columnValueDifferenceTest`,
   `rowValueDifferenceTest`, `zScoreTest` on DuckDB unchanged. Size 4–6.
-- **C4 go/no-go** (§1a, with its decision rule) before W4.3.
+- **C3 go/no-go** (§1a, with its decision rule) before W4.3 steps 1–9.
 - **W4.3 Store resolution as passes** (if D11 = R: as rewrites of the algebra, and steps 2–7 below collapse into it), each
   slice landing alone [W4 F2, F3, F13, F14, T4]: **0 explicit state**: one `ResolutionState` value replacing the shared
   mutable fields (`temporal` reassigned by nested resolutions, `StoreResolver.java:121-123, :1496, :2773, :2952`;
@@ -757,13 +825,13 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   source frames, M2M composition, execution-option appends, the 37 `findFunction` re-picks). Gates: steps 0–5 snapshot
   byte-identical; steps 6–9 W1.10 (a, b, c) rows green plus a classified SQL diff in which every changed statement is
   attributed to a named join-strategy decision from step 6's inventory (byte identity cannot hold across a new join tree
-  and naming pass); W1.10 green per step. Deletes: the one-pass resolver's state. Size 19–32 (re-sized at C3).
-- **W4.4a Load by manifest, non-M2M walls** (after D9); **W4.4b** M2M on the new passes, scope boundary from C3. Gate:
-  census pins, boot-time growth within budget. Size 2–4 (W4.4b open-ended until its C3 boundary).
+  and naming pass); W1.10 green per step. Deletes: the one-pass resolver's state. Size 19–32 (re-sized at C1).
+- **W4.4a Load by manifest, non-M2M walls** (after D9); **W4.4b** M2M on the new passes, scope boundary from C1. Gate:
+  census pins, boot-time growth within budget. Size 2–4 (W4.4b open-ended until its C1 boundary).
 
-### W5 — The back end (≈12–19 sessions)
+### W5 — The back end (catalogue; W5.0–W5.2 and W5.6 in Phase 3, the rest in Phase 5)
 
-If C4 chooses "stop the middle rebuild", W5.1c is dropped and W5.2's determinism trait lives on today's SQL tree
+If C3 chooses "stop the middle rebuild", W5.1c is dropped and W5.2's determinism trait lives on today's SQL tree
 [T4 G4].
 
 - **W5.0 The dialect fuzzer** (moved from W1.8, which had no MIR to fuzz) [L3 #4, #5, T3]: random well-typed trees of
@@ -806,7 +874,7 @@ If C4 chooses "stop the middle rebuild", W5.1c is dropped and W5.2's determinism
   constants; alias shapes the MIR does not carry). `StatementExecutor`'s `toSQLString`/`planDialect` choice
   (`:473-480`, `:1179-1190`) becomes an explicit option. Gate: the rows lane; goldens pinned; the register. Size 1–2.
 
-### W6 — Plan, runner, periphery (≈10–16 sessions)
+### W6 — Plan, runner, periphery (catalogue; Phase 5)
 
 - **W6.3 The judge SPI** (D7), before W6.2: a public judge SPI; the per-assert join of the two judges stays a gate.
 - **W6.1 A staged plan IR**: late-bound nodes (SchemaProbe, DynamicPivot, ForEach(values, template), Effect barrier)
@@ -822,7 +890,7 @@ If C4 chooses "stop the middle rebuild", W5.1c is dropped and W5.2's determinism
 - **W6.4 Periphery**: lineage over the typed HIR plus H's binding map; test-data generation through the MIR; the server a
   thin adapter; test runners and the probe out of the product jar. Gate: the product jar's contents list.
 
-### W7 — Close-out (≈1–3 sessions, or folded into owning slices per C1)
+### W7 — Close-out (catalogue; Phase 5, or folded into the owning items)
 
 - The target map met (§1b), `core-layers.txt` equal to the map file with no exceptions left.
 - Each regex guard deleted after the type or verifier that asserts its invariant: `IdentityGuardrailTest` pattern by
@@ -830,23 +898,9 @@ If C4 chooses "stop the middle rebuild", W5.1c is dropped and W5.2's determinism
   `JavaEvalLedgerTest`'s residue register after W6.2/W6.3 and an `AGENTS.md` edit; the ArchUnit rules that javac or the
   layering test now enforce.
 
-**Size (judgement, re-cut by the tractability audit 2026-09-29):** W0 9–13 left, W1 29–45, W2 18–28, W3 16–26, W4 32–52,
-W5 12–19, W6 10–16, W7 1–3: about **127–202 sessions**. The first week's evidence says mechanical items are overestimated
-3–5×, so the low end is the more likely; C1 re-fits every size from logged cost.
+Per-item sizes are in each item; phase and total sizes are in §4.
 
 ---
-
-## 5. Order
-
-Serial; one owner.
-1. W0.6 (its pushes 1–13) → W1.0b → W0.4 → W0.7.
-2. W1.1b → W1.1c → W1.1d → W1.2(a) → W1.4 → W1.2(b–d) → W1.3 → W1.5 → W1.7 → W1.11 → W1.12 → W1.9 → W1.13 → W1.10. **C1.**
-3. W2.1 → W2.2 → W2.2b(1) → W2.3a pushes 1a…5 (**C2**) → W2.2b(2) → W2.3b → W2.4 → W2.5 → W2.6 → W2.7 → W2.9.
-4. W3.1 → W3.2a → W3.2b → W3.0f → W3.3a → W3.3 → W2.8 → W3.4 → W3.5 → W3.7 → **C3a** (D11) → W3.6. **C3** (D9, D19
-   ruled; W4 re-sized).
-5. W4.0 → W4.4a → W4.1a → W4.1r (if R) → W4.2 → **C4** → W4.3 steps 0–9 with W4.1b → W4.4b. **C5.**
-6. W5.0 and W5.1a (may start after W1.7) → W5.1b → W5.1c → W5.2 → W5.3 → W5.4 → W5.6 → W5.5.
-7. W6.3 → W6.1 → W6.2 → W6.4. W7 last.
 
 ## 6. The alternative D1 did not take (record only)
 

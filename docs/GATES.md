@@ -5682,6 +5682,26 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild rev H4: the re-cut — learn and decide first, the middle before the front end
+
+**What.** A macro review (the user's question "is the plan actually good / expert?") found the target and the checking
+culture expert but the program not: it had spent four days on six rounds of review (net +270 product lines against
+~10,000 lines of review documents) while every look grew the size; it rebuilt front to back, so the healthiest part (the
+type checker agrees with legend-pure on ~72,000 calls, 769 differ) came first and the middle, where wrong answers and the
+worst tangle live, came after ~70 sessions; the decisive experiment (D11) and the decisive oracle (legend-engine's rows)
+came late; code grew before it shrank; gates were many. The user approved the re-cut. Plan rev H4: §4 is now five phases
+— (1) correctness and knowledge: W0.6, baselines, the mapping-heavy set, the engine row oracle and fixture mutator run as
+lite-versus-engine, the D11 experiment, W0.7, then **C1 decide** (D11, D9, D19, the minimum expert compiler, budgets, C3's
+thresholds); (2) the gates that matter; (3) the middle by risk and value (the Phase-1 defect list first; W4.3 step 0; the
+algebra or `ClassSource` path per D11; one G½; C3 go/no-go; the SQL tree); (4) the front end made expert (resolved tree,
+`VarId`, lite's own solver); (5) the back end and the edges. The W-items stay as a catalogue (§5) so every citation holds.
+New rules 0b.17 (net deletion: from Phase 3 every item ends net-negative on product lines) and 0b.18 (build, don't re-plan:
+no whole-plan audit until C1); rule 0b.3 narrowed to a few core gates; new item W1.14 (the gate diet); checkpoints renamed
+(C1 decide, C2 gates, C3 go/no-go, C4 middle done, C5 front end done); the minimum expert compiler proposed for C1; size
+about 114–181 sessions, the minimum expert compiler about 100–150.
+
+**Gate.** Documents only; `bazel test //...` and `//tools/deps:all` green (summary lines in the commit's chain run).
+
 ## 2026-09-29 — Rebuild rev H3: the tractability audit; every W0.6 push dry-run and specified; the plan re-cut
 
 **What.** The user asked for a final audit that the plan is tractable and implementable. Five read-only reviewers checked
