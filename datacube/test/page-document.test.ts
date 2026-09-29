@@ -145,4 +145,14 @@ describe('a saved page', () => {
     const retitled = { ...VIEWS, views: VIEWS.views.map((v) => (v.id === 'chart-2' ? { ...v, title: 'Lines' } : v)) };
     assert.notEqual(pageDefinitionText(writePage({ name: 'Q3 page', cube: CUBE, views: retitled })), base);
   });
+
+  it('holds a cube with no charts: its grid alone, the whole board', () => {
+    const alone: PageViews = {
+      views: [{ id: 'grid', kind: 'grid', cube: 'cube' }],
+      layout: { kind: 'grid', cols: 12, tiles: [{ id: 'grid', x: 0, y: 0, w: 12, h: 24 }], arranged: false },
+    };
+    const back = readPage(pageToJson(writePage({ name: 'plain', cube: CUBE, views: alone })));
+    assert.deepEqual(back.views, alone.views);
+    assert.deepEqual(back.layout, alone.layout);
+  });
 });

@@ -21,7 +21,6 @@ import { mountRemote } from '../src/remote.ts';
 import { forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
 import { Latest, TabWork, mayLeave } from '../src/host.ts';
 import {
-  definitionText,
   fileSource,
   openCube,
   type CubeDocument,
@@ -48,7 +47,6 @@ import {
   pageContent,
   pageDefinitionText,
   readSaved,
-  writePage,
   type PageDocument,
   type SavedDocument,
 } from '../src/page-document.ts';
@@ -778,16 +776,16 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     } = {};
 
     /**
-     * What saving now would write: the cube alone, or -- with charts around it -- the page
-     * that wraps it (page-document.ts); and its definition, for "changed since saved".
+     * What saving now would write -- always ONE kind of thing, the page (page-document.ts):
+     * the cube inside it, and its charts and layout, if any -- and its definition, for
+     * "changed since saved".
      */
     const savedForm = (name: string): { content: Record<string, unknown>; definition: string } | undefined => {
-      const doc = app.cubeDocument(name, current.unknown);
-      if (!doc) return undefined;
-      const views = app.pageViews();
-      if (!views) return { content: doc as unknown as Record<string, unknown>, definition: definitionText(doc) };
-      const page = writePage({ name, cube: doc, views, ...(current.pageUnknown ? { unknown: current.pageUnknown } : {}) });
-      return { content: pageContent(page), definition: pageDefinitionText(page) };
+      const page = app.pageDocument(name, {
+        ...(current.unknown ? { cube: current.unknown } : {}),
+        ...(current.pageUnknown ? { page: current.pageUnknown } : {}),
+      });
+      return page && { content: pageContent(page), definition: pageDefinitionText(page) };
     };
 
     /** The cube on screen (and its charts) differs from what was saved (or first opened). */

@@ -68,7 +68,7 @@ import type { MarkKey } from './chart-option.ts';
 import { ChartPanel } from './ui/chart-panel.ts';
 import { Board, BOARD_COLUMNS } from './layout/board.ts';
 import { addToRow, below } from './layout/tile-layout.ts';
-import { PAGE_CUBE, type ChartView, type PageView, type PageViews } from './page-document.ts';
+import { PAGE_CUBE, pageToJson, writePage, type ChartView, type PageDocument, type PageView, type PageViews } from './page-document.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
@@ -77,7 +77,7 @@ import {
   type ColumnLayout,
   type LeafColumn,
 } from './grid/columns.ts';
-import { cubeToJson, writeCube, type CubeDocument, type CubeSource } from './cube-document.ts';
+import { writeCube, type CubeDocument, type CubeSource } from './cube-document.ts';
 import { selectionStats, selectionTable, type CellRange } from './selection.ts';
 import type { ResultTable, Scalar } from './result.ts';
 import type { JsonColumnReader } from './ui/json-fields.ts';
@@ -2269,12 +2269,17 @@ export class CubeApp {
 
   /**
    * What the cube shows around itself, as a saved page keeps it: the grid, each chart (its
-   * title, spec, and the mark it filters to) and the layout. Undefined when there is no board
-   * -- a cube with no charts is saved as a cube.
+   * title, spec, and the mark it filters to) and the layout. A cube with no charts is a page
+   * of its grid alone, the whole board.
    */
-  pageViews(): PageViews | undefined {
+  pageViews(): PageViews {
     const b = this.#board;
-    if (!b || this.#charts.size === 0) return undefined;
+    if (!b || this.#charts.size === 0) {
+      return {
+        views: [{ id: 'grid', kind: 'grid', cube: PAGE_CUBE }],
+        layout: { kind: 'grid', cols: BOARD_COLUMNS, tiles: [{ id: 'grid', x: 0, y: 0, w: BOARD_COLUMNS, h: BOARD_ROWS }], arranged: false },
+      };
+    }
     const views: PageView[] = [{
       id: 'grid',
       kind: 'grid',
@@ -2303,6 +2308,19 @@ export class CubeApp {
         arranged: !b.auto,
       },
     };
+  }
+
+  /**
+   * The cube and everything around it as the ONE thing that is saved: a page (page-document.ts)
+   * wrapping the cube's own document. Undefined when the host gave no source.
+   */
+  pageDocument(name: string, unknown?: {
+    readonly cube?: Readonly<Record<string, unknown>>;
+    readonly page?: Readonly<Record<string, unknown>>;
+  }): PageDocument | undefined {
+    const cube = this.cubeDocument(name, unknown?.cube);
+    if (!cube) return undefined;
+    return writePage({ name, cube, views: this.pageViews(), ...(unknown?.page ? { unknown: unknown.page } : {}) });
   }
 
   /** Put a saved page's views back around the cube: its charts, their titles, its layout. */
@@ -2611,12 +2629,13 @@ export class CubeApp {
       return;
     }
     const title = this.#config.reportTitle ?? 'cube';
-    const doc = this.cubeDocument(title);
-    if (!doc) {
+    // the same one thing Save writes: the page, its cube inside
+    const page = this.pageDocument(title);
+    if (!page) {
       this.#status('this cube does not know its source, so it cannot be written down', 'warn');
       return;
     }
-    download(`${exportFileName(title, new Date())}.json`, 'application/json', cubeToJson(doc));
+    download(`${exportFileName(title, new Date())}.json`, 'application/json', pageToJson(page));
   }
 
   // -- the saved cube -------------------------------------------------------

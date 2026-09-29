@@ -91,10 +91,12 @@ It will not edit `cube-document.ts` or `cube-store.ts`; it stores through `CubeS
 save session will be asked to list page records in its Load dialog.
 
 **Landed (2026-09-28): saving pages.** `datacube/src/page-document.ts` (new: `writePage`, `readPage`,
-`readSaved` -- a cube or a page, by kind). In the save session's host, `datacube/demo/boot.ts`: Save
-writes a page when the cube has charts (`app.pageViews()`), a cube otherwise; Open and Open file read
-either kind (`readSaved`) and put a page's charts back (`app.restoreViews`); "changed since saved"
-compares the page. `cube-library.ts` is untouched: a page is a record like a cube, listed by name.
+`readSaved` -- a cube or a page, by kind). ONE thing is saved (user ruling, 2026-09-28): Save and
+the JSON export always write a page (`app.pageDocument`), the cube's own document inside it -- a cube
+with no charts is a page of its grid alone. In the save session's host, `datacube/demo/boot.ts`: Save
+writes the page; Open and Open file read either kind (`readSaved`: cubes saved before this open as a
+page of their grid) and put a page's charts back (`app.restoreViews`); "changed since saved" compares
+the page. `cube-library.ts` is untouched: a page is a record like a cube, listed by name.
 
 ## DataCube save/share (#21, the save session; plan `DATACUBE_SAVE_SHARE_2026_09_28.md`)
 
