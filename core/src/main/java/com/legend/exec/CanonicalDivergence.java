@@ -250,7 +250,7 @@ public final class CanonicalDivergence {
             Census.inc(Census.Key.DIVERGENCE_DISAGREE);
             DISAGREE_SAMPLES.add(new Row(family, held, "lattice=" + held
                     + " byte=" + byteAns.replaceFirst("^DIFFER", "false")
-                    + " [" + CONTEXT_SOURCE.get() + "]"));
+                    + " [" + CONTEXT_SOURCE.get().get() + "]"));
         }
     }
 
@@ -311,7 +311,7 @@ public final class CanonicalDivergence {
             // running test rides CONTEXT_SOURCE
             Row r = new Row(family, hostHeld,
                     "sql-verdict host=" + hostHeld + " sql=" + sqlHeld
-                            + " " + detail + " [" + CONTEXT_SOURCE.get()
+                            + " " + detail + " [" + CONTEXT_SOURCE.get().get()
                             + "]");
             if (SQL_DISAGREE_SAMPLES.size() < 50) {
                 SQL_DISAGREE_SAMPLES.add(r);
@@ -372,7 +372,7 @@ public final class CanonicalDivergence {
         }
         Census.inc(Census.Key.DECIMAL_SCALE_ONLY);
         sample(new Row("decimalScaleOnly", false,
-                "[" + CONTEXT_SOURCE.get() + "]"));
+                "[" + CONTEXT_SOURCE.get().get() + "]"));
     }
 
     public static long decimalScaleOnlyCount() {
@@ -553,10 +553,20 @@ public final class CanonicalDivergence {
             V7_DECLINE_WITNESSES = new ConcurrentLinkedQueue<>();
 
     /** Attribution source for disagreement samples — the HARNESS wires
-     * its per-test context holder here (invariant 6d: exec never
-     * depends on the middle-end, so the supplier is injected). */
-    public static volatile java.util.function.Supplier<String>
-            CONTEXT_SOURCE = () -> "<unattributed>";
+     * its per-test context holder here through {@link #attributeTo}
+     * (invariant 6d: exec never depends on the middle-end, so the
+     * supplier is injected). A final holder, not an assignable static
+     * field (plan W0.2(d)): the static-final rule in ArchitectureTest
+     * now binds every static field of the product. */
+    private static final java.util.concurrent.atomic.AtomicReference<
+            java.util.function.Supplier<String>> CONTEXT_SOURCE =
+            new java.util.concurrent.atomic.AtomicReference<>(() -> "<unattributed>");
+
+    /** The harness's per-test attribution: every later disagreement
+     * sample names what {@code source} answers. */
+    public static void attributeTo(java.util.function.Supplier<String> source) {
+        CONTEXT_SOURCE.set(java.util.Objects.requireNonNull(source, "source"));
+    }
 
     /** One dual-channel verdict pair: both adjudicators judged. */
     public static void v7Verdict(String form, boolean hostPass,
@@ -572,7 +582,7 @@ public final class CanonicalDivergence {
             V7_SAMPLES.add(new Row(form, hostPass,
                     "host=" + (hostPass ? "pass" : "fail")
                             + " prod=" + (prodPass ? "pass" : "fail")
-                            + " [" + CONTEXT_SOURCE.get() + "] " + detail));
+                            + " [" + CONTEXT_SOURCE.get().get() + "] " + detail));
         }
     }
 
@@ -600,7 +610,7 @@ public final class CanonicalDivergence {
             String rw = reason.length() > 500
                     ? reason.substring(0, 500) + "…" : reason;
             V7_DECLINE_WITNESSES.add(
-                    CONTEXT_SOURCE.get() + " :: " + form + " :: " + rw);
+                    CONTEXT_SOURCE.get().get() + " :: " + form + " :: " + rw);
         }
     }
 

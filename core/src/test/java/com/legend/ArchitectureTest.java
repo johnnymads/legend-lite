@@ -914,6 +914,24 @@ final class ArchitectureTest {
             .check(CORE_PROD_CLASSES);
     }
 
+    /**
+     * Invariant 3 (field level, bytecode): every STATIC field of the product is {@code final}. It replaces the
+     * line-based regex {@code CodeShapeGuardrailTest.noStaticMutableState}, which a declaration split over two lines
+     * escaped ({@code CanonicalDivergence.CONTEXT_SOURCE}, execution plan W0.2(d)). Its known limit: a final field may
+     * still hold a mutable object (a queue, a map, an AtomicReference); collections are held by
+     * {@link #staticCollectionStateIsImmutableOrRegistered}, and the rest is the runner's to remove (W6.2).
+     */
+    @Test
+    void staticFieldsAreFinal() {
+        com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields()
+                .that().areStatic()
+                // //testing is the test-support library (testonly), not the product
+                .and().areDeclaredInClassesThat().resideOutsideOfPackage("com.legend.testing..")
+                .should().beFinal()
+                .as("Invariant 3: no assignable static state in the product")
+                .check(CORE_PROD_CLASSES);
+    }
+
     @Test
     void staticCollectionStateIsImmutableOrRegistered() throws Exception {
         java.util.Set<String> register = java.util.Set.of(
