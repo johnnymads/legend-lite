@@ -414,6 +414,18 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   /** Set once the person has agreed to leave: the browser's own question is not asked twice. */
   let leaving = false;
 
+  /**
+   * FOR THE BROWSER HARNESSES: when the page has finished what an action started, as a fact
+   * rather than a guess. `changes` counts every change the cube reports (a view landing, a
+   * presentation change, a refusal, the Pure pane written); `printing` is the Pure prints still
+   * out. With the cube's own `busy`, a harness waits until nothing is in flight and nothing has
+   * changed for a moment -- the time the action took, not a fixed sleep (a 4s fall-through on
+   * every change that runs no query made verify-features take 8 minutes, and a 150ms sleep read
+   * the page before a slower machine had re-queried). Not product code: the demo page.
+   */
+  const harnessSignal = { changes: 0, printing: 0 };
+  (window as unknown as { __dataCubeSignal?: typeof harnessSignal }).__dataCubeSignal = harnessSignal;
+
   function makeApp(
     snap: CubeSnapshot,
     config: CubeConfiguration,
@@ -465,7 +477,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       ...(place.heldCopy ? { heldCopy: place.heldCopy } : {}),
       // "Changed since saved" is re-read on every change of the cube's state,
       // a presentation change (a width, a colour) included: it runs no query.
-      onChange: () => onCubeView?.(),
+      onChange: () => {
+        harnessSignal.changes += 1;
+        onCubeView?.();
+      },
       showColumnZone: true,
       // THE HOST'S TEXT, IN THE STATUS BAR. Planner progress during
       // boot and errors afterwards -- the cube states its own row,
@@ -540,6 +555,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // said one fact twice in a 20px strip. What a host is for is
         // saying what the cube cannot -- a planner that failed.
         if (kind !== 'error') return;
+        harnessSignal.changes += 1;
         status.textContent = text;
         status.classList.add('bad');
         status.classList.remove('warn-text');
@@ -548,6 +564,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // For the browser harness: how many views have landed.
         const w = window as unknown as { __dataCubeViews?: number };
         w.__dataCubeViews = (w.__dataCubeViews ?? 0) + 1;
+        harnessSignal.changes += 1;
         // A VIEW LANDED, SO THE LAST ERROR IS OVER.
         //
         // The line showed the last error and nothing ever took it
@@ -568,10 +585,14 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // until the real planner started returning SQL worth reading.
         // The print is asked for; a later view's print wins.
         const printing = (printed += 1);
+        harnessSignal.printing += 1;
         void created.controller.print(view.query, 'STANDARD').then(
           (text) => { if (printing === printed) must('pure').textContent = text; },
           (error: unknown) => { if (printing === printed) must('pure').textContent = String(error); },
-        );
+        ).finally(() => {
+          harnessSignal.printing -= 1;
+          harnessSignal.changes += 1;
+        });
         must('sql').textContent =
           view.sql || '(the demo shim plans per level; expand a row)';
       },

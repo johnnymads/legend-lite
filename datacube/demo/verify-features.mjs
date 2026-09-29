@@ -56,16 +56,13 @@ async function sampleOnDisk() {
 const DATA = process.env.DATA ?? (await sampleOnDisk());
 const ONLY = process.env.ONLY;
 /**
- * How long to wait for a query to land.
- *
- * Generous against the real figure -- these queries report single-
- * digit milliseconds on 5,000 rows -- and short enough that the
- * actions which re-query NOTHING do not each donate a quarter of a
- * minute to the run. Correctness does not rest on it: every check
- * asserts its own outcome, so a query that has not landed fails the
- * assertion rather than passing quietly.
+ * Settled: nothing in flight and nothing changed for this long (`settle`). An action that
+ * changes nothing costs this, not the 4 seconds the status-line wait fell through after.
+ * Correctness does not rest on it: every check asserts its own outcome.
  */
-const STATUS_WAIT_MS = 4000;
+const QUIET_MS = 150;
+/** A page that never settles is still read, as before, after this long. */
+const SETTLE_TIMEOUT_MS = 20_000;
 /**
  * A check may not exceed this.
  *
@@ -100,6 +97,12 @@ const context = await browser.newContext({
   permissions: ['clipboard-read', 'clipboard-write'],
 });
 const page = await context.newPage();
+// CPU_THROTTLE=4: the page's CPU slowed that many times (Chrome's own emulation), to see here
+// what a slower machine -- CI's runner -- sees: a wait that guesses passes fast and fails slow.
+if (process.env.CPU_THROTTLE) {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.CPU_THROTTLE) });
+}
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 if (process.env.DEBUG) {
@@ -275,14 +278,29 @@ async function settle(before) {
   // never going to change (an export, a clipboard copy, opening a
   // dialog) and single checks measured 36 to 42 SECONDS. The sweep
   // took twenty minutes; almost all of it was this function.
-  if (before !== undefined) {
-    await page.waitForFunction(
-      (was) =>
-        (document.querySelector('.dc-status-timing')?.textContent ?? '') !== was,
-      before, { timeout: STATUS_WAIT_MS },
-    ).catch(() => {});
-  }
-  await page.waitForTimeout(150);
+  //
+  // NOW BY THE PAGE'S OWN SIGNAL (demo/boot.ts `__dataCubeSignal`, 2026-09-29), not the status
+  // line: settled is nothing in flight (the cube's `busy`, the Pure pane's print) and nothing
+  // changed for QUIET_MS. Waiting for the status line to change fell through after 4s for every
+  // change that runs no query -- a colour, a width, a pin -- which was most of this harness's
+  // 8 minutes; and the 150ms sleep with no `before` read the page before a slower machine had
+  // re-queried (CI's Linux runner: double-click grouping, the undo checks). Still no dialog wait.
+  // `before` stays for the callers; the signal needs no text to compare.
+  void before;
+  await page.evaluate(() => { window.__settleWatch = undefined; });
+  await page.waitForFunction((quiet) => {
+    const signal = window.__dataCubeSignal;
+    const app = window.__dataCube;
+    if (!signal || !app) return false;
+    const now = performance.now();
+    const w = (window.__settleWatch ??= { changes: signal.changes, since: now });
+    if (app.busy || signal.printing > 0 || signal.changes !== w.changes) {
+      w.changes = signal.changes;
+      w.since = now;
+      return false;
+    }
+    return now - w.since >= quiet;
+  }, QUIET_MS, { timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
 }
 
 /**
@@ -499,9 +517,38 @@ const headerNames = () => page.evaluate(() =>
  * Used sparingly -- the point of one long run is that each feature
  * meets the state the others leave.
  */
+let pageLoaded = false;
 async function freshCube() {
+  // AFTER THE FIRST, A FRESH CUBE, NOT A FRESH PAGE: the file opened again, as a person would,
+  // gives a new cube with the default configuration -- what a check that asks for a clean one
+  // needs -- without restarting DuckDB-WASM and the planner and regenerating the demo's 200,000
+  // rows. The reload cost ~2s, and the 44 editor-control checks each asked for one.
+  if (pageLoaded && DATA) {
+    await reset();
+    await page.evaluate(() => { window.__freshFrom = window.__dataCube; });
+    // opening over a cube with unsaved changes asks first; Playwright's default would decline
+    const accept = (d) => { if (/unsaved changes/.test(d.message())) void d.accept(); };
+    page.on('dialog', accept);
+    try {
+      // emptied first: the SAME file set again changes nothing, so the input fires no change
+      await page.setInputFiles('input[type=file]', []);
+      await page.setInputFiles('input[type=file]', DATA);
+      // a NEW cube on the page: the status line may read the same as before, so not that
+      await page.waitForFunction(
+        () => (window.__dataCube !== window.__freshFrom
+          && document.querySelectorAll('.dc-row').length > 0)
+          || /could not|error/i.test(document.getElementById('status')?.textContent ?? ''),
+        undefined, { timeout: 90_000 },
+      );
+    } finally {
+      page.off('dialog', accept);
+    }
+    await settle();
+    return;
+  }
   await page.goto(`${URL_BASE}/demo/index.html`);
   await page.waitForSelector('.dc-row', { timeout: 90_000 });
+  pageLoaded = true;
   if (!DATA) return;
   // THE FILE'S answer, not the built-in cube's. The built-in cube's
   // status line already reads "… rows …", so waiting for /rows/ alone
@@ -1699,7 +1746,11 @@ try {
 
   await check('copy a column to the clipboard', async () => {
     await menu(['Copy', /^Column .* as Plain Text$/], { requery: false });
-    const text = await page.evaluate(() => navigator.clipboard.readText());
+    // the copy is asynchronous (the clipboard API is a promise): read until it lands
+    let text = '';
+    for (const until = Date.now() + 5_000; Date.now() < until && !text.trim(); await page.waitForTimeout(50)) {
+      text = await page.evaluate(() => navigator.clipboard.readText());
+    }
     if (!text || !text.trim()) throw new Error('the clipboard is empty');
     return `${text.split('\n').length} lines`;
   });
@@ -4848,7 +4899,8 @@ if (bad.length) {
   console.log(`\nBROKEN (${bad.length}):`);
   for (const r of bad) console.log(`  ${r.name} — ${r.detail}`);
 }
-const slow = [...timings].sort((a, b) => b[1] - a[1]).slice(0, 12);
+// TIMINGS=all: every check's time, not only the slowest twelve
+const slow = [...timings].sort((a, b) => b[1] - a[1]).slice(0, process.env.TIMINGS === 'all' ? timings.length : 12);
 console.log(`\nslowest checks of ${timings.length}`
   + ` (${Math.round((Date.now() - STARTED) / 1000)}s total):`);
 for (const [name, ms] of slow) {

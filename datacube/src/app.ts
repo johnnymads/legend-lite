@@ -708,6 +708,10 @@ export class CubeApp {
   get view(): CubeView | null {
     return this.#view;
   }
+  /** A change is in flight: its query has not answered yet. */
+  get busy(): boolean {
+    return this.#owner.busy;
+  }
   get canUndo(): boolean {
     return this.#owner.canUndo;
   }

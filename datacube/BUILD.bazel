@@ -682,7 +682,7 @@ _CI_HARNESSES = [
     "run-stress",
     "verify-cubes",
     "verify-features",
-    "verify-picker",
+    # not verify-picker: it drives a site already served on :8000 (`bazel run //datacube:serve`)
     "verify-real-data",
     "verify-remote",
     "verify-smoke",
