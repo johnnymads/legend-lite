@@ -4,7 +4,7 @@
 (`plan-audit-2026-09-26/architecture-review-2026-09-28.md`, evidence in `plan-audit-2026-09-26/stage-readings-2026-09-28/`).
 **Revised 2026-09-29 (rev H1)** after an adversarial audit of every wave against the code
 (`plan-audit-2026-09-26/h1-plan-audit-2026-09-29/`, synthesis in its `README.md`): the target is unchanged; items were
-corrected, split, re-ordered, given gates, and re-sized; decisions D6–D12 were owed; D6, D7, D10 and D12 were ruled on 2026-09-29, D8 and D9 wait for their waves, D11 waits for a runtime census.
+corrected, split, re-ordered, given gates, and re-sized; decisions D6–D12 were owed; D6, D7, D8, D10 and D12 were ruled on 2026-09-29, D9 waits for W4.4a, D11 waits for a runtime census.
 
 This is the ONE living plan. It replaces the step list of the 2026-09-26 version (steps 0–2 of which are done; their
 records are in `docs/GATES.md` and the old text is in git history at `601995bc2`), `REAL_PLAN_2026_09_25.md`'s order, and
@@ -108,7 +108,7 @@ depends on `model` because it converts syntax into semantic records.
 | D5 | Plan the whole program now | **RULED 2026-09-28**: this page |
 | D6 | W0.4: how the corpus certifies product SQL | **RULED 2026-09-29 (the user), the original intent:** the scan-order ORDER BY lives only in the harness, and only for the tests where an unordered compare cannot be correct (a `first`, `take`, `limit`, `slice`, `at` or positional read over a query with no sort, where WHICH rows come back depends on scan order). Every other test runs the product's exact SQL and compares rows without order, as the 921 unordered-chain tests already do. Today's pass is broader than that intent: it changes 993 tests' SQL from inside the product dialect. W0.4 measures the split, then implements it |
 | D7 | The judge charter | **RULED 2026-09-29 (the user): keep BOTH judges.** The host judge (Java equality over database-fetched values, the reference) and the database judge (the verdict computed in SQL, the product goal) both stay, joined per assert as today (`pinJudgeDifferential`). The charter (C2b/C2c, Z2) stands as written; no roster re-base; the stress lane keeps its host EqualToJson. W6.3 shrinks to the judge SPI |
-| D8 | The shape evaluator's scope | **OPEN.** May compile-time string `+` produce an identifier (a column name)? C6.2 and WORLD_MAP §4 call it COMPUTED; `StaticFold` does it today [W4 F7]. Blocks W4.2 |
+| D8 | Computing a query's column names at compile time | **RULED 2026-09-29 (the user): yes, as type checking, very ring-fenced** (TENET_CHARTER C6.2a). Only in the schema positions of `NormalizeRequiredFunction` bodies and column-metadata reads; a closed, pinned list of operations over names and column metadata; never a row value (a data-position expression stays SQL even when all-literal); anything else a clear error. The database computes every value, as today. Owner: W4.2 |
 | D9 | The manifest world | **OPEN.** The 2b stdlib question, WORLD_MAP rule 8 (an engine file only if every function passes the deletion test), and whether roadmap test files may be excluded by a named, pinned register [W4 F9]. Blocks W4.4 |
 | D10 | The failure unit under rule 0.9 | **RULED 2026-09-29 (the user): two modes, as the north-star tenet says** (`docs/TENETS.md`: eager Knowledge, demand-driven Work). **Compile-all mode** types the whole world, collects every diagnostic and fails on any: the gate that proves a model sound (a lane, and an API clients call). **User paths** are demand-driven: a query types only what it touches, memoized per model. Rules that keep it sound: demand-driven is an optimisation only (a touched body gives exactly compile-all's diagnostics for it, checked by running the corpus both ways); Knowledge errors (parse, unknown elements, duplicate ids) are eager on every path; nothing is dropped or retried. **The difference from legend-engine is kept:** a query that touches only valid code runs even if the model has a broken body elsewhere (the engine rejects the whole model); engine-equivalent strictness lives in compile-all |
 | D11 | The type of the scalar expressions inside the store resolver's new relational output | **OPEN, not ready to decide.** Static homework done (`d11-homework-2026-09-29.md`): it is not the same as `TypedRelationOp` (a grouping of 16 unary operators for one resolver arm, on both sides of resolution); 22 of the 77 typed kinds are ambiguous between relation and scalar and ~38 lowering sites and a per-node `Space` memo decide at run time. Before deciding: the runtime census that document names (which kinds reach resolver output in scalar position, which ambiguous kinds are ever relational after resolution) |
@@ -329,7 +329,11 @@ row of §1b is not done until that target exists and its line in `core-layers.tx
 - **W4.2 One G½** after W2.5, W3.1/3.3a/3.6 and D8: one hygienic engine over typed HIR by `VarId`, replacing ≥10 sites
   (SourceSubst, UserCallInliner, `StaticFold.inlineUserCall`, AlphaRename, StatementInline, LiteralMapUnroll, the
   resolver's private inliners — one slice each) [W4 F8]; source-level β-expansion during typing ends. Gate: fold results
-  identical per test; the snapshot byte-identical.
+  identical per test; the snapshot byte-identical. **And the schema evaluator per D8 (C6.2a):** `StaticFold` is replaced by an evaluator that
+  knows which positions are schema positions and folds only there, over the pinned operation list; first homework: the
+  operations the corpus's `NormalizeRequiredFunction` bodies actually use (55 marked functions in the pinned trees);
+  gates: the operation-list pin, the never-a-row-value test, and the corpus passes that use these functions today
+  (`columnValueDifferenceTest`, `rowValueDifferenceTest`, `zScoreTest` on DuckDB) unchanged.
 - **W4.3 Store resolution as passes**, in this order, each slice landing alone [W4 short answers, F2, F3, F13, F14]:
   0 gate (W4.0); 1 the desugar pre-pass (ChainNormalizer, ChainDispatch, the chain-op rewrites, SubQueryLift);
   2 a structural `NavPath` key replacing dotted chain keys, `#fN/#dN` heads and identity-keyed maps (SQL byte-identical);

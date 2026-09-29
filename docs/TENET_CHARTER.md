@@ -174,6 +174,23 @@ PROGRAMS (input to the compiler, whoever wrote them). Consequences:
   as a residual (`CASE` over scalars, lists, same-class structs; conditional membership).
   This is Clause 4 applied to the unroll: token identity carries no representation rule,
   so it needs no differential; a value-producing fold does, and is therefore not admitted.
+- **C6.2a — Computing a query's schema is type checking, ring-fenced** (ruled 2026-09-29, the user). Some library
+  functions compute their own result columns: `columnValueDifference` builds `quantity_1` with `$vc + '_1'`, loops over a
+  list of column names with `map`, and branches on a column's type with `if($col.type == Integer, …)`
+  (`core_relational/relational/tds/tdsExtension.pure`). The compiler must know those columns to type the rest of the
+  query and to report the result, with no database present. The type checker therefore evaluates such expressions at
+  compile time, inside this fence and nowhere else:
+  1. **Where:** only the schema positions of a body marked `<<functionType.NormalizeRequiredFunction>>`, and the
+     column-metadata reads (`$tds.columns`, `$col.name`, `$col.type`). A schema position is one whose value becomes part
+     of the query's type: a column name, a list of column names, a rename pair, a column spec's name, or the condition
+     of an `if` that selects between column expressions.
+  2. **What:** a closed, pinned list of operations over names and column metadata (string `+` over strings, `map`,
+     `filter`, `sortBy`, `indexOf`, `in`, `concatenate`, `removeDuplicates` over lists of names, `pair`, `$col.name`,
+     `$col.type ==`), the list drawn from what those library bodies actually use and pinned by a test.
+  3. **Never a row value.** An expression in any other position is left for the database, even when every input is a
+     literal (`'a' + 'b'` inside a filter stays SQL). A test pins that a data-position expression is never folded.
+  4. **Anything else is a clear error**, naming the expression and the fence; never a guess and never a partial fold.
+  5. Every row value such a function produces is computed by the database, as today.
 - **C6.3 — The prelude ships declarations only** (class/enum shapes with keys and defaults,
   native signatures), verified against the real `.pure`; the ONE body exception is a Pure
   QUERY over the platform's own system tables (no control flow on computed values, no
@@ -193,6 +210,7 @@ PROGRAMS (input to the compiler, whoever wrote them). Consequences:
 | C5.2 | F1.6 R0 ledger (shrink-only) → F7.4 makes the contract true |
 | C6.1 | `ObservabilityGuardrailTest` string-dispatch pin; `ArchitectureTest` metamodel-channel class-list (shrinks with the toPostgresModel leg) |
 | C6.2 | `LiteralUnrollLedgerTest` — the exact fold set of `LiteralUnroll`, compare-only (lands with the residual leg) |
+| C6.2a | The schema evaluator's pinned operation list and its never-a-row-value test (lands with execution plan W4.2) |
 
 Until a clause's enforcement lands, the clause still governs adjudication — "the guard is
 not built yet" is a schedule fact, not a license.
