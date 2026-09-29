@@ -16,12 +16,12 @@ Keep it current: when an item lands, move it to §3 with its GATES.md heading, a
 
 **Now (update in every push):** W0.6, fix the reproduced wrong-results defects, in the push order of
 `plan-audit-2026-09-26/w0.6-homework/README.md` (homework done: each report names the root cause at file:line, the fix,
-the blast radius and the gate). Open decisions that block only single fixes: D20, D21. After W0.6: W1.0b (baselines), W0.4, then W1 in §5's order.
-
+the blast radius and the gate; the exact scope and test values of the first push are in its section "Push 1"). Open
+decisions that block only single fixes: D20, D21. After W0.6: W1.0b, W0.4, W0.7, then W1 in §5's order. 
 **What this program is, in one paragraph.** legend-lite (`core/`, ~229k lines of product Java) is a clean-room
 replacement for legend-pure's compiler and legend-engine's query execution: Pure text → parse → resolve names → type →
 inline → resolve classes to tables → SQL → run on DuckDB/H2. It works (corpus rosters, PCT lanes), but its middle is
-tangled: a 3,500-line typer, a 36k-line one-pass store resolver, names compared as strings, semantics carried as flags
+tangled: a typer that was 3,500 lines (split to 1,748 by W1.6, still one class doing too much), a 36k-line one-pass store resolver, names compared as strings, semantics carried as flags
 that rebuilds drop. The program rebuilds it stage by stage into a conventional expert compiler (§1), landing on `main`
 slice by slice, every slice gated green, never a big bang. Goals (D17): cleaner, more bulletproof, much less code,
 faster, the cruft deleted, and wrong answers found and fixed first.
@@ -41,7 +41,7 @@ faster, the cruft deleted, and wrong answers found and fixed first.
    (5.99.0) and `$OB/external/+http_archive+legend_engine_src` (4.145.0); jars at the same releases in `@maven_upstream`.
    `find` needs `-L` there. Never use another cache (one holds pure 5.103.0). The `~/legend/legend-pure` and
    `~/legend/legend-engine` checkouts lag the pins; do not cite them.
-4. The slice (rule 0.6): homework → probe → switch → gate → deletion → GATES.md entry → push.
+4. The slice (rule 0b.6): homework → probe → switch → gate → deletion → GATES.md entry → push.
 5. Before the full chain, run the lanes that catch per-file pins (three of four pushes on 2026-09-29 went red here
    first): `bazel test //core:guardrails //core:census //parser-equivalence:parser_parity //spec:spec_tests`. If you
    added, moved or renamed a file, check the registers that name files: `JdbcSurfaceCensusTest`,
@@ -50,18 +50,27 @@ faster, the cruft deleted, and wrong answers found and fixed first.
    `JavaEvalLedgerTest` (exact line pins), `IdentityGuardrailTest`; regenerate generated files with `bazel run
    //core:update_generated` (the claims ledger's `also` column moves with any file move).
 6. The gate chain on the exact tree: `bazel test //...` then `bazel test //tools/deps:all` (Bazel's wildcard over that
-   package). Read the summary line (`Executed N out of M tests: M tests pass`), never only the exit code. For any
-   front-end slice also `bazel test //spec:reference_lane` (manual, 8 GB). Read per-test times of the corpus lanes
-   against the previous entry: a green lane that got 10× slower is a regression.
+   package; `//...` already contains those five tests, and the second command is the user's standing rule naming them
+   explicitly, so it normally reports `(cached)`). Read the summary line (`Executed N out of M tests: M tests pass`),
+   never only the exit code. For any front-end slice also `bazel test //spec:reference_lane` (manual, 8 GB);
+   "front-end" = any change under `lexer/`, `parser/`, `protocol/`, `model/`, `builtin/`, `compiler/` (including
+   `compiler/spec`, so G½'s inliners count) or `normalizer/`. Read per-test times of the corpus lanes against the
+   previous entry: a green lane that got 10× slower is a regression. **Rosters are floor AND ceiling**
+   (`MinimalCorpusTest.java:29-43`): a fix that makes a corpus test pass turns its lane red as GAINED; remove the name
+   from `spec/src/test/resources/rcorpus/<lane>-fail-roster.txt` (and any database-mode register naming it) in the same
+   push, with the reason in the GATES entry. `docs/RELATIONAL_CORPUS.md` is a Maven-era scoreboard the Bazel chain does
+   not regenerate: judge by the roster files.
 7. One test class: `//core:core_tests` is one package-wide `junit_test` and ignores `--test_filter`
    (`tools/junit/defs.bzl:25-66`); run the target, or drive the jars in `bazel-bin/core/core_tests.runfiles` from jshell
-   (JDK 25 under `external/rules_java++toolchains+remotejdk25_macos_aarch64`). One corpus test:
+   (`"$(bazel info output_base)/external/rules_java++toolchains+remotejdk25_macos_aarch64/bin/jshell" --class-path
+   "$(find -L bazel-bin/core/core_tests.runfiles -name '*.jar' | tr '\n' ':')"`, after one `bazel build //core:core_tests`). One corpus test:
    `--test_env=JAVA_TOOL_OPTIONS=-Drcorpus.test=<fqn>`. A PASSING `@KnownDefect` test means the defect is still present.
 8. A timing is a lane run alone with `--nocache_test_results`, `uptime` load under 3 at the start, nothing else
    building. A lane's time inside `bazel test //...` is not a timing.
 9. Commit: write the message to a file, then `git -c user.name=neema2 -c user.email=neema2@gmail.com commit -F <file>`;
-   the message ends with the two trailers `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` and
-   `Claude-Session: <this session's URL>`. Push: `git push origin HEAD:compiler/rebuild HEAD:main` (fast-forward only).
+   the message ends with the trailers the harness's attribution reminder gives (today `Co-Authored-By: Claude Opus 5.5
+   <noreply@anthropic.com>` and `Claude-Session: <the session URL in that reminder>`; if the harness gives none, the
+   `Co-Authored-By` line alone). Push: `git push origin HEAD:compiler/rebuild HEAD:main` (fast-forward only).
    Never force-push; never bare `git stash`.
 10. GATES.md entry (insert above the newest `— Rebuild` heading), template:
    `## <date> — Rebuild <item>: <one-line result>` then: what changed and why (files); the probe and its numbers; the
@@ -318,10 +327,12 @@ ClassDefinition 15; `FunctionId.of` 6; `Temporal.java:87,98,99`, `TypeClassifier
 | H1–H6 | plan audit, `ResolvedExpr` design, reference-lane spike, diagnostics design, quiet baselines, superseded docs marked | `h1-…/`, `h2-…`, `h3-…`, `h4-…`; GATES "Rebuild H5 and W1.6" |
 | W0.0, W0.1, W0.2 | expected-failure pins; the server's doors (loopback bind, Origin allow-list, `/engine/sql` gone); four confirmed defects; the static-final rule | GATES "Rebuild W0, first batch", "second batch" |
 | W0.3 | ten latent defects reproduced and pinned | GATES "Rebuild W0.3" |
-| W0.5 | the line guard, DanglingState rule 2, the JDBC test register, 15 zero rows dropped (commit `ed85b5166`; its GATES entry was never written, owed by W1.0) | commit `ed85b5166` |
+| W0.5 | the line guard, DanglingState rule 2, the JDBC test register, 15 zero rows dropped (commit `ed85b5166`) | GATES "Rebuild rev H2" (the owed record) |
 | W1.6 | the typer split: TdsDesugars and Overloads out of Typer (3,499 → 1,748 lines); `accessProperty` stayed in Typer (`Typer.java:~1200`) by choice, moves in W3.3 | GATES "Rebuild H5 and W1.6" |
 | W1.1 (1) | the reference lane, calls first | GATES "Rebuild W1.1 (1)" |
 | rev H2 | this page; D13–D18 ruled; automap reading corrected; `main` fast-forwarded to the program (`89dc45871`) | GATES "Rebuild rev H2" |
+| W0.6 homework | four root-cause reports and the push order; D20, D21 opened | `plan-audit-2026-09-26/w0.6-homework/`; commit `708947202` |
+| W1.0 | the documents executable: rev H2, the register, routing, banners; **the cold read passed after fixes** (a fresh agent found the program, item, order and decisions unaided; its 15 contradictions and 12 gaps were then fixed) | `plan-audit-2026-09-26/cold-read/2026-09-29-rev-H2.md`; GATES "Rebuild W1.0" |
 
 ---
 
@@ -364,13 +375,15 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   empty list giving NULL (H), `ANY_VALUE` missing on H2 (D). After D20/D21: `splitPart` (F), the Float literal cliff (G).
   Every predicted defect gets a failing lite test first. Gate per push: pins removed and tests asserting the right
   answer; the homework's adversarial cases added; rosters LOST 0 (read `docs/RELATIONAL_CORPUS.md`'s diff); the chain
-  green. Number: open wrong-results defects → 0.
+  green. The pins' `owner` fields (W2.5, W4.2, W4.3, W2.2, W2.3a, W6.4) predate D14; each fix removes its pin. If D20 or
+  D21 is still unruled when the other pushes are done, F and G are pinned `@KnownDefect(owner = "D20")`/`("D21")`, the
+  user is asked in the report, and W0.6 closes. §3 gains a row per W0.6 push. Number: open wrong-results defects → 0.
 - **W0.7 Request-reachable static state** [L6 F12]: list the statics and ThreadLocals a concurrent request to
   `server/` can reach (the dispatcher is single-threaded today, `LegendHttpServer.java:314`); make each per-request or
   immutable, or record why the single-threaded dispatcher makes it safe with a test pinning single-threadedness.
   Gate: the list in GATES; ArchUnit `staticFieldsAreFinal` still green. Number: request-reachable mutable statics → 0.
 
-### W1 — Gates and foundations (≈10–15 sessions). Everything later is judged by these.
+### W1 — Gates and foundations (≈14–22 sessions). Everything later is judged by these.
 
 - **W1.0 This page executable** (rev H2 did: this page's §0 checklist; `IN_FLIGHT.md` points here; `AGENTS.md` routes
   here; `docs/SEMANTICS_REGISTER.md`; superseded/paused banners on `PROGRAM_MAP`, `ONE_PLATFORM_PLAN`,
@@ -389,7 +402,7 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   what is missing is the instantiation (type and multiplicity arguments). **Record it permanently** in the typer, as a
   field on `TypedNativeCall`/`TypedUserCall` (the evidence for "a side table to avoid 100 constructor sites" had no
   source: `new Typed*(` is 394 sites in `compiler/spec`), so that G½ can later substitute instead of re-unifying. One
-  canonical type printer used by both sides (M3 FQNs, Nil, function types, relation column types, multiplicity
+  canonical type printer used by both sides (this supersedes the side-table wording in GATES "Rebuild W1.1 (1)") (M3 FQNs, Nil, function types, relation column types, multiplicity
   spellings); sample 100 rows by eye before blessing. Gate: the lane's type rows joined and bucketed; reasons per class;
   the AGREE floor and coverage pins held. Size 2–3.
 - **W1.1c The rejection bucket** [L1 #6d]: the lane pins "we typed, the reference failed" as its own bucket; import

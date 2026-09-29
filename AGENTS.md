@@ -310,13 +310,15 @@ type-checked on demand. Compiling elements must not compile specs.
 and throws, naming the construct; `StoreResolverTest` pins it. Likewise no
 store-only node reaches the Lowerer — those are "resolver bug" walls.
 
-### 8. The wall `[ENFORCED — ArchitectureTest:50]`
+### 8. The wall `[ENFORCED — ArchitectureTest, rule "THE WALL"]`
 
 No `com.legend..` → `com.gs.legend..` dependency, ever. Also: no `util/`
-package anywhere (`ArchitectureTest:66`).
+package anywhere (`ArchitectureTest`, the `..util..` rule).
 
-`ArchitectureTest` is 23 dependency-direction rules and **nothing else** — it
-asserts no sealedness, record-ness, or exhaustiveness. It uses its own
+`ArchitectureTest` is mostly dependency-direction rules (37 tests as of
+2026-09-29, including `staticFieldsAreFinal`); it asserts no sealedness,
+record-ness, or exhaustiveness (plan W1.11 adds an exhaustiveness check).
+Line numbers drift: search by rule name. It uses its own
 numbering ("6g", "7a-c") that does **not** map to this list or to
 `core/README.md`'s. Do not merge the numbering schemes.
 
@@ -345,7 +347,7 @@ otherwise, which is how it drifted:
 | `docs/TENETS.md` | Eager-Knowledge / lazy-Work, the north star |
 | `docs/WORLD_MAP.md` | Java vs Pure vs input: the three kinds of Pure code, the prelude, compare-not-compute, the decision procedure |
 | `docs/AUDITS.md` | Audit index and reading order |
-| `docs/CORPUS_BURNDOWN_HANDOFF.md` | Corpus burn-down entry point |
+| `docs/CORPUS_BURNDOWN_HANDOFF.md` | History: the corpus burn-down program (paused; its ledger is Maven-era) |
 | `docs/RELATIONAL_CORPUS.md` | The corpus scoreboard (a **gate artifact** — regenerated, not hand-edited) |
 | `docs/OUTSTANDING.md` | Generated non-passing ledger |
 

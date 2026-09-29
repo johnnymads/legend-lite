@@ -40,3 +40,61 @@ principled fix, whether it is correct today, the blast radius, and the gate (the
   `CodeShapeGuardrailTest.java:37`) is the tight constraint in `Lowerer.scalarStructural`, `UserCallInliner.rewriteSwitch`
   and `literalArms`, `TemporalFrame.applyJoinTemporalFilters`, `Substitution.rewrite`; add helpers rather than inline
   blocks.
+
+## Push 1: capture-avoiding substitution (fully specified, after the cold read of 2026-09-29)
+
+**Scope.** Report 1 bug 2 only, in all three substitution engines, so that no substitution anywhere can capture. The
+let-scope fix (bug 1) is push 2. Decisions taken here (engineering choices, not user rulings; each follows rule 0b.8
+"the principled design"):
+
+1. **One free-variable function over the typed tree**, new file `compiler/spec/typed/FreeVars.java` (a fact about the typed
+   IR, so it lives with it; check first that the name is free). Binders it respects: `TypedLambda` parameters; a
+   `TypedLet` binds its name for the later statements of the same body; `TypedMatch.param()` and `extraParam()`;
+   each `TypedMatchRuntime` arm's parameter. Do not reuse `resolver/AssociationJoins.java:2172 collectFreeVars`
+   (`compiler.spec` may not depend on `resolver`); leave a note there that it can switch to `FreeVars` later.
+2. **`UserCallInliner`**: a helper `underSubst(List<TypedSpec> terms, Supplier<T> k)` pushing `peekOrEmpty ∪
+   FreeVars.of(terms)` onto `captureRisk` and popping in `finally`; applied at the `TypedMatch` arm (:1250-1259, the input
+   and the extra term), `TypedMatchRuntime` (:1058, :1076), the literal unrolls (:917, :947, :985 incl. the accumulator
+   term, :1009), higher-order map (:1323), and around the root rewrite in `inlineBody` (:172-180, with the let values).
+   `bind` (:1439) unchanged; the class javadoc (:48-52) corrected to say binders are renamed when a substituted term
+   mentions them.
+3. **`SourceSubst.substitute`** (`compiler/spec/SourceSubst.java:185-203`, over `ValueSpecification`) becomes
+   capture-avoiding itself: when a lambda parameter or lambda-local let it would descend under is free in any value of
+   the current env, the binder is renamed through a fresh-name supply (the `AlphaRename` `_nr<N>` convention) and its
+   body re-substituted. Chosen over "every caller α-renames first" because one rule in one place protects all callers
+   (`inlineLets`, `LambdaBodies`, `StatementInline`, `LiteralMapUnroll`, `resolveStructuralArgs`, the checkers).
+4. **`lowering/MatchFold.inlineParam`** (:65-74): the same check with `FreeVars`; a colliding inner lambda binder is renamed
+   `_m<N>` (a per-fold counter; the name reaches SQL only as a lambda parameter, so any fresh spelling is correct), and it
+   stops at a lambda-body let named like the parameter. W4.2 deletes this β-site when G½ is one engine.
+
+**Probe (rule 0b.2), local only, never pushed.** A temporary commit makes each of the three engines print one stderr line
+`CAPTURE_RENAME <site> <binder>` whenever the new rule renames where the old one would not; run `bazel test
+//core:core_tests //spec:corpus_duckdb //spec:corpus_h2 //pct:pct_duckdb //pct:pct_h2 --nocache_test_results`; collect
+the lines from `bazel-testlogs/**/test.log` into the receipt `rebuild-W0.6-p1-probe/`. Expected: hits only from the new
+tests' queries; every other hit is a latent wrong answer the push also fixes, listed by test name in the GATES entry.
+Then drop the temporary commit (`git reset --hard HEAD~1` on the local-only commit, after checking it is that commit).
+
+**Tests** (all in `core/src/test/java/com/legend/compiler/spec/InlinerMatchCaptureTest.java`, DuckDB only: the capture
+happens before SQL, so one dialect proves it; `values(query)` as in the file, and a `values(model, query)` overload for
+the model case). Expected values computed by hand:
+
+| case | query | expected | today (predicted) |
+|---|---|---|---|
+| the pin | `\|[1,2,3]->map(x \| $x->match([i: Integer[1] \| [10,20]->map(x \| $i + $x)->sum()]));` | `[32, 34, 36]` | `[60, 60, 60]` |
+| extra parameter | `\|[1,2,3]->map(x \| $x->match([{i: Integer[1], k: Integer[1] \| [10,20]->map(x \| $i + $x + $k)->sum()}], $x));` | `[34, 38, 42]` | `[90, 90, 90]` |
+| three levels | `\|[1,2,3]->map(x \| $x->match([i: Integer[1] \| [10,20]->map(x \| $x->match([j: Integer[1] \| [100]->map(x \| $i + $j + $x)->sum()]))->sum()]));` | `[232, 234, 236]` | wrong |
+| fold accumulator | `\|[1,2,3]->map(a \| [$a]->map(e \| [10,20]->fold({x, a \| $a + $x + $e}, 0))->toOne());` | `[32, 34, 36]` | wrong |
+| literal unroll under a frame | model `function t::g(xs: Integer[*]): Integer[*] { $xs->map(y \| [$y]->map(e \| [10,20]->map(y \| $e + $y)->sum())->toOne()) }`, query `\|t::g([1,2,3])` | `[32, 34, 36]` | wrong |
+| typer-side let capture (SourceSubst) | `\|[1,2,3]->map(x \| let c = $x; [10,20]->map(x \| $c + $x)->sum();)` | `[32, 34, 36]` | wrong |
+| call-argument capture (may already pass: the frame check covers call args) | model `function t::f(p: Integer[1]): Integer[*] { let z = $p + 1; [1, 2]->map(p \| $z + $p); }`, query `\|[5]->map(p \| t::f($p))` | `[7, 8]` | `[7, 8]` or `[3, 5]` |
+| control (no capture possible) | the pin with the outer binder spelled `y` | `[32, 34, 36]` | `[32, 34, 36]` |
+
+Plus unit tests of `FreeVars` itself (each binder kind shadows; a let binds only later statements). If a query's surface
+syntax is refused by the parser, fix the test's spelling (e.g. a statement-terminating `;`), never the expectation, and
+record the corrected spelling.
+
+**Gate.** The pin removed and asserting `[32, 34, 36]`; the table green; the probe receipt saved; `bazel test
+//core:guardrails //core:census //parser-equivalence:parser_parity //spec:spec_tests`, then `bazel test //...` and
+`bazel test //tools/deps:all`; `bazel test //spec:reference_lane` (G½ is front-end, §0 step 6) with no bucket moved;
+rosters LOST 0 and any GAINED name trimmed with its reason. **Deletes:** nothing yet (W4.2 deletes the duplicate engines).
+**Number:** open wrong-results defects 12 → 11 (the pinned seven, the head-kill, A, A2, H, D; F and G wait on rulings).

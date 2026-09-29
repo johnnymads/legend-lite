@@ -1,5 +1,7 @@
 # Burn-down handoff — start here
 
+> **Superseded 2026-09-29.** History, not instructions: the corpus burn-down is paused while the compiler rebuild runs. The one living plan is `docs/EXECUTION_PLAN_2026_09_26.md` (start at §0).
+
 > **LEDGER 2398/2798 (400 non-passing) as of `4dd28f24`.** The lineage
 > leg is COMPLETE: scanRelations 19 honest → 45/49, ZERO FAILs, across
 > 7 gated batches; the 4 remaining rows are loud SHAPE walls

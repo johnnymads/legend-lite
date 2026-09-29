@@ -16,7 +16,8 @@ import java.lang.reflect.Method;
 import java.util.regex.Pattern;
 
 /**
- * A confirmed defect whose fix belongs to a later plan item (execution plan rule 0.11, item W0.0). The test is
+ * A confirmed defect whose fix belongs to a later plan item (execution plan rule 0b.11, item W0.0; since D14 only a
+ * cosmetic or diagnostic defect is pinned: a wrong answer, wrong binding or security defect is fixed now). The test is
  * written as the CORRECT behaviour and fails today; this annotation keeps the chain green while the defect stands
  * and turns it red the moment the defect is fixed, so the pin cannot outlive the defect silently:
  * <ul>

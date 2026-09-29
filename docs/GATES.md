@@ -5682,6 +5682,22 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild W1.0: the cold read passes after fixes; W0.6's first push fully specified
+
+**What.** W1.0's gate: a fresh agent with only the repository (`708947202`) explained the program, the current item and
+the next three with their gates, the first push's files and commands, the decisions and the process, unaided, and 8 of 8
+spot-checked code claims held. It listed 15 contradictions and 12 gaps; all are fixed or answered in this push (receipt:
+`docs/plan-audit-2026-09-26/cold-read/2026-09-29-rev-H2.md`, each item with its fix). Main fixes: §0 step 6 now states the
+roster floor-and-ceiling rule (a GAINED test turns the lane red until the roster is trimmed with a reason), what counts
+as a front-end slice, and why `//tools/deps:all` is run separately; §0 step 7 gives the jshell command; the order after
+W0.6 includes W0.7; W0.6 says what happens if D20/D21 stay unruled; `w0.6-homework/README.md` gains "Push 1", fully
+specified (scope, the design choice for each of the three substitution engines, a local-only probe, eight test cases
+with hand-computed expected values, the gate). `AGENTS.md`'s `ArchitectureTest` description corrected;
+`CORPUS_BURNDOWN_HANDOFF.md` bannered; `KnownDefect`'s javadoc cites rule 0b.11 and D14.
+
+**Gate.** Documents plus one javadoc; `bazel test //...` and `//tools/deps:all` green on the tree. The next cold read runs
+at checkpoint C1.
+
 ## 2026-09-29 — Rebuild rev H2: the plan revised after the meta-audit; D13–D18 ruled; the program lands on main
 
 **What.** A six-lens meta-audit of the plan (`docs/plan-audit-2026-09-26/meta-audit-2026-09-29/`, commit `cfbd8a83e`)
