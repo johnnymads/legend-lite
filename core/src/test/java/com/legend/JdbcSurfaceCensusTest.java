@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * 15 probes landed green that way; the {@code src/main -> src/test}
  * harness move silently walked 7,564 lines out of seven guards).
  *
- * <p>Three assertions:
+ * <p>Two assertions:
  * <ul>
  *   <li><b>Coverage floor</b> — the walk itself reports how many files
  *   it scanned, and that number must not drop: scope rot (a renamed
@@ -39,10 +39,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *   {@code org.sqlite}, statement-method spellings, in
  *   comment-stripped source). A new file fails in BOTH directions:
  *   growth is a conscious registration, shrink deletes the row.</li>
- *   <li><b>Test register</b> — same, for test roots: the harness,
- *   checkers, and probes legitimately EXECUTE queries, so they
- *   register by file; a new test file reaching JDBC is a conscious
- *   decision, not ambient drift.</li>
+ *   <li>The TEST register (every test file reaching JDBC, by name) was
+ *   deleted on 2026-09-29 with execution plan W0.5: tests execute queries
+ *   by nature, production JDBC is already funnelled to the chartered
+ *   seams in bytecode (ArchitectureTest), and the register only made each
+ *   new test file ask permission.</li>
  * </ul>
  *
  * <p>KNOWN LIMIT (the audit's own §3 lesson, recorded honestly): this
@@ -159,392 +160,6 @@ class JdbcSurfaceCensusTest {
             "core/src/main/java/com/legend/testdatagen/TestDataGenerationNatives.java"
     ));
 
-    private static final Set<String> TEST_REGISTER = new TreeSet<>(List.of(
-            "core/src/test/java/com/legend/ArchitectureTest.java",
-            // 2026-09-09, the connection lease: the CONNECTION LIFECYCLE is
-            // the thing under test, so java.sql.Connection is the subject and
-            // not an execution shortcut. It asserts isClosed() on a resolved
-            // handle — that a caller-owned connection is released by its lease
-            // and a store-owned one never is. No statements, no queries: the
-            // database executes nothing here, which is exactly tenet #1.
-            "core/src/test/java/com/legend/server/ConnectionLeaseTest.java",
-            // 2026-09-27, upstream pure/v1 parity: legend-engine's plan SQL and lite's
-            // are two spellings, so ROWS are the verdict -- both run on H2 over the
-            // model's own setup data and must answer the same rows. The database
-            // executes both; nothing is evaluated in Java (tenet #1; the referee rule)
-            "core/src/test/java/com/legend/server/PureV1ApiTest.java",
-            // batch 58: reads the referee H2 jar's VERSION constant (no
-            // connection, no statement) to pin the raw-SQL boundary's H2
-            // dialect level to the jar it translates for
-            "core/src/test/java/com/legend/sql/dialect/H2VersionPinTest.java",
-            // Charter Clause 2c fixture: World 2 IS a database execution
-            // — the two-worlds agreement is the thing under test
-            "core/src/test/java/com/legend/exec/EqualityWorldsConformanceTest.java",
-            // Phase 4: assertError spec tests — a DuckDB session + the
-            // SQLException surface IS the feature under test
-            "core/src/test/java/com/legend/AssertErrorNativeTest.java",
-            // Clause 2c: the verdict-arm spec tests — a DuckDB session
-            // computes the argument sides; the verdict IS the test
-            "core/src/test/java/com/legend/AssertVerdictsTest.java",
-            // V7 batch 2: the SPLICE PIN — a DuckDB session executes
-            // the frame (execute()) and the assert sides through the
-            // envelope splice; the spliced verdict IS the test
-            "core/src/test/java/com/legend/AssertVerdictSpliceTest.java",
-            // F13: instance-identity spec pins — a DuckDB session
-            // computes both verdict sides; the site-minted __id rides
-            // the SQL and the verdict IS the test
-            "core/src/test/java/com/legend/exec/InstanceIdentityTest.java",
-            // D94 (slice-4 fold-in): the diamond-layout witness — the
-            // executed half proves the [1] property reads back scalar
-            // THROUGH the database (tenet #1: the value's shape is the
-            // SQL layout's, so the assertion needs a real session)
-            "core/src/test/java/com/legend/compiler/element/ClassLayoutsDiamondTest.java",
-            // F10 v1: literal-channel spec pins — a DuckDB session
-            // computes both sides; the byte verdict IS the test
-            "core/src/test/java/com/legend/exec/LiteralChannelTest.java",
-            // relation wall burn 2026-08-23: the aggregate-ORDER-BY
-            // null-placement pin — a DuckDB session renders the sorted
-            // toString; the produced text IS the assertion
-            "core/src/test/java/com/legend/lowering/AggOrderNullPlacementTest.java",
-            // Phase 4: map wire-shape + rigid-lattice spec pins execute
-            // through a DuckDB session (the wire IS the assertion)
-            "core/src/test/java/com/legend/lowering/MapOptionalSourceTest.java",
-            // shortcut audit §5: the null-drop-in-the-lowerer pins run
-            // e2e over a DuckDB session (size/at/toOne must agree ON THE
-            // DATABASE — the bug was SQL-vs-egress disagreement)
-            "core/src/test/java/com/legend/lowering/OptionalCollectionNullDropTest.java",
-            // Part-1 silent-value witnesses (2026-08-26): the divide-by-
-            // zero raise, times() integer kind, []->map empty, and the
-            // missing-required rejection pin e2e VALUE semantics — the
-            // executed result IS the assertion (the BurnLaneTest form)
-            "core/src/test/java/com/legend/lowering/Part1SemanticsTest.java",
-            // §4AD P1 placement witnesses (2026-08-29): value-position
-            // ROW SEMANTICS execute IN the database — the R4
-            // distinguishing witnesses (phantom-mint refutation,
-            // multi-occurrence fork/share, double-NULL null-safe
-            // parity) assert EXECUTED rows, tenet #1 conformant
-            "core/src/test/java/com/legend/resolver/ValueMapPlacementTest.java",
-            // D100 witnesses (2026-08-26): connection-cache isolation —
-            // the resolver's per-(model, definition) key IS the feature
-            // under test; the SQLException surface is the assertion
-            "core/src/test/java/com/legend/server/ConnectionIsolationTest.java",
-            // D102 witnesses (2026-08-26): the checked-envelope defect
-            // CASE executes IN the database — the produced defects
-            // JSON is the assertion (NULL-predicate unable-to-evaluate
-            // arm vs violation arm vs null-safe equality)
-            "core/src/test/java/com/legend/integration/GraphFetchCheckedIntegrationTest.java",
-            // corpus-zero cluster A (2026-09-12): the by-tree isDistinct
-            // witness — the distinct-by-leaves test EXECUTES in the
-            // database (COUNT(DISTINCT row) = COUNT(row) over the grouped
-            // navigation); the rows are the assertion
-            "core/src/test/java/com/legend/integration/IsDistinctByTreeIntegrationTest.java",
-            // group F burn (2026-09-02): the mapping-metamodel query
-            // functions as Pure bodies over store rows — the in-memory
-            // DuckDB IS the database the rows are the verdict on
-            "core/src/test/java/com/legend/integration/MetamodelQueryFunctionsTest.java",
-            // slice-3 exit criterion: byte-decidable Any equality pins
-            // execute ON THE DATABASE (dedup verdicts computed in SQL —
-            // the carrier's disjoint spellings are the assertion)
-            "core/src/test/java/com/legend/lowering/AnyLiteralByteDecidabilityTest.java",
-            // M4 post-landing audit: contains-with-comparator over a
-            // carried list computes its verdict IN SQL (the comparator
-            // body executes in the database; the needle wrap's byte
-            // outcome is the assertion) — the referee-silent corner
-            // pinned e2e
-            "core/src/test/java/com/legend/lowering/ComparatorConventionTest.java",
-            // shortcut audit §1a: the typed-lane toOne pins raise pure's
-            // size errors IN THE DATABASE — the assertion is the DB's
-            // own error message, so the session is the test subject
-            "core/src/test/java/com/legend/lowering/ToOneLaneTest.java",
-            // R1: the World-2 paired-probe guard runs the SAME
-            // computation through SQL — the DuckDB session IS World 1
-            "core/src/test/java/com/legend/exec/VerdictWorld2ConsistencyTest.java",
-            // burn lane: the cast cross-kind raise is the DATABASE's
-            // error — the session is the assertion subject
-            "core/src/test/java/com/legend/lowering/BurnLaneTest.java",
-            // D4: variance pins run eval() e2e — the accepted direction
-            // must EXECUTE, not merely type-check
-            "core/src/test/java/com/legend/compiler/spec/VarianceD4Test.java",
-            // V10c: the dual-render conformance battery — the DATABASE
-            // computes the SQL canon text; agreement with the host
-            // reference render IS the assertion
-            "core/src/test/java/com/legend/lowering/SqlCanonConformanceTest.java",
-            // leg 3.3: the wire-kind probe battery — the DATABASE reports the
-            // physical type of a store-declared column on both drivers
-            "core/src/test/java/com/legend/exec/WireTypesTest.java",
-            // D6b: the leniency pins run Compiler.execute e2e — the
-            // valid-neighbor control must EXECUTE, and the bad-date pin
-            // proves rejection moved from the DB to the parser
-            "core/src/test/java/com/legend/compiler/LeniencyD6Test.java",
-            "core/src/test/java/com/legend/JdbcSurfaceCensusTest.java",
-            "core/src/test/java/com/legend/AuditRound3Test.java",
-            // multiplicity audit slice 2: the strictness negative
-            // fixtures — declared-return checks fire at INLINE time
-            // (the execute path), and the positive controls run their
-            // SQL in the database (tenet: no Java evaluation involved)
-            "core/src/test/java/com/legend/compiler/spec/MultiplicityStrictnessTest.java",
-            "core/src/test/java/com/legend/AuditRound5Test.java",
-            "core/src/test/java/com/legend/ConstantPlanParityTest.java",
-            // substr vs substring indexing (2026-09-12): each expression runs
-            // through QueryService end to end and the DATABASE computes the
-            // substring — the test only reads the scalar back (tenet #1)
-            "core/src/test/java/com/legend/SubstrIndexingTest.java",
-            "core/src/test/java/com/legend/TenetRatchetTest.java",
-            "core/src/test/java/com/legend/compiler/spec/UserCallInlinerTest.java",
-            // Tier-1 audit regression pins (2026-08-18): drive the fixed
-            // findings through the real pipeline / real connections —
-            // they verify egress spelling and wall behavior, computing
-            // no values in Java
-            "core/src/test/java/com/legend/exec/AuditTier1PipelineTest.java",
-            "core/src/test/java/com/legend/exec/Phase1AuditTest.java",
-            "core/src/test/java/com/legend/exec/RawGridSchemaTest.java",
-            // Phase 4: channel B's runner — one fresh DuckDB session per
-            // PCT test (the platform executes; the runner orchestrates)
-            "pct/src/test/java/org/finos/legend/lite/pct/channelb/ChannelB.java",
-            "core/src/test/java/com/legend/exec/DynamicPivotKeyLiteralTest.java",
-            "core/src/test/java/com/legend/testdatagen/PureReprTest.java",
-            "core/src/test/java/com/legend/exec/ExecuteFrameTest.java",
-            "core/src/test/java/com/legend/exec/ExecuteInDbTest.java",
-            // P3-2 single-query pin: a JDBC PROXY that COUNTS wire
-            // traffic — the probe-count discipline enforced by
-            // observation, not narration (tenet argument: the test's
-            // JDBC surface exists to PIN how little JDBC the platform
-            // uses)
-            "core/src/test/java/com/legend/exec/ExecuteInDbProbeCountTest.java",
-            // the PCT.function suppression behavior pin (executes model
-            // queries to prove which definition wins — session plumbing)
-            "core/src/test/java/com/legend/compiler/PctFunctionSuppressionTest.java",
-            "core/src/test/java/com/legend/exec/ExecutorTest.java",
-            "core/src/test/java/com/legend/exec/StructValueTest.java",
-            // contains over a table column (2026-09-28, DataCube T5): seeds a
-            // three-row table and runs the platform's own SQL through
-            // Compiler.execute -- the DATABASE decides every row (tenet #1),
-            // the test reads the column back
-            "core/src/test/java/com/legend/exec/ContainsOverloadTest.java",
-            // FLIP PROBE (harness-deletion item 1 slice 2): the dual-run
-            // agreement instrument — passes the family session's
-            // Connection THROUGH to Compiler.executeResolved (the one
-            // platform seam); no JDBC calls of its own; effect-gated so
-            // it only re-runs bodies the compiler proves read-only.
-            // Migration scaffolding: dies at the whole-test cutover.
-            // SCORING FLIP (slice 3): the migration dispatch itself —
-            // Connection passed THROUGH to the one platform seam; the
-            // effectful cutover's atomic-attempt protocol (begin/
-            // commit/rollbackAttempt — txn + ledger mark + mirror
-            // repair as ONE owned invariant) lives in ReplayOracle and
-            // this file only DRIVES it (SQLException handling at the
-            // call site); at cutover the call site moves to the runner
-            // and the walk's JDBC surfaces above delete.
-            // (ExecCallFinder RETIRED from the register 2026-08-28 —
-            // sideSqlText's evaluation path deleted with the slice-3
-            // equality half; the finder is pure tree navigation now)
-            "spec/src/test/java/com/legend/harness/H2Verify.java",
-            // SQLTEXT charter §8 slice 1: THE ORACLE SERVICE — the one
-            // owner of the family-mirror session, seed-ledger replay
-            // and fresh-replay fallback (extracted from the four
-            // duplicated H2Verify arms). Testing-side by design: the
-            // reference database IS its job; the platform reaches it
-            // only through the SqlReplayOracle SPI on ExecEnv.
-            "spec/src/test/java/com/legend/harness/ReplayOracle.java",
-            "core/src/test/java/com/legend/integration/AbstractDatabaseTest.java",
-            "core/src/test/java/com/legend/integration/AsOfJoinCheckerTest.java",
-            "core/src/test/java/com/legend/integration/AssociationIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/ComputedProjectIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/ConcatenateFlattenCheckerTest.java",
-            "core/src/test/java/com/legend/integration/CorpusDifferentialTest.java",
-            "core/src/test/java/com/legend/integration/DuckDBIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/DuckDBStructSyntaxTest.java",
-            // batch 166 witness (UnionSynthesis finding A): the fixture's
-            // tables and rows are loaded through the test's own JDBC
-            // connection, exactly as ComputedProjectIntegrationTest does;
-            // the query under test reaches the database only through the
-            // platform (QueryService)
-            "core/src/test/java/com/legend/integration/UnionJoinMappedPropertyTest.java",
-            // lean union join witness (2026-09-13): the fixture's DDL and rows
-            // go in through JDBC; the query reaches the database only through
-            // the platform (QueryService)
-            "core/src/test/java/com/legend/integration/UnionTargetLeanJoinTest.java",
-            // store-substitution witness (2026-09-13): an in-memory DuckDB
-            // connection for the system database; every query runs through
-            // the platform (Compiler.execute)
-            "core/src/test/java/com/legend/integration/MetamodelStoreSubstitutionTest.java",
-            "core/src/test/java/com/legend/integration/DynaFunctionIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/EnumIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/ExecutionResultIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/ExtendCheckerTest.java",
-            "core/src/test/java/com/legend/integration/ExtendWindowCheckerTest.java",
-            "core/src/test/java/com/legend/integration/FilterCheckerTest.java",
-            "core/src/test/java/com/legend/integration/FoldCheckerTest.java",
-            "core/src/test/java/com/legend/integration/FromCheckerTest.java",
-            "core/src/test/java/com/legend/integration/GetCheckerTest.java",
-            "core/src/test/java/com/legend/integration/GroupByCheckerTest.java",
-            "core/src/test/java/com/legend/integration/InheritanceIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/JoinCheckerTest.java",
-            // metamodel-store leg (2026-08-28): an ordinary integration
-            // suite — the caller's DuckDB connection through the one
-            // execute door, like every Checker suite above
-            "core/src/test/java/com/legend/integration/MetamodelStoreTest.java",
-            "core/src/test/java/com/legend/integration/JsonM2MChainIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/JsonM2MIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/JsonMappingIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/LetCheckerTest.java",
-            "core/src/test/java/com/legend/integration/M2M2RTabularTest.java",
-            "core/src/test/java/com/legend/integration/M2MChainIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/M2MIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/PivotCheckerTest.java",
-            // 2026-09-28, a raw pivot joined to a static relation: the
-            // join-resolution witness MUST execute on the real backend
-            // (tenet #1 -- the defect was DuckDB refusing the SQL: a
-            // column qualified with the wrong side of a join)
-            "core/src/test/java/com/legend/integration/PivotJoinColumnTest.java",
-            "core/src/test/java/com/legend/integration/RelationApiIntegrationTest.java",
-            // foundation probe 2026-09-01: the mapping-seam window rule
-            // (a Relation ~func extent's window is an evaluation
-            // boundary); test-side JDBC = fixture seeding on an in-memory
-            // DuckDB, execution through QueryService like its siblings
-            "core/src/test/java/com/legend/integration/RelationMappingWindowSeamTest.java",
-            "core/src/test/java/com/legend/integration/RelationalMappingCompositionTest.java",
-            "core/src/test/java/com/legend/integration/RelationalMappingIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/RenameCheckerTest.java",
-            "core/src/test/java/com/legend/integration/RenderCsvIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/SQLiteIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/ScalarFunctionIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/SelectDistinctCheckerTest.java",
-            "core/src/test/java/com/legend/integration/SlicingCheckerTest.java",
-            "core/src/test/java/com/legend/integration/SortCheckerTest.java",
-            "core/src/test/java/com/legend/integration/SourceUrlUserCallableTest.java",
-            "core/src/test/java/com/legend/integration/StreamingIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/StressTest.java",
-            "core/src/test/java/com/legend/integration/StressTest100K.java",
-            "core/src/test/java/com/legend/integration/StressTest10K.java",
-            "core/src/test/java/com/legend/integration/StressTestChaotic.java",
-            "core/src/test/java/com/legend/integration/StressTestComplexQueries.java",
-            "core/src/test/java/com/legend/integration/StressTestDense.java",
-            "core/src/test/java/com/legend/integration/StructFilterIntegrationTest.java",
-            // §4bZ-V B2 subsumption receipts: the round-trip decode
-            // witnesses MUST execute on the real backend (tenet #1 —
-            // the database executes; a Java-side re-derivation would
-            // prove nothing about the wire)
-            "core/src/test/java/com/legend/integration/SubsumptionWitnessTest.java",
-            "core/src/test/java/com/legend/integration/TypeConversionCheckerTest.java",
-            "core/src/test/java/com/legend/integration/TypeInferenceIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/UserFunctionIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/VariantIntegrationTest.java",
-            "core/src/test/java/com/legend/integration/WindowFunctionTest.java",
-            "core/src/test/java/com/legend/integration/WriteCheckerTest.java",
-            "core/src/test/java/com/legend/lowering/GroupByAverageMappingTest.java",
-            "core/src/test/java/com/legend/lowering/JoinTortureTest.java",
-            "core/src/test/java/com/legend/lowering/LowerRelationTest.java",
-            "core/src/test/java/com/legend/lowering/NullSemanticsTest.java",
-            "core/src/test/java/com/legend/lowering/ValueSortComparatorTest.java",
-            "core/src/test/java/com/legend/normalizer/AssocSimpleNameProbeTest.java",
-            "core/src/test/java/com/legend/normalizer/AssociationSetIdTest.java",
-            "core/src/test/java/com/legend/resolver/RoutedEquiJoinTest.java",
-            "core/src/test/java/com/legend/resolver/RuntimeIfClassQueryTest.java",
-            "core/src/test/java/com/legend/resolver/PivotOverClassQueryTest.java",
-            "core/src/test/java/com/legend/lowering/QuotedColumnNameTest.java",
-            // 2026-09-29, plan W0.2(a): Pure's splitPart run on a PLAIN H2 session (none of the
-            // engine's extension functions installed); the table is created and filled by
-            // hand, the query is compiled and the database computes every value
-            "core/src/test/java/com/legend/sql/dialect/H2SplitPartTest.java",
-            // 2026-09-29, plan W0.1: test-only seeding on a runtime's resolved connection,
-            // replacing the deleted product route /engine/sql; DDL/DML only, no value read back
-            "core/src/test/java/com/legend/server/Seed.java",
-            // 2026-09-29, plan W0.3: KNOWN-DEFECT probes (@KnownDefect, each naming its owner item).
-            // Each creates a small table by hand on an in-memory DuckDB, runs one compiled
-            // query and reads the rows the database computed: the defect is in the compiler's
-            // output, and the rows are how it shows
-            "core/src/test/java/com/legend/compiler/spec/InlinerMatchCaptureTest.java",
-            "core/src/test/java/com/legend/integration/ServiceTestProvisionKeyTest.java",
-            "core/src/test/java/com/legend/lowering/LowererLetScopeTest.java",
-            "core/src/test/java/com/legend/resolver/NavPrefixCollisionTemporalTest.java",
-            "core/src/test/java/com/legend/resolver/NestedExistsCorrelationStampTest.java",
-            "core/src/test/java/com/legend/TabularFunctionTest.java",
-            // names java.sql only to assert it ABSENT: runs the planner in a JVM
-            // limited to java.base (no connection, no statement)
-            "core/src/test/java/com/legend/PlannerRunsOnJavaBaseTest.java",
-            "core/src/test/java/com/legend/PlanOnJavaBase.java",   // its program: plans, prints; checks java.sql is absent
-            "core/src/test/java/com/legend/exec/RowLoadTest.java",
-            "core/src/test/java/com/legend/normalizer/AssociationViewJoinTest.java",
-            "spec/src/test/java/com/legend/rcorpus/DuckWorkspaces.java",
-            // the product test runner's proof (batch 7a, 2026-09-11): opens an
-            // in-memory DuckDB session and HANDS it to the runner, which hands
-            // it to the platform; it executes no SQL of its own (tenet #1)
-            "core/src/test/java/com/legend/test/PureTestRunnerTest.java",
-            // the lean SQL ladder (2026-09-20): opens an in-memory DuckDB, seeds
-            // its three-row table, and hands the runner a RECORDING proxy of the
-            // connection so every statement the platform sends is pinned; it
-            // executes no SQL of its own beyond that seed (tenet #1)
-            "core/src/test/java/com/legend/ladder/LeanSqlLadderTest.java",
-            // the stress corpus's service suites (2026-09-16): opens the
-            // in-memory DuckDB sessions the ServiceTestRunner hands to the
-            // platform; executes no SQL of its own
-            "core/src/test/java/com/legend/integration/StressServiceSuitesTest.java",
-            // the minimal harness (2026-09-06): opens the DuckDB session and
-            // the referee's H2 mirror and HANDS them to the platform; it
-            // executes no SQL of its own (tenet #1 — the database executes
-            // what the platform compiles; the harness only finds and runs
-            // tests)
-            "spec/src/test/java/com/legend/rcorpus/MinimalCorpus.java",
-            "core/src/test/java/com/legend/resolver/ResolveDeepEmptinessProbeTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveDerivedLeafProbeTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveFilterDemandTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveGraphUnionProbeTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveM2mTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveNavigationTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveNestedNavTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveOtherwiseTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveOuterDatedNavTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveSerializeTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveSimpleClassTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveTemporalContextTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveUnionChainTest.java",
-            // clean-sheet B3.2: a chained route's rows are the verdict (the
-            // arm carries its mid; the navigator reads one link key)
-            "core/src/test/java/com/legend/resolver/RoutedChainKeyTest.java",
-            // legacy routes as composition, leg 3a: the stack's lift shapes are
-            // judged by ROWS against the engine's key rules (R-key, R-target)
-            "core/src/test/java/com/legend/resolver/StackShapeWitnessTest.java",
-            // legacy routes as composition, leg 3b: the design's own witnesses
-            // (mixed union, route into a ~func member, subclass pins, one-table
-            // filtered union) are judged by rows
-            "core/src/test/java/com/legend/resolver/StackDesignWitnessTest.java",
-            // the leg 3 audit's unjudged shapes as rows (root beside member,
-            // subclass pin, user null-safe equality, aggregation over a stack)
-            "core/src/test/java/com/legend/resolver/StackRatchetWitnessTest.java",
-            // legacy routes as composition, step 1: the several-route navigate's
-            // rows are the verdict
-            "core/src/test/java/com/legend/resolver/RoutedNavigateTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveUnionJtcProbeTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveUnionMultiHopProbeTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveUnionOuterDateProbeTest.java",
-            // metamodel-as-relations step 3: the mapping metamodel as
-            // rows — every verdict is a query the database answers
-            "core/src/test/java/com/legend/integration/MetamodelMappingStoreTest.java",
-            "core/src/test/java/com/legend/resolver/ResolveUnionTest.java",
-            // run-time branch choice on the row's type column (metamodel
-            // step 2): rows are the verdict for match/instanceOf/cast
-            // over a user inheritance mapping — the SQL must execute
-            "core/src/test/java/com/legend/resolver/RuntimeTypeDispatchTest.java",
-            // navigation-depth leg (2026-09-02): 3-4 hop chains through
-            // associations, slots and inheritance execute e2e — the ROWS
-            // the database returns are the verdict (tenet #1)
-            "core/src/test/java/com/legend/resolver/NavigationDepthTest.java",
-            // harness burn-down leg 1 (2026-09-02): chain-position type
-            // dispatch — the database RAISES on a non-conforming cast;
-            // the raise and the rows are the verdict
-            "core/src/test/java/com/legend/resolver/ChainTypeDispatchTest.java",
-            "core/src/test/java/com/legend/sql/DuckDbValidityTest.java",
-            "core/src/test/java/com/legend/sql/dialect/CarrierDifferentialTest.java",
-            // GrammarFunctions_PCT REMOVED 2026-08-23 (F13b(a)): its only
-            // JDBC mention was the map test's expected-error text naming
-            // org.duckdb.DuckDBArray — the flatten fix moved that failure
-            // past the decode, the new expected text is JDBC-free
-            // renamed at the truthfulness-burn split (census §5c): the
-            // connection-opening entry file of the former
-            // ExecuteLegendLiteQuery triple
-            "pct/src/test/java/org/finos/legend/lite/pct/extension/PctExecuteNative.java"
-    ));
 
     @Test
     void jdbcSurfaceIsRegistered() throws IOException {
@@ -566,7 +181,6 @@ class JdbcSurfaceCensusTest {
                 + " trusting any guard that scopes by path");
 
         Set<String> mainHits = new TreeSet<>();
-        Set<String> testHits = new TreeSet<>();
         for (Path p : files) {
             String src = Files.readString(p)
                     .replaceAll("//.*", "")
@@ -575,12 +189,13 @@ class JdbcSurfaceCensusTest {
                 String rel = Repo.root().toAbsolutePath().normalize()
                         .relativize(p.toAbsolutePath().normalize())
                         .toString().replace(java.io.File.separatorChar, '/');
-                (rel.contains("/main/") ? mainHits : testHits).add(rel);
+                if (rel.contains("/main/")) {
+                    mainHits.add(rel);
+                }
             }
         }
         StringBuilder drift = new StringBuilder();
         diff(drift, "src/main", mainHits, MAIN_REGISTER);
-        diff(drift, "test roots", testHits, TEST_REGISTER);
         assertTrue(drift.length() == 0,
                 "JDBC surface census drift (tenet #1 — Java orchestrates,"
                 + " the DATABASE executes; audit 2026-08-18 items 6+7):"

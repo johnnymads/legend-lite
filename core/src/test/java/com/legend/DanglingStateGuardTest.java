@@ -40,13 +40,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * exact set, shrink-only (audit §10 item 13: pinned at zero once Phase
  * 0.5 rewires the ordered compare).
  *
- * <p>Second rule (same item): a guard may not pin a FILE absent from the
- * tree (a pin on a deleted file is a bearer bond — audit §6 found the
- * broad-catch count of the old runner's executor still pinned at 5 after
- * the file was deleted) nor justify a pin by a {@code Class.member} of a
- * class absent from the tree, unless the line says so (a history note:
- * deleted / died / retired), or the pin is a negative one
- * ({@code !Files.exists(...)}: the file must stay gone).
+ * <p>Its second rule, a guard over the other guards' comments (a pinned file or
+ * {@code Class.member} must exist in the tree), was deleted on 2026-09-29 with
+ * execution plan W0.5: it checked the guards' prose, not the product.
  */
 @Tag("census")
 class DanglingStateGuardTest {
@@ -186,88 +182,6 @@ class DanglingStateGuardTest {
         return src.substring(lineStart, at).contains("static ");
     }
 
-    // ---- rule 2: guards pin only what exists -------------------------------
-
-    private static final Pattern PINNED_FILE = Pattern.compile("\"([A-Z]\\w*)\\.java\"");
-    private static final Pattern CLASS_MEMBER = Pattern.compile(
-            "\\b([A-Z][A-Za-z0-9]+)\\.([a-z]\\w*|[A-Z][A-Z0-9_]+)\\b");
-    private static final Pattern HISTORY = Pattern.compile(
-            "(?i)\\b(deleted|died|retired|removed|gone|old runner)\\b");
-
-    @Test
-    void guardsPinOnlyFilesAndSymbolsInTheTree() throws IOException {
-        Set<String> classes = new TreeSet<>();
-        for (Path root : ROOTS) {
-            try (Stream<Path> files = Files.walk(root)) {
-                files.filter(p -> p.toString().endsWith(".java"))
-                        .forEach(p -> classes.add(p.getFileName().toString().replace(".java", "")));
-            }
-        }
-        // java.*/javax.* and the JDK classes a guard comment may name are
-        // not tree classes; only classes spelled like ours count
-        List<String> bad = new ArrayList<>();
-        List<Path> guards;
-        try (Stream<Path> files = Files.list(Repo.module("src/test/java/com/legend"))) {
-            guards = files.filter(p -> p.getFileName().toString().matches(".*(Test|Coverage)\\.java")).sorted().toList();
-        }
-        GuardCoverage.assertFloor("DanglingStateGuardTest(guards)", guards.size(), 20);
-        for (Path g : guards) {
-            String src = Files.readString(g);
-            Matcher m = PINNED_FILE.matcher(src);
-            while (m.find()) {
-                String line = lineText(src, m.start());
-                if (line.contains("!Files.exists") || HISTORY.matcher(line).find()) {
-                    continue;      // a negative pin, or a history note
-                }
-                if (!classes.contains(m.group(1))) {
-                    bad.add(g.getFileName() + ":" + lineOf(src, m.start()) + " pins \""
-                            + m.group(1) + ".java\" — no such file in the tree (a bearer bond)");
-                }
-            }
-            for (String line : src.split("\n")) {
-                if (!line.strip().startsWith("//") && !line.strip().startsWith("*")) {
-                    continue;      // comments only: code is checked by the compiler
-                }
-                if (HISTORY.matcher(line).find()) {
-                    continue;      // a history note may name what died
-                }
-                Matcher cm = CLASS_MEMBER.matcher(line);
-                while (cm.find()) {
-                    String cls = cm.group(1);
-                    if (RETIRED_TREE_CLASSES.contains(cls)) {
-                        bad.add(g.getFileName() + ": comment cites " + cm.group()
-                                + " — " + cls + " is not in the tree; say it died, or cite"
-                                + " the live mechanism");
-                    }
-                }
-            }
-        }
-        assertTrue(bad.isEmpty(), "guards citing what does not exist:\n  " + String.join("\n  ", bad));
-    }
-
-    /** Classes the harness rebuild deleted (batch 115) whose names still
-     * read like live mechanisms — the exact list the audit found cited. */
-    private static final Set<String> RETIRED_TREE_CLASSES = Set.of(
-            "EngineTestExecutor", "RelationalCorpusRunner", "Runner", "WholeTestFlip",
-            "FlipProbe", "WholeTestCensus", "AssertLedger", "ExecCallFinder",
-            "TestDataGenForm", "LineageForm", "ElqSplice", "AssertLoopForm",
-            "RuntimeIfForm", "JsonAssertCanon", "PlanAsserts", "SqlTextShapes");
-
-    private static String lineText(String src, int at) {
-        int a = src.lastIndexOf('\n', at) + 1;
-        int b = src.indexOf('\n', at);
-        return src.substring(a, b < 0 ? src.length() : b);
-    }
-
-    private static int lineOf(String src, int at) {
-        int n = 1;
-        for (int i = 0; i < at; i++) {
-            if (src.charAt(i) == '\n') {
-                n++;
-            }
-        }
-        return n;
-    }
 
     /** Comments and string literals removed (newlines kept so line numbers
      * survive); the slot census must not count a name in prose. */

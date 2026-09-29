@@ -143,7 +143,12 @@ names its gate.
   file at 3,472–3,499); delete the ceremony guards whose invariant no type or test needs (A13 §2: the JDBC
   TEST_REGISTER, DanglingState rule 2, ParkedWork, ShadowWalker zero rows, the claims `also` column, duplicate parity
   tests). **Not** `JavaEvalLedgerTest` (its exact line pins and funnel registers): AGENTS.md names it as the execution
-  tenet's enforcement, so it goes after W6.2/W6.3 with an AGENTS.md edit (W7) [W5-W7 #24]. Gate: the chain green; the GATES entry lists
+  tenet's enforcement, so it goes after W6.2/W6.3 with an AGENTS.md edit (W7) [W5-W7 #24]. **Done 2026-09-29:** the line
+  guard, DanglingState rule 2, the JDBC test register, the 15 zero rows of the shadow-walker census. **Kept, with
+  reasons:** `ParkedWorkLedgerTest` (a real deferral ledger: each row has an owner and a price; its PARK-4 anchor is
+  fragile, and parked rows become `@KnownDefect` pins when their owner item is planned); `preludeIsCurrent` and
+  `signatureTextIsCurrent` (they duplicate the diff tests but carry the generators' census, bootstrap and dump modes);
+  the claims `also` column (a generator output change, W7). Gate: the chain green; the GATES entry lists
   each guard with the reason its invariant is not needed or is held elsewhere.
 
 ### W1 — Gates and foundations (≈9–14 sessions). Everything later is judged by these. Re-cut order: W1.6 first.

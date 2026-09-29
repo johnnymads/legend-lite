@@ -37,54 +37,21 @@ class ShadowWalkerCensusTest {
     private static final Path NORMALIZER = Repo.module("src/main/java/com/legend/normalizer");
 
     private static final Map<String, Integer> REGISTER = new TreeMap<>(Map.ofEntries(
-            // SUBTYPE FAMILY — RETIRED (T4.1 step 3a, 2026-09-13): the kernel's
-            // isSubtype / ancestorsBelow / subtree / directSubtypes answer;
-            // the three mapping-aware walkers below keep their E logic and
-            // delegate their walks
-            Map.entry("isSubclassOf", 0),
-            Map.entry("selfAndAncestorsBelow", 0),
+            // The live shadows, at their call-site counts. The retired families (subtype,
+            // property, stereotype, store; T4.1 step 3, 2026-09-13; views stage 3,
+            // 2026-09-22) were 15 rows pinned at 0 for methods that no longer exist;
+            // they were deleted on 2026-09-29 (execution plan W0.5). A new shadow walker
+            // is kept out by the rebuild's typed mapping elaboration (W4.1), not by a
+            // list of dead names.
+            // SUBTYPE: the three mapping-aware walkers keep their E logic and delegate
+            // their walks to the kernel
             Map.entry("collectInheritanceMembers", 2),
             Map.entry("nearestMappedAncestor", 1),
             Map.entry("hasMappedSubclass", 1),
-            // PROPERTY FAMILY — RETIRED (T4.1 step 3b, 2026-09-13): the kernel's
-            // hierarchyClass / propertyType / propertyDef / derivedInline /
-            // propertyMultiplicity answer (45 + 3 + 1 + 53 + 3 + 2 sites)
-            Map.entry("findPropertyTypeDeep", 0),
-            Map.entry("findPropertyDefDeep", 0),
-            Map.entry("findPropertyType", 0),
-            Map.entry("classDef", 0),
-            Map.entry("findDerivedInline", 0),
-            Map.entry("findPropertyDeclared", 0),
-            // STEREOTYPE FAMILY — RETIRED (T4.1 step 3c, 2026-09-13): a fold over
-            // the kernel's lineage (MilestoningFacts)
-            Map.entry("isBitemporalClass", 0),
-            Map.entry("isTemporalClass", 0),
-            // STORE FAMILY — RETIRED (T4.1 step 3d, 2026-09-13): the kernel's
-            // table / column / columnKind (include-closure aware, schema-aware,
-            // view-following) answer; PhysicalTables is deleted; RelationalKinds
-            // moved to compiler as the one kind reader (its calls are not
-            // shadows and are no longer counted)
-            Map.entry("columnPureKind", 0),
-            Map.entry("findPhysicalColumn", 0),
-            Map.entry("findPhysicalTable", 0),
-            Map.entry("tableHasColumn", 0),
-            // KIND FAMILY — the two rows 6048acec2 (T4.1 step 3d) DELETED
-            // instead of ratcheting (audit 2026-09-15 P5-1): the coercion
-            // seam still asks the declared platform kind and the physical
-            // kind of a column through these two walkers; pinned at their
-            // live call-site counts, shrink-only from here
+            // KIND: the coercion seam still asks the declared platform kind and the
+            // physical kind of a column through these two walkers (audit 2026-09-15 P5-1)
             Map.entry("pureKindOf", 1),
-            Map.entry("declaredPlatformKind", 3),
-            // OWED: a view's root table is a STORE fact (T4.1 §8 step 3: "the
-            // view root and column kind stamped on compiled stores") — it
-            // still walks RelationalOperation records with the normalizer's
-            // own collectors and names the mapping in its errors; retire
-            // with step 4/6's compiled-store facts
-            // 5 -> 0 (views stage 3, 2026-09-22): the view main-table rule
-            // moved INTO the kernel — ModelBuilder.viewMainTable, the one
-            // owner (the normalizer, the lineage and the test-data
-            // generator read it there); no walker of it remains outside
-            Map.entry("inferViewMainTable", 0)));
+            Map.entry("declaredPlatformKind", 3)));
 
     @Test
     void shadowWalkerCallSitesArePinned() throws IOException {
