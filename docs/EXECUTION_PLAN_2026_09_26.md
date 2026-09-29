@@ -81,6 +81,7 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 | D9 | The manifest world | **OPEN.** The 2b stdlib question, WORLD_MAP rule 8 (an engine file only if every function passes the deletion test), and whether roadmap test files may be excluded by a named, pinned register [W4 F9]. Blocks W4.4 |
 | D10 | The failure unit under rule 0.9 | **OPEN.** Does an ill-typed body or mapping set that nothing demands fail the build? The reference fails the whole compile; today we poison per body and per set lazily (407 of 410 unknown-function failures are in bodies). Recommendation: resolve and type everything eagerly, collect every diagnostic, and fail the build (the reference's behaviour); the corpus harness attributes each test's failure to the diagnostics in its dependency closure — a report, not a tolerant mode [W2 #8, W4 F6]. Blocks W2.3a's poisoning and W4.1 |
 | D11 | Rule 0.10 for H | **OPEN.** A javac-distinct physical IR over arbitrary scalar leaves means duplicating 77 typed records. Proposal: a distinct sealed relational skeleton with typed-HIR scalar leaves plus `ColumnRef`, introduced LAST in W4.3 behind a print-back adapter that W5.1c deletes; "no store-only node in a leaf" is a verifier check [W4 F1] |
+| D12 | The six rulings of the `ResolvedExpr` design (H2, `h2-resolved-expr-design-2026-09-29.md` §7) | **OPEN.** Recommendations: (1) resolved bodies in a side table `ResolvedBodies`, not generic records (169 files); (2) freeze candidate sets at resolution if the push-1 probe counts 0 boot-body divergences; (3) today's callee strings ride `Call`/`Member` as a shrink-only `Legacy` field during W2.3a only; (4) W2.3a does not need D10 (an `Error` node replays today's failure lazily; D10 becomes its own flip); (5) port StaticFold and AlphaRename rather than bridge them; (6) identity keys for non-function body slots |
 
 ## 3. Done
 
@@ -180,7 +181,7 @@ names its gate.
   W5.2–W5.4 need.
 
 ### W2 — The resolved tree (≈12–18 sessions). The old step 3a/3b, widened by D2.
-- **W2.0 = H2, the `ResolvedExpr` design note** (before any W2 code) [W2 #1–#3]: what holds a resolved body (the ~15 body
+- **W2.0 = H2, the `ResolvedExpr` design note** — **written 2026-09-29** (`h2-resolved-expr-design-2026-09-29.md`; rulings D12; it sizes W2.3a at 6–8 sessions in four pushes) [W2 #1–#3]: what holds a resolved body (the ~15 body
   fields across `protocol` and `model`; `FunctionId` lives in `model`); the one builder that makes `ResolvedExpr` from a
   spelling and a scope, used by D, E and G; `Member`, `new`/`copy`, the `infix` and `propertyCall` flags; the binder
   scope and fresh-id supply; the World index lifecycle.
@@ -346,7 +347,7 @@ W2.3–W2.6 put the resolution on the parse nodes instead: `AppliedFunction`'s c
   is not ours.
 - **Homework status (2026-09-29):** H6 done (superseded docs marked); H1 done (this revision; reports in
   `plan-audit-2026-09-26/h1-plan-audit-2026-09-29/`); H3 done; H4 done (W1.2 adds speculative scopes and parser recovery);
-  H2 = W2.0, due before W2; H5 quiet baselines blocked while the other account's Bazel server, Claude session and
+  H2 = W2.0 written (rulings D12 open); H5 quiet baselines blocked while the other account's Bazel server, Claude session and
   legend-engine server run.
 - **Read, in order:** `docs/IN_FLIGHT.md`; this page; the H1 synthesis; `architecture-review-2026-09-28.md`; the stage
   reading and the H1 report for the area you touch; the last `docs/GATES.md` entries; for anything in D/F/G the reference
