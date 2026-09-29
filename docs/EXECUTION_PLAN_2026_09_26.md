@@ -4,7 +4,7 @@
 (`plan-audit-2026-09-26/architecture-review-2026-09-28.md`, evidence in `plan-audit-2026-09-26/stage-readings-2026-09-28/`).
 **Revised 2026-09-29 (rev H1)** after an adversarial audit of every wave against the code
 (`plan-audit-2026-09-26/h1-plan-audit-2026-09-29/`, synthesis in its `README.md`): the target is unchanged; items were
-corrected, split, re-ordered, given gates, and re-sized; six decisions (D6–D11) are owed.
+corrected, split, re-ordered, given gates, and re-sized; decisions D6–D12 were owed (D7 ruled 2026-09-29).
 
 This is the ONE living plan. It replaces the step list of the 2026-09-26 version (steps 0–2 of which are done; their
 records are in `docs/GATES.md` and the old text is in git history at `601995bc2`), `REAL_PLAN_2026_09_25.md`'s order, and
@@ -75,8 +75,8 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 | D3 | A reference lane at the pinned release | **RULED 2026-09-29 (the user): build it.** Spike done (H3): the whole closure compiles from `@maven_upstream` in 35 s at 5.3 GB; no new downloads |
 | D4 | "No tolerant modes" | **RULED 2026-09-28**: rule 0.9 |
 | D5 | Plan the whole program now | **RULED 2026-09-28**: this page |
-| D6 | W0.4: how the corpus certifies product SQL | **OPEN.** Recommendation: a product-SQL lane (the corpus runs the product dialect unmodified; the engine-scan-order pass becomes a harness-side comparison policy), because moving the pass only relocates the non-product SQL [W0-W1 #7]. Includes a separate referee session for the H2 lane |
-| D7 | The judge charter | **OPEN.** TENET_CHARTER C2b/C2c and Z2 make verdicts World 1's (host) job; JUDGING_TWO_MODES (2026-09-17) made the database judge the product goal; the charter was never amended. Either amend C2c/Z2 and make the database judge the only product judge (cost: H2 roster −65/+72, the stress lane needs a database EqualToJson), or keep the host judge as the product judge [W5-W7 #16, #17] |
+| D6 | W0.4: how the corpus certifies product SQL | **OPEN.** Recommendation (revised 2026-09-29): move the scan-order pass out of the product DuckDB dialect into the harness, behind an injected rewriter seam, keeping the per-lane registers that name the 993 affected tests. This honours the user's rulings of 2026-08-29 and 2026-09-20 (the engine's insertion-order emulation is a test-lane feature, never dropped). A product-SQL lane that compares those tests as multisets instead would drop the emulation, so it is offered only as an extra measurement lane [W0-W1 #7] |
+| D7 | The judge charter | **RULED 2026-09-29 (the user): keep BOTH judges.** The host judge (Java equality over database-fetched values, the reference) and the database judge (the verdict computed in SQL, the product goal) both stay, joined per assert as today (`pinJudgeDifferential`). The charter (C2b/C2c, Z2) stands as written; no roster re-base; the stress lane keeps its host EqualToJson. W6.3 shrinks to the judge SPI |
 | D8 | The shape evaluator's scope | **OPEN.** May compile-time string `+` produce an identifier (a column name)? C6.2 and WORLD_MAP §4 call it COMPUTED; `StaticFold` does it today [W4 F7]. Blocks W4.2 |
 | D9 | The manifest world | **OPEN.** The 2b stdlib question, WORLD_MAP rule 8 (an engine file only if every function passes the deletion test), and whether roadmap test files may be excluded by a named, pinned register [W4 F9]. Blocks W4.4 |
 | D10 | The failure unit under rule 0.9 | **OPEN.** Does an ill-typed body or mapping set that nothing demands fail the build? The reference fails the whole compile; today we poison per body and per set lazily (407 of 410 unknown-function failures are in bodies). Recommendation: resolve and type everything eagerly, collect every diagnostic, and fail the build (the reference's behaviour); the corpus harness attributes each test's failure to the diagnostics in its dependency closure — a report, not a tolerant mode [W2 #8, W4 F6]. Blocks W2.3a's poisoning and W4.1 |
@@ -311,10 +311,10 @@ names its gate.
   unverified), a Postgres dialect, `Compiler.dialectOf` dispatch fixed (today a non-H2 session silently renders DuckDB),
   a third harness backend, per-session databases, and a first fail roster.
 
-### W6 — Plan, runner, periphery (≈12–20 sessions). D7 first.
-- **W6.3 Judges** per D7, before W6.2 [W5-W7 #15]: roster re-base (H2 −65/+72; DuckDB 0); the stress lane moved to a
-  database EqualToJson or out of the product; a public judge SPI (HostJudge and AssertVerdicts share package-private
-  state) [W5-W7 #17, #18].
+### W6 — Plan, runner, periphery (≈11–18 sessions). D7 ruled: both judges stay.
+- **W6.3 Judges**, before W6.2 [W5-W7 #15]: both judges stay (D7). What remains is a public judge SPI, so the runner
+  can call either without the package-private state HostJudge, AssertVerdicts and DatabaseJudge share today
+  [W5-W7 #18]; the per-assert join of the two stays a gate. No roster change.
 - **W6.1 A staged plan IR**: late-bound nodes (SchemaProbe, DynamicPivot, ForEach(values, template), Effect barrier) for
   every plan-time read of the live database; one printer gated by the 570 plan-text asserts; lineage facts carried until
   W6.4 [W5-W7 #14, #20].
@@ -344,7 +344,7 @@ Serial; one owner; nothing in flight against the same rosters (rule 0.5).
 4. W3.1 → W3.2a → W3.2b → W3.3a → W3.3 → W2.8 → W3.5 → W3.6.
 5. W4.0 → W4.4a (D9) → W4.1a → W4.2 (D8) → W4.3 steps 1–6 with W4.1b → W4.3 steps 7–9 (D11) → W4.4b.
 6. W5.1a (may start after W1.7) → W5.1b → W5.1c → W5.2 → W5.3 → W5.4 → W5.5.
-7. W6.3 (D7) → W6.1 → W6.2 → W6.4. W7 last.
+7. W6.3 (the judge SPI) → W6.1 → W6.2 → W6.4. W7 last.
 
 ## 6. The alternative D1 did not take (record only)
 W2.3–W2.6 put the resolution on the parse nodes instead: `AppliedFunction`'s callee becomes the sealed `Callee`
