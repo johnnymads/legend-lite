@@ -180,6 +180,12 @@ numbers with the reason: an overload with no rule becomes Unimplemented, which i
 
 ### Step 3 — #47 + A1 as one slice: the binder's candidate set and the reference's rule (3–4 days)
 
+> **STOP — read first (2026-09-28).** Step 3a has NOT started and is blocked on user rulings. Start from
+> `plan-audit-2026-09-26/NEXT_STEPS_2026_09_28.md` (the recommended order and the five decisions owed), then
+> `architecture-review-2026-09-28.md` (the whole of core read stage by stage; the plan judged against compiler
+> practice; 15 defects) and `program-audit-2026-09-27.md` (the blockers on 3a as ruled). The evidence per stage is in
+> `plan-audit-2026-09-26/stage-readings-2026-09-28/`. The probe counts are GATES.md "step 3, the probe push".
+
 > **Read in this order before touching step 3** (2026-09-27): (1) `plan-audit-2026-09-26/reference-matching.md`
 > including its closing "Corrections from the second reading"; (2) `kernel-reading-2026-09-26.md`
 > (the twelve reference methods as pseudo-code with line citations, §C's thirty-five traps);
