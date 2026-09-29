@@ -54,7 +54,9 @@ await writeFile(csv, 'region,desk,notional,qty\n'
     `${['EMEA', 'AMER', 'APAC'][i % 3]},${['Rates', 'Credit', 'FX'][i % 5 % 3]},${(i * 12.5).toFixed(2)},${i}`).join('\n') + '\n');
 
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+// the clipboard: Copy Share Link writes the link there, and the check reads it back
+const context = await browser.newContext({ viewport: { width: 1400, height: 900 },
+  permissions: ['clipboard-read', 'clipboard-write'] });
 const page = await context.newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
@@ -243,6 +245,100 @@ try {
     const rows = await page.locator('#cubelib .dc-lib-row').allTextContents();
     if (rows.some((r) => r.includes('Sample trades'))) throw new Error('still listed');
     return `${rows.length} left`;
+  });
+
+  // THE SHARE LINK (milestone 1b): the page's settings in the address, never its data.
+  /** Copy the page's share link through the menu, and read it off the clipboard. */
+  async function copyLink() {
+    await burger('Copy Share Link');
+    const said = await waitMessage(/Link copied/);
+    const url = await page.evaluate(() => navigator.clipboard.readText());
+    if (!/#p1\./.test(url)) throw new Error(`not a share link: ${url.slice(0, 80)}`);
+    return { url, said };
+  }
+  /** Wait until the library in `tab` says the page opened: its answer has landed. */
+  async function openedIn(tab) {
+    try {
+      await tab.waitForFunction(() => /opened/.test(document.querySelector('#cubelib .dc-lib-message')?.textContent ?? ''),
+        undefined, { timeout: 90_000 });
+    } catch {
+      const said = await tab.evaluate(() => ({ message: document.querySelector('#cubelib .dc-lib-message')?.textContent ?? '(none)',
+        status: document.querySelector('.dc-status-timing')?.textContent ?? '', rows: window.__dataCube?.snapshot.rows,
+        url: location.href }));
+      throw new Error(`it never said opened: ${JSON.stringify(said)}`);
+    }
+  }
+  /** Where two typed views part, said briefly. */
+  const differs = (a, b) => {
+    const names = (v) => v.map((c) => `${c.name}:${c.type}[${c.values.length}]`).join(',');
+    if (names(a) !== names(b)) return `columns ${names(a)} vs ${names(b)}`;
+    const i = a.findIndex((c, k) => stamp(c) !== stamp(b[k]));
+    return `column ${a[i].name}: ${stamp(a[i].values.slice(0, 5))} vs ${stamp(b[i].values.slice(0, 5))}`;
+  };
+  /** A fresh tab at `url`, its errors kept. */
+  async function openTab(url) {
+    const tab = await context.newPage();
+    tab.on('pageerror', (e) => pageErrors.push(`(shared tab) ${e.message}`));
+    await tab.goto(url);
+    return tab;
+  }
+
+  await check('a SAMPLE page\'s link opens the same page in a fresh tab, with no question', async () => {
+    await load();
+    await showWin('datawin', 'Data');
+    await page.selectOption('#samplepick', 'trades');
+    await page.fill('#samplerows', '500');
+    let before = await statusNow();
+    page.once('dialog', (d) => { void d.accept(); });
+    await page.click('#sampleopen');
+    await landed(before);
+    await shape();
+    const want = await typed();
+    const { url, said } = await copyLink();
+    if (!/not its data/.test(said)) throw new Error(`it does not say the link holds no data: ${said}`);
+    const tab = await openTab(url);
+    try {
+      await openedIn(tab);
+      const got = await readView(tab);
+      if (stamp(got) !== stamp(want)) throw new Error(`the shared page shows different values: ${differs(want, got)}`);
+      if (/#p1\./.test(tab.url())) throw new Error('the link stayed in the address: a reload would reopen it over later changes');
+      return `${url.length} characters; the same typed values in the fresh tab`;
+    } finally {
+      await tab.close();
+    }
+  });
+
+  await check('a FILE page\'s link asks the opener for the file, then shows the same values', async () => {
+    await load();
+    const before = await statusNow();
+    await page.setInputFiles('#uploadfile', csv);
+    await landed(before);
+    await shape();
+    const want = await typed();
+    const { url, said } = await copyLink();
+    if (!/needs trades\.csv/.test(said)) throw new Error(`it does not say the file is needed: ${said}`);
+    const tab = await openTab(url);
+    try {
+      await tab.waitForSelector('#cubelib .dc-lib-ask:not([hidden])', { timeout: 90_000 });
+      await tab.setInputFiles('#cubelib .dc-lib-choose', csv);
+      await openedIn(tab);
+      const got = await readView(tab);
+      if (stamp(got) !== stamp(want)) throw new Error(`the shared page shows different values: ${differs(want, got)}`);
+      return 'asked for trades.csv, then the same typed values';
+    } finally {
+      await tab.close();
+    }
+  });
+
+  await check('a damaged link says so, and opens nothing', async () => {
+    const tab = await openTab(`${URL_BASE}/demo/index.html#p1.AAAAthisisnotapage`);
+    try {
+      await tab.waitForFunction(() => /damaged or incomplete/.test(document.querySelector('#cubelib .dc-lib-message')?.textContent ?? ''),
+        undefined, { timeout: 90_000 });
+      return 'said: damaged or incomplete';
+    } finally {
+      await tab.close();
+    }
   });
 
   await check('the LAST file picked wins, however long the first takes to read (P2-330)', async () => {

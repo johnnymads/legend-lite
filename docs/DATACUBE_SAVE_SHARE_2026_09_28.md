@@ -199,10 +199,106 @@ version, an unknown source kind or file format.
   view behind -- the host is now told last. Proof: `test/cube-library.test.ts`, `verify_cubes` 7/7.
   A single "cube changed" event is Leg B's (one state owner); until then the check runs per view.
 
+## Milestone 1b — sharing: step 0 and the plan (2026-09-28)
+
+**The unit is the page** (user ruling, 2026-09-28): what is shared is exactly what Save writes,
+`app.pageDocument` (`page-document.ts`) -- the cube's own document inside it, its charts and layout.
+
+**Upstream, as recorded in step 0:** upstream shares a LINK TO A RECORD in its shared server store
+(route `/:dataCubeId`), and `?sourceData=` launches a NEW cube on a source. Our store is each
+browser's own IndexedDB, so a record id means nothing to anyone else -- until legend-lite serves the
+store (milestone 2, with T9), when an id link becomes the upstream-shaped share.
+
+**Measured (probes, 2026-09-28):**
+- DuckDB 1.5.4 (the app's duckdb-wasm) writes a page into a Parquet file's own key-value metadata
+  (`COPY ... (FORMAT parquet, KV_METADATA {'datacube.page': '<json>'})`) and reads it back exactly
+  (`parquet_kv_metadata`), quotes and all. The file stays a plain Parquet table any reader opens.
+- A realistic page (12 columns, grouped + pivoted, 3 measures, a calculated column, a filter,
+  per-column formats, two charts and a layout) is 2,969 bytes of JSON; deflated and base64url'd it
+  is a **935-character** link fragment.
+
+**The three ways, one share sheet:**
+
+1. **A link** -- the page, deflated, in the URL's FRAGMENT (`#p1.<data>`, as built: step 1 below): never sent to any server,
+   nothing stored anywhere. Opening it opens the page; its source is found as a saved cube's is (a
+   sample rebuilt from its seed; a file asked for, and matched by its fingerprint). So a link is
+   complete for samples (and model-backed sources, later) and "bring the same file" for a file.
+2. **One file, data included** -- a Parquet file of the cube's source table with the page in its
+   metadata: open it and you have the page AND its rows, nothing else needed. Opening one reads the
+   rows as a new file source (the page's cube is reconciled with them, as any reopen is).
+3. **The page alone** -- the JSON file Export writes today (no data), for keeping or version control.
+
+**The share sheet** (one window, from the title bar menu and the Cubes window): the three, each
+saying what it carries -- "a link: the layout and settings, not the data; they need trades.csv
+(18 MB)" / "a file with all 120,000 rows of trades.csv" -- plus the system share where the browser
+has one.
+
+**Decisions for the user (recommendations):**
+- A. *Big pages in a link:* the fragment carries the page; above a size that chat tools mangle
+  (decided at step 1: 2,000 characters, where Outlook and Teams start cutting), the person is told
+  and offered the file instead. (Server-stored id links come
+  with the server store, milestone 2.)
+- B. *What the shared file carries:* the whole source table the cube reads -- so the recipient has
+  the same cube, every drill and filter still works -- never only the rows on screen. The sheet
+  says how many rows and what file they came from, before the file is made.
+
+## Milestone 1b, step 1 — the link: DONE 2026-09-28
+
+**Decided (the user, 2026-09-28, after measuring the alternatives):** the link is the saved page's
+JSON exactly as Save writes it (`pageToJson`), raw-deflated at level 9 against a PRESET DICTIONARY,
+base64url, after the `#`: `#p1.<data>`. The column lists that could be derived again stay in (the
+user: not worth dropping for a tiny saving, and a link read by eye explains itself).
+
+- **The dictionary** (`src/share/link-p1.ts`) is text the compressor may refer back to; the app
+  ships it and never sends it. It is GENERATED once, from the product's own tables through its own
+  writers (`tools/link-dictionary/make.ts`, `bazel run //datacube:make_link_dictionary -- p2`): the
+  document's keys and kinds (a template page using every kind of thing a page holds, empty), the
+  protocol's node shapes and every calculated-column, window and core function by name, the filter
+  operators, the compiler's types and aggregates, the chart marks. It holds no user text (pinned: the
+  only names in it are the placeholders `''`, `a`, `x`). Every column and format setting is listed
+  there as `Required<...>`, so a setting added later fails the build there, to be weighed for the
+  next version.
+- **Frozen per version.** `p1` names the dictionary; its bytes are pinned by their sha256 in
+  `test/share-link.test.ts` and never change, so every p1 link opens forever. A new vocabulary is
+  `p2`, alongside. A link of a version this build does not know is refused by name ("made by a newer
+  DataCube"); a damaged or cut-short one says so; nothing half-read ever opens.
+- **Deflate from fflate 0.8.3** (the one dependency, approved): the browser's `CompressionStream`
+  cannot take a preset dictionary.
+- **Budget 2,000 characters.** Over it, the link still works and the person is told, with the file
+  offered instead.
+- **Opening one:** the host reads `#p1.` at load, takes it out of the address (a reload never
+  reopens it over later work), and opens the page the way a saved one opens: a sample is rebuilt with
+  no question, a file is asked for and matched by its fingerprint.
+- **Encoded, not encrypted:** anyone holding the link can read the page, filter values included --
+  said in the message when the link is copied.
+
+**Measured (full URLs, `test/share-link.test.ts` diagnostics and the browser check):**
+
+| page | characters |
+|---|---|
+| the harness's sample page, grouped (real browser) | 484 |
+| realistic 12 columns, 4 calculated columns, filter, formats, open rows, a chart, layout | 868 |
+| the same with 60 columns | 1,371 |
+| 12 columns + a filter of 2,000 hand-typed ids | 9,713 (flagged long) |
+
+Weighed and not taken: binary encodings of the page (bigger than JSON + dictionary once deflated,
+and a second format to keep), the query as Pure text (bigger than protocol JSON against a protocol
+dictionary). Deferred to a v2 if a real page needs it: a structure-aware coder, a trained model,
+values by rank, a diff from a known base (estimated floor ~170-250 characters for the realistic page).
+
+**Proven:** `share_link_test` (exact round trip incl. Unicode, quotes, newlines and exact decimals;
+loud failures; the frozen hash; the budget) and three browser checks in `verify-cubes.mjs`: a
+sample page's link opens the same typed values in a fresh tab with no question; a file page's link
+asks for the file, then shows the same values; a damaged link says so and opens nothing. The
+browser check found a real bug before it landed: the link opened before the setup had declared the
+sample rebuild, so opening now runs last in the setup.
+
+For now the entry point is **Copy Share Link** in the host menu; the share sheet (step 3) replaces it.
+
 ## Next
 
 - Milestone 1 step 2: model-backed cubes on the model home's first slice (pointer, `demo:trades:1.0.0`).
-- Milestone 1b: sharing (link, single-file Parquet, share sheet).
+- Milestone 1b: step 2, one Parquet file with the page in its metadata; step 3, the share sheet.
 - Milestone 2 (with T9): the legacy translator, upstream sources, legend-engine proper.
 
 ## What this closes

@@ -36,6 +36,9 @@ js_library(
         # Arrow JS: the warehouse's result chunks are Arrow IPC streams (warehouse.ts). The same
         # 17.0.0 DuckDB-WASM already brings, so the bundle carries one copy.
         ":node_modules/apache-arrow",
+        # fflate: the share link's deflate WITH A PRESET DICTIONARY (src/share/link.ts), which the
+        # browser's own CompressionStream cannot take. MIT, no dependencies of its own.
+        ":node_modules/fflate",
         # Apache ECharts: the chart windows (src/chart-render.ts is its one importer; only
         # the charts and components used are registered, via echarts/core).
         ":node_modules/echarts",
@@ -161,6 +164,7 @@ typescript.tsc_test(
         ":node_modules/@types/jsdom",
         ":node_modules/apache-arrow",
         ":node_modules/echarts",
+        ":node_modules/fflate",
         ":node_modules/@types/node",
         ":node_modules/jsdom",
         ":node_modules/playwright",
@@ -193,6 +197,23 @@ js_binary(
     name = "emit_offer_queries",
     data = [":src"],
     entry_point = "tools/offer-facts/emit.ts",
+    node_options = [
+        "--experimental-strip-types",
+        "--disable-warning=ExperimentalWarning",
+    ],
+)
+
+# THE SHARE LINK'S DICTIONARY (milestone 1b): made ONCE per version from the product's own
+# vocabulary, then frozen in src/share/link-<version>.ts (pinned by its hash in
+# test/share-link.test.ts) -- links made with it must open forever, so it is never regenerated:
+#   bazel run //datacube:make_link_dictionary -- p2 > $PWD/datacube/src/share/link-p2.ts
+js_binary(
+    name = "make_link_dictionary",
+    data = [
+        ":src",
+        "tools/link-dictionary/make.ts",
+    ],
+    entry_point = "tools/link-dictionary/make.ts",
     node_options = [
         "--experimental-strip-types",
         "--disable-warning=ExperimentalWarning",

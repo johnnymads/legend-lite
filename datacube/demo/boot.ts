@@ -20,6 +20,7 @@ import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { mountRemote } from '../src/remote.ts';
 import { forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
 import { Latest, TabWork, mayLeave } from '../src/host.ts';
+import { isPageFragment, readPageFragment, shareLink } from '../src/share/link.ts';
 import {
   fileSource,
   openCube,
@@ -474,6 +475,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             { id: 'host.data' as const, label: 'Data\u2026' },
             // saved cubes: in this browser, over the files they were built on
             { id: 'host.cubes' as const, label: 'Cubes\u2026' },
+            // the page's settings in a link: never a row of data (src/share/link.ts)
+            { id: 'host.share' as const, label: 'Copy Share Link' },
           ]
           : []),
         { id: 'host.query', label: 'Generated Pure & SQL\u2026' },
@@ -486,6 +489,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       onHostMenu: (item) => {
         if (item.id === 'host.data') toggleHostWindow('datawin');
         if (item.id === 'host.cubes') showCubes?.();
+        if (item.id === 'host.share') void copyShareLink?.();
         if (item.id === 'host.query') toggleHostWindow('querywin');
         // A NAVIGATION, not a switch. Each page loads exactly one
         // arrangement, statically, and test/guardrails.test.ts holds
@@ -574,6 +578,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   /** Opens the saved cubes' window; set once the page can open files. */
   let showCubes: (() => void) | undefined;
+  /** Copies the page's share link; set once the page can open files. */
+  let copyShareLink: (() => Promise<void>) | undefined;
   /** Told when a view lands: "changed since saved" is re-read then. */
   let onCubeView: (() => void) | undefined;
   let app = makeApp(snapshot, configuration, DEMO_DIMENSIONS);
@@ -1094,6 +1100,36 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       void library?.refresh();
     };
 
+    // THE SHARE LINK: the page's settings, never its data. It is said HOW LONG it is, and a long
+    // one -- which some mail and chat tools cut -- is said so, with the file suggested instead.
+    copyShareLink = async () => {
+      const refused = app.saveRefusal();
+      const name = current.name ?? app.configuration.reportTitle ?? current.source?.name ?? 'cube';
+      const page = refused ? undefined : app.pageDocument(name, {
+        ...(current.unknown ? { cube: current.unknown } : {}),
+        ...(current.pageUnknown ? { page: current.pageUnknown } : {}),
+      });
+      showCubes?.();
+      if (!page) {
+        library?.say(refused ?? 'this cube cannot be shared yet: only cubes over a file are', 'warn');
+        return;
+      }
+      const link = shareLink(location.href, page);
+      try {
+        await navigator.clipboard.writeText(link.url);
+      } catch {
+        library?.say('the browser did not allow copying the link', 'error');
+        return;
+      }
+      const needs = page.cubes[0]?.cube.source.sample
+        ? 'it rebuilds its sample on its own'
+        : `whoever opens it needs ${page.cubes[0]?.cube.source.name ?? 'the same file'}`;
+      library?.say(link.long
+        ? `Link copied, but it is long (${link.length.toLocaleString()} characters): some mail and chat tools cut links this long. It holds the page's settings, not its data; ${needs}.`
+        : `Link copied (${link.length.toLocaleString()} characters). It holds the page's settings -- filter values included -- not its data; ${needs}.`,
+      link.long ? 'warn' : 'ok');
+    };
+
     // Build the chosen sample. No row cap: the one hard limit is the
     // browser's longest string (about 512M characters, some millions
     // of rows), and past it the build throws a RangeError -- said in
@@ -1175,6 +1211,21 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         if (picked) void openFile(picked.file, { handle: picked.handle }).catch(() => {});
       });
     });
+
+    // A SHARE LINK in the address opens its page, found the way a saved one is (a sample rebuilt,
+    // a file asked for). Then the link is taken out of the address: a reload never reopens it over
+    // what the person has done since. Last in the setup: opening one reaches everything above
+    // (a sample's rebuild included).
+    if (isPageFragment(location.hash)) {
+      const fragment = location.hash;
+      history.replaceState(null, '', location.pathname + location.search);
+      showCubes();
+      try {
+        await openSaved({ kind: 'page', page: readPageFragment(fragment) }, undefined);
+      } catch (e) {
+        library?.say(e instanceof Error ? e.message : String(e), 'error');
+      }
+    }
   }
 }
 
