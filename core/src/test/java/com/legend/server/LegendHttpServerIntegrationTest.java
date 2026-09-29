@@ -18,7 +18,9 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Integration test for LegendHttpServer endpoints.
  * 
- * Tests the HTTP layer with /lsp, legend-engine's pure/v1 execute, and /engine/sql.
+ * Tests the HTTP layer with /lsp, legend-engine's pure/v1 execute, and the server's doors: no raw-SQL
+ * route, and a page outside the origin allow-list is refused (execution plan W0.1). Tables are seeded
+ * in-process through {@link Seed}, on the connection the server's queries then read.
  * Uses file-based DuckDB so data persists across HTTP requests.
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -202,87 +204,80 @@ class LegendHttpServerIntegrationTest {
 
     @Test
     @Order(3)
-    @DisplayName("POST /engine/sql CREATE TABLE succeeds")
-    void testExecuteSqlCreateTable() throws Exception {
-        // First drop if exists for idempotency
-        String dropSql = "DROP TABLE IF EXISTS T_PERSON";
-        String dropBody = buildJsonRequest(buildSampleModel(), dropSql, "test::TestRuntime");
-        HttpRequest dropRequest = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/engine/sql"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(dropBody))
-                .build();
-        httpClient.send(dropRequest, HttpResponse.BodyHandlers.ofString());
-
-        String createTableSql = """
+    @DisplayName("seed: the model's DuckDB file gets T_PERSON")
+    void seedPersonTable() throws Exception {
+        Seed.sql(buildSampleModel(), "DROP TABLE IF EXISTS T_PERSON", "test::TestRuntime");
+        Seed.sql(buildSampleModel(), """
                 CREATE TABLE T_PERSON (
                     ID INTEGER PRIMARY KEY,
                     FIRST_NAME VARCHAR(100),
                     LAST_NAME VARCHAR(100),
                     AGE_VAL INTEGER
                 )
-                """;
-
-        String body = buildJsonRequest(buildSampleModel(), createTableSql, "test::TestRuntime");
-
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/engine/sql"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        System.out.println("CREATE TABLE response: " + response.body());
-
-        assertEquals(200, response.statusCode());
-        assertTrue(response.body().contains("\"success\":true"),
-                "Expected success:true but got: " + response.body());
+                """, "test::TestRuntime");
+        Seed.sql(buildSampleModel(), "INSERT INTO T_PERSON VALUES (1, 'John', 'Smith', 30)",
+                "test::TestRuntime");
     }
 
     @Test
     @Order(4)
-    @DisplayName("POST /engine/sql INSERT data")
-    void testExecuteSqlInsert() throws Exception {
-        String insertSql = "INSERT INTO T_PERSON VALUES (1, 'John', 'Smith', 30)";
-
-        String body = buildJsonRequest(buildSampleModel(), insertSql, "test::TestRuntime");
-
-        HttpRequest request = HttpRequest.newBuilder()
+    @DisplayName("POST /engine/sql is gone: raw SQL is not a product surface")
+    void rawSqlRouteIsGone() throws Exception {
+        HttpResponse<String> response = httpClient.send(HttpRequest.newBuilder()
                 .uri(URI.create("http://localhost:" + port + "/engine/sql"))
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        System.out.println("INSERT response: " + response.body());
-
-        assertEquals(200, response.statusCode());
-        assertTrue(response.body().contains("\"success\":true"),
-                "INSERT failed: " + response.body());
+                .POST(HttpRequest.BodyPublishers.ofString(
+                        buildJsonRequest(buildSampleModel(), "SELECT 1", "test::TestRuntime")))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, response.statusCode(), response.body());
     }
 
     @Test
     @Order(5)
-    @DisplayName("POST /engine/sql SELECT succeeds (raw SQL returns empty — no compiler types)")
-    void testExecuteSqlSelect() throws Exception {
-        String selectSql = "SELECT FIRST_NAME, LAST_NAME, AGE_VAL FROM T_PERSON WHERE ID = 1";
+    @DisplayName("a page outside the allow-list is refused, even with a preflight-free text/plain POST")
+    void foreignOriginIsRefused() throws Exception {
+        HttpResponse<String> response = httpClient.send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/api/pure/v1/grammar/grammarToJson/lambda"))
+                .header("Content-Type", "text/plain")
+                .header("Origin", "https://attacker.example")
+                .POST(HttpRequest.BodyPublishers.ofString("|1")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(403, response.statusCode(), response.body());
+        assertTrue(response.headers().firstValue("Access-Control-Allow-Origin").isEmpty(),
+                "a refused origin gets no CORS grant");
+    }
 
-        String body = buildJsonRequest(buildSampleModel(), selectSql, "test::TestRuntime");
+    @Test
+    @Order(5)
+    @DisplayName("a loopback page is served, and the CORS answer names it rather than *")
+    void loopbackOriginIsServedAndEchoed() throws Exception {
+        HttpResponse<String> response = httpClient.send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + "/api/pure/v1/grammar/grammarToJson/lambda"))
+                .header("Content-Type", "text/plain")
+                .header("Origin", "http://localhost:5173")
+                .POST(HttpRequest.BodyPublishers.ofString("|1")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode(), response.body());
+        assertEquals("http://localhost:5173",
+                response.headers().firstValue("Access-Control-Allow-Origin").orElse(null));
+    }
 
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/engine/sql"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
-
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        System.out.println("SELECT response: " + response.body());
-
-        // executeSql always returns empty — raw SQL has no compiler-provided types.
-        // Use the compiled Pure pipeline (pure/v1 execute) for typed results.
-        assertEquals(200, response.statusCode());
-        assertTrue(response.body().contains("\"success\":true"),
-                "SELECT failed: " + response.body());
+    @Test
+    @Order(5)
+    @DisplayName("the allow-list: loopback hosts on any port, listed origins, nothing that merely starts like them")
+    void theAllowList() {
+        LegendHttpServer.Origins loopback = LegendHttpServer.Origins.LOOPBACK;
+        assertTrue(loopback.allows("http://localhost:3000"));
+        assertTrue(loopback.allows("http://127.0.0.1:8080"));
+        assertTrue(loopback.allows("http://[::1]:9000"));
+        assertTrue(loopback.allows("https://localhost"));
+        assertFalse(loopback.allows("http://localhost.attacker.example"));
+        assertFalse(loopback.allows("http://attacker.example/?http://localhost"));
+        assertFalse(loopback.allows("null"));
+        LegendHttpServer.Origins listed = LegendHttpServer.Origins.fromEnv(" https://studio.example ,");
+        assertTrue(listed.allows("https://studio.example"));
+        assertTrue(listed.allows("http://localhost:3000"));
+        assertFalse(listed.allows("https://studio.example.attacker.example"));
     }
 
     @Test
@@ -347,7 +342,7 @@ class LegendHttpServerIntegrationTest {
 
     @Test
     @Order(8)
-    @DisplayName("E2E: Full workflow - Validate Model → Create Table → Insert → Pure Query")
+    @DisplayName("E2E: Full workflow - Validate Model → Seed → Pure Query")
     void testFullE2EWorkflow() throws Exception {
         // Use InMemory DuckDB (no file) to test connection caching
         String pureModel = """
@@ -435,50 +430,20 @@ class LegendHttpServerIntegrationTest {
         assertTrue(validateResponse.body().contains("\"diagnostics\":[]"),
                 "Model validation should have no errors: " + validateResponse.body());
 
-        // STEP 2: Create Table via SQL
-        System.out.println("\n=== E2E STEP 2: Create Table ===");
-        String createSql = """
+        // STEP 2 and 3: create and fill the table (seeded in-process; raw SQL has no route)
+        Seed.sql(pureModel, """
                 CREATE TABLE T_EMPLOYEE (
                     ID INTEGER PRIMARY KEY,
                     NAME VARCHAR(100),
                     DEPARTMENT VARCHAR(100),
                     SALARY INTEGER
                 )
-                """;
-        String createBody = buildJsonRequest(pureModel, createSql, "test::EmpRuntime");
-
-        HttpRequest createRequest = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/engine/sql"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(createBody))
-                .build();
-
-        HttpResponse<String> createResponse = httpClient.send(createRequest, HttpResponse.BodyHandlers.ofString());
-        System.out.println("Create response: " + createResponse.body());
-        assertEquals(200, createResponse.statusCode());
-        assertTrue(createResponse.body().contains("\"success\":true"),
-                "CREATE TABLE failed: " + createResponse.body());
-
-        // STEP 3: Insert Data via SQL
-        System.out.println("\n=== E2E STEP 3: Insert Data ===");
-        String insertSql = """
+                """, "test::EmpRuntime");
+        Seed.sql(pureModel, """
                 INSERT INTO T_EMPLOYEE VALUES (1, 'Alice', 'Engineering', 120000);
                 INSERT INTO T_EMPLOYEE VALUES (2, 'Bob', 'Engineering', 95000);
                 INSERT INTO T_EMPLOYEE VALUES (3, 'Carol', 'Marketing', 85000);
-                """;
-        String insertBody = buildJsonRequest(pureModel, insertSql, "test::EmpRuntime");
-
-        HttpRequest insertRequest = HttpRequest.newBuilder()
-                .uri(URI.create("http://localhost:" + port + "/engine/sql"))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(insertBody))
-                .build();
-
-        HttpResponse<String> insertResponse = httpClient.send(insertRequest, HttpResponse.BodyHandlers.ofString());
-        System.out.println("Insert response: " + insertResponse.body());
-        assertEquals(200, insertResponse.statusCode());
-        assertTrue(insertResponse.body().contains("\"success\":true"),
-                "INSERT failed: " + insertResponse.body());
+                """, "test::EmpRuntime");
 
         // STEP 4: Run Pure Query
         System.out.println("\n=== E2E STEP 4: Execute Pure Query ===");

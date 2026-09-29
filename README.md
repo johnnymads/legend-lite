@@ -276,6 +276,9 @@ bazel build //core:server_deploy.jar     # the one self-contained jar to ship
 ```
 
 The server starts on **port 8080**. Point any legend-engine client (DataCube, for one) at `http://localhost:8080`.
+It listens on the loopback interface only and serves pages from loopback origins (any port); set
+`LEGEND_LITE_ALLOWED_ORIGINS` (comma-separated exact origins) to serve another page, and `LEGEND_LITE_BIND` to listen
+on another address. A request whose `Origin` is not allowed is refused with 403.
 
 ---
 
@@ -293,7 +296,6 @@ so a client written for legend-engine runs against legend-lite unchanged
 | `POST` | `/api/pure/v1/execution/generatePlan` | the query's execution plan, carrying its SQL |
 | `POST` | `/api/pure/v1/execution/execute` | the query run: its columns, the SQL it ran, its rows |
 | `POST` | `/lsp` | LSP JSON-RPC: diagnostics, completions, hover |
-| `POST` | `/engine/sql` | raw SQL against a runtime's connection |
 | `POST` | `/engine/diagram` | a class diagram from a Pure model |
 | `GET` | `/health` | health check |
 

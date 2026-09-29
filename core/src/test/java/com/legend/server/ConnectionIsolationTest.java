@@ -64,20 +64,19 @@ class ConnectionIsolationTest {
     @Test
     void distinctStoresSharingAConnectionDefinitionDoNotShareADatabase()
             throws Exception {
-        QueryService qs = new QueryService();
-        qs.executeSql(MODEL_A, "CREATE TABLE LEAK_T (ID INTEGER)", "test::RT");
-        qs.executeSql(MODEL_A, "INSERT INTO LEAK_T VALUES (42)", "test::RT");
+        Seed.sql(MODEL_A, "CREATE TABLE LEAK_T (ID INTEGER)", "test::RT");
+        Seed.sql(MODEL_A, "INSERT INTO LEAK_T VALUES (42)", "test::RT");
         // the persistence FEATURE, and the interactive-blob flow: same
         // stores + definition (different non-store source) SHARE
-        assertDoesNotThrow(() -> qs.executeSql(MODEL_A,
+        assertDoesNotThrow(() -> Seed.sql(MODEL_A,
                 "SELECT * FROM LEAK_T", "test::RT"));
-        assertDoesNotThrow(() -> qs.executeSql(MODEL_A_PRIME,
+        assertDoesNotThrow(() -> Seed.sql(MODEL_A_PRIME,
                 "SELECT * FROM LEAK_T", "test::RT"));
         // the LEAK (pre-fix): a model with a DIFFERENT store
         // declaration but identical connection text saw model A's
         // tables — now it must get its own database
         SQLException leak = assertThrows(SQLException.class,
-                () -> qs.executeSql(MODEL_B,
+                () -> Seed.sql(MODEL_B,
                         "SELECT * FROM LEAK_T", "test::RT"));
         assertTrue(String.valueOf(leak.getMessage()).contains("LEAK_T"),
                 "expected a missing-table error for the OTHER model: "

@@ -9,10 +9,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.*;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -22,45 +19,103 @@ import java.util.regex.Pattern;
  * 
  * Endpoints:
  * - POST /lsp - Handle LSP JSON-RPC messages (diagnostics, completions, etc.)
- * - POST /engine/sql - Execute raw SQL against Connection from Runtime
+ * - POST /api/pure/v1/... - legend-engine's own pure/v1 API
+ * - POST /engine/diagram - a class diagram from a Pure model
  * - GET /health - Health check
+ *
+ * <p>The server's doors (execution plan W0.1, 2026-09-29). It binds the LOOPBACK interface unless
+ * {@code LEGEND_LITE_BIND} names another address, and it refuses every request whose {@code Origin}
+ * header names a page outside the allow-list (loopback origins, plus {@code LEGEND_LITE_ALLOWED_ORIGINS}).
+ * A browser always sends {@code Origin} on a cross-origin POST, including a "simple" text/plain one that
+ * skips the CORS preflight, so a web page elsewhere cannot drive a model's connections through this
+ * server; a request with no {@code Origin} comes from a local non-browser client. The CORS answer echoes
+ * the allowed origin instead of {@code *}. The raw-SQL route {@code /engine/sql} is gone.
  */
 public class LegendHttpServer {
 
     private final HttpServer server;
     private final PureLspServer lspServer;
-    private final QueryService queryService = new QueryService();
+    private final Origins origins;
 
-    // Pattern to find the Runtime definition
-    private static final Pattern RUNTIME_PATTERN = Pattern.compile(
-            "Runtime\\s+([\\w:]+)\\s*\\{",
-            Pattern.MULTILINE);
-
+    /** On the loopback interface, loopback origins only: the development server. */
     public LegendHttpServer(int port) throws IOException {
-        this.server = HttpServer.create(new InetSocketAddress(port), 0);
+        this(port, java.net.InetAddress.getLoopbackAddress(), Origins.LOOPBACK);
+    }
+
+    public LegendHttpServer(int port, java.net.InetAddress bind, Origins origins) throws IOException {
+        this.server = HttpServer.create(new InetSocketAddress(bind, port), 0);
         this.lspServer = new PureLspServer();
+        this.origins = origins;
         setupRoutes();
+    }
+
+    /**
+     * The pages allowed to call this server: any loopback origin ({@code http[s]://localhost},
+     * {@code 127.0.0.1} or {@code [::1]}, any port), plus the exact origins listed.
+     */
+    public static final class Origins {
+
+        public static final Origins LOOPBACK = new Origins(java.util.Set.of());
+
+        private static final Pattern LOOPBACK_ORIGIN = Pattern.compile(
+                "https?://(localhost|127\\.0\\.0\\.1|\\[::1\\])(:[0-9]{1,5})?");
+
+        private final java.util.Set<String> extra;
+
+        private Origins(java.util.Set<String> extra) {
+            this.extra = java.util.Set.copyOf(extra);
+        }
+
+        /** {@code LEGEND_LITE_ALLOWED_ORIGINS}: comma-separated exact origins, e.g. {@code https://studio.example}. */
+        public static Origins fromEnv(@com.legend.base.Nullable String list) {
+            if (list == null || list.isBlank()) {
+                return LOOPBACK;
+            }
+            java.util.Set<String> out = new java.util.LinkedHashSet<>();
+            for (String o : list.split(",")) {
+                if (!o.isBlank()) {
+                    out.add(o.strip());
+                }
+            }
+            return new Origins(out);
+        }
+
+        public boolean allows(String origin) {
+            return LOOPBACK_ORIGIN.matcher(origin).matches() || extra.contains(origin);
+        }
+    }
+
+    /** Every route passes the origin check first; a refused origin never reaches a handler. */
+    private void route(String path, HttpHandler handler) {
+        server.createContext(path, exchange -> {
+            String origin = exchange.getRequestHeaders().getFirst("Origin");
+            if (origin != null && !origins.allows(origin)) {
+                sendResponse(exchange, 403,
+                        "{\"error\":\"origin not allowed: " + Json.escape(origin) + "\"}");
+                return;
+            }
+            handler.handle(exchange);
+        });
     }
 
     private void setupRoutes() {
         // LSP Protocol - diagnostics, completions, etc.
-        server.createContext("/lsp", new LspHandler());
+        route("/lsp", new LspHandler());
 
         // Engine - query and SQL execution
         // legend-engine's own pure/v1 API, exactly (PureV1Api; the user's ruling of
         // 2026-09-27: lite serves upstream's APIs and nothing of its own)
-        server.createContext("/api/pure/v1/", new PureV1Handler());
-        server.createContext("/engine/sql", new ExecuteSqlHandler());
-        server.createContext("/engine/diagram", new DiagramHandler());
+        route("/api/pure/v1/", new PureV1Handler());
+        route("/engine/diagram", new DiagramHandler());
 
         // Health check
-        server.createContext("/health", exchange -> {
+        route("/health", exchange -> {
             addCorsHeaders(exchange);
             sendResponse(exchange, 200, "{\"status\":\"ok\"}");
         });
 
         // CORS preflight for all routes
-        server.createContext("/", exchange -> {
+        route("/", exchange -> {
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 addCorsHeaders(exchange);
                 exchange.sendResponseHeaders(204, -1);
@@ -170,82 +225,15 @@ public class LegendHttpServer {
         return null;
     }
 
-    private class ExecuteSqlHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            addCorsHeaders(exchange);
-            if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(204, -1);
-                exchange.close();
-                return;
-            }
-            if (!"POST".equals(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, "{\"error\":\"Method not allowed\"}");
-                return;
-            }
-
-            try {
-                String body = readBody(exchange);
-                System.out.println("Raw body length: " + body.length());
-                Json.Obj request = Json.parseObject(body);
-                String pureSource = request.getStringOr("code", null);
-                String sql = request.getStringOr("sql", null);
-                String runtimeName = request.getStringOr("runtime", null);
-
-                if (pureSource == null || pureSource.isBlank()) {
-                    sendResponse(exchange, 400, "{\"error\":\"Missing 'code' field\"}");
-                    return;
-                }
-                if (sql == null || sql.isBlank()) {
-                    sendResponse(exchange, 400, "{\"error\":\"Missing 'sql' field\"}");
-                    return;
-                }
-                if (runtimeName == null || runtimeName.isBlank()) {
-                    // Try to extract from source
-                    runtimeName = extractRuntimeName(pureSource);
-                    if (runtimeName == null) {
-                        sendResponse(exchange, 400,
-                                "{\"error\":\"Missing 'runtime' field and no Runtime found in source\"}");
-                        return;
-                    }
-                }
-
-                // Execute using QueryService
-                queryService.executeSql(pureSource, sql, runtimeName);
-
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("success", true);
-                // executeSql's contract is statement execution (its
-                // result is ALWAYS the empty relation — the old SELECT
-                // branch here was dead code the E5 sweep removed)
-                response.put("message", "SQL executed successfully");
-
-                sendResponse(exchange, 200, Json.toCompact(response));
-
-            } catch (Exception e) {
-                e.printStackTrace();
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("success", false);
-                response.put("error", e.getMessage());
-                sendResponse(exchange, 200, Json.toCompact(response));
-            }
-        }
-    }
-
-    /**
-     * Extract the Runtime name from the Pure source.
-     */
-    private @com.legend.base.Nullable String extractRuntimeName(String source) {
-        Matcher matcher = RUNTIME_PATTERN.matcher(source);
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
-        return null;
-    }
-
+    /** The CORS answer for an ALLOWED origin (the route's check ran first): it names that origin, never {@code *}. */
     public static void addCorsHeaders(HttpExchange exchange) {
         var headers = exchange.getResponseHeaders();
-        headers.add("Access-Control-Allow-Origin", "*");
+        String origin = exchange.getRequestHeaders().getFirst("Origin");
+        if (origin == null) {
+            return;
+        }
+        headers.add("Access-Control-Allow-Origin", origin);
+        headers.add("Vary", "Origin");
         headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         headers.add("Access-Control-Allow-Headers", "Content-Type");
     }
@@ -354,7 +342,16 @@ public class LegendHttpServer {
             }
         }
 
-        LegendHttpServer server = new LegendHttpServer(port);
+        String bind = System.getenv("LEGEND_LITE_BIND");
+        java.net.InetAddress address = bind == null || bind.isBlank()
+                ? java.net.InetAddress.getLoopbackAddress()
+                : java.net.InetAddress.getByName(bind);
+        if (!address.isLoopbackAddress()) {
+            System.err.println("WARNING: LEGEND_LITE_BIND=" + bind + " exposes this server beyond this machine;"
+                    + " a caller's model runs its connections' setup SQL on this host.");
+        }
+        LegendHttpServer server = new LegendHttpServer(port, address,
+                Origins.fromEnv(System.getenv("LEGEND_LITE_ALLOWED_ORIGINS")));
         server.start();
 
         System.out.println();
@@ -365,7 +362,6 @@ public class LegendHttpServer {
         System.out.println("Endpoints:");
         System.out.println("  POST http://localhost:" + port + "/lsp         - LSP Protocol");
         System.out.println("  POST http://localhost:" + port + "/api/pure/v1/... - legend-engine's pure/v1 API");
-        System.out.println("  POST http://localhost:" + port + "/engine/sql     - Execute raw SQL");
         System.out.println("  GET  http://localhost:" + port + "/health         - Health check");
         System.out.println();
         System.out.println("Press Ctrl+C to stop");

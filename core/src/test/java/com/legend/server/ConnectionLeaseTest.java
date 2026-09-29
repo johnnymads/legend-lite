@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The AUTO-RESOLVING entry points of {@link QueryService} — the five methods
+ * The AUTO-RESOLVING entry points of {@link QueryService} — the methods
  * that call {@code ConnectionResolver.resolve} themselves rather than taking a
  * caller's connection — and the resource contract they owe.
  *
@@ -30,8 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (2026-09-09) found the suite reaches {@code resolve} 17 times through only
  * TWO of the five methods, so three of them were changed-blind territory:
  * {@code execute(3-arg)}, {@code execute(…, OutputStream, OutputFormat)} and
- * {@code stream(…, OutputStream)} had no coverage at all. {@link #allFive}
- * closes that hole.
+ * {@code stream(…, OutputStream)} had no coverage at all. {@link #allFour}
+ * closes that hole ({@code executeSql}, the fifth, was deleted by plan W0.1).
  *
  * <p>{@link #leaseReleasesOwnedKeepsBorrowed} asserts the CONTRACT directly —
  * a caller-owned connection is closed by its lease, a store-owned one never is.
@@ -97,15 +97,15 @@ class ConnectionLeaseTest {
         duckModel = memModel.replace("specification: DuckDB { };",
                 "specification: DuckDB { path: '"
                         + duckFile.toString().replace("\\", "/") + "'; };");
-        qs.executeSql(duckModel, "CREATE TABLE T_PERSON (ID INTEGER PRIMARY KEY,"
+        Seed.sql(duckModel, "CREATE TABLE T_PERSON (ID INTEGER PRIMARY KEY,"
                 + " FIRST_NAME VARCHAR(100))", "test::TestRuntime");
-        qs.executeSql(duckModel, "INSERT INTO T_PERSON VALUES (1, 'Alice')",
+        Seed.sql(duckModel, "INSERT INTO T_PERSON VALUES (1, 'Alice')",
                 "test::TestRuntime");
     }
 
     @Test
-    @DisplayName("all five auto-resolving entry points execute (three had no coverage)")
-    void allFive() throws Exception {
+    @DisplayName("all four auto-resolving entry points execute")
+    void allFour() throws Exception {
         String query = "|model::Person.all()->project(~[name: p|$p.firstName])";
 
         // 1. execute(pureSource, query, runtimeName) — QueryService:81
@@ -126,9 +126,7 @@ class ConnectionLeaseTest {
         qs.execute(duckModel, query, "test::TestRuntime", csv, OutputFormat.CSV);
         assertTrue(csv.size() > 0, "wire execute wrote nothing");
 
-        // 4. executeSql(…) — QueryService:148 (/engine/sql)
-        assertNotNull(qs.executeSql(duckModel, "SELECT 1", "test::TestRuntime"),
-                "executeSql returned no result");
+        // (executeSql and /engine/sql were deleted by plan W0.1: raw SQL is not a product surface)
 
         // 5. stream(…, OutputStream) — QueryService:193
         var streamed = new ByteArrayOutputStream();
@@ -174,9 +172,9 @@ class ConnectionLeaseTest {
                     connections: [ store::H2DB: [ environment: store::H2Conn ] ];
                 }
                 """;
-        qs.executeSql(h2Model, "CREATE TABLE T_THING (ID INTEGER PRIMARY KEY,"
+        Seed.sql(h2Model, "CREATE TABLE T_THING (ID INTEGER PRIMARY KEY,"
                 + " NAME VARCHAR(100))", "test::H2Runtime");
-        qs.executeSql(h2Model, "INSERT INTO T_THING VALUES (1, 'kept')",
+        Seed.sql(h2Model, "INSERT INTO T_THING VALUES (1, 'kept')",
                 "test::H2Runtime");
         // a SEPARATE auto-resolve: the previous call's connection is closed by
         // its lease, so the row survives only if the database does
@@ -241,9 +239,9 @@ class ConnectionLeaseTest {
                         + own.toString().replace("\\", "/") + "'; };");
         Path wal = Path.of(own + ".wal");
         try {
-            qs.executeSql(ownModel, "CREATE TABLE T_PERSON (ID INTEGER PRIMARY KEY,"
+            Seed.sql(ownModel, "CREATE TABLE T_PERSON (ID INTEGER PRIMARY KEY,"
                     + " FIRST_NAME VARCHAR(100))", "test::TestRuntime");
-            qs.executeSql(ownModel, "INSERT INTO T_PERSON VALUES (1, 'Alice')",
+            Seed.sql(ownModel, "INSERT INTO T_PERSON VALUES (1, 'Alice')",
                     "test::TestRuntime");
             assertTrue(!Files.exists(wal),
                     "QueryService did not release the connection it resolved:"

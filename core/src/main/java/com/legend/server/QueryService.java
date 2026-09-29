@@ -44,11 +44,8 @@ import java.util.Objects;
  *       auto-resolves the connection.</li>
  * </ul>
  *
- * <p>Raw-SQL escape hatch:
- * <ul>
- *   <li>{@link #executeSql(String, String, String)} — runs arbitrary SQL
- *       against the Runtime's connection (no Pure parsing, no plan).</li>
- * </ul>
+ * <p>There is no raw-SQL entry point: {@code executeSql} and its {@code /engine/sql} route were deleted
+ * (execution plan W0.1, 2026-09-29); tests seed tables in-process.
  */
 public class QueryService {
 
@@ -138,23 +135,6 @@ public class QueryService {
         try (ConnectionResolver.Lease lease =
                 ConnectionResolver.resolve(pureSource, runtimeName)) {
             execute(pureSource, query, runtimeName, lease.connection(), out, format);
-        }
-    }
-
-    /**
-     * Execute raw SQL against the connection from the Runtime.
-     */
-    public ExecutionResult executeSql(String pureSource, String sql, String runtimeName)
-            throws SQLException {
-
-        try (ConnectionResolver.Lease lease =
-                ConnectionResolver.resolve(pureSource, runtimeName);
-                java.sql.Statement stmt = lease.connection().createStatement()) {
-            stmt.execute(sql);
-            // DDL/DML: no result set — an empty relation, the caller's
-            // "no columns" signal (the legacy empty() contract).
-            return new ExecutionResult.Tabular(List.of(), List.of(),
-                    new com.legend.compiler.element.type.Type.RelationType(List.of()));
         }
     }
 
