@@ -90,6 +90,20 @@ the chart refresh in `#onView`), `datacube/src/app.css`, `datacube/src/ui/menu.t
 It will not edit `cube-document.ts` or `cube-store.ts`; it stores through `CubeStore` as they are. The
 save session will be asked to list page records in its Load dialog.
 
+## DataCube save/share (#21, the save session; plan `DATACUBE_SAVE_SHARE_2026_09_28.md`)
+
+**Owns:** `datacube/src/cube-document.ts`, `cube-store.ts`, `file-handles.ts`, `ui/cube-library.ts`,
+`host.ts`, the state owner (`state-owner.ts`, `cube-state.ts`), and saving/sharing in `demo/boot.ts`.
+
+**Agreed (USER 2026-09-28): THE PAGE IS THE SAVED DOCUMENT.** Save, Load, the share link, the share
+file and Export always carry the whole page -- grid, charts, layout; a lone cube is a page with one
+grid tile. The cube document stays the building block a page embeds (by value, as the charts plan
+says). Records and files saved as a bare `datacube.cube` since milestone 1 still open, as a
+one-tile page. So: the charts session owns the page FORMAT; the save session owns storing,
+loading, listing, sharing and "changed since saved" -- which covers the whole page, so the board
+reports its changes too. The save session builds sharing on the page format once it lands and will
+not define a page shape of its own.
+
 ## The rules both sides follow
 
 1. **Before pushing, `git fetch` and rebase on `origin/main`; never force-push; never bare `git stash`.**
