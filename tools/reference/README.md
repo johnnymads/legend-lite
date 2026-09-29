@@ -1,5 +1,13 @@
 # The reference differential: what the real Pure compiler resolved, call by call
 
+**Since 2026-09-29 this is a gated lane** (execution plan W1.1): `bazel test //spec:reference_lane` (manual, about
+8 GB, about 45 s once the reference dump is cached). The reference side is the build output
+`//tools/reference:ref_dump`, legend-pure's compiler run from the pinned `@maven_upstream` jars (4.145.0 / 5.99.0), so
+the jar-versus-pin skew and the source-drift file below are history. `ReferenceLaneTest` types our side, joins in Java
+(`ReferenceJoin`, a port of `join.py`), and compares the whole report (coverage, buckets, every disagreement class) to
+`spec/src/test/resources/reference-lane/core_relational.txt`; every class needs a reason in `reasons.tsv` there. The
+text below describes the earlier hand-run tooling, kept for ad-hoc joins.
+
 `RefResolutions.java` compiles every module on the classpath with the real Pure compiler (the
 interpreted runtime inside legend-engine's shaded server jar, over the jar's own `.pure` sources
 and manifests), then writes one row per function-call expression in every function body under

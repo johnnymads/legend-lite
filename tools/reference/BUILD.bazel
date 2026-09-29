@@ -1,6 +1,7 @@
-# H3 spike (2026-09-29): can legend-pure's own compiler load core_relational's 27-module closure from the
-# pinned @maven_upstream jars (4.145.0 / 5.99.0)? Test input only (the reference-checkout tenet): nothing in
-# //core depends on this. Becomes the W1.1 reference lane if the spike holds.
+# THE REFERENCE LANE's reference side (execution plan W1.1): legend-pure's own compiler, run from the pinned
+# @maven_upstream jars (4.145.0 / 5.99.0), compiles core_relational's 27-module closure and dumps what every call
+# resolved to. Test input only (the reference-checkout tenet): nothing in //core depends on this. The H3 spike
+# (2026-09-29) proved it: 35 s, 5.3 GB.
 load("@rules_java//java:defs.bzl", "java_binary")
 
 java_binary(
@@ -48,4 +49,17 @@ java_binary(
         "@maven_upstream//:org_finos_legend_pure_legend_pure_m2_dsl_tds_grammar",
         "@maven_upstream//:org_finos_legend_pure_legend_pure_m2_store_relational_grammar",
     ],
+)
+
+# The reference dump as a BUILD OUTPUT: a pure function of the pinned jars and RefResolutions.java, so Bazel caches
+# it and a lane run pays only our side and the join (plan W1.1). ~35 s and ~6 GB when it does run; built only for
+# the manual //spec:reference_lane.
+genrule(
+    name = "ref_dump",
+    testonly = True,
+    outs = ["ref-resolutions.tsv"],
+    cmd = "$(location :ref_resolutions) $@ /core_relational/ /platform/ /core_functions_ /core/ 2> /dev/null",
+    tags = ["manual"],
+    tools = [":ref_resolutions"],
+    visibility = ["//spec:__pkg__"],
 )
