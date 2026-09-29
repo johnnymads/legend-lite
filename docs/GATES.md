@@ -5682,6 +5682,43 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild W0, first batch: four defects closed, expected-failure pins, the line guard dropped
+
+**Where.** Branch `compiler/rebuild` (draft PR #8), plan rev H1 (`EXECUTION_PLAN_2026_09_26.md`). One push, five
+commits, each one item; the chain ran on the exact tree.
+
+**What landed.**
+- **W0.2(e)** The sql dialects no longer depend on the compiler. `EngineStyleH2` read `PlatformTypes.TDS_NULL_CELL`,
+  the only reference from `sql..` into `compiler..`; javac inlined the constant, so ArchitectureTest's
+  "sql depends only on itself" stayed green while `core/BUILD.bazel` granted `:sql_dialect` the
+  `:compiler_element_type` dep. The constant now lives in `sql` (`SqlExpr.TDS_NULL_CELL`, with
+  `PlatformTypes.TDS_NULL_CELL` the same constant) and the dep is gone, so Bazel strict deps refuse the edge.
+  The first chain was red on one guard: `CodeShapeGuardrailTest.mutableInstanceStateIsExplicit` read the
+  interface constant as a mutable instance field (interface fields are implicitly static final); the modifiers
+  are now spelled out.
+- **W0.2(b)** `StaticFold` folded `toOne([])` to `[]` and `toOne([1, 2])` to `[1, 2]` (the one-argument arm
+  returned its argument), turning the reference's run-time error into a value. Both spellings now unwrap only
+  a singleton and otherwise report "not static". `StaticFoldTest`: red on the two non-singleton cases before,
+  green after. Rosters unchanged.
+- **W0.0** `@KnownDefect(owner, reason)`: a test of the correct behaviour that fails today passes while the
+  defect stands and FAILS when the defect is fixed, naming its owner item; any other throwable propagates.
+  `KnownDefectTest` covers the outcomes and an end-to-end inversion.
+- **W0.5 (part)** The 3,500-line file guard is dropped (every early rebuild item edits a file at 3,472–3,499
+  lines). The 250-line method limit stays. `JavaEvalLedgerTest` is NOT touched: AGENTS.md names it as the
+  execution tenet's enforcement, so its exact line pins wait for W6 and an AGENTS.md edit (H1 report W5-W7 #24);
+  the plan's W0.5 text is corrected to say so.
+- **W0.2(d)** `CanonicalDivergence.CONTEXT_SOURCE` was a `public static volatile` field assigned by the corpus
+  harness, declared over two lines, so the line regex `noStaticMutableState` never saw it. It is a private
+  final holder set through `attributeTo`. `ArchitectureTest.staticFieldsAreFinal` (bytecode, every static
+  field of the product is final) replaces the regex guard; it was red on exactly that field. It first also
+  flagged `com.legend.testing.Repo.scratch`, in the test-support library, which the rule now excludes.
+
+**Chain.** `bazel test //...` 128 of 128 pass (41 executed, both corpus lanes among
+them, rosters unchanged: no roster file moved); `//tools/deps:all` 4 of 4. In-chain times are not timings (the other
+account's Bazel server and Claude session were running).
+
+---
+
 ## 2026-09-27 — Execution plan step 3, the probe push: the counts owed before 3a, 3b and 3c, taken before any switch
 
 **What it is, plainly.** Step 3's design (revision 2 §5) and the program audit of this morning

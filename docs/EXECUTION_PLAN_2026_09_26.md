@@ -102,10 +102,14 @@ names its gate.
 ### W0 — Now: safety, confirmed defects, guard room (≈3–5 sessions)
 - **W0.0 Expected-failure pins** (rule 0.11): a small test annotation or register naming the owner item, so a confirmed
   defect whose fix is later sits in a green chain [W0-W1 #16]. Gate: a deliberately flipped pin turns the chain red.
-- **W0.1 Close the server's open doors.** Delete `/engine/sql` and `QueryService.executeSql`; add an Origin allow-list and
-  a required non-simple header (or token) on every POST; refuse `LocalFile`, `jdbc:h2:file:`, `jdbc:h2:tcp:` and
-  `file:` sources declared in request bodies (`ConnectionResolver.java:170-205`, `DuckDb.java:329-341`). Localhost binding
-  alone does not stop a browser page [W0-W1 #3]. Re-seed `LegendHttpServerIntegrationTest`, `ConnectionIsolationTest`,
+- **W0.1 Close the server's open doors.** Delete `/engine/sql` and `QueryService.executeSql`; bind the loopback
+  interface by default; refuse any request whose `Origin` is outside an allow-list (loopback origins plus a configured
+  list), and answer CORS with the allowed origin, never `*`. Localhost binding alone does not stop a browser page
+  [W0-W1 #3]; the Origin check does, because a browser always sends `Origin` on a cross-origin POST. **Revised
+  2026-09-29:** no required custom header (datacube's client, `datacube/src/pure-v1.ts`, speaks to the real
+  legend-engine too, and lite serves upstream's API unchanged), and no per-spec refusal of `LocalFile`/`tcp` specs:
+  a request's model already runs arbitrary setup SQL on its connection (`testDataSetupSqls`), so refusing file specs
+  alone would be theatre; the boundary is loopback plus Origin, and binding elsewhere prints a warning. Re-seed `LegendHttpServerIntegrationTest`, `ConnectionIsolationTest`,
   `ConnectionLeaseTest`, `QueryServiceDirectTest` through a test-only seeding path; move `ErrorShapeGuardrailTest:103` and
   `JavaEvalLedgerTest:1248` pins with the push. Gate: tests that a text/plain cross-origin POST and a file/tcp connection
   in a request are refused.
@@ -131,9 +135,10 @@ names its gate.
   `exec/Census.java:92`, `TestLaneOrderGuardrailTest`, the four engine-order registers, and the H2 lane's aliases on its
   referee session.
 - **W0.5 Guard room** (moved from W7) [W0-W1 #17, W5-W7 #12, #24]: drop the 3,500-line guard (every early item edits a
-  file at 3,472–3,499); delete the ceremony guards whose invariant no type or test needs (A13 §2: `JavaEvalLedger`
-  EVICT_SIZE exact line pins, the JDBC TEST_REGISTER, DanglingState rule 2, the funnel registers, ParkedWork,
-  ShadowWalker zero rows, the claims `also` column, duplicate parity tests). Gate: the chain green; the GATES entry lists
+  file at 3,472–3,499); delete the ceremony guards whose invariant no type or test needs (A13 §2: the JDBC
+  TEST_REGISTER, DanglingState rule 2, ParkedWork, ShadowWalker zero rows, the claims `also` column, duplicate parity
+  tests). **Not** `JavaEvalLedgerTest` (its exact line pins and funnel registers): AGENTS.md names it as the execution
+  tenet's enforcement, so it goes after W6.2/W6.3 with an AGENTS.md edit (W7) [W5-W7 #24]. Gate: the chain green; the GATES entry lists
   each guard with the reason its invariant is not needed or is held elsewhere.
 
 ### W1 — Gates and foundations (≈9–14 sessions). Everything later is judged by these. Re-cut order: W1.6 first.
