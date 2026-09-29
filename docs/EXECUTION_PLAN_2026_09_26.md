@@ -100,6 +100,7 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 | W0.5 | the line guard and three ceremony guards dropped; what stays and why is in W0.5 | GATES.md 2026-09-29 "Rebuild W0, first batch"; commit ed85b5166 |
 | H5 | quiet baselines at ed85b5166 (corpus DuckDB 75.7 s, H2 79.8 s, core 29.9 s, stress 23.0 s, guardrails 9.5 s) | GATES.md 2026-09-29 "Rebuild H5 and W1.6" |
 | W1.6 | the typer split: TdsDesugars and Overloads out of Typer (3,499 → 1,748 lines), probe rows identical | GATES.md 2026-09-29 "Rebuild H5 and W1.6" |
+| W1.1 (1) | the reference lane, calls first: cached reference dump, Java join, whole report pinned, a reason per class | GATES.md 2026-09-29 "Rebuild W1.1 (1)" |
 
 ## 4. The waves
 
@@ -364,7 +365,7 @@ W2.3–W2.6 put the resolution on the parse nodes instead: `AppliedFunction`'s c
   research (`reference-matching.md` with its corrections, `kernel-reading-2026-09-26.md`).
 - **Pinned trees:** `OB=$(bazel info output_base)`; `$OB/external/+http_archive+legend_pure_src` (5.99.0),
   `…legend_engine_src` (4.145.0); jars at the same releases in `@maven_upstream`.
-- **Gates:** `bazel test //...` then `bazel test //tools/deps:all`. Corpus `//spec:corpus_duckdb`, `//spec:corpus_h2`.
+- **Gates:** `bazel test //...` then `bazel test //tools/deps:all`; for any front-end slice also `bazel test //spec:reference_lane` (manual, 8 GB). Corpus `//spec:corpus_duckdb`, `//spec:corpus_h2`.
   Probe `--test_env=LL_SHADOW=1` (counts: `tools/untangle/probe_counts.py`, `bare_tiers.py`). One corpus test:
   `--test_env=JAVA_TOOL_OPTIONS=-Drcorpus.test=<fqn>`. Reference spike: `bazel run //tools/reference:ref_resolutions`.
 - **Receipts:** `~/legend/platform-architecture/receipts/` (not in git); every GATES.md entry names its receipt.

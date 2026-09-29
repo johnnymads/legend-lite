@@ -5682,6 +5682,42 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild W1.1 (1): the reference lane, calls first
+
+**What it is.** `bazel test //spec:reference_lane` (manual; about 8 GB; about 45 s once the reference dump is cached)
+compares legend-pure's own compiler, run from the pinned `@maven_upstream` jars, with ours, call by call, over
+`core_relational`'s closure. The reference dump is the build output `//tools/reference:ref_dump` (built once in about
+50 s, 235,668 call rows); our side is `OurResolutions` (factored out of `OurResolutionsTest`, now reporting the
+sources its loader dropped and the bodies it could not type); the join is `ReferenceJoin`, a Java port of
+`tools/reference/join.py`; `ReferenceLaneTest` pins the whole report in
+`spec/src/test/resources/reference-lane/core_relational.txt` and refuses a disagreement class with no reason in
+`reasons.tsv` (21 rows: per class for the large families, per kind with an owner for the rest).
+
+**The report at `06eeb8142`.**
+
+| coverage | | buckets | |
+|---|---|---|---|
+| reference functions | 12,380 | AGREE | 72,081 |
+| our functions | 16,076 | OVERLOAD | 769 |
+| our bodies typed | 17,156 | PACKAGE | 14 |
+| our bodies FAILED | 1,521 | DRIFT | 32 |
+| our sources DROPPED | 32 | ABSENT | 68,232 |
+| functions in both | 11,840 | PROPERTY_AS_CALL | 39 |
+| reference typed, we FAILED | 1,342 | EXTRA | 15,825 |
+
+2,099 disagreement classes (ABSENT 307, EXTRA 1,739, OVERLOAD 41, PACKAGE 5, DRIFT 4, PROPERTY_AS_CALL 3). The buckets
+equal the H3 spike's Python join exactly; two runs gave byte-identical reports.
+
+**What it fixes from the audit.** Coverage is pinned, so a regression that drops a source or fails a body turns the lane
+red instead of shrinking the disagreement set [W0-W1 #8]; the reference dump is cached [#9]; reasons are per class
+[#10]. **Still to come (W1.1's second push):** type rows (result type and multiplicity, resolved type parameters) through
+a typer-recorded side table and one canonical printer, and ids and spans for form nodes, which are most of ABSENT.
+
+**Chain.** `bazel test //...` 128 of 128 (5 executed); `//tools/deps:all` 4 of 4. The lane itself is manual: two runs,
+both PASSED (43.8 s, 45.4 s).
+
+---
+
 ## 2026-09-29 — Rebuild H5 and W1.6: quiet baselines; the typer split along its seams
 
 **H5, quiet baselines at `ed85b5166`** (the other account's Bazel server, datacube server and legend-engine server had
