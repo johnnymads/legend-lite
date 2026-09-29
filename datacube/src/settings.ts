@@ -6,6 +6,8 @@
 // expand here fetches afresh; the dev protocol version is an engine
 // client detail this cube does not have.
 
+import { DEFAULT_HISTORY_LIMIT } from './state-owner.ts';
+
 export type SettingGroup = 'Grid' | 'Editor' | 'Debug';
 
 export type SettingKey =
@@ -65,7 +67,7 @@ export const SETTINGS: readonly Setting[] = [
     title: 'Max History Stack Size',
     description: 'Sets the number of maximum snapshots to store in edit history.',
     group: 'Editor',
-    defaultValue: 100,
+    defaultValue: DEFAULT_HISTORY_LIMIT,
     min: 10,
     step: 10,
   },

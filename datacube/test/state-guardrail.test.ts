@@ -18,7 +18,7 @@ function sources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const OWNER = join('src', 'cube-state.ts');
+const OWNER = join('src', 'state-owner.ts');
 /** The two that held copies: the app and the controller. */
 const HOLDERS = [join('src', 'app.ts'), join('src', 'cube.ts')];
 /** The cube's state, by the names the holders used for it. */

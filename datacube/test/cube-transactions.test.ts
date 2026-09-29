@@ -1,161 +1,25 @@
-// Leg B through the APP (docs/DATACUBE_LEG_B_STATE_OWNER_2026_09_28.md, B1b): a change is one
-// transaction on the cube's one state owner. Each test is an audit entry reproduced the way a person
-// meets it -- a menu entry, a chevron, a setting -- over an engine the test can refuse or hold.
+// Leg B through the APP (docs/DATACUBE_LEG_B_STATE_OWNER_2026_09_28.md): a change is one transaction, whole gestures, history (B1b, B1c, B2). Each test is
+// an audit entry reproduced the way a person meets it, over the fixture's gated engine.
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { JSDOM } from 'jsdom';
 
-import { CubeApp } from '../src/app.ts';
-import { CubeController } from '../src/cube.ts';
-import { TreeState } from '../src/tree.ts';
-import type { Planner } from '../src/cube.ts';
-import type { Plan, PlanColumn } from '../src/relation-type.ts';
-import type { ResultTable } from '../src/result.ts';
-import type { CubeSnapshot } from '../src/snapshot.ts';
 import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import { setHeaderDrag } from '../src/ui/pivot-panel.ts';
-import { FakeEngine } from './fake-engine.ts';
-import { fakeParse, fakePrint } from './fake-planner.ts';
-import { element } from '../../pure-protocol/src/index.ts';
+import {
+  app, busy, chevron, dom, engine, groupRow, menu, menuItems, remount, root, settle, setUp, statuses, unhandled, zoneChips,
+} from './cube-fixture.ts';
 
-const SNAPSHOT: CubeSnapshot = {
-  source: { query: element('trades') },
-  columns: [
-    { name: 'region', type: 'String' },
-    { name: 'desk', type: 'String' },
-    { name: 'notional', type: 'Float' },
-  ],
-  derived: [],
-  rows: ['region', 'desk'],
-  pivotOn: [],
-  measures: [{ name: 'total', column: 'notional', fn: 'sum' }],
-  sorts: [],
-  epoch: 1,
-};
-
-/** An engine the test refuses or holds: every query answers the same small table. */
-class GateEngine extends FakeEngine {
-  readonly name = 'gate';
-  queries = 0;
-  refuse: string | null = null;
-  hold = false;
-  /** Answer with an extra column `n`: which query this was, so two answers can be told apart. */
-  tag = false;
-  readonly held: (() => void)[] = [];
-  async answer(_sql: string, epoch: number): Promise<ResultTable> {
-    this.queries += 1;
-    const n = this.queries;
-    const tagged = this.tag;
-    if (this.hold) await new Promise<void>((r) => this.held.push(r));
-    if (this.refuse !== null) throw new Error(this.refuse);
-    return {
-      columns: [
-        { name: 'region', type: 'String', values: ['EMEA', 'AMER'] },
-        { name: 'desk', type: 'String', values: ['A', 'B'] },
-        { name: 'total', type: 'Float', values: [600, 400] },
-        ...(tagged ? [{ name: 'n', type: 'Integer', values: [n, n] }] : []),
-      ],
-      rowCount: 2,
-      epoch,
-      elapsedMs: 1,
-    };
-  }
-  /** Let held query `i` (in the order they arrived) answer. */
-  release(i: number): void {
-    (this.held[i] ?? assert.fail(`no held query ${i}`))();
-  }
-  releaseAll(): void {
-    for (const r of this.held.splice(0)) r();
-  }
-}
-
-class StubPlanner implements Planner {
-  async plan(): Promise<Plan> {
-    return { sql: 'SELECT 1', columns: [] };
-  }
-  async relationType(): Promise<PlanColumn[]> {
-    return [];
-  }
-  parse = fakeParse;
-  print = fakePrint;
-}
-
-let dom: JSDOM;
-let root: HTMLElement;
-let engine: GateEngine;
-let app: CubeApp;
-let unhandled: unknown[];
-let statuses: [string, string][];
-
-/** Let every promise the app started settle (menus and chevrons do not return theirs). */
-async function settle(): Promise<void> {
-  for (let i = 0; i < 20; i += 1) await new Promise((r) => setTimeout(r, 0));
-}
-
-beforeEach(async () => {
-  dom = new JSDOM('<!doctype html><div id="r"></div>');
-  const g = globalThis as unknown as Record<string, unknown>;
-  g['window'] = dom.window;
-  g['document'] = dom.window.document;
-  g['requestAnimationFrame'] = (cb: FrameRequestCallback) => {
-    cb(0);
-    return 1;
-  };
-  g['cancelAnimationFrame'] = () => {};
-  root = dom.window.document.getElementById('r') as unknown as HTMLElement;
-  engine = new GateEngine();
-  unhandled = [];
-  process.removeAllListeners('unhandledRejection');
-  process.on('unhandledRejection', (e) => unhandled.push(e));
-  statuses = [];
-  app = new CubeApp(root, SNAPSHOT, { engine, planner: new StubPlanner(),
-    onStatus: (text, kind) => statuses.push([text, kind]) });
-  await app.open();
-});
-
-const menuItems = (): HTMLElement[] =>
-  [...dom.window.document.querySelectorAll('.dc-menu [role="menuitem"], .dc-menu [role="menuitemcheckbox"]')] as HTMLElement[];
-
-/** Right-click a cell showing `text`, then click the entry a person reads as `label`. */
-function menu(text: string, label: string): void {
-  const cell = [...root.querySelectorAll<HTMLElement>('.dc-cell')]
-    .find((c) => c.textContent?.trim().replace(/^[▸▾]/, '').startsWith(text));
-  assert.ok(cell, `no cell '${text}'`);
-  cell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true }));
-  const item = menuItems().find((i) => (i.querySelector('.dc-menu-label')?.textContent ?? i.textContent) === label);
-  assert.ok(item, `no entry '${label}': ${menuItems().map((i) => i.textContent).join(' | ')}`);
-  item.click();
-}
-
-/** The chevron of the group row labelled `label`. */
-/** A group's label is its value, with its child count when the tree shows one: `EMEA (2)`. */
-const groupRow = (label: string): HTMLElement | undefined => [...root.querySelectorAll<HTMLElement>('.dc-row')]
-  .find((r) => (r.querySelector('.dc-tree-label')?.textContent ?? '').replace(/ \(\d+\)$/, '') === label);
-
-function chevron(label: string): HTMLElement {
-  const row = groupRow(label);
-  assert.ok(row, `no group row '${label}'`);
-  return row.querySelector('.dc-chevron') as HTMLElement;
-}
-
-/** Each zone of the zone bar and the chips in it, as a person reads them. */
-const zoneChips = (): string[] => {
-  const zones = [...root.querySelectorAll<HTMLElement>('.dc-zone-bar .dc-zone')];
-  assert.ok(zones.length > 0, 'no zones on screen');
-  return zones.map((z) => [...z.querySelectorAll('.dc-chip-label')].map((c) => c.textContent?.trim() ?? '').join(','));
-};
-
-const busy = (): boolean => root.querySelector('.dc-status-progress')?.classList.contains('dc-busy') ?? false;
+beforeEach(setUp);
 
 describe('a refused change is not a change (B1b)', () => {
   it('leaves no undo step and nothing of itself behind (P2-100)', async () => {
-    engine.refuse = 'the engine said no';
+    engine.gate.fail = 'the engine said no';
     menu('EMEA', 'Ascending');
     await settle();
     assert.deepEqual(app.snapshot.sorts, [], 'the refused sort is gone');
     assert.equal(app.canUndo, false, 'a change that never landed is no step');
-    engine.refuse = null;
+    engine.gate.fail = null;
     menu('EMEA', 'Descending');
     await settle();
     await app.undo();
@@ -164,7 +28,7 @@ describe('a refused change is not a change (B1b)', () => {
   });
 
   it('a refused expand leaves the group closed (P2-101)', async () => {
-    engine.refuse = 'the engine said no';
+    engine.gate.fail = 'the engine said no';
     chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
     chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
     await settle();
@@ -173,7 +37,7 @@ describe('a refused change is not a change (B1b)', () => {
 
   it('a refused zone change puts the zones back (P2-102)', async () => {
     const before = zoneChips();
-    engine.refuse = 'the engine said no';
+    engine.gate.fail = 'the engine said no';
     menu('EMEA', 'Remove Vertical Pivot on region');
     await settle();
     assert.deepEqual(app.snapshot.rows, ['region', 'desk']);
@@ -182,7 +46,7 @@ describe('a refused change is not a change (B1b)', () => {
 
   it('a presentation change runs no query, so nothing can refuse it (P2-114)', async () => {
     const ran = engine.queries;
-    engine.refuse = 'the engine said no';
+    engine.gate.fail = 'the engine said no';
     await app.applyConfiguration({ columns: { desk: { pinned: 'left' } } });
     await settle();
     assert.equal(engine.queries, ran, 'no query');
@@ -193,7 +57,7 @@ describe('a refused change is not a change (B1b)', () => {
 
 describe('a group is SET open or closed, never toggled (B1b)', () => {
   it('two quick clicks on a closed group, while the first is still running, leave it open (P2-127)', async () => {
-    engine.hold = true;
+    engine.gate.hold = true;
     const click = (): void => {
       chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
       chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
@@ -202,8 +66,8 @@ describe('a group is SET open or closed, never toggled (B1b)', () => {
     await settle();
     click(); // the screen still shows EMEA closed: the person asks to OPEN it, again
     await settle();
-    engine.hold = false;
-    engine.releaseAll();
+    engine.gate.hold = false;
+    engine.gate.releaseAll();
     await settle();
     assert.equal(app.tree.isOpen(['EMEA']), true);
   });
@@ -219,19 +83,19 @@ describe('machine re-runs are not steps (B1b)', () => {
 
 describe('busy is the owner\'s (B1b)', () => {
   it('a superseded run ending does not turn busy off while the newer one runs (P2-104)', async () => {
-    engine.hold = true;
+    engine.gate.hold = true;
     menu('EMEA', 'Ascending');
     await settle();
-    const first = engine.held.length;
+    const first = engine.gate.held.length;
     assert.ok(first > 0, 'the first change is running');
     menu('EMEA', 'Descending');
     await settle();
     assert.ok(busy());
-    for (let i = 0; i < first; i += 1) engine.release(i);
+    for (let i = 0; i < first; i += 1) engine.gate.release(i);
     await settle();
     assert.equal(busy(), true, 'the newer change is still running');
-    engine.hold = false;
-    engine.releaseAll();
+    engine.gate.hold = false;
+    engine.gate.releaseAll();
     await settle();
     assert.equal(busy(), false);
   });
@@ -256,6 +120,18 @@ describe('undo puts back everything it covers (B1b)', () => {
   });
 });
 
+describe('the title bar is rebuilt only when what it shows changes', () => {
+  it('a query starting and landing leaves the title bar\'s elements in place', async () => {
+    const bar = root.querySelector('.dc-titlebar-menu');
+    assert.ok(bar, 'the menu button');
+    menu('EMEA', 'Ascending');
+    await settle();
+    assert.equal(root.querySelector('.dc-titlebar-menu'), bar, 'the same button: not rebuilt');
+    await app.applyConfiguration({ reportTitle: 'renamed' });
+    assert.notEqual(root.querySelector('.dc-titlebar-menu'), bar, 'rebuilt when its title changed');
+  });
+});
+
 describe('the shortcuts are registered once (B1b)', () => {
   it('after the title bar is rebuilt, one Ctrl-Z is ONE undo step (P2-220)', async () => {
     menu('EMEA', 'Ascending');
@@ -277,7 +153,7 @@ describe('the shortcuts are registered once (B1b)', () => {
 describe('a whole gesture is one change (B1c)', () => {
   it('a chip dragged from Row Groups to Column Labels is ONE change: refused, it names one (P2-103)', async () => {
     const zones = zoneChips();
-    engine.refuse = 'the engine said no';
+    engine.gate.fail = 'the engine said no';
     setHeaderDrag({ column: 'desk', from: 'rows' });
     (root.querySelector('.dc-app-side .dc-zone-columns') as HTMLElement)
       .dispatchEvent(new dom.window.MouseEvent('drop', { bubbles: true, cancelable: true }));
@@ -286,7 +162,7 @@ describe('a whole gesture is one change (B1c)', () => {
     assert.deepEqual(zoneChips(), zones);
     assert.equal(statuses.some(([t]) => /changes were undone/.test(t)), false,
       `one gesture, one change: ${statuses.map(([t]) => t).join(' | ')}`);
-    engine.refuse = null;
+    engine.gate.fail = null;
     setHeaderDrag({ column: 'desk', from: 'rows' });
     (root.querySelector('.dc-app-side .dc-zone-columns') as HTMLElement)
       .dispatchEvent(new dom.window.MouseEvent('drop', { bubbles: true, cancelable: true }));
@@ -299,8 +175,24 @@ describe('a whole gesture is one change (B1c)', () => {
 });
 
 describe('what is read off the rows on screen reads the state ON SCREEN (B1c)', () => {
+  it('a right-click while a KIND change runs reads the kinds of the rows on screen (P2-110, the menu\'s column facts)', async () => {
+    engine.gate.hold = true;
+    void app.applyConfiguration({ columns: { region: { kind: 'measure' } } });
+    await settle();
+    assert.equal(app.state.busy, true, 'the kind change is running');
+    const cell = [...root.querySelectorAll<HTMLElement>('.dc-cell')]
+      .find((c) => c.textContent?.trim().replace(/^[▸▾]/, '') === 'EMEA') ?? assert.fail('no EMEA');
+    cell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true }));
+    const labels = menuItems().map((i) => i.querySelector('.dc-menu-label')?.textContent ?? '');
+    assert.ok(labels.includes("Add Filter: region = 'EMEA'"),
+      `EMEA on screen is still a region group: ${labels.filter((l) => l.startsWith('Add Filter')).join(' | ') || 'no filters offered'}`);
+    engine.gate.hold = false;
+    engine.gate.releaseAll();
+    await settle();
+  });
+
   it('a right-click while a regroup runs names the column the clicked row belongs to (P2-110)', async () => {
-    engine.hold = true;
+    engine.gate.hold = true;
     menu('EMEA', 'Remove Vertical Pivot on region');
     await settle();
     assert.deepEqual(app.snapshot.rows, ['desk'], 'the regroup is pending');
@@ -310,8 +202,8 @@ describe('what is read off the rows on screen reads the state ON SCREEN (B1c)', 
     cell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true }));
     const labels = menuItems().map((i) => i.querySelector('.dc-menu-label')?.textContent ?? '');
     assert.ok(labels.includes("Add Filter: region = 'EMEA'"), labels.filter((l) => l.startsWith('Add Filter')).join(' | '));
-    engine.hold = false;
-    engine.releaseAll();
+    engine.gate.hold = false;
+    engine.gate.releaseAll();
     await settle();
   });
 });
@@ -355,7 +247,7 @@ describe('a Properties Apply is ONE transaction, the tree included (P2-169)', ()
 
   it('refused, nothing of it stays: not the sort, not the root total', async () => {
     const before = app.tree.showTotals;
-    engine.refuse = 'the engine said no';
+    engine.gate.fail = 'the engine said no';
     edit();
     await settle();
     assert.deepEqual(app.snapshot.sorts, []);
@@ -375,14 +267,14 @@ describe('history through the app (B2)', () => {
 
   it('a change made while an Undo runs: no mixed state, and undo goes back to where it was made (P2-106)', async () => {
     await sort('Ascending');
-    engine.hold = true;
+    engine.gate.hold = true;
     void app.undo();
     await settle();
     assert.deepEqual(app.snapshot.sorts, [], 'the undo is on screen, pending');
     menu('EMEA', 'Remove Vertical Pivot on region');
     await settle();
-    engine.hold = false;
-    engine.releaseAll();
+    engine.gate.hold = false;
+    engine.gate.releaseAll();
     await settle();
     assert.deepEqual([app.snapshot.rows, app.snapshot.sorts], [['desk'], []], 'the undo AND the change landed');
     assert.equal(app.canRedo, false, 'a new change ends the redo branch, as always');
@@ -395,13 +287,13 @@ describe('history through the app (B2)', () => {
   it('two quick Ctrl-Z while the first runs are two steps, each to a state that was on screen (P2-107)', async () => {
     await sort('Ascending');
     await sort('Descending');
-    engine.hold = true;
+    engine.gate.hold = true;
     ctrlZ();
     await settle();
     ctrlZ();
     await settle();
-    engine.hold = false;
-    engine.releaseAll();
+    engine.gate.hold = false;
+    engine.gate.releaseAll();
     await settle();
     assert.deepEqual(app.snapshot.sorts, [], 'two presses, two steps');
     await app.redo();
@@ -410,12 +302,7 @@ describe('history through the app (B2)', () => {
   });
 
   it('collapsing a group opened by the expand level is a step, and undo opens it again (P2-109)', async () => {
-    app.dispose();
-    root.replaceChildren();
-    app = new CubeApp(root, SNAPSHOT, { engine, planner: new StubPlanner(),
-      configuration: { ...DEFAULT_CONFIGURATION, initialExpandToLevel: 1 } });
-    await app.open();
-    await settle();
+    await remount({ configuration: { ...DEFAULT_CONFIGURATION, initialExpandToLevel: 1 } });
     assert.equal(groupRow('EMEA')?.getAttribute('aria-expanded'), 'true', 'opened by the expand level');
     chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('mousedown', { bubbles: true }));
     chevron('EMEA').dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
@@ -456,238 +343,3 @@ describe('history through the app (B2)', () => {
     assert.equal(redo()?.getAttribute('aria-disabled'), 'true', 'a new change ended it');
   });
 });
-
-describe('lifecycle (B3)', () => {
-  it('a disposed cube stops: its query is cancelled and nothing reaches the host after (P2-105)', async () => {
-    const heard: string[] = [];
-    app.dispose();
-    root.replaceChildren();
-    app = new CubeApp(root, SNAPSHOT, { engine, planner: new StubPlanner(),
-      onView: () => heard.push('view'), onChange: () => heard.push('change'),
-      onStatus: (text) => heard.push(`status ${text}`) });
-    await app.open();
-    await settle();
-    engine.hold = true;
-    menu('EMEA', 'Ascending');
-    await settle();
-    heard.length = 0;
-    app.dispose();
-    engine.hold = false;
-    engine.releaseAll();
-    await settle();
-    assert.deepEqual(heard, [], 'a late answer reached the host of a cube it no longer has');
-    assert.equal(app.state.busy, false, 'the change in flight was cancelled');
-    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
-    await settle();
-    assert.deepEqual(heard, [], 'and its shortcuts are gone');
-  });
-
-  it('two drill-throughs: the LATER one is shown, however the answers arrive (P2-131)', async () => {
-    const cell = (text: string): HTMLElement => [...root.querySelectorAll<HTMLElement>('.dc-cell')]
-      .find((c) => c.textContent?.trim().replace(/^[▸▾]/, '').startsWith(text)) ?? assert.fail(`no cell ${text}`);
-    // a cell is focused by a click and ACTIVATED by Enter: that is the drill
-    const drill = (text: string): void => {
-      cell(text).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, detail: 1 }));
-      (root.querySelector('.dc-app-grid .dc-grid') ?? root.querySelector('.dc-app-grid') as Element)
-        .dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    };
-    engine.hold = true;
-    engine.tag = true;
-    const before = engine.queries;
-    drill('EMEA');
-    await settle();
-    drill('AMER');
-    await settle();
-    assert.equal(engine.held.length, 2, `two drills asked (${engine.queries - before} queries)`);
-    const second = engine.queries;
-    engine.release(1);
-    await settle();
-    engine.release(0);
-    await settle();
-    engine.hold = false;
-    engine.tag = false;
-    const shown = root.querySelector('.dc-drill')?.textContent ?? '';
-    assert.match(shown, new RegExp(`\\b${second}\\b`), `the later drill's rows: ${shown}`);
-  });
-
-  it('Escape in a text field stays in the field: the window and its draft stay (P2-221)', async () => {
-    app.openEditor();
-    const win = root.querySelector('[data-window="Properties"]') as HTMLElement;
-    assert.ok(win, 'the Properties window');
-    ([...win.querySelectorAll<HTMLElement>('.dc-editor-tab')].find((t) => t.textContent === 'General Properties')
-      ?? assert.fail('no General tab')).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    const field = win.querySelector<HTMLInputElement>('input[type="text"], input:not([type])')
-      ?? assert.fail('no text field in the Properties window');
-    field.value = 'a draft';
-    field.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    assert.ok(root.querySelector('[data-window="Properties"]:not([hidden])'), 'the window is still open');
-    assert.equal(field.value, 'a draft', 'and the draft with it');
-    win.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    assert.equal(root.querySelector('[data-window="Properties"]:not([hidden])'), null, 'Escape on the window itself closes it');
-  });
-});
-
-describe('a compile refusal is RETURNED, never thrown (B4, P2-152)', () => {
-  it('pivoting on a JSON column: compile answers with the refusal', async () => {
-    const c = new CubeController(new GateEngine(), new StubPlanner());
-    const snapshot: CubeSnapshot = { ...SNAPSHOT, columns: [...SNAPSHOT.columns, { name: 'meta', type: 'Variant' }],
-      rows: ['region'], pivotOn: ['meta'] };
-    const out = await c.compile({ snapshot, tree: TreeState.empty() }, null);
-    assert.match(out?.refusal ?? '', /holds JSON/);
-  });
-});
-
-describe('the Filters window works on the LIVE filter (B4, P2-144)', () => {
-  const filtersWindow = (): HTMLElement | null => root.querySelector('[data-window="Filters"]:not([hidden])');
-  const ok = (): void => {
-    ([...(filtersWindow() ?? assert.fail('no Filters window')).querySelectorAll<HTMLButtonElement>('button')]
-      .find((b) => b.textContent === 'OK') ?? assert.fail('no OK')).click();
-  };
-
-  it('unedited, it shows a filter added elsewhere', async () => {
-    app.openFilters();
-    menu('EMEA', "Add Filter: region = 'EMEA'");
-    await settle();
-    const shown = [...(filtersWindow() ?? assert.fail('closed')).querySelectorAll<HTMLInputElement>('input')].map((i) => i.value);
-    assert.ok(shown.includes('EMEA'), `the window shows the cube's filter: ${shown.join(' | ')}`);
-  });
-
-  const valueInput = (v: string): HTMLInputElement =>
-    [...(filtersWindow() ?? assert.fail('closed')).querySelectorAll<HTMLInputElement>('input')]
-      .find((x) => x.value === v) ?? assert.fail(`no ${v} value in the window`);
-  const values = (): string[] => {
-    const f = app.snapshot.filter;
-    const all = f === undefined ? [] : f.kind === 'condition' ? [f] : 'children' in f ? f.children : [f];
-    return all.map((c) => ('value' in c ? String(c.value) : '?'));
-  };
-
-  it('the audit\'s case: a condition added elsewhere, THEN an edit here -- OK keeps both', async () => {
-    menu('EMEA', "Add Filter: region = 'EMEA'");
-    await settle();
-    app.openFilters();
-    menu('AMER', "Add Filter: region != 'AMER'");
-    await settle();
-    const value = valueInput('EMEA');
-    value.value = 'APAC';
-    value.dispatchEvent(new dom.window.Event('change'));
-    ok();
-    await settle();
-    assert.deepEqual(values(), ['APAC', 'AMER'], 'the edit landed on the filter the cube had');
-    assert.equal(filtersWindow(), null);
-  });
-
-  it('an edit here, THEN a condition added elsewhere: OK says so instead of dropping it; a second OK replaces it', async () => {
-    menu('EMEA', "Add Filter: region = 'EMEA'");
-    await settle();
-    app.openFilters();
-    const value = valueInput('EMEA');
-    value.value = 'APAC';
-    value.dispatchEvent(new dom.window.Event('change'));
-    menu('AMER', "Add Filter: region != 'AMER'");
-    await settle();
-    ok();
-    await settle();
-    assert.deepEqual(values(), ['EMEA', 'AMER'], 'the condition added elsewhere is still there');
-    assert.ok(filtersWindow(), 'the window stays open, the edit kept');
-    assert.match(filtersWindow()?.textContent ?? '', /changed while this window was open/);
-    ok();
-    await settle();
-    assert.deepEqual(values(), ['APAC'], 'the second OK replaces it, knowingly');
-    assert.equal(filtersWindow(), null);
-  });
-});
-
-describe('while Ad Hoc Analysis is on, the shell acts on it (B5b)', () => {
-  const hamburger = (): HTMLElement[] => {
-    (root.querySelector('.dc-titlebar-menu') as HTMLElement).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    const items = [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')];
-    (root.querySelector('.dc-titlebar-menu') as HTMLElement).dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    return items;
-  };
-  const entry = (label: string): HTMLElement | undefined =>
-    hamburger().find((el) => el.querySelector('.dc-menu-label')?.textContent === label);
-  const disabled = (label: string): boolean => entry(label)?.getAttribute('aria-disabled') === 'true';
-  const enter = async (): Promise<void> => {
-    await app.enterAdHoc();
-    await settle();
-    assert.ok(app.adhoc, 'in Ad Hoc');
-  };
-
-  it('the menu\'s Undo and Redo say what AD HOC can undo, not the hidden cube (P2-284)', async () => {
-    menu('EMEA', 'Ascending');
-    await settle();
-    assert.equal(disabled('Undo'), false, 'the cube has a step');
-    await enter();
-    assert.equal(disabled('Undo'), true, 'Ad Hoc has none yet');
-    await (app.adhoc ?? assert.fail('no mode')).session.setOptions({ suppressMissingRows: false });
-    assert.equal(disabled('Undo'), false, 'now it has one');
-  });
-
-  it('cube-only entries are not offered, and Ctrl-E opens nothing (P2-289)', async () => {
-    await enter();
-    for (const label of ['Properties...', 'Hide Drag Zones', 'Show Drag Zones']) {
-      const e = entry(label);
-      if (e) assert.equal(e.getAttribute('aria-disabled'), 'true', `${label} is the cube's`);
-    }
-    dom.window.document.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }));
-    assert.equal(root.querySelector('[data-window="Properties"]'), null, 'Ctrl-E opened the hidden cube\'s Properties');
-  });
-
-  it('the status bar is Ad Hoc\'s: no cube Filter link, and Ad Hoc\'s own counts (P2-287, P2-290)', async () => {
-    await enter();
-    const bar = root.querySelector('.dc-app-stats') as HTMLElement;
-    assert.equal(bar.querySelector('.dc-status-filter'), null, 'the cube\'s Filter link under the Ad Hoc grid');
-    const view = app.adhoc?.view ?? assert.fail('no Ad Hoc view');
-    assert.match(bar.textContent ?? '', new RegExp(`${view.table.rowCount} rows`), `the Ad Hoc counts: ${bar.textContent}`);
-  });
-
-  it('Settings reach Ad Hoc: Max History Stack Size and Debug Mode (P2-283)', async () => {
-    await enter();
-    app.openSettings();
-    const input = root.querySelector('[data-setting="dataCube.editor.maxHistoryStackSize"] input') as HTMLInputElement;
-    input.value = '10';
-    input.dispatchEvent(new dom.window.Event('change'));
-    const debug = root.querySelector('[data-setting="dataCube.debugger.enableDebugMode"] input') as HTMLInputElement;
-    debug.checked = true;
-    debug.dispatchEvent(new dom.window.Event('change'));
-    ([...root.querySelectorAll('button')].find((b) => b.textContent === 'OK') ?? assert.fail('no OK')).click();
-    const s = (app.adhoc ?? assert.fail('no mode')).session;
-    for (let i = 0; i < 12; i += 1) await s.setOptions({ suppressMissingRows: i % 2 === 0 });
-    let undos = 0;
-    while (s.canUndo && undos < 50) { await s.undo(); undos += 1; }
-    assert.equal(undos, 10, 'the Ad Hoc history holds what Settings says');
-    const logged: unknown[] = [];
-    const was = console.debug;
-    console.debug = (...args: unknown[]) => { logged.push(args[0]); };
-    try {
-      await app.adhoc?.refresh();
-      await settle();
-    } finally {
-      console.debug = was;
-    }
-    assert.ok(logged.some((l) => String(l).includes('query')), `Ad Hoc queries are logged in Debug Mode: ${logged.join(' | ')}`);
-  });
-
-  it('saving from the Cubes window in Ad Hoc says it cannot keep the Ad Hoc layout (P2-288)', async () => {
-    await enter();
-    assert.match(app.saveRefusal() ?? '', /Ad Hoc/, 'saving would keep the hidden cube and say "saved"');
-  });
-});
-
-describe('Ad Hoc starts from what is ON SCREEN (B5c, P2-291)', () => {
-  it('entering while a filter is still being applied does not carry the pending filter into the session', async () => {
-    engine.hold = true;
-    menu('EMEA', "Add Filter: region = 'EMEA'");
-    await settle();
-    assert.ok(app.snapshot.filter, 'the filter is pending');
-    void app.enterAdHoc();
-    await settle();
-    const grid = (app.adhoc ?? assert.fail('no Ad Hoc')).session.grid;
-    const pinned = JSON.stringify(grid).includes('EMEA');
-    engine.hold = false;
-    engine.releaseAll();
-    await settle();
-    assert.equal(pinned, false, 'EMEA pinned in Ad Hoc from a filter the cube had not accepted');
-  });
-});
-

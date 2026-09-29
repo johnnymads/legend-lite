@@ -719,4 +719,16 @@ describe('reopening a filter gives back exactly the filter (P2-150)', () => {
       assert.deepEqual(toFilter(tree, colType), filter);
     });
   }
+
+  it('the stored value is shown as it is (no quoting games), and published only while untouched', () => {
+    const root = fromFilterNode(node('desk', '"N/A"'));
+    assert.equal(root.kind === 'condition' ? root.text : '', '"N/A"', 'shown as it is');
+    const tree = newGroup([root]);
+    // edited: the typed text is read, by the column's type (quotes around text are stripped)
+    const edited = updateNode(tree, root.id, { text: '"N/B"' });
+    assert.deepEqual(toFilter(edited, colType), node('desk', 'N/B'));
+    // another column: the stored value is the old column's, and is not carried over
+    const moved = updateNode(tree, root.id, { column: 'region' });
+    assert.deepEqual(toFilter(moved, colType), node('region', 'N/A'));
+  });
 });

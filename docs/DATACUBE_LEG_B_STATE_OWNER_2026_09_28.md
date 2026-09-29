@@ -42,12 +42,12 @@ Status: **open** (the cited mechanism is unchanged), **overtaken** (the code it 
 | P2-107 | overlapping Undos roll back to a state never rendered | **fixed by B1b** (two presses are two steps over the stack); pinned in B2 by "two quick Ctrl-Z …" — passed on first run |
 | P2-108 | Undo restores the configuration but not appearance, zones or title bar | **closed B1b**: one paint from the state (`#paintState`). "the zones and the title bar come back with the state" (red before) |
 | P2-109 | the history key ignores groups collapsed from an expand level | **fixed by B1a/B1b** (`TreeState.key` sees closed groups and the expand level); pinned in B2 by "collapsing a group opened by the expand level is a step" — passed on first run |
-| P2-110 | during a refresh the context menu pairs the old rows with the new snapshot | **closed B1c**: the menu reads `rendered` (`#shown`). "a right-click while a regroup runs names the column…" (red before: it offered `desk = 'EMEA'` on a region row) |
+| P2-110 | during a refresh the context menu pairs the old rows with the new snapshot | **closed B1c, COMPLETED in the cleanup**: B1c moved the menu's column resolution to the state on screen (`#shown`) but left its column facts, kinds and the formats' kinds on the pending state -- the claim overstated it (found by the leg's self-audit). Now everything the menu reads off the rows reads `#shown`. `test/cube-transactions.test.ts` (red before: `desk = 'EMEA'` on a region row); the kind-change case is a pin (it passed before too) |
 | P2-114 | fire-and-forget calls: unhandled rejections; failed presentation changes keep the new config | **closed B1b**: presentation runs no query; `change` never throws (it returns an outcome). "a presentation change runs no query…" (red before) |
 | P2-127 | the host TOGGLES instead of applying the requested expand state | **closed B1b**: `tree.setOpen(path, expanded)`. "two quick clicks … leave it open" (red with the toggle put back) |
 | P2-131 | drill-through has no stale-result guard | **closed B3**: drills are latest-wins. "two drill-throughs: the LATER one is shown" (red before: the earlier answer, arriving last, took the window) |
 | P2-144 | the Filters window keeps an old copy and its Apply overwrites newer changes | **closed B4**: the Filters window follows the filter the cube HAS (`FilterEditor.rebase` on every state event): unedited it shows it; with edits kept, the next OK says the cube's filter changed, the one after replaces it knowingly. `test/cube-transactions.test.ts` both orders (red before: OK dropped the condition added elsewhere) |
-| P2-150 | reopening Filters rewrites '' / numeric-looking / quoted values | **closed B4** (re-tested first: T4c had fixed numeric-looking strings and decimals; `''`, blanks and quoted text still broke): values are written back the way a person types them (`asTyped`), so reopening gives back exactly the filter. `test/filter-editor.test.ts` "reopening a filter gives back exactly the filter" (red before on 3 of 5) |
+| P2-150 | reopening Filters rewrites '' / numeric-looking / quoted values | **closed B4, reworked in the cleanup (USER 2026-09-28: stored values)**: B4 made the display text round-trip (quoting `''` and quoted text); now a condition read from the cube keeps its STORED value and publishes it exactly while untouched -- only an edited condition's text is read. `test/filter-editor.test.ts` (both the round trip and the edited/moved cases) |
 | P2-152 | a serializer refusal throws from compile: the column editor hangs, Apply silently does nothing | **closed B4**: a refusal while BUILDING the queries is returned (`{refusal}`, no query to show); other failures stay failures and are reported (column editor, Properties Apply). `test/cube-transactions.test.ts` + `test/column-editor.test.ts` "a compile that FAILS" (red before: a rejected promise; "Compiling…" forever) |
 | P2-169 | an Apply that also changes root aggregation / expand level loses its row, pivot and sort edits | **fixed by B1b** (86bc9f06e: the Apply is one transaction, tree included); pinned in B1c by "a Properties Apply is ONE transaction" (lands and refuses whole) — passes on B1b's code, not re-run against the code before it |
 | P2-170 | edits made while an Apply runs are recorded as applied | **closed B4**: the editor records what it SENT, and ignores Apply while one runs. `test/editors-live.test.ts` (red before: a second Apply ran; the edit made meanwhile never reached the cube) |
@@ -254,3 +254,37 @@ controller, and B5 and B6 have landed — not before.
   becoming a second owner again.
 - The transaction rules change what the user sees on a refusal (both changes undone, said so): a
   product behaviour, recorded here, not an accident of the refactor.
+
+## 6. After the leg: its own audit, and the cleanup (2026-09-28)
+
+The leg's self-audit (asked by the user: hacks, shortcuts, smells, duplication, left-behind code)
+found, and this cleanup fixed:
+
+- **P2-110 was half fixed** (see §2): the menu's facts and kinds and the formats' kinds read the
+  pending state. Fixed; the row corrected.
+- **The title bar was rebuilt on every state event** (a query starting included): now only when
+  what it shows changes (its title, its folds). Test, red with the old rebuild put back.
+- **P2-150 was a text-encoding patch**: replaced by stored values (user's call).
+- **P2-144 keeps "OK twice"** (user's call: fine for now).
+- **Organisation**: the generic owner is `src/state-owner.ts` (with the one `DEFAULT_HISTORY_LIMIT`,
+  also Settings' default and Ad Hoc's), the cube's rules stay in `src/cube-state.ts`; one test
+  `Gate` (`test/gate.ts`) under the app fixture's engine and Ad Hoc's source; the app-level tests
+  split by concern over one fixture (`test/cube-fixture.ts`: transactions, lifecycle, editors,
+  Ad Hoc shell); the Ad Hoc status bar shares the cube's builder.
+- **An overtaken file open leaves nothing**: `forgetUpload` drops its table and file bytes (unless
+  a newer open or the cube on screen reads that name).
+- **Host rules out of the demo page**: `src/host.ts` (`TabWork`, `mayLeave`, `Latest`), tested; the
+  page uses them.
+
+Still true, recorded: the Properties editor merges at Apply rather than following live changes
+while open; column editors re-check on every landed view; query keys are JSON of the state
+(re-planning Ad Hoc's queries) -- unmeasured; the guardrail is a text scan of the app and the
+controller; the page's warehouse wiring is reviewed, not driven (no warehouse in the harness);
+`tools/ci-watch.sh` reads the GitHub API anonymously and reports "done" when rate-limited
+(not this leg's file: reported, not changed).
+
+The cleanup's proofs: one run of `verify_features` came back 164/170 with its failure messages
+lost (the wrapper filtered them -- now kept whole); three full reruns with no change were
+170/170. Recorded as an UNEXPLAINED intermittent failure, not reproduced -- not as fixed. The
+suspect to check first if it returns: the title bar no longer rebuilt per event, so a menu that
+used to close under a running query now stays open.

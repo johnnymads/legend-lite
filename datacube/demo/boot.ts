@@ -18,7 +18,8 @@ import {
 import type { Planner } from '../src/cube.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { mountRemote } from '../src/remote.ts';
-import { formatOf, ingestFile } from '../src/upload.ts';
+import { forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
+import { Latest, TabWork, mayLeave } from '../src/host.ts';
 import {
   definitionText,
   fileSource,
@@ -398,8 +399,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
    * opened file lives only in this tab's database; a warehouse session only in memory; unsaved
    * changes). Asked before leaving the page and before switching plane (P2-337).
    */
-  const work: (() => string | undefined)[] = [];
-  const workInTab = (): string | undefined => work.map((w) => w()).find((w) => w !== undefined);
+  const work = new TabWork();
   /** Set once the person has agreed to leave: the browser's own question is not asked twice. */
   let leaving = false;
 
@@ -490,8 +490,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // the life of the project. The choice is still which bundle
         // the page loads; this only saves knowing the file names.
         if (PLANES.some((plane) => plane.id === item.id)) {
-          const lost = workInTab();
-          if (lost && !window.confirm(`Switching plane loads another page: ${lost} will be lost. Switch anyway?`)) return;
+          if (!mayLeave(work, (q) => window.confirm(q), 'Switching plane loads another page')) return;
           leaving = true;
         }
         goToPlane(item.id);
@@ -655,7 +654,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         whNote.classList.toggle('bad', bad);
         whNote.textContent = text;
       };
-      work.push(() => (session ? `the warehouse session (${session.principal})` : undefined));
+      work.add(() => (session ? `the warehouse session (${session.principal})` : undefined));
       const whConnect = must('whconnect') as HTMLButtonElement;
       whConnect.addEventListener('click', () => {
         void (async () => {
@@ -785,11 +784,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       library?.sync();
     };
     // Leaving the page with unsaved changes asks, the browser's way.
-    work.push(() => (dirty() ? 'unsaved changes' : undefined));
-    work.push(() => (current.source && !current.source.sample
+    work.add(() => (dirty() ? 'unsaved changes' : undefined));
+    work.add(() => (current.source && !current.source.sample
       ? `the file opened in this tab (${current.source.name})` : undefined));
     window.addEventListener('beforeunload', (event) => {
-      if (leaving || !workInTab()) return;
+      if (leaving || work.what() === undefined) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -798,7 +797,9 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      * Read a file into this tab and build a cube over it: a fresh one, or -- `saved` -- a
      * saved cube reconciled with what the file holds NOW.
      */
-    let opens = 0;
+    const opens = new Latest();
+    /** The table the newest open reads: an overtaken open never drops it. */
+    let latestTable = '';
     async function openFile(
       file: File,
       how: {
@@ -814,16 +815,25 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       }
       // LATEST WINS: each open takes a number (once it is going ahead), and one overtaken by a
       // newer open stops at its next wait, before it touches the model or the cube (P2-330).
-      const opening = (opens += 1);
+      const newest = opens.start();
+      latestTable = tableNameOf(file.name);
       note.classList.remove('bad');
       note.textContent = `reading ${file.name}…`;
       try {
         const opened = await ingestFile(engine, db, file, local.fromCatalog);
-        if (opening !== opens) return [];
+        if (!newest()) {
+          // overtaken: nothing of this open is kept -- unless a newer open, or the cube on
+          // screen, reads a table of the same name
+          const mine = tableNameOf(file.name);
+          if (mine !== latestTable && (!current.source || tableNameOf(current.source.name) !== mine)) {
+            await forgetUpload(engine, db, file.name).catch(() => {});
+          }
+          return [];
+        }
         local.use(opened.model, opened.runtime);
         const columns = await sourceColumns(planner, opened.source);
         const source = await fileSource(file, formatOf(file.name), columns, how.sample);
-        if (opening !== opens) return [];
+        if (!newest()) return [];
         const saved = how.saved;
         let snap: CubeSnapshot;
         let config: CubeConfiguration;

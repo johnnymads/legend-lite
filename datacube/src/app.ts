@@ -386,6 +386,8 @@ export class CubeApp {
    * holds that nothing outside cube-state.ts assigns cube state.
    */
   readonly #owner: CubeStateOwner;
+  /** What the title bar was last built from (`#paintState`). */
+  #chrome = '';
   /** Stops the owner's events reaching this app: see `dispose`. */
   readonly #unsubscribe: () => void;
   /** Set by `dispose`: nothing reaches the host, the screen or a window after it. */
@@ -811,7 +813,16 @@ export class CubeApp {
     // appearance it was built with until this existed.
     this.#grid.setAppearance(this.#config.appearance, toColumnAppearance(this.#config));
     this.#refreshToolPanel();
-    this.#renderChrome();
+    // The title bar is REBUILT only when what it shows changed (its title, its folds): it was
+    // rebuilt on every event, a query starting included, which could close its own menu.
+    const c = this.#config;
+    const chrome = JSON.stringify([c.reportTitle ?? null, c.showDragZones, c.showTitleBar]);
+    if (chrome !== this.#chrome) {
+      this.#chrome = chrome;
+      this.#renderChrome();
+    } else {
+      this.#applyChrome();
+    }
   }
 
   // -- assembly ------------------------------------------------------
@@ -841,8 +852,8 @@ export class CubeApp {
    * column's kind is the one declared in its editor; the
    * configuration's override is for source columns.
    */
-  #kindOf(column: string): ColumnKind | undefined {
-    const c = rowColumns(this.#snapshot).find((x) => x.name === column);
+  #kindOf(column: string, snapshot: CubeSnapshot = this.#snapshot): ColumnKind | undefined {
+    const c = rowColumns(snapshot).find((x) => x.name === column);
     if (!c) return undefined;
     return c.derived
       ? c.kind
@@ -858,7 +869,7 @@ export class CubeApp {
     const view = this.#view;
     if (!view) return;
     // and by its KIND: a numeric dimension reads as written (no thousands separators)
-    const kinds = new Map(rowColumns(this.#snapshot).map((c) => [c.name, c.kind]));
+    const kinds = new Map(rowColumns(this.#shown).map((c) => [c.name, c.kind]));
     const byLeaf = leafFormats(this.#config, view.columns.leaves.map((leaf) => ({
       ...leaf, type: view.rows.columns[leaf.index]?.type, kind: kinds.get(leaf.name),
     })));
@@ -1083,8 +1094,6 @@ export class CubeApp {
     // Ad Hoc owns the bar while it is on (`#renderAdHocStatus`)
     if (this.#adhoc) return;
     const doc = this.#doc;
-    const bar = this.#els.stats;
-    bar.replaceChildren();
 
 // WHAT YOU CAN DO ON THE LEFT, WHAT IS TRUE ON THE RIGHT.
     //
@@ -1097,11 +1106,7 @@ export class CubeApp {
     // Both editors were reachable only through the grid's
     // right-click menu, two levels down, and a person looking for
     // them did not find them.
-    const left = doc.createElement('div');
-    left.className = 'dc-status-actions';
-    const right = doc.createElement('div');
-    right.className = 'dc-status-readout';
-    bar.append(left, right);
+    const { left, right } = this.#statusFrame();
 
     const properties = doc.createElement('button');
     properties.type = 'button';
@@ -1137,12 +1142,9 @@ export class CubeApp {
     // the fuller one in the wrong place. The cube states it here
     // itself, so a host gets a timing readout without wiring one,
     // and `onStatus` still fires for hosts that want their own.
-    const rows = doc.createElement('div');
-    rows.className = 'dc-status-rows dc-status-timing';
-    rows.textContent = timingText(view, cols);
+    const rows = this.#readout(right, timingText(view, cols));
     rows.title = 'Rows and columns in the result, and how long the '
       + 'query took.';
-    right.append(rows);
 
     if (view.truncated.length > 0 && this.#config.showTruncationWarning) {
       right.append(this.#statusSeparator());
@@ -1160,12 +1162,37 @@ export class CubeApp {
     this.#statsSlot = stats;
     this.#renderSelectionStats();
 
-    // Upstream's task progress: a bar while anything runs, and what is
-    // running in its tooltip. The same element every rebuild, so a
-    // task that outlives a view keeps showing.
-    right.append(this.#statusSeparator(), this.#progress);
+    this.#statusTail(right);
+  }
 
-    // The host's own readout, last.
+  /** The status bar emptied, and its two sides: what you can do, what is true. */
+  #statusFrame(): { left: HTMLElement; right: HTMLElement } {
+    const bar = this.#els.stats;
+    bar.replaceChildren();
+    const left = this.#doc.createElement('div');
+    left.className = 'dc-status-actions';
+    const right = this.#doc.createElement('div');
+    right.className = 'dc-status-readout';
+    bar.append(left, right);
+    return { left, right };
+  }
+
+  /** The row and column readout, at the start of the right side. */
+  #readout(right: HTMLElement, text: string): HTMLElement {
+    const rows = this.#doc.createElement('div');
+    rows.className = 'dc-status-rows dc-status-timing';
+    rows.textContent = text;
+    right.append(rows);
+    return rows;
+  }
+
+  /**
+   * The end of every status bar: upstream's task progress (a bar while anything runs, what is
+   * running in its tooltip; the same element every rebuild, so a task that outlives a view
+   * keeps showing), then the host's own readout.
+   */
+  #statusTail(right: HTMLElement): void {
+    right.append(this.#statusSeparator(), this.#progress);
     this.#adoptHostStatus();
   }
 
@@ -1175,18 +1202,9 @@ export class CubeApp {
    * it (P2-287), and the counts were the hidden cube's (P2-290).
    */
   #renderAdHocStatus(rows: number, cols: number, stale: boolean): void {
-    const bar = this.#els.stats;
-    bar.replaceChildren();
-    const left = this.#doc.createElement('div');
-    left.className = 'dc-status-actions';
-    const right = this.#doc.createElement('div');
-    right.className = 'dc-status-readout';
-    bar.append(left, right);
-    const readout = this.#doc.createElement('div');
-    readout.className = 'dc-status-rows dc-status-timing';
-    readout.textContent = `${rows.toLocaleString()} rows \u00d7 ${cols} cols${stale ? ' (not refreshed)' : ''}`;
-    right.append(readout, this.#statusSeparator(), this.#progress);
-    this.#adoptHostStatus();
+    const { right } = this.#statusFrame();
+    this.#readout(right, `${rows.toLocaleString()} rows \u00d7 ${cols} cols${stale ? ' (not refreshed)' : ''}`);
+    this.#statusTail(right);
   }
 
   /** A task on the status bar's progress, until the returned end is called. */
@@ -1573,13 +1591,14 @@ export class CubeApp {
         if (column !== undefined && column !== TREE_COLUMN && meta !== undefined
           && !meta.isDetail && (this.#shown.rows.length > 0 || meta.isTotal)
           && !this.#shown.rows.includes(column)
-          && (this.#kindOf(column) === 'measure' || value === null)) {
+          && (this.#kindOf(column, this.#shown) === 'measure' || value === null)) {
           value = undefined;
         }
       }
       // FROM A HEADER, Properties... opens on that column (its measure,
       // for a pivot result or a pivot total), as upstream's does.
-      const facts = column !== undefined ? this.#columnFacts(column) : {};
+      // the facts of the rows ON SCREEN, as everything this menu reads (P2-110)
+      const facts = column !== undefined ? this.#columnFacts(column, this.#shown) : {};
       const onHeader = el.closest('.dc-th') !== null;
       const propertiesColumn = onHeader && column !== undefined
         && column !== TREE_COLUMN
@@ -1598,7 +1617,7 @@ export class CubeApp {
         hasExpanded: this.#owner.current.tree.openPaths.length > 0,
         hasHeatmap:
           column !== undefined && this.#heatmapFor(column) !== undefined,
-        canGroup: column === undefined || this.#isDimension(column),
+        canGroup: column === undefined || this.#kindOf(column, this.#shown) === 'dimension',
         ...(this.#config.pivotMeasuresFirst ? { measuresFirst: true } : {}),
         // A host mailer, or upstream's way: a .eml draft to download.
         canEmail: this.#options.email !== undefined
@@ -1610,7 +1629,7 @@ export class CubeApp {
         ...(column !== undefined && isPivotTotalColumn(column)
           ? { pivotTotal: true }
           : {}),
-        ...(column !== undefined && this.#kindOf(column) !== undefined
+        ...(column !== undefined && this.#kindOf(column, this.#shown) !== undefined
           ? { extendable: true }
           : {}),
         ...(column !== undefined ? calcStageOf(this.#shown, column) : {}),
@@ -2008,7 +2027,7 @@ export class CubeApp {
    * whether it is kept out of the pivot, and whether its width is
    * fixed (Minimize leaves a fixed width alone, as upstream does).
    */
-  #columnFacts(column: string): {
+  #columnFacts(column: string, snapshot: CubeSnapshot): {
     pivotBase?: string;
     isMeasure?: boolean;
     excludedFromPivot?: boolean;
@@ -2020,13 +2039,13 @@ export class CubeApp {
       : undefined;
     const base = measure === undefined
       ? column
-      : (this.#snapshot.measures.find((m) => m.name === measure)?.column
+      : (snapshot.measures.find((m) => m.name === measure)?.column
         ?? measure);
     const excluded = columnConfig(this.#config, base).excludedFromPivot === true
-      || this.#snapshot.columns.some((c) => c.name === base && c.excludedFromPivot);
+      || snapshot.columns.some((c) => c.name === base && c.excludedFromPivot);
     return {
       ...(measure !== undefined ? { pivotBase: base } : {}),
-      ...(this.#kindOf(base) === 'measure' ? { isMeasure: true } : {}),
+      ...(this.#kindOf(base, snapshot) === 'measure' ? { isMeasure: true } : {}),
       ...(excluded ? { excludedFromPivot: true } : {}),
       ...(columnConfig(this.#config, column).widthMode === 'fixed'
         ? { fixedWidth: true }

@@ -9,16 +9,8 @@ import { describe, it } from 'node:test';
 import { DEFAULT_CONFIGURATION } from '../src/config.ts';
 import type { CubeView } from '../src/cube.ts';
 import { STALE, type Stale } from '../src/epoch.ts';
-import {
-  CubeStateOwner,
-  StateOwner,
-  UndoStack,
-  type StateRules,
-  queryKey,
-  stateKey,
-  type CubeState,
-  type OwnerEvent,
-} from '../src/cube-state.ts';
+import { CubeStateOwner, queryKey, stateKey, type CubeState, type OwnerEvent } from '../src/cube-state.ts';
+import { StateOwner, UndoStack, type StateRules } from '../src/state-owner.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { TreeState } from '../src/tree.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';

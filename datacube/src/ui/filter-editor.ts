@@ -275,6 +275,17 @@ export interface DraftCondition {
   /** The values of a list operand (`in` / `not in`), one per entry. */
   readonly items?: readonly string[] | undefined;
   readonly rightColumn: string;
+  /**
+   * The value the cube HAS, for a condition read from its filter, with what it was shown as.
+   * While the condition is untouched (same column, text and items) this value is published
+   * exactly -- never its text read back, which lost '' and quoted values (P2-150).
+   */
+  readonly stored?: {
+    readonly column: string;
+    readonly text: string;
+    readonly items?: readonly string[] | undefined;
+    readonly value: FilterValue | readonly FilterValue[];
+  } | undefined;
 }
 
 export interface DraftGroup {
@@ -345,10 +356,24 @@ function typedOrText(text: string, type: string | undefined): FilterValue | null
 /** Column types, by name, for the conversion below. Absent: untyped. */
 type TypeOf = (column: string) => string | undefined;
 
+/** The stored value, when the condition is as it was read and the operator still takes it. */
+function untouched(d: DraftCondition, kind: ReturnType<typeof operandKind>): FilterValue | readonly FilterValue[] | undefined {
+  const st = d.stored;
+  if (!st || st.column !== d.column || st.text !== d.text) return undefined;
+  const sameItems = (st.items ?? []).length === (d.items ?? []).length
+    && (st.items ?? []).every((x, i) => x === d.items?.[i]);
+  if (!sameItems) return undefined;
+  const isList = Array.isArray(st.value);
+  if ((kind === 'list') !== isList || (kind !== 'list' && kind !== 'single')) return undefined;
+  return st.value;
+}
+
 function conditionOf(d: DraftCondition, typeOf?: TypeOf):
 FilterCondition | null {
   if (!d.column) return null;
   const kind = operandKind(d.operator);
+  const kept = untouched(d, kind);
+  if (kept !== undefined) return { kind: 'condition', column: d.column, operator: d.operator, value: kept } as FilterCondition;
   const type = typeOf?.(d.column);
   const one = (text: string): FilterValue | null => typedOrText(text, type);
 
@@ -574,17 +599,18 @@ export function fromFilterNode(node: FilterNode): DraftNode {
     return { ...inner, not: !inner.not } as DraftNode;
   }
   if (node.kind === 'condition') {
+    const text = Array.isArray(node.value) ? '' : textOf(node.value);
+    const items = Array.isArray(node.value) ? (node.value as readonly FilterValue[]).map(itemText) : undefined;
     return {
       kind: 'condition',
       id: nextId(),
       not: false,
       column: node.column,
       operator: node.operator,
-      text: Array.isArray(node.value) ? '' : textOf(node.value),
-      ...(Array.isArray(node.value)
-        ? { items: (node.value as readonly FilterValue[]).map(itemText) }
-        : {}),
+      text,
+      ...(items ? { items } : {}),
       rightColumn: node.rightColumn ?? '',
+      ...(node.value !== undefined ? { stored: { column: node.column, text, items, value: node.value } } : {}),
     };
   }
   return {
@@ -627,26 +653,11 @@ function itemText(value: FilterValue): string {
   return scalarText(value);
 }
 
+/** A stored value as it is SHOWN; what is published while untouched is the value itself (`stored`). */
 function scalarText(value: FilterValue): string {
   if (isRelativeDate(value)) return `${value.relative}()`;
   if (isJsonValue(value)) return value.json;
-  return typeof value === 'string' ? asTyped(value) : String(value);
-}
-
-/**
- * A text value written the way a person TYPES it, so reading it back
- * (`parseTyped`) gives back exactly it. Typed text is trimmed, empty
- * means no value, and quotes around it are stripped -- so '' reopened as
- * nothing (the condition dropped), and "N/A" in quotes lost them; the
- * next Apply published the damaged filter (P2-150). Such a value is
- * wrapped in the quote it does not start with: '' , '  ', '"N/A"'.
- */
-function asTyped(value: string): string {
-  const t = value.trim();
-  const quoted = t.length > 1
-    && ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"')));
-  if (t !== '' && !quoted) return value;
-  return t.startsWith("'") ? `"${value}"` : `'${value}'`;
+  return String(value);
 }
 
 export interface FilterEditorOptions {

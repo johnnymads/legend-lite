@@ -15,7 +15,7 @@
 // flight (P2-270).
 
 import { STALE } from '../epoch.ts';
-import { StateOwner, type StateOutcome, type StateRules } from '../cube-state.ts';
+import { DEFAULT_HISTORY_LIMIT, StateOwner, type StateOutcome, type StateRules } from '../state-owner.ts';
 import type { ResultTable } from '../result.ts';
 import type { LevelScope } from '../query.ts';
 import type { CubeSnapshot } from '../snapshot.ts';
@@ -52,7 +52,6 @@ export type Run = (
   scope: LevelScope | undefined,
 ) => Promise<ResultTable>;
 
-const HISTORY = 100;
 
 /** A grid's answers: the view placed from them, and the answers, to place again. */
 interface Answers {
@@ -84,7 +83,7 @@ export class AdHocSession {
     this.cube = cube;
     this.#run = run;
     this.#owner = new StateOwner(grid ?? initialGrid(cube.outline), (g) => this.#query(g), rules(cube), {
-      historyLimit: options.historyLimit ?? HISTORY,
+      historyLimit: options.historyLimit ?? DEFAULT_HISTORY_LIMIT,
       abort: () => { this.#seq += 1; },
     });
   }

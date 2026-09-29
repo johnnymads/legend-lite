@@ -23,6 +23,8 @@ import {
 export interface DuckDbFiles {
   registerFileText(name: string, text: string): Promise<void>;
   registerFileBuffer(name: string, buffer: Uint8Array): Promise<void>;
+  /** Let go of a registered file's bytes (DuckDB-WASM's `dropFile`). */
+  dropFile?(name: string): Promise<unknown>;
 }
 
 export type UploadFormat = 'csv' | 'parquet' | 'json';
@@ -73,6 +75,17 @@ export function tableNameOf(fileName: string): string {
  * there `DESCRIBE` is the only thing that says what the columns are
  * -- guessing from the file would be a second, worse sniffer.
  */
+/**
+ * An upload that was overtaken before its cube was built (a newer open won): its table and its
+ * file's bytes go, so an open abandoned half-way leaves nothing held in the tab. The caller
+ * makes sure no cube reads a table of the same name.
+ */
+export async function forgetUpload(engine: QueryEngine, db: DuckDbFiles, fileName: string): Promise<void> {
+  const table = tableNameOf(fileName);
+  await engine.run(`DROP TABLE IF EXISTS ${dq(table)}`, 0);
+  await db.dropFile?.(`upload_${table}.${formatOf(fileName)}`);
+}
+
 export async function ingestFile(
   engine: QueryEngine,
   db: DuckDbFiles,

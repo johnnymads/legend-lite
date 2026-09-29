@@ -11,32 +11,16 @@ import { buildCube } from '../src/adhoc/outline.ts';
 import { AdHocSession, type Run } from '../src/adhoc/session.ts';
 import { FormatterCache } from '../src/format.ts';
 import { fakeRun, SNAPSHOT } from './adhoc-fixture.ts';
+import { Gate } from './gate.ts';
 
-/** The fixture's source, which the test can make FAIL or HOLD. */
-class Source {
-  calls: string[] = [];
-  fail = false;
-  hold = false;
-  /** Hold every call after this many more (so a zoom's member lookup answers and its step waits). */
-  holdAfter: number | null = null;
-  #n = 0;
-  readonly held: (() => void)[] = [];
-  readonly #inner = fakeRun(this.calls);
+/** The fixture's source, through a gate the test holds or fails. */
+class Source extends Gate {
+  readonly asked: string[] = [];
+  readonly #inner = fakeRun(this.asked);
   readonly run: Run = async (snapshot, scope) => {
-    this.#n += 1;
-    if (this.holdAfter !== null && this.#n > this.holdAfter) this.hold = true;
-    if (this.hold) await new Promise<void>((r) => this.held.push(r));
-    if (this.fail) throw new Error('the source said no');
+    await this.pass();
     return this.#inner(snapshot, scope);
   };
-  get count(): number {
-    return this.#n;
-  }
-  release(): void {
-    this.holdAfter = null;
-    this.hold = false;
-    for (const r of this.held.splice(0)) r();
-  }
 }
 
 const cube = () => buildCube(SNAPSHOT, [{ name: 'Time', columns: ['year', 'quarter'] }]);
@@ -53,12 +37,12 @@ describe('an Ad Hoc step is one transaction (B5a)', () => {
     const s = new AdHocSession(cube(), src.run);
     await s.zoomIn('Time', []);
     const depth = s.canUndo;
-    src.fail = true;
+    src.fail = 'the source said no';
     await assert.rejects(() => s.setPov('region', ['EMEA']));
     assert.deepEqual(s.grid.pov['region'], [], 'the POV did not move');
     assert.deepEqual(values(s), [75, 35, 40], 'the numbers on screen are the grid\'s');
     assert.equal(s.canUndo, depth);
-    src.fail = false;
+    src.fail = null;
     await s.setPov('region', ['EMEA']);
     assert.deepEqual(values(s), [30, 30], 'a retry queries the new POV');
   });
@@ -78,12 +62,12 @@ describe('an Ad Hoc step is one transaction (B5a)', () => {
     const s = new AdHocSession(cube(), src.run);
     await s.zoomIn('Time', []);
     await s.setPov('region', ['EMEA']);
-    src.holdAfter = src.count + 1; // the member lookup answers; the step's queries wait
+    src.holdAfter = src.calls + 1; // the member lookup answers; the step's queries wait
     const zoom = s.zoomIn('Time', ['2021']);
     await tick();
     assert.ok(src.held.length > 0, 'the step is running');
     await s.setOptions({ suppressMissingRows: false });
-    src.release();
+    src.releaseAll();
     await zoom;
     await tick();
     assert.equal(s.grid.options.suppressMissingRows, false);
@@ -96,10 +80,10 @@ describe('an Ad Hoc step is one transaction (B5a)', () => {
     await s.refresh();
     await s.setOptions({ navigateWithoutData: true });
     await s.zoomIn('Time', []);
-    const asked = src.calls.length;
+    const asked = src.asked.length;
     await s.undo();
     await s.redo();
-    assert.equal(src.calls.length, asked, 'no query');
+    assert.equal(src.asked.length, asked, 'no query');
   });
 });
 
@@ -189,13 +173,12 @@ describe('Ad Hoc on screen (B5a)', () => {
     const mode = mount(src);
     await mode.refresh();
     src.hold = true;
-    src.fail = true;
+    src.fail = 'the source said no';
     const step = mode.refresh();
     await tick();
     const said = statuses.length;
     mode.destroy();
-    src.hold = false;
-    src.release();
+    src.releaseAll();
     await step;
     await tick();
     assert.equal(statuses.length, said, `nothing said after exit: ${statuses.slice(said).join(' | ')}`);

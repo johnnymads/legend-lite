@@ -11,7 +11,8 @@ import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { sampleById, sampleFileName } from '../src/samples.ts';
-import { ingestFile, type DuckDbFiles } from '../src/upload.ts';
+import { forgetUpload, ingestFile, type DuckDbFiles } from '../src/upload.ts';
+import type { QueryEngine } from '../src/engine.ts';
 import { build, plannerFor } from './catalog-builder.ts';
 import {
   asc, col as column, derive, fn, from, lambda, lit, to, toMany, type, type ValueSpecification,
@@ -197,5 +198,20 @@ describe('ingestFile with JSON', () => {
     assert.deepEqual(col('first_event'), docs.map((d) => d.shipments[0]!.events[0]!.status));
     assert.deepEqual(col('billing_city'), docs.map((d) => d.customer.addresses[0]!.city));
     assert.deepEqual(col('first_sizes').map(Number), docs.map((d) => d.items[0]!.attributes.sizes.length));
+  });
+});
+
+describe('an upload overtaken before it was used is forgotten', () => {
+  it('drops its table and lets go of its file bytes', async () => {
+    const sql: string[] = [];
+    const dropped: string[] = [];
+    const engine = { run: async (q: string) => { sql.push(q); return { columns: [], rowCount: 0 }; } } as unknown as QueryEngine;
+    await forgetUpload(engine, {
+      registerFileText: async () => {},
+      registerFileBuffer: async () => {},
+      dropFile: async (name) => { dropped.push(name); },
+    }, 'big trades.csv');
+    assert.deepEqual(sql, ['DROP TABLE IF EXISTS "big_trades"']);
+    assert.deepEqual(dropped, ['upload_big_trades.csv']);
   });
 });

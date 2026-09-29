@@ -50,7 +50,12 @@ _EXTRA_DATA = {
     # the in-memory source the Ad Hoc Analysis tests query
     "adhoc-session": ["test/adhoc-fixture.ts"],
     "adhoc-mode": ["test/adhoc-fixture.ts"],
-    "adhoc-transactions": ["test/adhoc-fixture.ts"],
+    "adhoc-transactions": ["test/adhoc-fixture.ts", "test/gate.ts"],
+    # the cube as a person meets it, over a gated engine (Leg B's app-level tests)
+    "cube-transactions": ["test/cube-fixture.ts", "test/gate.ts"],
+    "cube-lifecycle": ["test/cube-fixture.ts", "test/gate.ts"],
+    "cube-editors-app": ["test/cube-fixture.ts", "test/gate.ts"],
+    "cube-adhoc-shell": ["test/cube-fixture.ts", "test/gate.ts"],
     "guardrails": glob(["demo/**/*.ts"]) + [
         "test/wasm-differential/compare.ts",
         "//wasm:differential",
