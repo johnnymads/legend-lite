@@ -105,3 +105,28 @@ junit_test(
     ],
 )
 
+# THE LAYERS OF //core (execution plan rule 0.12): each product library's direct dependencies, as Bazel resolves
+# them, one genquery per target; CoreLayeringTest compares them with core-layers.txt.
+_CORE_LAYERS = [
+    "spi", "cache", "values", "error", "lexer", "sql", "protocol", "model", "parser", "builtin", "platform",
+    "compiler_element_type", "sql_dialect", "compiler", "normalizer", "lineage", "validation", "lowering", "plan",
+    "resolver", "exec", "probe", "testdatagen", "driver", "ide", "test", "server_lib",
+]
+
+[genquery(
+    name = "layer_" + t,
+    expression = "labels(deps, //core:%s)" % t,
+    scope = ["//core:" + t],
+) for t in _CORE_LAYERS]
+
+junit_test(
+    name = "core_layering_test",
+    size = "small",
+    srcs = ["CoreLayeringTest.java"],
+    data = ["core-layers.txt"] + [":layer_" + t for t in _CORE_LAYERS],
+    select = ["--select-class=com.legend.tools.deps.CoreLayeringTest"],
+    deps = [
+        "//testing",
+        "@maven_test//:org_junit_jupiter_junit_jupiter_api",
+    ],
+)

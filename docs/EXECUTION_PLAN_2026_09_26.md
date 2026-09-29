@@ -40,6 +40,11 @@ that measures it prints it into GATES.md — this page carries no hand-typed cou
     proposes a scoped form.
 11. **A confirmed defect whose fix belongs to a later wave** is pinned as an expected-failure test naming its owner item
     (W0.0); the test flips when the owner lands.
+12. **Every stage is its own Bazel target, with only the dependencies it should have** (ruled 2026-09-29, the user). A
+    rewrite is done only when its stage is carved out as a target whose direct dependencies match the target map (§1b).
+    Java's strict dependencies stop code importing an unlisted target; `//tools/deps:core_layering_test` stops the lists
+    growing unnoticed: it compares Bazel's own graph (a genquery per target) with `tools/deps/core-layers.txt`, exactly,
+    so a new edge fails and a removed one must be recorded. Baseline 2026-09-29, before any carve-out.
 
 ## 1. The target (what "expert" means here)
 
@@ -65,6 +70,32 @@ architecture is a conventional production front end and a query compiler back en
 Cross-cutting: `Diagnostic(code, severity, phase, span, args)` in a sink from every stage; a phase verifier asserting
 each IR's post-conditions after every pass in tests; per-pass golden dumps; the reference lane; the corpus with rosters by
 (name, failure class); a per-test product-SQL snapshot; a query fuzzer with DuckDB-equals-H2 as oracle.
+
+## 1b. The target map (rule 0.12)
+
+Where each stage ends up, what it may depend on, and the wave that carves it out. Today's edges are in
+`tools/deps/core-layers.txt`; each carve-out moves them toward this table.
+
+| target | contents | may depend on | carved out in |
+|---|---|---|---|
+| `base`, `json` | shared basics | nothing | exists |
+| `syntax` | lexer, parser, the syntax tree (today `lexer`, `parser`, `protocol`, the parse records of `model`) | base, json, errors | W1.9 |
+| `sql`, `sql_dialect` | the SQL tree; the per-database printers | base; the printers `sql` | done (W0.2(e)) |
+| `catalog` | platform declarations and ids (today `builtin`, `platform`) | base, ids, syntax types; never the parser at run time | W2.1 |
+| `resolved` | resolved declarations and `ResolvedExpr` | base, errors, ids, syntax types | W2.3a |
+| `binder` | name lookup (today `NameResolver` and friends in `compiler`) | syntax, catalog, resolved | W2.3a |
+| `elements` | building declarations (today `compiler/element`) | resolved, types | W2.3a |
+| `typed` | the typed tree's types (today `compiler/spec/typed`) | types, ids | W3 |
+| `typer` | type checking (today `compiler/spec`) | resolved, elements, typed, catalog | W3 |
+| `mappings` | mapping preparation (today `normalizer`) | typer, typed, resolved; not the binder's internals | W4.1 |
+| `inliner` | one substitution engine | typed | W4.2 |
+| `store` | classes to tables (today `resolver`) | typed, mappings, its output types; **never** `lowering` or `plan` | W4.3 |
+| `lowering` | building the SQL tree | the store's output, typed, sql | W5 |
+| `plan`, `runner`, `server`, `lineage`, `testdatagen` | planning, running, the edges | the stages they drive | W6 |
+
+Today's violations of the map, visible in the baseline: `resolver` depends on `lowering` and `plan`; `normalizer`,
+`lineage`, `validation`, `lowering` and `plan` depend on the whole `compiler`; `builtin` depends on `parser`; `parser`
+depends on `model` because it converts syntax into semantic records.
 
 ## 2. Decisions
 
@@ -105,7 +136,8 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 ## 4. The waves
 
 Each item is one push unless it says otherwise. Estimates are working sessions, judgment, labelled as such. Every item
-names its gate.
+names its gate. Every rewrite also ends by carving its stage out as a Bazel target (rule 0.12): the wave that owns a
+row of §1b is not done until that target exists and its line in `core-layers.txt` matches the map.
 
 ### W0 — Now: safety, confirmed defects, guard room (≈3–5 sessions)
 - **W0.0 Expected-failure pins** (rule 0.11): a small test annotation or register naming the owner item, so a confirmed
@@ -157,7 +189,7 @@ names its gate.
   the claims `also` column (a generator output change, W7). Gate: the chain green; the GATES entry lists
   each guard with the reason its invariant is not needed or is held elsewhere.
 
-### W1 — Gates and foundations (≈9–14 sessions). Everything later is judged by these. Re-cut order: W1.6 first.
+### W1 — Gates and foundations (≈10–15 sessions). Everything later is judged by these. Re-cut order: W1.6 first.
 - **W1.6 The typer split along its real seams** [W0-W1 #1] (the 39 checkers are already separate files): the pre-dispatch
   desugars (`Typer.java:700-1310`) into a desugar pass; the overload machinery (`applyGeneric`/`checkGeneric`/
   `checkWithDeferred`, `:1465-2090`) into its own class; `accessProperty` (`:2951-3192`) beside it. Pure moves. Gate: the
@@ -192,6 +224,10 @@ names its gate.
   `identityHashCode`, `NavReducer.java:63,75`); an injected observer (not the `LL_TMP_SQL` stderr print) records every
   statement's SQL per test per dialect, including `EngineStyleH2`; aliases canonicalized. Refactor slices in W4 and W5
   gate on byte identity; semantic slices gate on a reviewed diff. Needs W0.4.
+- **W1.9 The `syntax` target** (rule 0.12, the first carve-out, and the proof the method works): the parser produces the
+  syntax tree only; the conversion into semantic model records (`model/FromProtocol`, `MappingFromProtocol`, used 25 times
+  in `parser/`) moves to the stage after it; `lexer`, `parser` and the syntax records become one target depending on base,
+  json and errors. Gate: rosters and the parser-equivalence lanes unchanged; `core-layers.txt` updated.
 - **W1.8 The query fuzzer** (moved from W7) [W5-W7 #23] with a register of declared DuckDB/H2 divergences first; the oracle
   W5.2–W5.4 need.
 
@@ -336,20 +372,20 @@ names its gate.
   harness's deps changed [W5-W7 #21].
 
 ### W7 — Close-out (≈2–4 sessions).
-- `//core:compiler` (the cyclic group; `compiler_mid` does not exist) split into per-stage targets; a below-top-level
-  cycle rule [W5-W7 #22].
+- Confirm the target map (§1b) is met: every stage carved out in its own wave (rule 0.12), `core-layers.txt` equal to
+  the map, nothing left in a shared `compiler` target [W5-W7 #22].
 - Each regex guard deleted after the type or verifier that asserts its invariant [W5-W7 #24]: IdentityGuardrailTest
   pattern by pattern after W2.3–W2.8, W4.1, W4.3, W5.1; `STRING_DISPATCH_SITES` with a charter C6.1 amendment;
   VerdictChannelRegisterTest after W6.3 and D7; JavaEvalLedgerTest's residue register after W6.2/W6.3 and an AGENTS.md
   edit.
 
-**Size (judgment, from the H1 readers):** W0 3–5, W1 9–14, W2 15–23, W3 11–18, W4 32–51, W5 10–16, W6 12–20, W7 2–4 —
-roughly **95–150 working sessions**. W4.3 is the largest and least certain.
+**Size (judgment, from the H1 readers):** W0 3–5, W1 10–15, W2 15–23, W3 11–18, W4 32–51, W5 10–16, W6 12–20, W7 2–4 —
+roughly **96–151 working sessions**. W4.3 is the largest and least certain.
 
 ## 5. Order
 Serial; one owner; nothing in flight against the same rosters (rule 0.5).
 1. W0.0, W0.5, W0.2, W0.1, W0.3; W0.4 once D6 is ruled.
-2. W1.6 → W1.1 → W1.2 → W1.4 → W1.3 → W1.5 → W1.7 (needs W0.4) → W1.8.
+2. W1.6 → W1.1 → W1.2 → W1.4 → W1.3 → W1.5 → W1.7 (needs W0.4) → W1.9 → W1.8.
 3. W2.0 (H2, ruled) → W2.0b (D11 census) → W2.1 → W2.2 → W2.3a → W2.3b → W2.4 → W2.5 → W2.6 → W2.7 → W2.9.
 4. W3.1 → W3.2a → W3.2b → W3.3a → W3.3 → W2.8 → W3.5 → W3.6.
 5. W4.0 → W4.4a (D9) → W4.1a → W4.2 (D8) → W4.3 steps 1–6 with W4.1b → W4.3 steps 7–9 (D11) → W4.4b.
