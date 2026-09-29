@@ -127,6 +127,19 @@ class WarehouseServerTest {
     }
 
     @Test
+    void aValidTokenRefreshesAndTheFreshOneWorks() throws Exception {
+        String t = login("alice", "alice-pw");
+        SqlApi.Token fresh = API.token(send(API.refresh(t)));
+        assertEquals("alice", fresh.principal());
+        assertEquals("alice", str(query(fresh.token(), "SELECT system.main.authenticated_user()").get(0).get(0)));
+        String forged = t.substring(0, t.indexOf('.')) + ".AAAA";
+        HttpResult refused = send(API.refresh(forged));
+        assertEquals(401, refused.status());
+        assertTrue(refused.body().contains("AUTH_INVALID"), refused.body());
+        assertEquals(401, send(new HttpCall("POST", "/sql/v1/token/refresh", java.util.Map.of(), "")).status());
+    }
+
+    @Test
     void everyCallNeedsAValidToken() throws Exception {
         HttpResult noToken = send(new HttpCall("POST", "/sql/v1/statements",
                 java.util.Map.of("Content-Type", "application/json"), "{\"sql\":\"SELECT 1\"}"));

@@ -11,6 +11,22 @@ of its own (plan rule 0b.16).
 - **Paused while the rebuild runs:** `docs/SERVER_PROGRAM_2026_09_26.md` (its legs are SV0–SV3, not the rebuild's W0–W7),
   the DataCube feature programs (`docs/DATACUBE_*`), NLQ (the untracked `nlq/` directory is not ours; leave it).
 
+## A second line, 2026-09-29: DataCube against the warehouse (the user's ask, rule 5)
+
+In the worktree `legend-lite-dcsnap`, branch `datacube-live-snap`. **Owns:** `datacube/`. **Touches `warehouse/`** (one
+line each, announced here before landing):
+- `server/Identity.java`, `server/WarehouseServer.java`: `POST /sql/v1/token/refresh` (a valid token for a fresh one,
+  never past the sign-in's session limit, 12h default); tokens carry their sign-in time (`principal|expiry|signedInAt`);
+  `--token-key-file` (a key kept across restarts), `--token-minutes`, `--session-hours`; `Config.sessionLimit`.
+- `sqlapi/SqlApiBinding.java`, `sqlapi/NativeBinding.java`: `refresh(token)`. Tests: `IdentityTest` (new),
+  `WarehouseServerTest.aValidTokenRefreshesAndTheFreshOneWorks`.
+
+**Touches CI** (`.github/workflows/gates-run.yml`, `gate.yml`): a `browser` lane, Linux only --
+`//datacube:live_snap_test` and the `browser-ci` harnesses; the other lanes unchanged. `docs/GATES.md`: its row.
+
+Nothing in `core/`, `spec/`, `tools/`. Runs a warehouse (`:9090`) and the DataCube site (`:8000`), idle: stop them before
+a timing (rule 4).
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).

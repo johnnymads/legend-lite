@@ -58,6 +58,9 @@ public interface SqlApiBinding {
 
     Token token(HttpResult result);
 
+    /** A still-valid token for a fresh one, same user; {@link #token} reads the reply. */
+    HttpCall refresh(String token);
+
     HttpCall submit(StatementRequest request, String token);
 
     /** The step after a submit's or a poll's result. */

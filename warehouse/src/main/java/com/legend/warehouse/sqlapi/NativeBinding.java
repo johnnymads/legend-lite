@@ -33,6 +33,11 @@ public final class NativeBinding implements SqlApiBinding {
     }
 
     @Override
+    public HttpCall refresh(String token) {
+        return new HttpCall("POST", "/sql/v1/token/refresh", Map.of("Authorization", "Bearer " + token), "");
+    }
+
+    @Override
     public Token token(HttpResult result) {
         if (result.status() != 200) throw new IllegalStateException(failure(result).message());
         return ApiJson.parseToken(result.body());

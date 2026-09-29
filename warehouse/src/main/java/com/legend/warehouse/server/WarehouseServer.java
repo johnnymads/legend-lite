@@ -60,23 +60,31 @@ public final class WarehouseServer implements AutoCloseable {
             Statements.Limits limits,
             @Nullable Path duckdbLibrary,
             List<String> owners,
-            List<String> allowedOrigins) {
+            List<String> allowedOrigins,
+            Duration sessionLimit) {
 
         /** DuckDB's library from the classpath (DuckDB's JDBC jar carries it). */
         public Config(int port, Path dataDir, List<String> catalogs, List<String[]> users,
                 byte @Nullable [] tokenKey, Duration tokenLife, Statements.Limits limits) {
-            this(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, null, List.of(), List.of());
+            this(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, null, List.of(), List.of(),
+                    Identity.DEFAULT_SESSION_LIMIT);
         }
 
         public Config withOwners(List<String> owners) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins);
+                    allowedOrigins, sessionLimit);
         }
 
         /** The web pages (exact origins, e.g. {@code https://cube.example.com}) whose browsers may call this server. */
         public Config withAllowedOrigins(List<String> allowedOrigins) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins);
+                    allowedOrigins, sessionLimit);
+        }
+
+        /** How long one sign-in may be kept alive by refreshing its token (`Identity.refresh`). */
+        public Config withSessionLimit(Duration sessionLimit) {
+            return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
+                    allowedOrigins, sessionLimit);
         }
     }
 
@@ -102,7 +110,7 @@ public final class WarehouseServer implements AutoCloseable {
             key = new byte[32];
             new SecureRandom().nextBytes(key);
         }
-        identity = new Identity(key, config.tokenLife(), clock);
+        identity = new Identity(key, config.tokenLife(), config.sessionLimit(), clock);
         for (String[] u : config.users()) {
             if (u[0].equalsIgnoreCase(Statements.SERVER)) throw new IllegalArgumentException("'" + u[0] + "' is the server's own name");
             identity.addUser(u[0], u[1]);
@@ -216,6 +224,10 @@ public final class WarehouseServer implements AutoCloseable {
             login(ex);
             return;
         }
+        if (path.equals("/sql/v1/token/refresh") && method.equals("POST")) {
+            refresh(ex);
+            return;
+        }
         String principal = principal(ex);
         Matcher m;
         if (path.equals("/sql/v1/statements") && method.equals("POST")) {
@@ -278,6 +290,25 @@ public final class WarehouseServer implements AutoCloseable {
         String password = o.getStringOr("password", null);
         Identity.Issued issued = user == null || password == null ? null : identity.login(user, password);
         if (issued == null) throw Reply.error(401, ErrorCode.AUTH_INVALID, "wrong user or password");
+        throw new Reply(200, Json.toCompact(ApiJson.token(
+                new Token(issued.token(), issued.expires().toString(), issued.principal()))));
+    }
+
+    /**
+     * A still-valid token for a fresh one: same user, a new expiry, never past the sign-in's session
+     * limit. An open page calls it before its token runs out, so nobody is asked for a password
+     * mid-work; a token that is already invalid, or a session at its limit, must sign in again.
+     */
+    private void refresh(HttpExchange ex) throws Reply {
+        String auth = ex.getRequestHeaders().getFirst("Authorization");
+        if (auth == null || !auth.startsWith("Bearer ")) {
+            throw Reply.error(401, ErrorCode.AUTH_REQUIRED, "a bearer token is required");
+        }
+        Identity.Issued issued = identity.refresh(auth.substring("Bearer ".length()).strip());
+        if (issued == null) {
+            throw Reply.error(401, ErrorCode.AUTH_INVALID,
+                    "the token is invalid, expired, or its session has reached its limit: sign in again");
+        }
         throw new Reply(200, Json.toCompact(ApiJson.token(
                 new Token(issued.token(), issued.expires().toString(), issued.principal()))));
     }
@@ -480,9 +511,34 @@ public final class WarehouseServer implements AutoCloseable {
     }
 
     /**
+     * The token key kept in {@code file}: read when it is there, else made (32 random bytes) and written readable by
+     * the owner only. A key kept across restarts keeps every issued token good across them.
+     */
+    public static byte[] tokenKey(Path file) throws IOException {
+        if (java.nio.file.Files.exists(file)) {
+            byte[] key = java.nio.file.Files.readAllBytes(file);
+            if (key.length < 32) throw new IllegalArgumentException("the token key in " + file + " is under 32 bytes");
+            return key;
+        }
+        byte[] key = new byte[32];
+        new SecureRandom().nextBytes(key);
+        // owner-only where the file system has POSIX modes; elsewhere (Windows) the directory's ACL decides
+        if (file.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            java.nio.file.Files.createFile(file, java.nio.file.attribute.PosixFilePermissions.asFileAttribute(
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")));
+        } else {
+            java.nio.file.Files.createFile(file);
+        }
+        java.nio.file.Files.write(file, key);
+        return key;
+    }
+
+    /**
      * {@code --port N --data DIR --catalog NAME... --user NAME:PASSWORD...
      * --concurrency N --queue N --max-rows N --retain-minutes N --result-memory-mb N --duckdb-library FILE
-     * --owner NAME... --allow-origin ORIGIN...}. An owner may do anything; every other user is a reader (§3 of the server program).
+     * --owner NAME... --allow-origin ORIGIN... --token-key-file FILE --token-minutes N --session-hours N}. An owner may
+     * do anything; every other user is a reader (§3 of the server program). With {@code --token-key-file} tokens are
+     * signed with the key in FILE (made, owner-only, when absent), so a restart does not sign everyone out.
      */
     public static void main(String[] args) throws Exception {
         int port = 8765;
@@ -497,6 +553,9 @@ public final class WarehouseServer implements AutoCloseable {
         Path library = null;
         List<String> owners = new ArrayList<>();
         List<String> origins = new ArrayList<>();
+        Path tokenKeyFile = null;
+        long tokenMinutes = 60;
+        long sessionHours = Identity.DEFAULT_SESSION_LIMIT.toHours();
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--port" -> port = Integer.parseInt(args[++i]);
@@ -511,13 +570,17 @@ public final class WarehouseServer implements AutoCloseable {
                 case "--max-rows" -> maxRows = Long.parseLong(args[++i]);
                 case "--retain-minutes" -> retainMinutes = Long.parseLong(args[++i]);
                 case "--result-memory-mb" -> resultMemoryMb = Long.parseLong(args[++i]);
+                case "--token-key-file" -> tokenKeyFile = Path.of(args[++i]);
+                case "--token-minutes" -> tokenMinutes = Long.parseLong(args[++i]);
+                case "--session-hours" -> sessionHours = Long.parseLong(args[++i]);
                 default -> throw new IllegalArgumentException("unknown argument " + args[i]);
             }
         }
         if (cats.isEmpty()) cats.add(StatementRequest.DEFAULT_CATALOG);
-        WarehouseServer s = new WarehouseServer(new Config(port, data, cats, users, null, Duration.ofHours(1),
+        WarehouseServer s = new WarehouseServer(new Config(port, data, cats, users,
+                tokenKeyFile == null ? null : tokenKey(tokenKeyFile), Duration.ofMinutes(tokenMinutes),
                 new Statements.Limits(concurrency, queue, maxRows, Duration.ofMinutes(retainMinutes), resultMemoryMb << 20),
-                library, owners, origins));
+                library, owners, origins, Duration.ofHours(sessionHours)));
         System.err.println("warehouse listening on 127.0.0.1:" + s.port() + ", catalogs " + cats);
     }
 }

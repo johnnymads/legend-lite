@@ -22,7 +22,7 @@ import javax.crypto.spec.SecretKeySpec;
  * signed-in user.
  *
  * <p>THE PRINCIPAL COMES ONLY FROM A VERIFIED TOKEN (program §3, 0b). A
- * token is {@code base64url(principal|expiry) . base64url(HMAC-SHA256)}
+ * token is {@code base64url(principal|expiry|signedInAt) . base64url(HMAC-SHA256)}
  * under a key only this server holds; nothing a client sends can name a
  * user any other way. W1's users and passwords live in the server's
  * configuration; W2 replaces the password store with an identity
@@ -34,8 +34,12 @@ public final class Identity {
     private static final Pattern PRINCIPAL = Pattern.compile("[A-Za-z0-9_.@-]{1,128}");
     private static final int ITERATIONS = 120_000;
 
+    /** How long one sign-in lasts, refreshes included: past it, only the password signs in again. */
+    public static final Duration DEFAULT_SESSION_LIMIT = Duration.ofHours(12);
+
     private final byte[] key;
     private final Duration tokenLife;
+    private final Duration sessionLimit;
     private final Clock clock;
     private final Map<String, Hashed> users = new HashMap<>();
     private final SecureRandom random = new SecureRandom();
@@ -44,9 +48,14 @@ public final class Identity {
     }
 
     public Identity(byte[] key, Duration tokenLife, Clock clock) {
+        this(key, tokenLife, DEFAULT_SESSION_LIMIT, clock);
+    }
+
+    public Identity(byte[] key, Duration tokenLife, Duration sessionLimit, Clock clock) {
         if (key.length < 32) throw new IllegalArgumentException("the token key must be at least 32 bytes");
         this.key = key.clone();
         this.tokenLife = tokenLife;
+        this.sessionLimit = sessionLimit;
         this.clock = clock;
     }
 
@@ -69,9 +78,30 @@ public final class Identity {
         // password take the same time.
         byte[] tried = pbkdf2(password, h == null ? new byte[16] : h.salt());
         if (h == null || !MessageDigest.isEqual(tried, h.hash())) return null;
-        Instant expires = clock.instant().plus(tokenLife);
-        String payload = name + "|" + expires.getEpochSecond();
-        return new Issued(enc(payload.getBytes(StandardCharsets.UTF_8)) + "." + enc(sign(payload)), name, expires);
+        Instant now = clock.instant();
+        return issue(name, now.plus(tokenLife), now.getEpochSecond());
+    }
+
+    /**
+     * A fresh token for the user a still-valid token stands for, so an open page need not ask for
+     * the password each hour. It carries the ORIGINAL sign-in time, and no refresh reaches past
+     * that plus the session limit: a token that leaks is not good forever. Null when the token is
+     * not valid, or the session has reached its limit.
+     */
+    public @Nullable Issued refresh(@Nullable String token) {
+        Verified v = verified(token);
+        if (v == null) return null;
+        Instant now = clock.instant();
+        Instant limit = Instant.ofEpochSecond(v.signedInAt()).plus(sessionLimit);
+        Instant expires = now.plus(tokenLife);
+        if (expires.isAfter(limit)) expires = limit;
+        if (!expires.isAfter(now)) return null;
+        return issue(v.principal(), expires, v.signedInAt());
+    }
+
+    private Issued issue(String principal, Instant expires, long signedInAt) {
+        String payload = principal + "|" + expires.getEpochSecond() + "|" + signedInAt;
+        return new Issued(enc(payload.getBytes(StandardCharsets.UTF_8)) + "." + enc(sign(payload)), principal, expires);
     }
 
     /** A token that has been issued. */
@@ -80,6 +110,14 @@ public final class Identity {
 
     /** The principal a token stands for, or null when it is forged, garbled or expired. */
     public @Nullable String verify(@Nullable String token) {
+        Verified v = verified(token);
+        return v == null ? null : v.principal();
+    }
+
+    private record Verified(String principal, long signedInAt) {
+    }
+
+    private @Nullable Verified verified(@Nullable String token) {
         if (token == null) return null;
         int dot = token.indexOf('.');
         if (dot <= 0 || dot != token.lastIndexOf('.')) return null;
@@ -92,17 +130,20 @@ public final class Identity {
             return null;
         }
         if (!MessageDigest.isEqual(sign(payload), sig)) return null;
-        int bar = payload.lastIndexOf('|');
-        if (bar <= 0) return null;
-        String principal = payload.substring(0, bar);
+        // principal|expiry|signedInAt; a principal holds no '|' (PRINCIPAL)
+        String[] parts = payload.split("\\|", -1);
+        if (parts.length != 3) return null;
+        String principal = parts[0];
         long expiry;
+        long signedInAt;
         try {
-            expiry = Long.parseLong(payload.substring(bar + 1));
+            expiry = Long.parseLong(parts[1]);
+            signedInAt = Long.parseLong(parts[2]);
         } catch (NumberFormatException garbled) {
             return null;
         }
         if (clock.instant().getEpochSecond() >= expiry) return null;
-        return validPrincipal(principal) && users.containsKey(principal) ? principal : null;
+        return validPrincipal(principal) && users.containsKey(principal) ? new Verified(principal, signedInAt) : null;
     }
 
     private byte[] sign(String payload) {
