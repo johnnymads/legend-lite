@@ -689,13 +689,10 @@ final class StaticFold {
                 return a instanceof TypeToken t ? t.simpleName() : null;
             }
             case TO_ONE, AT -> {
-                if (op == FoldOp.TO_ONE && ps.size() == 1) {
-                    Object a = eval(ps.get(0), scope);
-                    return a instanceof List<?> l && l.size() == 1 ? l.get(0) : a;
-                }
-                // toOne(value, message): the ASSERTING spelling unwraps
-                // when statically singular (ledger cluster 19 part 1)
-                if (op == FoldOp.TO_ONE && ps.size() == 2) {
+                // toOne unwraps only a statically singular value; any other
+                // size is the reference's run-time error, so NOT static
+                // (plan W0.2(b); both spellings, ledger cluster 19 part 1)
+                if (op == FoldOp.TO_ONE && (ps.size() == 1 || ps.size() == 2)) {
                     Object a = eval(ps.get(0), scope);
                     if (a instanceof List<?> l) {
                         return l.size() == 1 ? l.get(0) : null;
