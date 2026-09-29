@@ -90,6 +90,12 @@ the chart refresh in `#onView`), `datacube/src/app.css`, `datacube/src/ui/menu.t
 It will not edit `cube-document.ts` or `cube-store.ts`; it stores through `CubeStore` as they are. The
 save session will be asked to list page records in its Load dialog.
 
+**Landed (2026-09-28): saving pages.** `datacube/src/page-document.ts` (new: `writePage`, `readPage`,
+`readSaved` -- a cube or a page, by kind). In the save session's host, `datacube/demo/boot.ts`: Save
+writes a page when the cube has charts (`app.pageViews()`), a cube otherwise; Open and Open file read
+either kind (`readSaved`) and put a page's charts back (`app.restoreViews`); "changed since saved"
+compares the page. `cube-library.ts` is untouched: a page is a record like a cube, listed by name.
+
 ## DataCube save/share (#21, the save session; plan `DATACUBE_SAVE_SHARE_2026_09_28.md`)
 
 **Owns:** `datacube/src/cube-document.ts`, `cube-store.ts`, `file-handles.ts`, `ui/cube-library.ts`,

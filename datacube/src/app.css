@@ -2453,3 +2453,16 @@
 
 .dc-chartpanel-status[hidden] { display: none; }
 .dc-chartpanel-hint { margin: var(--dc-pad-2) 0 0; color: var(--dc-muted); font-size: var(--dc-text-sm-size); }
+
+/* In a tile the options float over the chart, from its left edge, rather
+   than taking width from it: a small tile keeps its chart whole. */
+.dc-chart-tile .dc-chartpanel { position: relative; }
+.dc-chart-tile .dc-chartpanel-form {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 220px;
+  max-width: 85%;
+  z-index: 1;
+  background: var(--dc-bg);
+  box-shadow: var(--dc-popup-shadow);
+}

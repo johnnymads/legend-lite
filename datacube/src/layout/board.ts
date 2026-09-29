@@ -21,11 +21,11 @@ import {
   describe as describeTile,
   dragTile,
   fitToColumns,
-  moveBy,
   moveTile,
   removeTile,
-  resizeBy,
+  resizeShared,
   resizeTile,
+  stepTile,
   type Layout,
   type Rect,
   type Tile,
@@ -42,6 +42,8 @@ export interface BoardTile {
   readonly removable?: boolean;
   readonly minW?: number;
   readonly minH?: number;
+  /** Stands alone, never in a row of tiles (the grid): see `Tile.anchor`. */
+  readonly anchor?: boolean;
 }
 
 export interface BoardOptions {
@@ -159,6 +161,7 @@ export class Board {
       h: at.h ?? 10,
       ...(tile.minW !== undefined ? { minW: tile.minW } : {}),
       ...(tile.minH !== undefined ? { minH: tile.minH } : {}),
+      ...(tile.anchor ? { anchor: true } : {}),
     };
     this.#commit(moveTile([...this.#layout, placed], tile.id, placed.x, placed.y, this.#cols));
   }
@@ -177,10 +180,12 @@ export class Board {
     this.#layout = layout.filter((t) => this.#tiles.has(t.id)).map((t) => {
       // a tile's limits are its own, whatever the layout handed in says
       const spec = this.#tiles.get(t.id)!.spec;
+      const { anchor: _given, ...rest } = t;
       return {
-        ...t,
+        ...rest,
         ...(spec.minW !== undefined ? { minW: spec.minW } : {}),
         ...(spec.minH !== undefined ? { minH: spec.minH } : {}),
+        ...(spec.anchor ? { anchor: true } : {}),
       };
     });
     this.#shown = this.#layout;
@@ -444,7 +449,7 @@ export class Board {
       }
       const dw = Math.round((ev.clientX - x0) / cell.w);
       const dh = Math.round((ev.clientY - y0) / cell.h);
-      return resizeTile(base, id, Math.max(1, start.w + dw), Math.max(1, start.h + dh), this.#cols);
+      return resizeShared(base, id, Math.max(1, start.w + dw), Math.max(1, start.h + dh), this.#cols);
     };
     const onMove = (ev: PointerEvent): void => {
       if (kind === 'move') {
@@ -493,9 +498,15 @@ export class Board {
     const step = steps[e.key];
     if (!step) return;
     e.preventDefault();
-    const result = e.shiftKey
-      ? resizeBy(this.#layout, id, step[0], step[1], this.#cols)
-      : moveBy(this.#layout, id, step[0], step[1], this.#cols);
+    const t = this.#layout.find((u) => u.id === id);
+    if (!t) return;
+    const resized = e.shiftKey ? resizeShared(this.#layout, id, t.w + step[0], t.h + step[1], this.#cols) : null;
+    const result = resized
+      ? { layout: resized, changed: resized.some((u, i) => {
+        const b = this.#layout[i];
+        return !b || b.id !== u.id || b.x !== u.x || b.y !== u.y || b.w !== u.w || b.h !== u.h;
+      }) }
+      : stepTile(this.#layout, id, step[0], step[1], this.#cols);
     if (!result.changed) {
       const title = this.#tiles.get(id)?.name ?? 'The tile';
       // tiles float up to fill space, so down is only ever past a neighbour

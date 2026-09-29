@@ -27,6 +27,12 @@ export interface Tile {
   readonly maxH?: number;
   /** Pinned: never pushed, never floated, never dragged. */
   readonly static?: boolean;
+  /**
+   * Stands alone: never part of a row of tiles (never joined, never sharing its width
+   * with a row), never split in height, never grown into a neighbour's gap. The grid
+   * is the page's anchor; its charts are what gather in rows around it.
+   */
+  readonly anchor?: boolean;
 }
 
 export type Layout = readonly Tile[];
@@ -279,7 +285,7 @@ export function liftTile(layout: Layout, id: string, cols: number): Tile[] {
   // columns) grows down over the gap -- a split side column becomes one tile
   // again. Never a wide one: the grid does not grow because its chart left.
   for (const t of rest) {
-    if (t.static || t.w > cols / 2 || t.x !== gone.x || t.w !== gone.w) continue;
+    if (t.static || t.anchor || t.w > cols / 2 || t.x !== gone.x || t.w !== gone.w) continue;
     // the column the two filled, measured from where they were before anything
     // floated (the lower half has risen into the upper one's place)
     const was = tileOf(layout, t.id);
@@ -301,9 +307,10 @@ export function liftTile(layout: Layout, id: string, cols: number): Tile[] {
 export function addToRow(layout: Layout, id: string, cols: number, h: number, perRow = 4, minW = 1): Tile[] {
   const lowest = [...layout].filter((t) => !t.static).sort((a, b) => b.y - a.y)[0];
   const row = lowest === undefined ? [] : layout.filter((t) => t.y === lowest.y && t.h === lowest.h && !t.static);
+  const joinable = row.length > 0 && row.every((t) => !t.anchor);
   const fresh: Tile = { id, x: 0, y: bottom(layout), w: cols, h, ...(minW > 1 ? { minW } : {}) };
-  // a row below the top one (the top is the grid's, with anything beside it)
-  if (row.length > 0 && row.length < perRow && lowest!.y > 0) {
+  // a row of charts, never the anchor's (the grid, and anything beside it)
+  if (joinable && row.length < perRow) {
     const d: Tile = { ...fresh, y: lowest!.y, h: lowest!.h, w: Math.ceil(cols / (row.length + 1)) };
     const laid = intoRow(layout, d, { x: cols - 1, y: d.y }, cols);
     if (laid) return compact(laid);
@@ -319,13 +326,12 @@ export function removeTile(layout: Layout, id: string, cols: number): Tile[] {
 
 /**
  * Whether `t` is one of a ROW: tiles side by side on one top edge, of one
- * height, none wider than half the page. A wide tile with a narrow one
- * beside it (a grid and its side chart) is not a row -- dropping on the
- * grid must not squeeze it into sharing the width with its neighbours.
+ * height, none of them the anchor. The grid with a chart beside it is not a
+ * row -- dropping on the grid must not squeeze it into sharing its width.
  */
-function inRow(layout: readonly Tile[], t: Tile, cols: number): boolean {
+function inRow(layout: readonly Tile[], t: Tile): boolean {
   const members = layout.filter((u) => u.y === t.y && u.h === t.h && !u.static);
-  return members.length >= 2 && members.every((u) => u.w <= cols / 2);
+  return members.length >= 2 && members.every((u) => !u.anchor);
 }
 
 /**
@@ -337,7 +343,7 @@ function inRow(layout: readonly Tile[], t: Tile, cols: number): boolean {
  * not on the row, or the row cannot take it.
  */
 function intoRow(rest: readonly Tile[], d: Tile, pointer: Cell, cols: number): Tile[] | null {
-  const member = (t: Tile) => t.y === d.y && t.h === d.h && !t.static;
+  const member = (t: Tile) => t.y === d.y && t.h === d.h && !t.static && !t.anchor;
   const row = rest.filter(member).sort((a, b) => a.x - b.x);
   if (row.length === 0) return null;
   const before = row.filter((t) => t.x + t.w / 2 <= pointer.x);
@@ -387,7 +393,7 @@ export function dragTile(layout: Layout, id: string, rect: Rect, pointer: Cell, 
   let target: Tile = want;
   if (over && over.static) {
     target = { ...want, y: firstFreeRowDown(want, rest) };
-  } else if (over && !(over.w === from.w && over.h === from.h) && inRow(rest, over, cols)
+  } else if (over && !(over.w === from.w && over.h === from.h) && inRow(rest, over)
     && (settled = intoRow(rest, { ...want, y: over.y, h: Math.max(from.minH ?? 1, over.h) }, pointer, cols))) {
     // a tile of a row: join the row there, at its height
   } else if (over && over.w === from.w && over.h === from.h) {
@@ -414,13 +420,23 @@ export function dragTile(layout: Layout, id: string, rect: Rect, pointer: Cell, 
       target = { ...from, w, x: left ? over.x : over.x + over.w - w, y: over.y,
         h: Math.max(from.minH ?? 1, over.h) };
       settled = pushDown([...rest.map((t) => (t.id === over.id ? narrowed : t)), target], target);
-    } else if (over.w <= cols / 2 && h >= (from.minH ?? 1)) {
+    } else if (!over.anchor && over.w <= cols / 2 && h >= (from.minH ?? 1)) {
       const above = pointer.y < over.y + over.h / 2;
       const kept = { ...over, h: keepH, y: above ? over.y + h : over.y };
       target = { ...from, x: over.x, w: over.w, h, y: above ? over.y : over.y + keepH };
       settled = swapIn(rest, [kept, target]);
     } else if (pointer.y < over.y + top) {
-      target = { ...want, y: over.y };
+      // above it: into the row of narrow tiles there, if one ends on its top
+      // edge; else as wide as it, so no gap is left beside the new row
+      const rowAbove = rest.filter((t) => t.y + t.h === over.y && !t.static);
+      const rowY = rowAbove[0]?.y;
+      settled = rowY !== undefined && rowAbove.every((t) => t.y === rowY && !t.anchor)
+        ? intoRow(rest, { ...want, y: rowY, h: Math.max(from.minH ?? 1, rowAbove[0]!.h) }, pointer, cols)
+        : null;
+      if (!settled) {
+        const w = Math.max(from.minW ?? 1, over.w);
+        target = { ...want, x: Math.min(over.x, cols - w), w, y: over.y };
+      }
     } else {
       // below it: into the row there, at the row's height
       const y = over.y + over.h;
@@ -431,10 +447,10 @@ export function dragTile(layout: Layout, id: string, rect: Rect, pointer: Cell, 
   } else if (firstCollision(want, rest)) {
     // overlapping a row of narrow tiles: join it at its height (the nearest,
     // when it covers more than one); a wide tile -- the grid -- is no row
-    const rows = [...new Set(rest.filter((t) => collides(t, want) && t.w <= cols / 2 && !t.static)
+    const rows = [...new Set(rest.filter((t) => collides(t, want) && !t.anchor && !t.static)
       .map((t) => `${t.y}:${t.h}`))]
       .map((k) => k.split(':').map(Number) as [number, number])
-      .filter(([y, h]) => rest.filter((t) => t.y === y && t.h === h).every((t) => t.w <= cols / 2))
+      .filter(([y, h]) => rest.filter((t) => t.y === y && t.h === h).every((t) => !t.anchor))
       .sort((a, b) => Math.abs(a[0] - want.y) - Math.abs(b[0] - want.y));
     for (const [y, h] of rows) {
       settled = intoRow(rest, { ...want, y, h: Math.max(from.minH ?? 1, h) }, pointer, cols);
@@ -455,6 +471,76 @@ export function dragTile(layout: Layout, id: string, rect: Rect, pointer: Cell, 
 }
 
 /**
+ * Resize tile `id` to `w` x `h` by moving the edges it SHARES, as a divider does: widening
+ * a tile in a row narrows the neighbour beside it, making a tile taller shortens the ones
+ * under it -- so a row stays a row and a screenful stays a screenful. Where no neighbour
+ * shares the edge, or one would drop below its minimum, the page makes room the old way
+ * (`resizeTile`: what is in the way moves down).
+ */
+export function resizeShared(layout: Layout, id: string, w: number, h: number, cols: number): Tile[] {
+  const from = tileOf(layout, id);
+  if (from.static) return [...layout];
+  const size = clampSize(from, w, h, cols);
+  const dw = Math.min(size.w, cols - from.x) - from.w;
+  const dh = size.h - from.h;
+  let tiles: Tile[] = layout.map((t) => (t.id === id ? { ...t, w: from.w + dw, h: from.h + dh } : t));
+  const overlapsRows = (t: Tile) => t.y < from.y + from.h && from.y < t.y + t.h;
+  const overlapsCols = (t: Tile) => t.x < from.x + from.w && from.x < t.x + t.w;
+  if (dw !== 0) {
+    const right = layout.filter((t) => t.id !== id && t.x === from.x + from.w && overlapsRows(t));
+    if (right.length === 0 || right.some((t) => t.static || t.w - dw < (t.minW ?? 1))) {
+      return resizeTile(layout, id, from.w + dw, from.h + dh, cols);
+    }
+    const ids = new Set(right.map((t) => t.id));
+    tiles = tiles.map((t) => (ids.has(t.id) ? { ...t, x: t.x + dw, w: t.w - dw } : t));
+  }
+  if (dh !== 0) {
+    const under = layout.filter((t) => t.id !== id && t.y === from.y + from.h && overlapsCols(t));
+    if (under.length === 0 || under.some((t) => t.static || t.h - dh < (t.minH ?? 1))) {
+      // nothing shares the bottom edge: growing pushes down, shrinking leaves the room to gravity
+      return compact(pushDown(tiles, tiles.find((t) => t.id === id)!));
+    }
+    const ids = new Set(under.map((t) => t.id));
+    tiles = tiles.map((t) => (ids.has(t.id) ? { ...t, y: t.y + dh, h: t.h - dh } : t));
+  }
+  // a neighbour's moved edge must not run into a third tile
+  return problems(tiles, cols).length === 0 ? compact(tiles) : resizeTile(layout, id, from.w + dw, from.h + dh, cols);
+}
+
+/**
+ * One keyboard step of a move, as the drag would do it: onto the neighbour in that
+ * direction (the pointer on its middle -- swap, join its row, go above or below it), or
+ * one cell into empty space. KeyResult says when nothing changed (an edge), to announce it.
+ */
+export function stepTile(layout: Layout, id: string, dx: number, dy: number, cols: number): KeyResult {
+  const t = tileOf(layout, id);
+  if (t.static || (dx === 0 && dy === 0)) return { layout: [...layout], changed: false };
+  const midX = t.x + Math.floor(t.w / 2);
+  const midY = t.y + Math.floor(t.h / 2);
+  // the first tile beside it in that direction, its middle as the pointer
+  const ahead = layout.filter((u) => u.id !== id && (dx > 0 ? u.x >= t.x + t.w && u.y <= midY && midY < u.y + u.h
+    : dx < 0 ? u.x + u.w <= t.x && u.y <= midY && midY < u.y + u.h
+    : dy > 0 ? u.y >= t.y + t.h && u.x <= midX && midX < u.x + u.w
+    : u.y + u.h <= t.y && u.x <= midX && midX < u.x + u.w))
+    .sort((a, b) => (dx > 0 ? a.x - b.x : dx < 0 ? b.x - a.x : dy > 0 ? a.y - b.y : b.y - a.y))[0];
+  let next: Tile[];
+  if (ahead) {
+    // sideways, its middle (a row swaps there); up or down, its far edge in that
+    // direction -- the top row reads "above it", the bottom row "below it"
+    const pointer = {
+      x: ahead.x + Math.floor(ahead.w / 2),
+      y: dy < 0 ? ahead.y : dy > 0 ? ahead.y + ahead.h - 1 : ahead.y + Math.floor(ahead.h / 2),
+    };
+    next = dragTile(layout, id, { x: pointer.x - Math.floor(t.w / 2), y: pointer.y - Math.floor(t.h / 2), w: t.w, h: t.h }, pointer, cols);
+  } else {
+    const x = clamp(t.x + dx, 0, cols - t.w);
+    const y = Math.max(0, t.y + dy);
+    next = x === t.x && y === t.y ? [...layout] : moveTile(layout, id, x, y, cols);
+  }
+  return { layout: next, changed: !sameLayout(next, layout) };
+}
+
+/**
  * The page a board shows until its user arranges it by hand: the main tile
  * across the top, `mainH` rows tall, and the others in rows below it, up to
  * `perRow` side by side sharing the width, each row the rest of one screen
@@ -464,9 +550,9 @@ export function below(
   main: string, others: readonly string[], cols: number, rows: number, mainH: number,
   perRow = 4, minH = 1,
 ): Tile[] {
-  if (others.length === 0) return [{ id: main, x: 0, y: 0, w: cols, h: rows }];
+  if (others.length === 0) return [{ id: main, x: 0, y: 0, w: cols, h: rows, anchor: true }];
   const h = Math.max(minH, rows - mainH);
-  const out: Tile[] = [{ id: main, x: 0, y: 0, w: cols, h: mainH }];
+  const out: Tile[] = [{ id: main, x: 0, y: 0, w: cols, h: mainH, anchor: true }];
   for (let start = 0; start < others.length; start += perRow) {
     const row = others.slice(start, start + perRow);
     const share = Math.floor(cols / row.length);
@@ -661,7 +747,7 @@ export function problems(layout: Layout, cols: number): string[] {
 export function beside(
   main: string, others: readonly string[], cols: number, rows: number, mainW: number, minH = 1,
 ): Tile[] {
-  if (others.length === 0) return [{ id: main, x: 0, y: 0, w: cols, h: rows }];
+  if (others.length === 0) return [{ id: main, x: 0, y: 0, w: cols, h: rows, anchor: true }];
   const w = Math.min(Math.max(1, mainW), cols - 1);
   const share = Math.floor(rows / others.length);
   const out: Tile[] = [];
@@ -672,7 +758,7 @@ export function beside(
     out.push({ id, x: w, y, w: cols - w, h });
     y += h;
   });
-  return [{ id: main, x: 0, y: 0, w, h: rows }, ...out];
+  return [{ id: main, x: 0, y: 0, w, h: rows, anchor: true }, ...out];
 }
 
 /** What a screen reader hears after a step (aria-live): 1-based, in words. */

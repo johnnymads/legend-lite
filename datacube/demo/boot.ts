@@ -24,7 +24,6 @@ import {
   definitionText,
   fileSource,
   openCube,
-  readCube,
   type CubeDocument,
   type CubeSource,
   type FileSource,
@@ -45,6 +44,14 @@ import {
   type FileHandle,
 } from '../src/file-handles.ts';
 import { CubeLibrary } from '../src/ui/cube-library.ts';
+import {
+  pageContent,
+  pageDefinitionText,
+  readSaved,
+  writePage,
+  type PageDocument,
+  type SavedDocument,
+} from '../src/page-document.ts';
 import { inferModel, type CatalogBuilder } from '../src/infer.ts';
 import { pageConfig } from './page-config.ts';
 import {
@@ -766,14 +773,29 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       baseline?: string;
       /** What opening left out of the saved copy (its file changed): saving over it loses them. */
       lost?: readonly string[];
+      /** Fields of the saved PAGE this reader does not know, written back as they were. */
+      pageUnknown?: Readonly<Record<string, unknown>>;
     } = {};
 
-    /** The cube on screen differs from what was saved (or first opened). */
+    /**
+     * What saving now would write: the cube alone, or -- with charts around it -- the page
+     * that wraps it (page-document.ts); and its definition, for "changed since saved".
+     */
+    const savedForm = (name: string): { content: Record<string, unknown>; definition: string } | undefined => {
+      const doc = app.cubeDocument(name, current.unknown);
+      if (!doc) return undefined;
+      const views = app.pageViews();
+      if (!views) return { content: doc as unknown as Record<string, unknown>, definition: definitionText(doc) };
+      const page = writePage({ name, cube: doc, views, ...(current.pageUnknown ? { unknown: current.pageUnknown } : {}) });
+      return { content: pageContent(page), definition: pageDefinitionText(page) };
+    };
+
+    /** The cube on screen (and its charts) differs from what was saved (or first opened). */
     const dirty = (): boolean => {
       if (!current.source || current.baseline === undefined) return false;
       if ((current.lost?.length ?? 0) > 0) return true;
-      const doc = app.cubeDocument(current.name ?? 'cube', current.unknown);
-      return doc !== undefined && definitionText(doc) !== current.baseline;
+      const now = savedForm(current.name ?? 'cube');
+      return now !== undefined && now.definition !== current.baseline;
     };
     const baseTitle = document.title;
     onCubeView = () => {
@@ -805,7 +827,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       how: {
         readonly handle?: FileHandle;
         readonly sample?: { readonly id: string; readonly rows: number };
-        readonly saved?: { readonly doc: CubeDocument; readonly id?: string };
+        readonly saved?: { readonly doc: CubeDocument; readonly id?: string; readonly page?: PageDocument };
       } = {},
     ): Promise<readonly string[]> {
       // Replacing a cube with unsaved changes asks first (opening a saved one asked already).
@@ -879,16 +901,19 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           ...(saved?.id ? { cubeId: saved.id } : {}),
           ...(saved ? { name: saved.doc.name } : {}),
           ...(saved?.doc.unknown ? { unknown: saved.doc.unknown } : {}),
+          ...(saved?.page?.unknown ? { pageUnknown: saved.page.unknown } : {}),
         };
         // open() is what runs the first query; without it the
         // chrome renders and the grid stays empty.
         await app.open();
+        // a saved page: its charts and layout, around the cube just opened
+        if (saved?.page) app.restoreViews(saved.page);
         // The baseline is the cube as it LANDED (normalized by its first refresh); a cube
         // opened with parts left out is changed from the start.
-        const landed = app.cubeDocument(current.name ?? 'cube', current.unknown);
+        const landed = savedForm(current.name ?? 'cube');
         current = {
           ...current,
-          ...(landed ? { baseline: definitionText(landed) } : {}),
+          ...(landed ? { baseline: landed.definition } : {}),
           lost: notes.filter((n) => n.startsWith('left out')),
         };
         onCubeView?.();
@@ -1004,8 +1029,18 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       });
     }
 
-    /** Open a saved cube (from the store, or a file someone handed over). */
-    async function openDocument(doc: CubeDocument, id: string | undefined): Promise<void> {
+    /** Open a saved cube or page (from the store, or a file someone handed over). */
+    async function openSaved(saved: SavedDocument, id: string | undefined): Promise<void> {
+      if (saved.kind === 'cube') return openDocument(saved.cube, id);
+      const [first, ...more] = saved.page.cubes;
+      if (!first || more.length > 0) {
+        throw new Error(`"${saved.page.name}" holds ${saved.page.cubes.length} cubes; opening a page of several is not built yet`);
+      }
+      return openDocument(first.cube, id, saved.page);
+    }
+
+    /** Open a saved cube (from the store, or a file someone handed over), with the page around it. */
+    async function openDocument(doc: CubeDocument, id: string | undefined, page?: PageDocument): Promise<void> {
       const got = await fileFor(doc, id);
       if (!got) {
         library?.say('not opened: no file chosen', 'warn');
@@ -1014,7 +1049,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const notes = await openFile(got.file, {
         ...(got.handle ? { handle: got.handle } : {}),
         ...(doc.source.sample ? { sample: doc.source.sample } : {}),
-        saved: { doc, ...(id !== undefined ? { id } : {}) },
+        saved: { doc, ...(id !== undefined ? { id } : {}), ...(page ? { page } : {}) },
       });
       if (id !== undefined && got.handle) await handles?.put(id, got.handle);
       library?.say(notes.length === 0
@@ -1034,19 +1069,19 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       save: async (name, asNew) => {
         const refused = app.saveRefusal();
         if (refused) throw new Error(refused);
-        const doc = app.cubeDocument(name, current.unknown);
-        if (!doc) throw new Error('this cube cannot be saved yet: only cubes over a file are');
+        const form = savedForm(name);
+        if (!form) throw new Error('this cube cannot be saved yet: only cubes over a file are');
         const id = !asNew && current.cubeId !== undefined ? current.cubeId : crypto.randomUUID();
-        const record = { id, name, content: doc as unknown as Record<string, unknown> };
+        const record = { id, name, content: form.content };
         if (id === current.cubeId) await store.update(id, record);
         else await store.create(record);
         if (current.handle) await handles?.put(id, current.handle);
-        current = { ...current, cubeId: id, name, baseline: definitionText(doc), lost: [] };
+        current = { ...current, cubeId: id, name, baseline: form.definition, lost: [] };
         onCubeView?.();
         if (!persistent) persistent = await persistStorage();
       },
-      open: async (id) => openDocument(readCube((await store.get(id)).content), id),
-      openText: async (text) => openDocument(readCube(text), undefined),
+      open: async (id) => openSaved(readSaved((await store.get(id)).content), id),
+      openText: async (text) => openSaved(readSaved(text), undefined),
       forget: async (id) => {
         await handles?.remove(id);
         if (current.cubeId === id) {

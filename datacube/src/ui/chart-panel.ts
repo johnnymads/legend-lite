@@ -42,6 +42,8 @@ export interface ChartPanelOptions {
   readonly formOpen?: boolean;
   /** The chart froze or went live (by the Freeze button, or by an edit to its grouping). */
   readonly onFrozen?: (frozen: boolean) => void;
+  /** The user changed the chart (an option in its form). */
+  readonly onSpec?: () => void;
 }
 
 export class ChartPanel {
@@ -142,6 +144,7 @@ export class ChartPanel {
     const freeze = grouping && !this.frozen && this.#spec.mark !== 'scatter';
     this.#spec = { ...this.#spec, ...change, ...(freeze ? { frozen: true } : {}) };
     if (freeze) this.#options.onFrozen?.(true);
+    this.#options.onSpec?.();
     if (redrawForm) this.#paintForm();
     this.refresh();
   }
@@ -203,6 +206,7 @@ export class ChartPanel {
           const freeze = !this.frozen && this.#spec.mark !== 'scatter';
           this.#spec = { ...(v ? { ...rest, split: v } : rest), ...(freeze ? { frozen: true } : {}) };
           if (freeze) this.#options.onFrozen?.(true);
+          this.#options.onSpec?.();
           this.refresh();
         },
         { allowNone: spec.mark !== 'heatmap' },

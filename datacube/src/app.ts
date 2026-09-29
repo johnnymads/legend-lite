@@ -68,6 +68,7 @@ import type { MarkKey } from './chart-option.ts';
 import { ChartPanel } from './ui/chart-panel.ts';
 import { Board, BOARD_COLUMNS } from './layout/board.ts';
 import { addToRow, below } from './layout/tile-layout.ts';
+import { PAGE_CUBE, type ChartView, type PageView, type PageViews } from './page-document.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
 import {
@@ -133,6 +134,8 @@ const TILE_MIN_ROWS = 6;
 /** The grid's rows above its charts, of the 24 on one screen; and charts side by side in a row. */
 const GRID_ROWS_ABOVE_CHARTS = 14;
 const CHARTS_PER_ROW = 4;
+/** The grid's tile, until renamed: the cube's name is already above the board. */
+const GRID_TILE_TITLE = 'Grid';
 
 /** Rows sampled to infer what a JSON column holds. */
 const JSON_SAMPLE_ROWS = 1000;
@@ -2170,10 +2173,10 @@ export class CubeApp {
    * click on a mark selects it: the cube is filtered to that mark (see
    * `#select`).
    */
-  openChart(): void {
+  openChart(restore?: ChartView): void {
     const { board } = this.#ensureBoard();
     this.#chartCount += 1;
-    const id = `chart-${this.#chartCount}`;
+    const id = restore?.id ?? this.#freshChartId();
     const doc = this.#doc;
     const body = doc.createElement('div');
     body.className = 'dc-chart-tile';
@@ -2200,8 +2203,14 @@ export class CubeApp {
     options.className = 'dc-tile-button';
     options.textContent = 'Options';
     options.setAttribute('aria-pressed', 'false');
+    paintFreeze(restore?.spec.frozen === true);
     const panel = new ChartPanel(body, {
-      onFrozen: paintFreeze,
+      onFrozen: (frozen) => {
+        paintFreeze(frozen);
+        this.#pageChanged();
+      },
+      onSpec: () => this.#pageChanged(),
+      ...(restore ? { initial: restore.spec } : {}),
       snapshot: () => this.#snapshot,
       run: async (query, snapshot, signal) =>
         (await this.#controller.runQuery(query, snapshot, undefined, signal)).rows,
@@ -2214,7 +2223,17 @@ export class CubeApp {
     });
     freeze.addEventListener('click', () => panel.setFrozen(!panel.frozen));
     this.#charts.set(id, panel);
-    this.#selections.set(id, { chip, conditions: [], key: '' });
+    this.#selections.set(id, {
+      chip,
+      conditions: restore?.selection ? [...restore.selection] : [],
+      key: restore?.selection ? JSON.stringify(restore.selection) : '',
+    });
+    if (restore?.selection) this.#paintSelection(id);
+    if (restore) {
+      // placed by the page's layout, once every view is on the board (`restoreViews`)
+      board.add({ id, title: restore.title, element: body, actions: [chip, freeze, options], minW: 3, minH: TILE_MIN_ROWS });
+      return;
+    }
     const before = board.layout;
     board.add({
       id,
@@ -2232,6 +2251,71 @@ export class CubeApp {
         CHARTS_PER_ROW, 3));
     }
     board.reveal(id);
+    this.#pageChanged();
+  }
+
+  /** A chart id not on the board (a restored page's ids may run ahead of the count). */
+  #freshChartId(): string {
+    let n = this.#chartCount;
+    while (this.#charts.has(`chart-${n}`)) n += 1;
+    this.#chartCount = n;
+    return `chart-${n}`;
+  }
+
+  /** The views and their layout changed: "changed since saved" re-reads the page. */
+  #pageChanged(): void {
+    if (!this.#disposed) this.#options.onChange?.();
+  }
+
+  /**
+   * What the cube shows around itself, as a saved page keeps it: the grid, each chart (its
+   * title, spec, and the mark it filters to) and the layout. Undefined when there is no board
+   * -- a cube with no charts is saved as a cube.
+   */
+  pageViews(): PageViews | undefined {
+    const b = this.#board;
+    if (!b || this.#charts.size === 0) return undefined;
+    const views: PageView[] = [{
+      id: 'grid',
+      kind: 'grid',
+      cube: PAGE_CUBE,
+      ...(b.board.title('grid') !== GRID_TILE_TITLE ? { title: b.board.title('grid') ?? GRID_TILE_TITLE } : {}),
+    }];
+    for (const [id, panel] of this.#charts) {
+      const spec = panel.spec;
+      if (!spec) continue;
+      const sel = this.#selections.get(id);
+      views.push({
+        id,
+        kind: 'chart',
+        cube: PAGE_CUBE,
+        title: b.board.title(id) ?? id,
+        spec,
+        ...(sel && sel.conditions.length > 0 ? { selection: sel.conditions } : {}),
+      });
+    }
+    return {
+      views,
+      layout: {
+        kind: 'grid',
+        cols: BOARD_COLUMNS,
+        tiles: b.board.layout.map((t) => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h })),
+        arranged: !b.auto,
+      },
+    };
+  }
+
+  /** Put a saved page's views back around the cube: its charts, their titles, its layout. */
+  restoreViews(page: PageViews): void {
+    const charts = page.views.filter((v): v is ChartView => v.kind === 'chart');
+    if (charts.length === 0) return;
+    const { board } = this.#ensureBoard();
+    const grid = page.views.find((v) => v.kind === 'grid');
+    if (grid?.title) board.rename('grid', grid.title);
+    for (const chart of charts) this.openChart(chart);
+    board.setLayout(page.layout.tiles);
+    if (this.#board) this.#board.auto = !page.layout.arranged;
+    this.#chartCount = Math.max(this.#chartCount, ...charts.map((c) => Number(/^chart-(\d+)$/.exec(c.id)?.[1] ?? 0)));
   }
 
   /**
@@ -2263,7 +2347,11 @@ export class CubeApp {
       rowHeight: 12,
       onRemove: (tileId) => this.#removeTile(tileId),
       // arranged by hand: from now on the layout is the user's
-      onChange: () => { if (this.#board) this.#board.auto = false; },
+      onChange: () => {
+        if (this.#board) this.#board.auto = false;
+        this.#pageChanged();
+      },
+      onRename: () => this.#pageChanged(),
     });
     const add = doc.createElement('button');
     add.type = 'button';
@@ -2273,10 +2361,12 @@ export class CubeApp {
     add.addEventListener('click', () => this.openChart());
     board.add({
       id: 'grid',
-      title: this.#config.reportTitle ?? 'Grid',
+      // the cube's own name is the page's title already, above the board
+      title: GRID_TILE_TITLE,
       element: this.#els.grid,
       actions: [add],
       removable: false,
+      anchor: true,
       minW: 3,
       minH: TILE_MIN_ROWS,
     }, { x: 0, y: 0, w: BOARD_COLUMNS, h: BOARD_ROWS });
@@ -2293,6 +2383,7 @@ export class CubeApp {
     this.#charts.get(id)?.dispose();
     this.#charts.delete(id);
     b.board.remove(id);
+    this.#pageChanged();
     if (b.board.size > 1) {
       this.#arrange();
       return;
@@ -2336,6 +2427,7 @@ export class CubeApp {
     sel.conditions = add;
     sel.key = add.length === 0 ? '' : key;
     this.#paintSelection(chart);
+    this.#pageChanged();
   }
 
   #paintSelection(chart: string): void {
