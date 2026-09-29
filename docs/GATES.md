@@ -5682,6 +5682,35 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild W0.3: ten latent defects reproduced and pinned to their owners
+
+**What it is.** Plan item W0.3 asked for each latent defect in the architecture review's §4 (and the stage readings) a
+failing test or a recorded "not reproducible". All ten reproduced. Each is a test of the CORRECT behaviour marked
+`@KnownDefect(owner, reason)` (W0.0): it passes while the defect stands, and fails naming its owner item once the defect
+is fixed. The pin now prints the failure it absorbs to the test log, and every one was read: each absorbed exactly the
+predicted defect, never a harness fault (preconditions throw `IllegalStateException`, which a pin does not absorb).
+The tests were drafted by three read-only agents from the code and run here.
+
+| owner | defect | observed |
+|---|---|---|
+| W2.2 | an overload in a second `###Pure` section resolves with the first section's imports (`ElementParser.java:325` putIfAbsent by FQN) | `a::whichOne`, expected `b::whichOne` |
+| W1.2 | an error column after a non-BMP character counts code points; the same token's span counts UTF-16 units | column 7, span 8 |
+| W1.2 | `%2024-02-30T10:00+0500` in the engine dialect escapes the parser as a raw `DateTimeException` (`PureDateLiteral.shift`) | `Invalid date 'FEBRUARY 30'` |
+| W1.2 | `withChildren` drops `AppliedProperty`/`LambdaFunction`/`ColSpecArray` positions, `ColSpec` stereotypes and tagged values, `GraphFetchLiteral` subtype trees (five pins; the non-position fields need an owner ruling) | `null`, `[]` |
+| W2.3a | a Pure class mapping without `~src` whose class name resolves through an import | `NullPointerException("resolver passthrough")` |
+| W2.5 | the lowerer's flat let map shadows a same-named lambda parameter | `let x = 10; [1,2,3]->map(x\|$x+1)` gives `[11,11,11]`; the filter twin `[1,2,3]` |
+| W4.2 | a static match arm substitutes its input under a same-named inner binder (no capture set outside call frames) | `[60,60,60]` for `[32,34,36]` |
+| W4.3 | a nested exists loses its CORRELATION stamp on the outer re-pass (`Substitution.java:2061`; 15 stamp-dropping rebuild sites, 3 more than the review counted) | NULL keys match: rows `[BETA]` for `[]` |
+| W4.3 | an unmapped source column spelled `product_name` makes `slotPrefix` mint `product_2_`, which misses TemporalFrame's alias-keyed lookup; the dated navigation loses its milestoning window | `[1\|old, 1\|new]` for `[1\|new]` |
+| W6.4 | `ServiceTestRunner` keys provisioned CSV by `String.hashCode`; `"Aa"`/`"BB"` collide and the second service runs on the first's rows | `FAIL` for `PASS` |
+
+Registers: `JdbcSurfaceCensusTest` registers the five probes that read rows from an in-memory DuckDB;
+`OwnCorpusParityTest` 2578 → 2598 (the probes' models joined the own corpus and matched).
+
+**Chain.** `bazel test //...` 128 of 128 pass (6 executed: the core, census, guard and parser-parity lanes that read the new tests; the corpus lanes were cached on unchanged product code) and `//tools/deps:all` 4 of 4.
+
+---
+
 ## 2026-09-29 — Rebuild W0, second batch: the server's doors; splitPart on a plain H2; the H2 design note
 
 **Where.** Branch `compiler/rebuild`, plan rev H1. Four commits; the chain ran on the exact tree.

@@ -94,6 +94,10 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 | 3-probes | nine counts before any step-3 switch; tier classifier corrected | GATES.md 2026-09-27 "step 3, the probe push" |
 | audits | program audit; architecture review; stage readings; H1 plan audit | `plan-audit-2026-09-26/` |
 | H3, H4 | reference lane spike from the pinned jars; diagnostics design | `h3-reference-lane-spike-2026-09-29.md`, `h4-diagnostics-design-2026-09-29.md` |
+| H1, H2 | the plan audit (this revision); the `ResolvedExpr` design | `h1-plan-audit-2026-09-29/`, `h2-resolved-expr-design-2026-09-29.md` |
+| W0.0, W0.1, W0.2 | expected-failure pins; the server's doors; the four confirmed defects; the static-final rule | GATES.md 2026-09-29 "Rebuild W0, first batch" and "second batch" |
+| W0.3 | ten latent defects reproduced, each pinned to its owner item | GATES.md 2026-09-29 "Rebuild W0.3" |
+| W0.5 (part) | the 3,500-line file guard dropped | GATES.md 2026-09-29 "Rebuild W0, first batch" |
 
 ## 4. The waves
 
