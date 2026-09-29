@@ -5682,6 +5682,38 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild H5 and W1.6: quiet baselines; the typer split along its seams
+
+**H5, quiet baselines at `ed85b5166`** (the other account's Bazel server, datacube server and legend-engine server had
+stopped; each lane alone, `--nocache_test_results`, one-minute load under 3 at its start; receipt
+`platform-architecture/receipts/rebuild-h5-baselines-ed85b5166/`):
+
+| lane | load at start | time |
+|---|---|---|
+| `//spec:corpus_duckdb` | 2.62 | 75.7 s |
+| `//spec:corpus_h2` | 2.72 | 79.8 s |
+| `//core:core_tests` | 2.87 | 29.9 s |
+| `//core:stress_suites` | 2.71 | 23.0 s |
+| `//core:guardrails` | 2.42 | 9.5 s |
+
+**W1.6, the typer split** (the audit corrected the item: the 39 checkers were already separate files; the seams are the
+desugars and the overload machinery). Two pure moves, each gated alone:
+1. `TdsDesugars` (807 lines): the pre-dispatch desugars of the legacy TDS surface. Typer 3,499 → 2,784.
+2. `Overloads` (1,209 lines): the generic application rule, candidate sets, ranking, the deferred-argument retry, lambda
+   typing against a formal, the NormalizeRequired and schema-erased inlining. Typer keeps 17 one-line delegates, so no
+   caller changed. Typer 2,784 → 1,748.
+
+The moved text was diffed against the original: it differs only in visibility, in `this` passed on as the Typer field
+(each rewritten site checked for a shadowing local named `t`), and in three qualified references.
+`accessProperty` stays in Typer: it has room now, and W2.4 rewrites it into `Member` semantics, so a move today is churn.
+
+**Gate.** `LL_SHADOW=1` over both corpus lanes (main run and host prerun) before and after each move: every probe row
+identical, CANDIDATES and PICK included, once two row kinds that print hash-ordered sets are printed sorted (the
+baseline itself shows both orders between its lanes; `receipts/rebuild-w1.6/shadow_norm.py`). Both corpus lanes pass,
+rosters unchanged. The first full chain was red on three per-file pins that moved with the code (protocol-construction debt, one broad catch, the claims ledger's also column); after the pins commit `bazel test //...` 128 of 128 (9 executed) and `//tools/deps:all` 4 of 4.
+
+---
+
 ## 2026-09-29 — Rebuild W0.3: ten latent defects reproduced and pinned to their owners
 
 **What it is.** Plan item W0.3 asked for each latent defect in the architecture review's §4 (and the stage readings) a

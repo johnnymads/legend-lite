@@ -10,11 +10,10 @@ are in git history at `caf0cf71f`.
   `docs/EXECUTION_PLAN_2026_09_26.md` wave by wave. Every slice on the branch is gated green by `bazel test //...` and
   `bazel test //tools/deps:all` before it is pushed; `main` fast-forwards at wave boundaries and stays the last known-good
   product.
-- **State 2026-09-29:** homework H1 (plan audit, plan rev H1), H3, H4, H6 done; H2 (the `ResolvedExpr` note) is W2.0.
-  Six decisions D6–D11 are open in the plan's §2; W0 items that do not depend on them start now.
-- **Owed by the user, outside this session's reach:** the other macOS account (`neema`) still runs a Bazel server (a
-  `datacube/serve` target), a Claude session and a legend-engine server; they must be stopped from that account before
-  any timing (plan rule 0.7). Correctness chains run regardless.
+- **State 2026-09-29:** all homework done (H1-H6). W0 done except W0.4 (waits on D6). W1.6 done. Next: W1.1, the
+  reference lane. Seven decisions are open in the plan's §2 (D6-D12).
+- The other account's Bazel server, datacube server and legend-engine server have stopped; timings are possible again
+  (plan rule 0.7).
 
 ## Rules that remain
 

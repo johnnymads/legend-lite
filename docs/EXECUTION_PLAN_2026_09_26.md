@@ -97,7 +97,9 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 | H1, H2 | the plan audit (this revision); the `ResolvedExpr` design | `h1-plan-audit-2026-09-29/`, `h2-resolved-expr-design-2026-09-29.md` |
 | W0.0, W0.1, W0.2 | expected-failure pins; the server's doors; the four confirmed defects; the static-final rule | GATES.md 2026-09-29 "Rebuild W0, first batch" and "second batch" |
 | W0.3 | ten latent defects reproduced, each pinned to its owner item | GATES.md 2026-09-29 "Rebuild W0.3" |
-| W0.5 (part) | the 3,500-line file guard dropped | GATES.md 2026-09-29 "Rebuild W0, first batch" |
+| W0.5 | the line guard and three ceremony guards dropped; what stays and why is in W0.5 | GATES.md 2026-09-29 "Rebuild W0, first batch"; commit ed85b5166 |
+| H5 | quiet baselines at ed85b5166 (corpus DuckDB 75.7 s, H2 79.8 s, core 29.9 s, stress 23.0 s, guardrails 9.5 s) | GATES.md 2026-09-29 "Rebuild H5 and W1.6" |
+| W1.6 | the typer split: TdsDesugars and Overloads out of Typer (3,499 → 1,748 lines), probe rows identical | GATES.md 2026-09-29 "Rebuild H5 and W1.6" |
 
 ## 4. The waves
 
@@ -356,8 +358,7 @@ W2.3–W2.6 put the resolution on the parse nodes instead: `AppliedFunction`'s c
   is not ours.
 - **Homework status (2026-09-29):** H6 done (superseded docs marked); H1 done (this revision; reports in
   `plan-audit-2026-09-26/h1-plan-audit-2026-09-29/`); H3 done; H4 done (W1.2 adds speculative scopes and parser recovery);
-  H2 = W2.0 written (rulings D12 open); H5 quiet baselines blocked while the other account's Bazel server, Claude session and
-  legend-engine server run.
+  H2 = W2.0 written (rulings D12 open); H5 done (the other account's servers stopped; timings in §3). All homework done.
 - **Read, in order:** `docs/IN_FLIGHT.md`; this page; the H1 synthesis; `architecture-review-2026-09-28.md`; the stage
   reading and the H1 report for the area you touch; the last `docs/GATES.md` entries; for anything in D/F/G the reference
   research (`reference-matching.md` with its corrections, `kernel-reading-2026-09-26.md`).
