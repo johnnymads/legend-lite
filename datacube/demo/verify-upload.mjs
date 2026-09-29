@@ -11,6 +11,7 @@
 // rather than only if the page is blank.
 //
 //   DATA=/abs/path/trades.csv EXPECT_ROWS=50000 bazel run //datacube:verify_upload
+//   bazel run //datacube:verify_upload        (no DATA: the product's own sample, 50,000 rows)
 
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -26,12 +27,23 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // that masks the very failure it was added to report.
 function bad(m) { console.log(`FAIL: ${m}`); failed = true; }
 let failed = false;
-const DATA = process.env.DATA;
-const EXPECT_ROWS = Number(process.env.EXPECT_ROWS ?? 0);
+// NO DATA GIVEN: the product's own sample (src/samples.ts, what "try" opens and make_sample
+// writes), written to a temporary file, so the harness runs anywhere -- CI included -- and
+// knows its row count because it made the file.
+const SAMPLE_ROWS = 50_000;
+const DATA = process.env.DATA ?? await sampleFile();
+const EXPECT_ROWS = Number(process.env.EXPECT_ROWS ?? (process.env.DATA ? 0 : SAMPLE_ROWS));
 const EXPECT_COLS = Number(process.env.EXPECT_COLS ?? 0);
-if (!DATA) {
-  console.error('set DATA=/abs/path/to/file.csv (or .parquet)');
-  process.exit(2);
+
+async function sampleFile() {
+  const { sampleCsv } = await import('../src/samples.ts');
+  const { mkdtemp, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const file = join(await mkdtemp(join(tmpdir(), 'dc-upload-')), 'sample-trades.csv');
+  await writeFile(file, sampleCsv({ rows: SAMPLE_ROWS, seed: 20260920 }), 'utf8');
+  console.log(`no DATA: the product's sample, ${SAMPLE_ROWS.toLocaleString()} rows -> ${file}`);
+  return file;
 }
 
 const TYPES = {
@@ -137,15 +149,12 @@ try {
     console.log('FAIL: still showing the demo data');
     failed = true;
   }
-  // A year must render as 2019, not 2,019. The inference marks
-  // key-like numerics as dimensions and the demo turns thousands
-  // separators off for them; without that the grid looks broken in a
-  // way that reads as bad data.
-  if (rows[0]?.some((c) => /^\d,\d{3}$/.test(c))) {
-    console.log(`FAIL: a key-like number got thousands separators: `
-      + JSON.stringify(rows[0]));
-    failed = true;
-  }
+  // No key-like check here any more: an opened file's numeric columns are MEASURES
+  // (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, decision D3: every numeric column a measure,
+  // upstream's rule, unless a host or the user declares it a dimension), so its year reads
+  // 2,021 until someone makes it a dimension. The inference that guessed keys was deleted in
+  // T1c; this check outlived it (2026-09-29). A DIMENSION's no-separators rule is pinned in
+  // test/config.test.ts (numberDefaults).
 
   // HEADERS MUST BE VISIBLE, not merely present.
   //

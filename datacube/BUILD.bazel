@@ -675,6 +675,21 @@ _HARNESSES = [
     "verify-wasm-browser",
 ]
 
+# THE ONES CI RUNS (the `browser` lane, Linux only: .github/workflows/gates-run.yml): every
+# harness that needs no server and no file of yours -- each exits non-zero on a failure. The
+# lane runs whatever carries the tag, so the list is here, beside the harnesses, not in CI.
+_CI_HARNESSES = [
+    "run-stress",
+    "verify-cubes",
+    "verify-features",
+    "verify-picker",
+    "verify-real-data",
+    "verify-remote",
+    "verify-smoke",
+    "verify-upload",
+    "verify-wasm-browser",
+]
+
 [js_binary(
     name = h.replace("-", "_"),
     data = _HARNESS_HELPERS + [
@@ -688,4 +703,13 @@ _HARNESSES = [
         "--experimental-wasm-exnref",
         "--disable-warning=ExperimentalWarning",
     ],
+    tags = ["browser-ci"] if h in _CI_HARNESSES else [],
 ) for h in _HARNESSES]
+
+# `bazel run //datacube:install_browser [-- --with-deps]`: the Chromium the harnesses drive, at
+# the version the lock file pins.
+js_binary(
+    name = "install_browser",
+    data = [":node_modules/playwright"],
+    entry_point = "demo/install-browser.mjs",
+)

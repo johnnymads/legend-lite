@@ -120,12 +120,6 @@ const KNOWN = [
       + 'which reaches DuckDB the same way.',
   },
   {
-    id: 'contains-on-non-string',
-    match: (d) => /Binder Error.*list_contains/.test(d),
-    why: 'contains() on a BOOLEAN lowers to list_contains(BOOLEAN, ...) '
-      + 'instead of refusing.',
-  },
-  {
     id: 'int64-overflow',
     match: (d) => /Out of Range|Overflow/.test(d),
     why: 'x * 2 on 9223372036854775807. Arguably correct of DuckDB to '

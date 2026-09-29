@@ -120,7 +120,11 @@ try {
     console.log(`FAIL: first row is not AMER: ${JSON.stringify(firstCells[0])}`);
     failed = true;
   }
-  const money = firstCells.slice(1, 6);
+  // The year columns BY NAME (`2021__|__notional`), not by position: a column beside the
+  // pivot (the ungrouped qtr) or the pivot's own Total must not shift what is checked.
+  const money = await page.locator('.dc-row').first().locator('.dc-cell').evaluateAll((cells) =>
+    cells.filter((c) => /^\d{4}__\|__notional$/.test(c.dataset.column ?? ''))
+      .map((c) => c.textContent?.trim() ?? ''));
   if (money.length !== 5 || !money.every((c) => /^\$[\d,]+$/.test(c))) {
     console.log(`FAIL: expected 5 pivoted currency cells, got `
       + JSON.stringify(money));

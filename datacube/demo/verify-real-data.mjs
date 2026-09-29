@@ -14,6 +14,11 @@
 //   EXPECT='{"Iberia":74988250}' \
 //   bazel run //datacube:verify_real_data
 //
+// No DATA: the harness BUILDS a Parquet file with node's DuckDB (as verify-remote does -- a
+// committed binary fixture rots silently) and takes EXPECT from that same DuckDB, so it runs
+// anywhere, CI included. The answer still comes from a different engine than the one under
+// test: DuckDB natively in node, against the in-browser planner and DuckDB-WASM.
+//
 // FORMAT=csv (default parquet) for a CSV. The file must carry the
 // eight columns demo/trades.pure declares: region, desk, book, year,
 // qtr, notional, pnl, qty.
@@ -26,14 +31,50 @@ import { fileURLToPath } from 'node:url';
 import { servedPath } from './static-files.ts';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const DATA = process.env.DATA ?? process.env.PARQUET;
-const FORMAT = process.env.FORMAT ?? 'parquet';
-if (!DATA) {
-  console.error('set DATA=/abs/path/to/trades.parquet (or .csv with FORMAT=csv)');
-  process.exit(2);
-}
+const GIVEN = process.env.DATA ?? process.env.PARQUET;
+const FORMAT = GIVEN ? (process.env.FORMAT ?? 'parquet') : 'parquet';
+const fixture = GIVEN ? undefined : await buildFixture();
+const DATA = GIVEN ?? fixture.file;
 // What DuckDB says about this file, for the grid to be checked against.
-const EXPECT = JSON.parse(process.env.EXPECT ?? '{}');
+const EXPECT = fixture ? fixture.expect : JSON.parse(process.env.EXPECT ?? '{}');
+
+/** A Parquet file of the demo's eight columns, and DuckDB's per-region total of notional. */
+async function buildFixture() {
+  const { createRequire } = await import('node:module');
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const require = createRequire(import.meta.url);
+  const duckdb = require('@duckdb/duckdb-wasm/blocking');
+  const dist = path.dirname(require.resolve('@duckdb/duckdb-wasm/blocking'));
+  const db = await duckdb.createDuckDB({
+    mvp: { mainModule: path.join(dist, 'duckdb-mvp.wasm'), mainWorker: path.join(dist, 'duckdb-node-mvp.worker.cjs') },
+    eh: { mainModule: path.join(dist, 'duckdb-eh.wasm'), mainWorker: path.join(dist, 'duckdb-node-eh.worker.cjs') },
+  }, new duckdb.VoidLogger(), duckdb.NODE_RUNTIME);
+  await db.instantiate();
+  const conn = db.connect();
+  // regions the demo never generates, so the grid cannot pass by showing the demo's own rows
+  conn.query(`CREATE TABLE t AS SELECT
+      CASE i % 3 WHEN 0 THEN 'Iberia' WHEN 1 THEN 'Nordics' ELSE 'Benelux' END AS region,
+      CASE (i // 3) % 3 WHEN 0 THEN 'Rates' WHEN 1 THEN 'Credit' ELSE 'FX' END AS desk,
+      ('Book ' || (1 + ((i // 9) % 4)))                                      AS book,
+      (2021 + (i % 5))                                                       AS year,
+      ('Q' || (1 + (i % 4)))                                                 AS qtr,
+      ((i * 7919) % 1000000) / 100.0                                         AS notional,
+      ((i * 104729) % 200000) / 100.0 - 1000.0                               AS pnl,
+      ((i * 31) % 97) + 1                                                    AS qty
+    FROM range(30000) t(i)`);
+  const expect = Object.fromEntries(conn.query('SELECT region, sum(notional) AS n FROM t GROUP BY region')
+    .toArray().map((r) => [String(r.region), Number(r.n)]));
+  const name = `dc-real-${process.pid}-${Date.now()}.parquet`;
+  conn.query(`COPY t TO '${name}' (FORMAT PARQUET)`);
+  const bytes = db.copyFileToBuffer(name);
+  for (const stray of [name, `tmp_${name}`]) await rm(stray, { force: true }).catch(() => {});
+  const file = path.join(await mkdtemp(path.join(tmpdir(), 'dc-real-')), 'trades.parquet');
+  await writeFile(file, bytes);
+  console.log(`no DATA: built ${file} (30,000 rows); DuckDB says ${JSON.stringify(expect)}`);
+  return { file, expect };
+}
 
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm',
@@ -115,6 +156,11 @@ try {
   const rows = await page.$$eval('.dc-row', (els) =>
     els.map((el) => [...el.querySelectorAll('.dc-cell')]
       .map((c) => c.textContent?.trim() ?? '')));
+  // The same rows, each cell with its column's name: the pivoted years are read BY NAME, so the
+  // pivot's Total (which repeats their sum) or a column beside the pivot is never counted in.
+  const named = await page.$$eval('.dc-row', (els) =>
+    els.map((el) => [...el.querySelectorAll('.dc-cell')]
+      .map((c) => ({ column: c.dataset.column ?? '', text: c.textContent?.trim() ?? '' }))));
 
   console.log(`status: ${await page.textContent('.dc-status-timing')}`);
   console.log(`HTTP requests for the data (range reads): ${ranges}`);
@@ -126,20 +172,28 @@ try {
   // data rather than falling back to generating its own.
   const labels = rows.map((r) => (r[0] ?? '').replace(/^[^A-Za-z]*/, ''));
   for (const [region, total] of Object.entries(EXPECT)) {
-    const row = rows[labels.indexOf(region)];
+    const row = named[labels.indexOf(region)];
     if (!row) {
       console.log(`FAIL: no row for ${region} (saw ${labels.join(', ')})`);
       failed = true;
       continue;
     }
-    // Sum the pivoted year columns and compare with DuckDB's own total.
-    const cells = row.slice(1).filter((c) => /^\$/.test(c));
-    const sum = cells.reduce((a, c) => a + Number(c.replace(/[$,]/g, '')), 0);
-    const off = Math.abs(sum - total);
-    const ok = off <= Math.max(2, total * 1e-9);
-    console.log(`  ${ok ? 'MATCH ' : 'DIFFER'} ${region}: grid ${sum}`
+    // Sum the pivoted year columns and compare with DuckDB's own total; the pivot's Total
+    // column, when shown, must say the same. Money renders to whole dollars, so each cell is
+    // off by under a dollar: the tolerance is a dollar per cell.
+    const money = (t) => Number(t.replace(/[$,()]/g, '')) * (/^\(/.test(t) ? -1 : 1);
+    const years = row.filter((c) => /^\d{4}__\|__/.test(c.column));
+    const sum = years.reduce((a, c) => a + money(c.text), 0);
+    const tolerance = Math.max(2, years.length);
+    const ok = years.length > 0 && Math.abs(sum - total) <= tolerance;
+    console.log(`  ${ok ? 'MATCH ' : 'DIFFER'} ${region}: grid ${sum} over ${years.length} years`
       + ` vs duckdb ${total}`);
     if (!ok) failed = true;
+    const shown = row.find((c) => c.column.startsWith('__pivot_total__|__'));
+    if (shown && Math.abs(money(shown.text) - total) > tolerance) {
+      console.log(`FAIL: ${region}'s Total column says ${shown.text}, duckdb ${total}`);
+      failed = true;
+    }
   }
   if (Object.keys(EXPECT).length === 0) {
     console.log('FAIL: no EXPECT given, so nothing was actually checked');

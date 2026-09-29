@@ -60,17 +60,21 @@ jobs:
             {"key":"9",      "name":"gate 9 Channel B dual-verdict",   "targets":"//pct:pct_channel_b"},
             {"key":"10",     "name":"gate 10 stress corpus",           "targets":"//core:stress_suites"},
             {"key":"app",    "name":"DataCube app, WASM planner, warehouse", "targets":"//datacube:tests //wasm:all //warehouse:tests"},
-            {"key":"native", "name":"warehouse as a native image",     "targets":"//warehouse:tests_native"}
+            {"key":"native", "name":"warehouse as a native image",     "targets":"//warehouse:tests_native"},
+            {"key":"browser", "name":"DataCube in a real browser, and live against the warehouse", "targets":"//datacube:live_snap_test"}
           ]')
           # the native image is built on Linux and macOS (Windows needs its own toolchain setup: owed)
           if [ "$PLATFORM" = windows ]; then all=$(printf '%s' "$all" | jq -c '[.[] | select(.key != "native")]'); fi
+          # the browser lane runs on Linux only: its harnesses drive DuckDB-WASM in Chromium, the same on
+          # every platform, and live-vs-snap compares the native warehouse on x86_64 with the arm64 laptops'
+          if [ "$PLATFORM" != linux ]; then all=$(printf '%s' "$all" | jq -c '[.[] | select(.key != "browser")]'); fi
           if [ -n "${WANT:-}" ]; then
             lanes=$(printf '%s' "$all" | jq -c --arg w ",$WANT," '[.[] | . as $e | select($w | contains("," + $e.key + ","))]')
           else
             lanes=$all
           fi
           [ "$(printf '%s' "$lanes" | jq 'length')" -gt 0 ] || {
-            echo "::error ::no lane matches gates='${WANT:-}' — valid keys: 1,checks,3,4,5,6,7,8,9,10,app,native"
+            echo "::error ::no lane matches gates='${WANT:-}' — valid keys: 1,checks,3,4,5,6,7,8,9,10,app,native,browser"
             exit 1
           }
           echo "lanes=$lanes" >> "$GITHUB_OUTPUT"
@@ -119,6 +123,9 @@ jobs:
           set -eu
           py=python3; command -v python3 >/dev/null 2>&1 || py=python
           "$py" -m pip install --quiet --target "$RUNNER_TEMP/pyarrow" pyarrow==23.0.1
+      - name: Chromium for the browser harnesses (Playwright's, at the lock file's version)
+        if: matrix.lane.key == 'browser'
+        run: bazel run --config=ci --repository_cache="$HOME/.cache/bazel-repo" --disk_cache="$HOME/.cache/bazel-disk" //datacube:install_browser -- --with-deps
       - name: bazel test ${{ matrix.lane.targets }}
         env:
           LANE_TARGETS: ${{ matrix.lane.targets }}
@@ -142,6 +149,21 @@ jobs:
           done
           echo "targets: ${targets[*]}"
           bazel test "${flags[@]}" "${targets[@]}"
+      - name: the browser harnesses (every //datacube target tagged browser-ci)
+        if: matrix.lane.key == 'browser'
+        run: |
+          set -u
+          flags=(--config=ci --repository_cache="$HOME/.cache/bazel-repo" --disk_cache="$HOME/.cache/bazel-disk")
+          mkdir -p harness-logs
+          failed=()
+          # one at a time: each serves the site and drives its own browser
+          for t in $(bazel query --repository_cache="$HOME/.cache/bazel-repo" 'attr(tags, "browser-ci", //datacube:*)'); do
+            name=${t##*:}
+            echo "::group::$t"
+            if bazel run "${flags[@]}" "$t" 2>&1 | tee "harness-logs/$name.log"; then :; else failed+=("$t"); fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -gt 0 ]; then echo "::error ::harnesses failed: ${failed[*]}"; exit 1; fi
       - name: test logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -151,4 +173,5 @@ jobs:
             bazel-testlogs/**/test.log
             bazel-testlogs/**/test.xml
             bazel-testlogs/**/test.outputs/**
+            harness-logs/**
           if-no-files-found: ignore

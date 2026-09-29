@@ -22,6 +22,7 @@ commands (`mvn`, `tools/allgates.sh`, `-Dx.generate=1`) no longer exist.
 | 10 | `//core:stress_suites` | the stress corpus |
 | 11 | `//spec:corpus_duckdb` | its second pass: the database judge, joined per assert to the host pass (one target with gate 4 since 2026-09-23 — the host pass ran twice before) |
 | app | `//datacube:tests`, `//wasm:all` | DataCube's suite and typecheck; the planner compiled to WebAssembly (TeaVM) and held to the JVM by differentials — its own corpus, DataCube's serialised cubes, the timezone database |
+| browser | `//datacube:live_snap_test`, then every `//datacube` target tagged `browser-ci` (`bazel run`) | **Linux only in CI.** Every cube case live on the native warehouse and snapped into DuckDB-WASM, the answers compared (plus receipts, sign-in again, token refresh); then the harnesses that drive the built site in headless Chromium and need no server: smoke, features, cubes, real data, upload, remote, picker, wasm-browser, stress. Locally: `bazel run //datacube:install_browser` once, then `bazel run` each (about 12 minutes together) |
 
 Beside the gates, in `bazel test //...`:
 
