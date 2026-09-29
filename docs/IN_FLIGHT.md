@@ -78,39 +78,23 @@ qualified with the pivot's alias; DuckDB refused it). New `core/src/test/java/co
 PivotJoinColumnTest.java` (red without the fix), registered in `JdbcSurfaceCensusTest`;
 `OwnCorpusParityTest` MIN_MATCHED re-pinned with a dated note.
 
-## DataCube charts and pages (branch `feature/datacube-charts`; design: `DATACUBE_DASHBOARDS_DESIGN_2026_09_28.md`)
+## DataCube (one session owns all of it since 2026-09-28)
 
-**Owns:** `datacube/src/chart-*.ts`, `datacube/src/ui/chart-panel.ts`, `datacube/src/layout/`, their
-tests, and the `echarts` dependency (`datacube/package.json`, `pnpm-lock.yaml`).
+The charts session is stopped and its work merged (design `DATACUBE_DASHBOARDS_DESIGN_2026_09_28.md`
+with its homework; `feature/datacube-charts` and `docs/datacube-dashboards` deleted). ONE session now
+owns `datacube/` whole: the state owner (`state-owner.ts`, `cube-state.ts`), the cube and page
+documents (`cube-document.ts`, `page-document.ts`), the store and the Cubes window, charts
+(`chart-*.ts`, `ui/chart-panel.ts`, the `echarts` dependency), the board (`layout/`), `host.ts`, and
+the demo host (`demo/boot.ts`). Plans: `DATACUBE_LEG_B_STATE_OWNER_2026_09_28.md` (done),
+`DATACUBE_SAVE_SHARE_2026_09_28.md` (#21; next: sharing, milestone 1b).
 
-**Touches outside its area:** `datacube/src/app.ts` (the chart menu entry, the board around the grid,
-the chart refresh in `#onView`), `datacube/src/app.css`, `datacube/src/ui/menu.ts`, `datacube/BUILD.bazel`.
+**Standing (USER 2026-09-28): THE PAGE IS THE SAVED DOCUMENT.** Save, Load, the share link, the share
+file and Export always carry the whole page -- grid, charts, layout; a lone cube is a page of its grid
+alone. The cube document is the building block a page embeds, by value. Records and files saved as a
+bare `datacube.cube` before this still open, as a page of their grid (`readSaved`). "Changed since
+saved" compares the page.
 
-**Save/share:** a page is a NEW document kind (`datacube.page`) that embeds cube documents by value.
-It will not edit `cube-document.ts` or `cube-store.ts`; it stores through `CubeStore` as they are. The
-save session will be asked to list page records in its Load dialog.
-
-**Landed (2026-09-28): saving pages.** `datacube/src/page-document.ts` (new: `writePage`, `readPage`,
-`readSaved` -- a cube or a page, by kind). ONE thing is saved (user ruling, 2026-09-28): Save and
-the JSON export always write a page (`app.pageDocument`), the cube's own document inside it -- a cube
-with no charts is a page of its grid alone. In the save session's host, `datacube/demo/boot.ts`: Save
-writes the page; Open and Open file read either kind (`readSaved`: cubes saved before this open as a
-page of their grid) and put a page's charts back (`app.restoreViews`); "changed since saved" compares
-the page. `cube-library.ts` is untouched: a page is a record like a cube, listed by name.
-
-## DataCube save/share (#21, the save session; plan `DATACUBE_SAVE_SHARE_2026_09_28.md`)
-
-**Owns:** `datacube/src/cube-document.ts`, `cube-store.ts`, `file-handles.ts`, `ui/cube-library.ts`,
-`host.ts`, the state owner (`state-owner.ts`, `cube-state.ts`), and saving/sharing in `demo/boot.ts`.
-
-**Agreed (USER 2026-09-28): THE PAGE IS THE SAVED DOCUMENT.** Save, Load, the share link, the share
-file and Export always carry the whole page -- grid, charts, layout; a lone cube is a page with one
-grid tile. The cube document stays the building block a page embeds (by value, as the charts plan
-says). Records and files saved as a bare `datacube.cube` since milestone 1 still open, as a
-one-tile page. So: the charts session owns the page FORMAT; the save session owns storing,
-loading, listing, sharing and "changed since saved" -- which covers the whole page, so the board
-reports its changes too. The save session builds sharing on the page format once it lands and will
-not define a page shape of its own.
+**Touches outside `datacube/`:** nothing planned; announced here before it does.
 
 ## The rules both sides follow
 
