@@ -58,7 +58,7 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 
 | id | question | status |
 |---|---|---|
-| D1 | The call node's type: the 2026-09-27 ruling (one `AppliedFunction`, a sealed `Callee` slot `Spelled`/`Bound`, checked at run time) or a distinct `ResolvedExpr` family so javac proves no unresolved tree reaches the typer | **OPEN — the user.** Recommended: `ResolvedExpr` (rule 0.10). W2 is written for it; §6 says what changes if the ruling stands |
+| D1 | The call node's type: the 2026-09-27 ruling (one `AppliedFunction`, a sealed `Callee` slot `Spelled`/`Bound`, checked at run time) or a distinct `ResolvedExpr` family so javac proves no unresolved tree reaches the typer | **RULED 2026-09-29 (the user): a distinct `ResolvedExpr` family.** It supersedes the 2026-09-27 run-time `Callee` slot; W2 is written for it; §6 is kept only as the record of the alternative |
 | D2 | Binding scope | **RULED 2026-09-28: everything** — calls, members, binders (`VarId`), element references. Landed as separate pushes on one new tree type (W2.3–W2.6) so each roster change is attributable |
 | D3 | A reference lane at the pinned release | **Needs the user's approval of W1.1's shape.** No new downloads appear needed: all 27 modules of `core_relational`'s closure are already resolved in `maven_upstream_install.json` at 4.145.0 / 5.99.0 (checked 2026-09-28); the lane is a new test target over them |
 | D4 | "No tolerant modes" | **RULED 2026-09-28**: rule 0.9 |
@@ -210,7 +210,7 @@ after W4.1 and W3 (it needs typed mappings and one declaration per call). W4.4 a
 changes). W5 after W4.3 (it lowers the physical IR). W6 can start after W5.1. W0.1 and W5.4 have separate owners and can
 run in parallel with anything. Nothing runs against the same rosters as another slice in flight (rule 0.5).
 
-## 6. If D1 keeps the 2026-09-27 ruling
+## 6. The alternative D1 did not take (record only)
 W2.3–W2.6 put the resolution on the parse nodes instead: `AppliedFunction`'s callee becomes the sealed `Callee`
 (`Spelled` | `Bound` | a third case `Member(name)`); `VarId` and element ids become fields on `Variable`,
 `LambdaFunction` parameters, `PackageableElementPtr` and `EnumValue`, null before resolution. The typer switches on
