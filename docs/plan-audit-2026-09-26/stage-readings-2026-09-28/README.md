@@ -1,7 +1,7 @@
 # Stage readings, 2026-09-28: every stage of core read whole, plus the guards and the plan
 
-These are the evidence behind `../architecture-review-2026-09-28.md` (the synthesis) and `../NEXT_STEPS_2026_09_28.md`
-(what to do and the decisions owed). Each file is one reader's report, preserved as returned, with a header saying what
+These are the evidence behind `../architecture-review-2026-09-28.md` (the synthesis) and `docs/EXECUTION_PLAN_2026_09_26.md`
+(the living plan: what to do, in what order, and the decisions owed). Each file is one reader's report, preserved as returned, with a header saying what
 was re-checked by hand afterwards. Tree: `6ab32198d` (origin/main on 2026-09-28; `core/` unchanged since `d484e1f78`
 except the upstream-API server work, which touched `server/` only).
 

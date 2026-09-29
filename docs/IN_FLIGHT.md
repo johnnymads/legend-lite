@@ -125,6 +125,10 @@ saved" compares the page.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-28 untangle: **the plan is rewritten for the whole compiler** (`EXECUTION_PLAN_2026_09_26.md`, waves W0–W7;
+  docs only). What changes for you: W0.1 asks the `server/` owner to close `/engine/sql` (arbitrary SQL, all interfaces,
+  CORS `*`; `server/LegendHttpServer.java:40,53,248`); W6.4 later moves the server onto one compiled workspace. Nothing
+  else of yours is touched before W6. NOT building.
 - 2026-09-28 untangle: **architecture review filed** (`docs/plan-audit-2026-09-26/architecture-review-2026-09-28.md`,
   docs only): the whole of core read stage by stage, the plan judged against compiler practice, 15 concrete
   defects listed. One is a SECURITY item outside the untangle's area, for whoever owns `server/`:

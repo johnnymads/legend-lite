@@ -1,501 +1,231 @@
-# The execution plan: every step, what we do, what homework is done, what is owed, how it is gated
+# The execution plan: the whole compiler, rebuilt stage by stage behind the oracle
 
-Written 2026-09-26 after `PLAN_AUDIT_2026_09_26.md`. This is the document a fresh session executes
-from. It supersedes the ORDER in `REAL_PLAN_2026_09_25.md` and the first-step detail in
-`A1_HOMEWORK_2026_09_25.md`; the design's stages, principles and rulings stand
-(`COMPILER_DESIGN_2026_09_25.md`, corrected where its banner says). The research behind every claim
-here is in `docs/plan-audit-2026-09-26/` (six files, each with file:line evidence):
-`reference-matching.md`, `engine-resolution.md`, `code-traps.md`, `lowering.md`, `cycles.md`,
-`renderer.md`. Read those before touching the step they cover; they are the homework, not this page.
+**Rewritten 2026-09-28** after the whole of `core` was read stage by stage
+(`plan-audit-2026-09-26/architecture-review-2026-09-28.md`, evidence in `plan-audit-2026-09-26/stage-readings-2026-09-28/`).
+This is the ONE living plan. It replaces the step list of the 2026-09-26 version (steps 0–2 of which are done; their
+records are in `docs/GATES.md` and the old text is in git history at `601995bc2`), `REAL_PLAN_2026_09_25.md`'s order, and
+`NEXT_STEPS_2026_09_28.md` (folded in here and deleted). The research files in `plan-audit-2026-09-26/` stay as the
+homework they are; this page says what to build, in what order, gated how.
 
-## 0. How this works this time
+Keep this page current: when a step lands, mark it done with the GATES.md entry's date; when a number changes, the tool
+that measures it prints it into GATES.md — this page carries no hand-typed counts except as dated context.
 
-The previous attempt went wrong in four repeatable ways: facts were stated from memory or from the
-engine's Java instead of the reference's; a step's specification did not name what else reads the
-thing it changes; a gate proved well-formedness (a regex, a green exit code) rather than substance;
-and timing was read only when it was already 5x. The rules below are the mechanical answer to each.
+## 0. Rules
 
-1. **Homework before code, from primary sources.** Every step has a homework note that quotes the
-   pinned trees (`$(bazel info output_base)/external/+http_archive+legend_{pure,engine}_src`) by
-   file:line and lists every reader of every symbol the step changes (grep counts in the note).
-   The six audit files are that note for the first steps; later steps write theirs the same way.
-2. **Probe before switch.** The `LL_SHADOW=1` probe (CANDIDATES/PICK/FORM rows) or a census runs
-   BEFORE the switch and is saved as a receipt; the switch is judged against it.
-3. **The gate is the oracle plus the numbers.** Both corpus rosters LOST 0; conformance unchanged;
-   the manifest census not grown; the identity pins shrink-only; and the CORPUS LANE TIMING LINES
-   READ at every gate, on a quiet machine (`uptime` load under 2, no other Bazel), against the
-   receipts' curve. A step that needs a special case to keep the rosters is wrong and stops.
-4. **Deletions land in the same commit** as the switch, with the tests that pinned the deleted
-   behaviour. A pin that must move gets a dated justification naming the step.
-5. **One variable at a time.** Names constant while the world changes; world constant while names
-   change (charter D7(c)). No two steps in flight against the same rosters.
-6. **The size guard is amended, not dodged.** A file at the 3,500-line guard may be split ALONG A
-   STAGE SEAM (the typer's `applyCore` and checkers; the lowerer by family) by the step that touches
-   it, with the seam named in the record. Splitting by topic to stay under the guard stays forbidden.
-7. **Every slice: homework → probe → switch → gate → deletion → GATES.md record → push to main**
-   with the full chain green (`bazel test //...` and `bazel test //tools/deps:all`; the
-   diagnostics battery `//parser-equivalence:diagnostics` is manual and runs only on a pin bump or a
-   parser/lexer/protocol change — the 2026-08-26 ruling; the first version of this line listed it in
-   the chain by mistake, corrected 2026-09-27), never force-pushed, committed as
-   `neema2 <neema2@gmail.com>` with the session trailers. A lane's time inside a chain is a
-   scheduling artefact: a timed claim is the lane run alone (GATES.md, 2026-09-27).
-8. **Where the evidence lives.** Numbers and decisions are in `docs/GATES.md` entries (one per
-   slice) and in this directory's research files, both on main. The RAW receipts (probe TSVs, JFR
-   aggregates, chain and timing logs, ~500 MB) are on the desk only, under
-   `~/legend/platform-architecture/receipts/` (`plan-audit-2026-09-26/step{0,2,3}/`,
-   `reference-differential/`, `untangle-4b/corpus-curve-duckdb.txt`), not in any repository; every
-   GATES.md entry names the receipt file it read from, and quotes the numbers, so a session
-   without the desk can review from GATES.md and re-run the probe to regenerate a receipt.
+1. **Homework before code, from primary sources** — the pinned trees
+   (`$(bazel info output_base)/external/+http_archive+legend_{pure,engine}_src`) and our code, by file:line.
+2. **Probe before switch**; the probe's receipt is saved before the switch and the switch is judged against it.
+3. **The gate is the oracle plus the numbers**: corpus rosters LOST 0 (by name AND failure class once W1.4 lands), the
+   reference lane's disagreement set not grown (W1.1), the phase verifier green (W1.3), golden dumps unchanged except
+   where the record explains (W1.5), `bazel test //...` and `//tools/deps:all` green, timing read alone and quiet.
+4. **Deletions land with the switch.** A pin that moves carries a dated reason naming the step.
+5. **One variable at a time.** Names change with the world held constant; the world changes with names held constant.
+6. **Every slice:** homework → probe → switch → gate → deletion → GATES.md record → push to main. Never force-push;
+   commit as `neema2 <neema2@gmail.com>` with the session trailers.
+7. **A timing is a lane run alone** with `--nocache_test_results`, load under 3 at start; a lane inside a chain is not a timing.
+8. **Standing rulings:** no string identity for a declaration; no PCT or category checks in the compiler; no caches
+   before the algorithm is proven; every deferral pinned with an owner; we own everything the program needs.
+9. **"Strict" means: collect every diagnostic in one pass, poison the failed unit, fail the build on any error**
+   (ruled 2026-09-28). It does not mean abort on the first error; it never means accept bad input.
+10. **Every new stage gets its own IR type.** A phase boundary is proved by javac, not checked at run time.
 
-## 1. The steps, in order
+## 1. The target (what "expert" means here)
 
-### Step 0 — Structure: the annotation move and the target split (now, ~1 day)
+The product is judged by a differential against legend-pure, so resolution and overload semantics copy the reference
+exactly, oddities included (`reference-matching.md`, `kernel-reading-2026-09-26.md`). Around that constraint the
+architecture is a conventional production front end and a query compiler back end:
 
-**What it is.** The two marker annotations `Nullable`/`NonNull` leave `com.legend` (which makes the
-whole of core one 26-package cycle); two leaf classes move; `//core` is split into the Bazel targets
-the dependency graph already permits. After this, every back-edge a later step would introduce is a
-build error, not a test found afterwards.
+| # | stage | IR out (a distinct sealed type) | identity it carries | today's code | stage reading |
+|---|---|---|---|---|---|
+| A–C | lex, parse | syntax tree (`ValueSpecification` without resolver fields; wire trivia in a side record) | spans only | lexer/, parser/ | A01, A02 |
+| W | World (eager knowledge) | declaration tables per kind; per-section import groups; C3 linearizations and variance | `FunctionId` (external key, the reference's element name); `ClassId`/`EnumId`/`StoreId`… as typed FQN wrappers; `DeclId` handles | model/, builtin/, compiler/ModelBuilder | A03, A04 |
+| D | resolve | `ResolvedExpr` | call: `Candidates(List<FunctionId>)`; dot access: `Member(name)`; every binder: `VarId`; every element reference: `Ref<Kind>` | compiler/NameResolver | A04 |
+| F | elements | typed declarations (`TypedClass`, `TypedFunction`…) keyed by id | ids | compiler/element | A04 |
+| G | type | typed HIR (`TypedSpec`): every node typed; every call ONE declaration; every member its property | ids, `VarId` | compiler/spec | A05, A06 |
+| E′ | mapping elaboration (after F) | typed mapping IR: per set a typed relation expression and property bindings keyed by `PropertyId` | ids, spans | normalizer/ (today emits untyped text-Pure before types exist) | A06 |
+| G½ | inline, shape-evaluate | typed HIR | substitution by `VarId`, one engine | UserCallInliner, StaticFold, SourceSubst, AlphaRename, LiteralUnroll, NormalizeFolds… | A05 |
+| H | store resolution, as passes | physical IR (distinct type): routed sets, a join tree, `ColumnRef(JoinNodeId, column)` | `SetId`, `NavId`, `JoinNodeId` | resolver/ (35,925 lines, one pass) | A07-A08 |
+| I | lower | SQL MIR (semantic nodes; units, parts, join kinds as enums; no SQL spelling) | `FunctionId` → one immutable rule table | lowering/ | A09 |
+| J | legalise + render | SQL text per dialect | — | sql/, sql/dialect | A10 |
+| P | plan | plan IR (sealed: SqlExec, Sequence, Allocation, Effect, VerdictBatch…) | — | plan/ (no IR today), StatementExecutor | A11 |
+| K | run | results | — | exec/, a thin runner | A11 |
 
-**What we do.**
-- First extend `tools/untangle/move_classes.py` `ROOTS` (today `core, spec, pct, parser-equivalence`)
-  to every directory that references the annotations: `warehouse` (24 files), `wasm`, `tools`,
-  `testing`, `datacube` if it has Java. Then `python3 tools/untangle/move_classes.py --group A`
-  (groups.txt: `com.legend.base <- com.legend.Nullable com.legend.NonNull --inline`). Then the
-  build-file carriers, which the tool cannot see: `core/BUILD.bazel:42-43` AND
-  `warehouse/BUILD.bazel:17-18` (its own copy of `CustomNullableAnnotations`/
-  `CustomNonnullAnnotations`; grep every `BUILD.bazel` for the old FQN), `ArchitectureTest.java:273-276`
-  `NULLNESS_ANNOTATIONS`, the 4 root-package files using bare `@Nullable`. Prove EVERY null gate is
-  live (core's and warehouse's) by injecting one violation in each and watching it fail, then remove
-  it. A build that stays green with the old FQN in a flag is a disabled gate, not a passing one.
-- Keep `//core` as an umbrella target that exports the new targets, so the six consumers
-  (`spec`, `pct`, `parser-equivalence`, `wasm`, `tools/engine-runner`, `warehouse`) need no change
-  in the same commit; they move to fine-grained deps later, one at a time.
-- Coordination with the concurrent warehouse session: `docs/IN_FLIGHT.md`.
-- Groups B/C in groups.txt: `resolver.AsorRef → lowering` (the lowering↔resolver cycle is two
-  constants read at `SnapshotEnvelope.java:134,140`); `compiler.element.StoreLookups → compiler`.
-- `core/BUILD.bazel`: targets `annot`(base), `values`, `error`, `spi`, `lexer`, `protocol`(+spec),
-  `model`, `parser`(+section), `builtin`, `platform`, `element_type`, ONE `compiler_mid` for
-  {compiler, compiler.element, compiler.spec, compiler.spec.typed}, then `lowering`, `resolver`,
-  `sql`, `sql_dialect`, `exec`, `normalizer`, `plan`, `lineage`, root, `server`, `ide`, `cache`,
-  `probe`. A `//core:parser_tests` lane for the ~34 front-end-only test files.
-- NOT now: any move of `Typer`, `InferenceKernel`, `NameResolver`, `FunctionCompiler`, `BareNames`,
-  `StatementInline`, `LiteralMapUnroll`, `Temporal`, `TypeClassifier`, `KnowledgeLayer` (the last
-  two were REFUTED as moves by the same-package check).
+Cross-cutting: `Diagnostic(code, severity, phase, span, args)` in a sink from every stage; a phase verifier asserting
+each IR's post-conditions after every pass in tests; per-pass golden dumps; the reference lane; the corpus with rosters by
+(name, failure class); a query fuzzer with DuckDB-equals-H2 as oracle.
 
-**Homework done.** `cycles.md`: measured numbers on HEAD, the front end's zero back-edges, the
-validated 7-move cut set, the back-edge table, the test-isolation counts, the rebase recipe. Tools:
-study `receipts/plan-audit-2026-09-26/cycles/{class-edges.py,simulate.py}`.
-**Homework owed.** None before starting. Re-run `simulate.py` after the moves to confirm 28 units.
-**Gate.** Chain green; `bazel query 'deps(//core:compiler_mid)'` excludes exec/server; the injected
-NullAway violation fails; the two constant-inlined edges appear as strict-deps errors and are fixed
-by the moves, not by exemptions. Corpus timing unchanged (no compiler code changed).
-**Stop rule.** A move that needs a `resideInAPackage` exemption or a "temporary" back-edge.
-**Coordination.** `datacube/dual-plane` touches 32 core files; publish the one-line rebase recipe
-("drop the move commit, re-run `--group A`") with the commit; coordinate `AsorRef` only.
+## 2. Decisions
 
-### Step 1 — The differential becomes a gate (half a day)
-
-> **Done 2026-09-26** (GATES.md entry of that date; numbers in `tools/reference/README.md`): AGREE
-> 42,589 / OVERLOAD 450 / PACKAGE 11 / SOURCE_DRIFT 52,266 / ABSENT 42,174 / PROPERTY_AS_CALL 31 /
-> EXTRA 12,971. Two findings for steps 3 and 6 fell out: our typer inserts `toOne` (2,504) and
-> `elementToPath` (1,518) calls the reference never makes.
-
-**What it is.** Today `tools/reference/join.py` joins by (enclosing function NAME, spelling) and
-compares sets, so overloads of the enclosing function merge, a call we elide shows as a
-disagreement, and version-drift rows count. "Zero" is not yet a meaningful number.
-
-**What we do.**
-- `spec/src/test/java/com/legend/generators/OurResolutionsTest.java`: print the call's line and
-  column (`TypedNativeCall.pos`, `TypedUserCall` likewise) and the enclosing function's FunctionId.
-- `tools/reference/join.py`: key on (source, line, column); a declared elision list by FunctionId
-  with a reason (`print`, `assert…` bodies we do not emit); exclude a row when its declaration is
-  absent on either side (4.138.5 vs 4.145.0 drift: `sqlQueryToString`, `getTemporalTableFilter`).
-- Add a compile-status differential: which function bodies each compiler accepts (ours from the
-  census's failure list; the reference's from `RefResolutions` function rows). The element-lookup
-  rules (no own-package tier, ambiguity is an error) are visible only here.
-- Re-run both dumps (`RefResolutions` per `tools/reference/README.md`; ours via the spec test with
-  `-Dour.resolutions=core_relational`) and re-count.
-
-**Homework done.** The 28 package rows read one by one (audit §3): 15 exact-beats-type-variable
-(`sort` 11+3, `distinct` 1), 8 `size` on the result of `execute` resolving to `relation::size` on our
-side, 4 `plus` + 1 `contains` join artefacts of elision/merging. The 799 overload rows aggregated by
-shape (study `receipts/plan-audit-2026-09-26/differential-join-747ff1c11.tsv`): 507 `isEmpty`
-`[0..1]` vs `[*]`, then `average`/`median` Integer vs Number, `max`/`min` `[1..*]` vs `[*]`,
-`between` DateTime/StrictDate vs Date, the comparison operators `[1]` vs `[0..1]`,
-`elementToPath(Type)` vs `(PackageableElement)`, `map` `[m]`/`[0..1]` vs `[*]`.
-**Homework owed.** None: the 8 `size` rows are explained in `plan-audit-2026-09-26/homework-2026-09-26.md`
-§1 (our TDS erasure at typing time makes the legacy `project`'s result relation-shaped, so
-`relation::size` wins where the reference keeps `TabularDataSet` a class and picks `collection::size`;
-32 vs 14 across the module; the two overloads count different things).
-**Gate.** The join prints per-cause counts; every remaining row is attributed to a rule in
-`reference-matching.md` or to a listed elision. Receipts saved.
-**Stop rule.** None; this step only measures.
-
-### Step 2 — A2: one identity, rules registered by declaration id (2 days)
-
-> **Done 2026-09-26** (GATES.md entry of that date). The catalog generator emits one overload group
-> per declared name (`Pure.AT_…`, 488); every rule table, memo and family lookup is keyed by
-> `FunctionId`, which moved to `model` beside the declaration type; the bare-name registration
-> API, both indexes, the second identity and the table's bridge are deleted. Two findings for the
-> record: the identity exposed four qualified-property/function collisions the spelling-based key
-> hid (walls, pinned with the reason; step A4 removes the lift), and the lowering helpers were
-> retyped to identities rather than widening the layering rule. Left for step 3 by count: 18
-> resolver lookups at a qualified name, ~70 `isToOneCall` compares by FQN text, the typer's two
-> spelled family lookups.
-
-**What it is.** Lowering already dispatches by the resolved overload (`Scalars.lower` keys by
-`callee.signatureKey()`), but under lite's own key while the tables use upstream's `FunctionId`, and
-the REGISTRATION side fans bare names to overloads (`Pure.nativeKeysAt`, 158 sites). A2 picks one
-identity and makes every rule an explicit list of ids on a shared rule object. It is independent of
-A1 and semantics-preserving, so it is the first code slice.
-
-**What we do** (`lowering.md` F1–F3, F9–F10; `code-traps.md` A2).
-- Identity = `FunctionId`. Retire `Function.signatureKey()` as a DISPATCH key everywhere (93 readers:
-  12 in lowering, the inlining stacks in `StaticFold:294` and the typer, `UserCallInliner`…); keep it
-  as display text only if something prints it; delete the `catalogKey` bridge in
-  `ImplementationTable.build`.
-- Registration API: `rule(RuleRef, FunctionId…)` lists; a `RuleRef` is a named shared rule object
-  (many ids → one rule: `plus` five overloads, `family(SqlFn.LESS, "lessThan")`). Positions:
-  SCALAR, AGGREGATE, WINDOW, WINDOW_AGGREGATE, FORM(family). Feature overrides stay an overlay keyed
-  by (FunctionId, Feature). Delete `Pure.nativeKeysAt` (3 overloads), `nativeNamed`, `registeredAt`,
-  `Index.REGISTERED_BY_BARE`, `KEYS_BY_NAME`, the `ArchitectureTest` allowlist rows for `Pure$Index`.
-- The two residual name dispatches in the lowerer: `Lowerer.isFamily(n, "get"/"equal"/"eq")`
-  (:3406-3410, sites :2840, :2908) and `NativeFn.LowererForm.of(callee.qualifiedName())` (:583) →
-  family rows with `Position.FORM`, dispatched by id.
-- The store resolver's 35 FQN-string lookups (`resolver/Callees` 7, `TemporalFrame` 6,
-  `AssociationJoins` 6, `SyntheticHeads`/`GraphEmission`/`ClassSources`/`ChainDispatch` 3 each,
-  `JsonSourceFrame`/`ChainNormalizer` 2) → lookups by id.
-- `NULLIF` added to `SqlFn` (the one node the design's plan lists that the MIR lacks). No new IR.
-
-**Homework done.** `lowering.md` §1–2 (what the registries are, who reads them, the recommended
-registry shape, the many-to-one precedent, the DynaFn 4th column). Registration counts by file.
-**Homework owed.** None: the 81 `signatureKey()` readers are classified by fate and the three
-`new TypedFunction(` sites confirmed to pass a definition in `plan-audit-2026-09-26/homework-2026-09-26.md`
-§2–3 (61 become `FunctionId` compares or lookups, 14 are deleted with the index and the bridge).
-**Gate.** Probe PICK rows identical before/after (the receipt from step 1's run); CATALOG_LOOKUP_BY_NAME
-170 → 0 and its pin deleted; rosters LOST 0; conformance unchanged; timing at the curve; the table's
-kind counts exact (Intrinsic 664, Form 217, Refused 20, Body 2194, Unimplemented 71, or the new
-numbers with the reason: an overload with no rule becomes Unimplemented, which is loud and correct).
-**Stop rule.** A rule that can only be registered by a name pattern.
-
-### Step 3 — #47 + A1 as one slice: the binder's candidate set and the reference's rule (3–4 days)
-
-> **STOP — read first (2026-09-28).** Step 3a has NOT started and is blocked on user rulings. Start from
-> `plan-audit-2026-09-26/NEXT_STEPS_2026_09_28.md` (the recommended order and the five decisions owed), then
-> `architecture-review-2026-09-28.md` (the whole of core read stage by stage; the plan judged against compiler
-> practice; 15 defects) and `program-audit-2026-09-27.md` (the blockers on 3a as ruled). The evidence per stage is in
-> `plan-audit-2026-09-26/stage-readings-2026-09-28/`. The probe counts are GATES.md "step 3, the probe push".
-
-> **Read in this order before touching step 3** (2026-09-27): (1) `plan-audit-2026-09-26/reference-matching.md`
-> including its closing "Corrections from the second reading"; (2) `kernel-reading-2026-09-26.md`
-> (the twelve reference methods as pseudo-code with line citations, §C's thirty-five traps);
-> (3) `homework-2026-09-26.md` §4–§5 (the profile and the tier probe, as corrected); (4)
-> `step3-homework-audit-2026-09-26.md` (thirty findings against the first design, each with line
-> evidence); (5) `step3-design-2026-09-26.md` — revision 2 first, then the superseded v1 it
-> appends. Revision 2 dispositions every audit finding in its §6 and cuts the step into 3a
-> (referents on the node, the ~69 typing-time mints bound by declaration group), probes, 3b (the
-> candidate rule and one index), 3c (the reference's matcher and loop), 3d (the merge point by
-> table, #43), 3e (TDS erasure out of the typer, its own inventory).
->
-> **RULED 2026-09-27 (the user):** the call node carries its resolution as a sealed two-case
-> `Callee` — `Spelled(name)` before the resolver, `Bound(spelled, declarations)` after it, never
-> empty; `FunctionId`'s record moves from `model` to `protocol` (its factories to
-> `model.FunctionIds`), which dissolves the cycle this section's "NEVER put `FunctionId` on the
-> protocol node" was about. Every reader switches on both cases; a `Spelled` callee at the typer is
-> a compiler bug, not a user error; the compiler's own desugars can only construct `Bound` from an
-> overload group. Revision 2 §1 has the type, the reasoning and who constructs and reads what.
-> 3a may start.
-> The text below is the 2026-09-26 morning version and is right about WHAT changes (the candidate
-> rule, the kernel, the merge point) and superseded by revision 2 on HOW the resolver's answer
-> travels and on TDS erasure's place (3e, after 3d, with its own inventory of the 45 readers).
-
-**What it is.** The resolver produces, per compilation, a `Bindings` value: for each call node
-(by node identity), the declaration ids it may mean; the syntax node stops carrying spellings. The
-kernel chooses among those declarations the way the reference does: the candidate loop with
-per-candidate lambda typing and a strict re-rank. The category gate at the function merge point is
-deleted. These are one slice because the kernel's tie tolerance (`allSameShape`) is what lets a
-catalog native and its bodied twin coexist today; removing it before the twins are merged by id
-errors on every such call.
-
-**What we do** (`reference-matching.md` all; `code-traps.md` #47/A1; `cycles.md` §4).
-- **Bindings, not annotations.** New value produced by `NameResolver` (phase D): `Map<AppliedFunction
-  identity, List<FunctionId>>` (identity-keyed). Lives in `compiler` (later `bind`), above protocol,
-  model and platform; the typer's `candidatesOf` and `FunctionCompiler.functionsAt` read it.
-  `AppliedFunction.candidateFqns` deleted with its ten readers (`parser/OperatorParts:67,123,136`,
-  `lineage/PkInference:98`, `ResolvedNames:28`, `ValidateDesugar:283`, `StatementInline:203`,
-  `SortChecker:184`, `CallShapes:87`, `Typer:2531-2542`, `NameResolver:1708-1743`,
-  `NameResolutionContractTest`). NEVER put `FunctionId` on the protocol node (7-package cycle).
-- **The candidate rule** (`resolveCallCandidates:362-381` rewritten): qualified → the functions of
-  that name in exactly that package; bare → the section's imports ∪ the core group ∪ root. The
-  core group is the reference's 29 (`m3.pure:175-213`); the three engine-only packages
-  (`metamodel::variant`, `metamodel::relation`, `precisePrimitives`) are dropped from Pure-source
-  resolution, after the probe counts which bare corpus names used them. The own-package tier goes
-  (the reference has none; `NameResolver:252`'s citation is superseded). Root fallback added. One
-  index of declared functions by (package, name) built once per World (`DeclarationTable` at
-  `PureModelContext:584-591` is the seed; today the universe is rebuilt per resolve at
-  `knownFqns:387-397`).
-- **Engine input keeps its own rule** behind the grammar: `ParsedModel` gets the dialect; the
-  handler surface (`BareNames` tier 1, `EngineHandlers.fqnsOf`) applies ONLY to `LEGEND_LITE`
-  trees (server `LegendHttpServer:231`, `Compiler.plan:515`, wasm). For Pure source it stops.
-  Before that: run the probe (`LL_SHADOW=1`, CANDIDATES rows, `bare/node` column) over both corpus
-  lanes and the census and count, per bare name, which tier resolved it. Any name that resolves
-  only through tier 1 in Pure source is a missing declaration to add, not a tier to keep.
-- **The kernel** (`InferenceKernel.resolveOverload:1078-1215`): implement the loop of
-  `reference-matching.md` finding 5 with the orderings of findings 6–10 and 13 (per-parameter
-  `GenericTypeMatch` then `MultiplicityMatch`; `TypeMatch`: simple(C3 distance) < non-concrete <
-  relation/function < bottom < null; multiplicity: exact < non-concrete < (upper, lower) < null, with
-  the `[1..*]`-rejects-`[*]` and MAX-upper arithmetic; collection literals typed `[n]`; a `T`
-  parameter below every concrete match). Lambda arguments are typed against the CANDIDATE
-  (`TypeInference.java:108-148`), then the strict re-rank; several strict-best is
-  `TypeInferenceException("Too many matches …")` naming them. Delete `score`, `scoreNonLambda`
-  (and `Typer.selectRankedByPresentArgs`/`checkWithDeferred`'s pre-pick if the loop subsumes it),
-  `mostSpecific`, `moreSpecific`, `allSameShape`, native-over-module, `nearestInLinearization`, the
-  Nil tie-break, `paramTypeScore`/`paramMultScore` as scores (they become match constructors sharing
-  `unify`/`unifyMult`).
-- **The merge point** (`FunctionCompiler.functionsAt:42-110`): reads the declaration table for the
-  candidate ids and nothing else. Delete `PlatformTypes.isPlatformOwnedFunction` (:690-696) and
-  `PLATFORM_OWNED_FUNCTIONS`, the `PCT_PROFILE` stereotype check (:102), `addModelOverloads`'s
-  suppression, `SUPPRESSED_ONCE` (:70,:97) and the `ArchitectureTest:946` allowlist row.
-- **Twins.** `DeclarationTable.of:60-65` keeps the bodied twin for an id; `FunctionCompiler.compile:186`
-  derives `isNative` from the definition's class. Fix at the table: one declaration per id, and
-  "native" means the implementation table has an Intrinsic/Form row for it (13 `isNative()`
-  readers, incl. `Typer.requiresNormalization:1674` and `StatementInline:33`). This is task #43
-  landing as a consequence.
-- **Walls.** Zero candidates is a WALL with a reason at the call's span until step F (the loaders
-  are tolerant by design: `buildModule`, `MinimalCorpus:293`, `compileAll:117-133`).
-- **Tests that retire:** `PctFunctionSuppressionTest`, `BareNamesTest` (rewritten for engine input
-  only), `NativeCatalogGovernanceTest:152,165`, `NameResolutionContractTest`'s candidateFqns rows.
-
-**Homework done.** `reference-matching.md` (twenty findings, the twelve methods to read, the risks);
-`engine-resolution.md` (the two languages, settled); `code-traps.md` (readers, pins, the twin
-cascade, the tolerant modes); the 28 rows; the 799 by shape.
-**Homework owed** (each a line in the slice's GATES.md record) — status 2026-09-26 afternoon:
-- ~~Read the twelve reference methods in `reference-matching.md`'s list, in that order, before
-  writing the kernel.~~ **Done**: `kernel-reading-2026-09-26.md` (pseudo-code with line citations
-  for all twelve, §A; twelve corrections to the findings, §B; thirty-five implementer traps, §C).
-  The corrections that change the kernel are appended to `reference-matching.md` ("Corrections
-  from the second reading"): the unconditional-accept path for properties and qualified
-  properties (no strict re-rank, no tie error), silent survival when ANY candidate's inference
-  failed (we WALL instead, with the reason — invariant 4), untyped-lambda typing THROWS on a
-  non-`Function` parameter (so the lenient candidate order must be exact), the `&&` short-circuit
-  across lambdas, merge-mode dropping a concrete over a non-concrete binding, the precise automap
-  trigger, Nil before the FunctionType branch.
-- TDS erasure leaves the typer (`homework-2026-09-26.md` §1): `TdsErasure.refineResult` stops
-  rewriting typed results; the matcher treats `TabularDataSet` as a class. **A work item of the
-  slice** (the homework behind it is closed).
-- The probe count of tier-1-only bare names in Pure source. **Method in place**: the shadow probe
-  writes `BARE-TIER name fqn tier site` rows — from the resolver's prelude merge ONLY for an FQN
-  the resolver's own tiers had not already put on the node (`resolver-added`), and from the
-  overload merge point for a name that reached the typer bare (`merge`);
-  `tools/untangle/bare_tiers.py` classifies each bare name CORE / FORM / ENGINE-ONLY. First run
-  (before the marginal refinement) over both corpus lanes: 279 bare names, 40 "engine-only" — all
-  from the prelude merge re-adding an FQN the file's own wildcard import had resolved (the
-  calendar tests import `meta::pure::functions::date::calendar::*`), i.e. not tier-1-only at all;
-  the refined count is in the record: 6 names by site (homework §5, corrected after the audit).
-- ~~Measure `ResolvedNames.names` … with a real profile on a quiet machine …~~ **Done**:
-  `homework-2026-09-26.md` §4. JFR over `//spec:corpus_duckdb` at load 2.4: `ResolvedNames` 4–6%
-  inclusive; the resolver's 17–19% of SAMPLES (2–5% of wall) was ONE method rebuilding platform ∪ model as a fresh set per
-  STATEMENT of every synthesized body (`ModelNormalizer.resolveSynthesized` →
-  `NameResolver.resolveQuery(query, imports, modelFqns)`). Fixed at the algorithm (universe built
-  once per normalization; the per-call overload deleted) — measured after on the curve.
-- ~~Decide where `Bindings` lives …~~ **Decided**: `com.legend.compiler` (the resolver's
-  package; moves to `com.legend.bind` at step 10 with the resolver), an immutable record
-  `Bindings(Map<AppliedFunction, List<FunctionId>> byNode)` keyed by NODE IDENTITY
-  (`IdentityHashMap` copied into an unmodifiable view), produced by `NameResolver` beside the
-  resolved `ParsedModel` (the resolver returns the pair; `ParsedModel` is below the compiler and
-  never carries a compiler type), handed to `PureModelContext.from` and read by the typer as
-  `ctx.bindings()`; a query resolved on its own gets its own `Bindings` the same way. The
-  protocol node itself never carries `FunctionId` — the seven-package cycle in `cycles.md` §4.
-**Gate.** Differential overload 0, package 0 (after step 1's fixes), compile-status rows explained;
-rosters LOST 0 (DuckDB 2474, H2 2232 at the last record; read the current numbers from the rosters);
-conformance unchanged; census walls ≤ 32, failures ≤ 1,447, kernel ≤ 164; FUNCTION_CATEGORY_CHECK
-13 → 11 with the pin lowered; NAME_COMPARE/MINT pins shrink by the deleted sites; per-pass corpus
-time at the curve (DuckDB ~32/37s, H2 ~20/56s per pass, in-lane); JVM boot noted separately.
-**Stop rule.** A roster row that can only be kept by a name test, a tier, or a tolerance in the
-kernel. "Too many matches" on a corpus call the reference compiles means our types differ from its
-types (a distance computed differently); fix the type, never the rule.
-
-### Step 4 — The typer split along its stage seam (1 day)
-
-**What it is.** `Typer.java` is 3,489 lines against a 3,500 guard; `Lowerer` 3,494; `Scalars` 3,476.
-Steps 5–7 cannot add a line. Under rule 0.6 the typer splits along the seam the design names:
-`applyCore:1308-1454` and the 39 `*Checker` files become the forms package; the generic path stays.
-**What we do.** Move `applyCore` and the checker dispatch to `compiler/spec/forms/` (or the
-existing `spec` package's checker files under one entry), with `ReceiverOwnedFunctions` and
-`CoreFn` reads beside it; no behaviour change. Amend `CodeShapeGuardrailTest`'s comment with the
-rule and this step's date. The lowerer's split by family happens in step 8 when E touches it.
-**Homework done.** `code-traps.md` B (the dispatch order) and D (the guard numbers); `cycles.md` §3
-(the compiler cycle's carriers, so the split does not add a back-edge).
-**Homework owed.** None.
-**Gate.** Chain green; rosters and probe rows identical; `simulate.py` shows no new cycle.
-
-### Step 5 — B: forms dispatched by a candidate's Form row
-
-**What it is.** A form's checker runs because a CANDIDATE declaration (from Bindings) has a `Form`
-row in the implementation table, not because the spelling matched. This is the reference's loop
-applied to forms: the candidate supplies the lambda's parameter types, then the strict re-rank.
-**What we do.** `Typer:560-571` (`CoreFn.of(af.function())` → `applyCore`) becomes "for each
-candidate id with a Form row, run its rule"; the 21 form-dispatch-by-name sites go (Typer 7,
-SortChecker 4, ScanRelations 2, SourceSubst 2, MatchChecker 2, MappingNormalizer 1, ProjectChecker,
-GraphFetchChecker, DeferredArgs); the spelling checks inside checkers (`join`'s canonicalisation,
-`agg`'s equals, the TDS legacy vocabulary by name in `TdsLegacy`) become rule rows. `agg` gets a
-declaration (upstream declares it as a bodied function in engine `core`; a catalog row until F loads
-it). Candidate sets spanning two rules (`filter` → JSON or relation; `sort`/`map` collection vs
-relation) are the loop's normal case. `CoreFn.NEW` (syntax, owns no FQN) and `INTERNAL_DESUGAR`
-(`CoreFn:410-414`) are the two exceptions to record.
-**Homework done.** `code-traps.md` B; `engine-resolution.md` finding 4 (upstream's 8 named return
-inferences and 49 parameter inferences: the list of what a form rule must compute).
-**Homework owed.** Per form (65 `CoreFn` arms): which Form rows it owns, which of its argument
-typing is generic (moves to the kernel) and which is the rule. One table, before code.
-**Gate.** FORM_DISPATCH 21 → 0, PARSE_NAME_LOOKUP 3 → 0, pins deleted; probe FORM rows zero
-disagreement; rosters LOST 0; census not grown.
-**Stop rule.** A form that needs the spelling to pick its rule.
-
-### Step 6 — D: the kernel's missing rules, classified against the reference
-
-**What it is.** The census's 164 kernel failures (top messages "T bound to Class<Any> vs …"
-53/42/19/7, unbound T 11) are classified against the reference's actual binding rules, then fixed
-one rule at a time, retiring each form checker that existed only because the kernel could not type
-the call.
-**What we do.** First the classification: for each of the 164, which of these is missing: LUB
-merging of a second binding (`TypeInferenceContext.register:330-440`, with variance), multiplicity
-merge by subsumption (`registerMul:276-281`), lambda typing deferred to the parent
-(`FunctionExpressionProcessor:491-523, 823-853`), function-type unification with contravariant
-parameters (`TypeMatch.java:490-544`), relation-type column matching (:436-488), `Class<X>`
-literal typing by variance (`InstanceValueProcessor:157-181`). Then the rules, each with its census
-number as the gate. `PrintTypeInferenceObserver` in the reference prints the registration trace per
-body: use it to diff a failing body against ours.
-**Homework done.** `reference-matching.md` findings 4, 8, 13, 15, 19; the census numbers.
-**Homework owed.** The 164 classified (a TSV: body, message, missing rule, checker if any). The
-inventory of which of the 39 checkers exist only for a kernel gap.
-**Gate.** kernel 164 → 0 in the census; checkers shrink-only; rosters LOST 0; conformance unchanged.
-**Stop rule.** A rule that only the census's bodies need and the reference does not have.
-
-### Step 7 — C: one SHAPE evaluator (after a charter ruling; after D)
-
-**What it is.** One evaluator over typed terms replaces the inliners and folders, but its scope is
-what determines the SHAPE of the SQL, never a value the database could compute. That is the line
-the execution tenet draws, and the current `StaticFold` (27 fold ops on literals, unregistered in
-`JavaEvalLedgerTest`) is already on the wrong side of it.
-**What we do.** First, a ruling in `docs/TENET_CHARTER.md` (and `JAVA_EVICTION_PLAN.md` §1's
-decision rule) stating the line: column lists and names, column-spec sets, static `if`/`match`
-branch selection, static `map` unrolling, type tokens, literal-empty detection, and a literal that
-becomes an IDENTIFIER; nothing else. A `JavaEvalLedgerTest` row for the evaluator with that scope.
-Then: count, per corpus test, which of the ELEVEN rewriters fired (`StatementInline`,
-`Typer.inlineNormalized`, `UserCallInliner`, `StaticFold` eval/fold, `LiteralFold`,
-`NormalizeFolds`, `LiteralUnroll`, `SourceSubst.inlineLets`, `LiteralMapUnroll`, `ValidateDesugar`,
-`resolver/LiteralFolds`; lowering `Fold` and `MatchFold` are fold-vs-isolate, not evaluation). Then
-one evaluator keyed by declaration: inlining of `Body` rows with symbols (no alpha-renaming), an
-expansion computed once per (declaration, argument terms) and shared, a depth/size budget that
-becomes a diagnostic; the shape rules above; the desugars (`validate`, constraints, milestoning) as
-rows. Delete the eleven and `FoldOp`.
-**Why after D.** Normalise-required bodies cannot be typed standalone today (`Typer:1600-1605`);
-that is why two inliners work on the untyped tree. D's TDS-erased typing removes the reason.
-**Homework done.** `lowering.md` F11–F13; `code-traps.md` C.
-**Homework owed.** The ruling; the eleven-rewriter census per corpus test (a probe column).
-**Gate.** Fold results identical per test (probe before/after); rosters LOST 0; the ledger's
-residue does not grow beyond the one row; the typer's line count falls by the folder.
-**Stop rule.** An evaluator rule that computes a scalar the SQL could.
-
-### Step 8 — E: one registry (the table owns the rules)
-
-**What it is.** The implementation table stops being derived from the rule maps
-(`PlatformRegistrations:16-22` reads `Scalars.ruleKeys()`) and becomes the owner: one row per
-declaration; `Intrinsic` rows hold `Map<Position, RuleRef>`; `Form` rows hold the typing rule;
-`Refused` rows the reason; `Body`; `Unimplemented`. Everything that is genuinely ownership becomes a
-source of rows; everything that is not is moved to where it belongs.
-**What we do** (`lowering.md` §5 table). Rows: walled bodies, walled natives, subsumed
-(`Refused`), family members (`Position.FORM`). Not rows: `LITE_SURFACE` and the lite internal set
-(bind/visibility facts → the World's declaration table), the TDS legacy vocabulary (→ Form rules,
-done in step 5), the handler surface column (a bind fact for engine input), the DynaFn column (the
-translator's rename table, keyed by engine operator). The claims ledger (`spec/.../claims/`,
-`native-claims.tsv`) deleted; `PreludeGenerator`, `NativesGenerator`,
-`NativeSignatureGeneratorTest` read the table instead. Dialect capability is NOT a column: it is
-`SqlDialect.supports(SqlFn | structural node)` checked by one MIR walk after lowering, before
-rendering. The lowerer splits by family here (rule 0.6).
-**Homework done.** `lowering.md` §5, F15, F16, the registry shape.
-**Homework owed.** The generators' new inputs, listed; the `Scalars` 131 lambdas' move plan.
-**Gate.** Every former mechanism's readers read the table; the claims generator and its tests
-gone; table kinds pinned exactly; rosters LOST 0.
-
-### Step 9 — F: load by manifest, names held constant
-
-**What it is.** The charter's D7: the 32 walls to zero in cost order (four parser gaps, m3 routing,
-measures and units, three extension types, the M2M features), then the corpus loader reads the
-manifest closure (27 modules, 1,772 files) strictly: one parse, one build. Deleted: `UpstreamFiles.
-LIBRARY_FILES/SHAPE_FILES`, the prelude's engine-file lists, the one-row membership.
-**Why here.** One variable at a time: steps 3–8 change how names resolve with the world constant;
-F changes the world with names constant.
-**Homework done.** D7 in `UPSTREAM_BOUNDARY_PROGRAM.md` (the walls by cause and cost, the census
-timings: parse 0.34s, model 5.7s, the strict builder's retry loop 72.7s); the census tool.
-**Homework owed.** #46's remainder: the JVM boot growth (+3s per JVM from the 4b.1 universe and
-prelude) is measured here, on a quiet machine, and fixed at the algorithm (the universe built once
-per World, not per resolve, is the candidate; step 3 may already have done it).
-**Gate.** walls 32 → 0; both rosters unchanged; the chain within the 12-minute budget; the census
-pinned; boot time back at the receipts' ~1.8s.
-
-### Step 10 — G: the seams become packages
-
-**What it is.** The remaining three moves and two hoists from `cycles.md` §3 (`StatementInline`,
-`LiteralMapUnroll` → `compiler.inline`; `Temporal` → spec; hoist `ENUM_METACLASS_FQN`; replace the
-`RelationalTypeInference.infer` call in `KnowledgeLayer:406`), then `compiler_mid` splits into
-`bind` / `element` / `typer` / `typed` targets; a new `ArchitectureTest` rule for cycles below the
-top-level slices (today's `:171` sees only top-level ones); the size guard drops.
-**Homework done.** `cycles.md`.
-**Homework owed.** Re-run `simulate.py` on the post-step-8 tree before choosing the moves.
-**Gate.** Zero package cycles at class level; every package a target; the guard deleted.
-
-### Later phase, separate program — the ANSI base and a third backend
-
-`renderer.md`: 60 of the 184 spellings the base renderer emits are DuckDB-only, 22 more are
-Postgres-family, six collide silently with another database's meaning; H2 spends 26 of its 45
-override points undoing the base. The shape is mechanical (`Spellings.ANSI` = 38 rows;
-`Spellings.DUCKDB = ANSI + 39`; 12 arms and ~10 defaults into `DuckDb.java` or capability throws;
-H2 shrinks), ~70 sites, 2–4 days. Not during the untangle: shares no files with steps 2–8, is
-unobservable by every gate (DuckDB byte-identity is guarded only by execution), and a standard base
-with only DuckDB and H2 executors is a base nobody runs. Trigger: an embedded Postgres corpus lane
-(`//spec:corpus_postgres`, zonky; the corpus asserts are backend-independent rows, so no new
-goldens). Order: render-diff harness → data split → coded arms → H2 shrink → Postgres lane green.
-
-## 2. The pins and how they retire
-
-| pin (IdentityGuardrailTest unless noted) | today | retires at |
+| id | question | status |
 |---|---|---|
-| CATALOG_LOOKUP_BY_NAME | 170 | step 2 (→ 0, deleted) |
-| FUNCTION_CATEGORY_CHECK | 13 | step 3 (→ 11), step 5/7 (the rest), then deleted |
-| NAME_COMPARE (function share, 20 of 207), MINT (143 minus the parser's 17), LOCAL, CASE labels | | step 3 shrinks; step 5 and the A4 note retire; the parser's 17 are the floor, not zero |
-| FORM_DISPATCH 21, PARSE_NAME_LOOKUP 3 | | step 5 (→ 0, deleted) |
-| CodeShapeGuardrailTest FILE_LIMIT 3500 | | amended at step 4; deleted at step 10 |
-| census walls 32 / failures 1,447 / kernel 164 | | steps 6 and 9, to zero |
-| claims ledger drift test | | step 8 |
-| MinimalCorpusTest PER_TEST_CEILING_MS 60,000 | | stays; the timing lines are read at every gate |
+| D1 | The call node's type: the 2026-09-27 ruling (one `AppliedFunction`, a sealed `Callee` slot `Spelled`/`Bound`, checked at run time) or a distinct `ResolvedExpr` family so javac proves no unresolved tree reaches the typer | **OPEN — the user.** Recommended: `ResolvedExpr` (rule 0.10). W2 is written for it; §6 says what changes if the ruling stands |
+| D2 | Binding scope | **RULED 2026-09-28: everything** — calls, members, binders (`VarId`), element references. Landed as separate pushes on one new tree type (W2.3–W2.6) so each roster change is attributable |
+| D3 | A reference lane at the pinned release | **Needs the user's approval of W1.1's shape.** No new downloads appear needed: all 27 modules of `core_relational`'s closure are already resolved in `maven_upstream_install.json` at 4.145.0 / 5.99.0 (checked 2026-09-28); the lane is a new test target over them |
+| D4 | "No tolerant modes" | **RULED 2026-09-28**: rule 0.9 |
+| D5 | Plan the whole program now | **RULED 2026-09-28**: this page |
 
-## 3. Session bootstrap (for a fresh session)
+## 3. Done
 
-- **Repo:** `~/legend/legend-lite` (the worktree used so far: `.claude/worktrees/build-audit`, branch
-  `datacube/app` tracking `origin/main`). Bazel 9. Untracked `nlq/` is not ours; leave it.
-- **Read, in order:** `AGENTS.md`; `docs/UPSTREAM_BOUNDARY_PROGRAM.md` §3 D (rulings, D7);
-  `docs/PLAN_AUDIT_2026_09_26.md`; this file; the audit file for the step at hand; the last
-  `docs/GATES.md` entries; the study `~/legend/platform-architecture/PLATFORM_ARCHITECTURE.md`
-  §11–§14 for background.
-- **Pinned trees:** `OB=$(bazel info output_base)`; `$OB/external/+http_archive+legend_pure_src`
-  (5.99.0), `$OB/external/+http_archive+legend_engine_src` (4.145.0). Regenerate after a pin bump
-  with `bazel run //core:update_generated`.
-- **Gates:** `bazel test //... //parser-equivalence:diagnostics` then `bazel test //tools/deps:all`.
-  Corpus lanes `//spec:corpus_duckdb`, `//spec:corpus_h2` (two passes each: host judge, database
-  judge; read every timing line they print). One test: `--test_env=JAVA_TOOL_OPTIONS=-Drcorpus.test=<fqn>`.
-  Probe: `--test_env=LL_SHADOW=1`. Stacks: `LEGEND_LITE_STACKS=1`. Census: the spec tests with
-  `-Dmanifest.census=core_relational` (`-Dmanifest.census.timing=1` for phase timings). Our
-  resolutions dump: `-Dour.resolutions=core_relational` (`OurResolutionsTest`, writes under the
-  repo's out dir). Reference dump: `tools/reference/README.md` (the shaded jar and the IDE's JDK).
-- **Timing discipline:** `uptime` first; never time with another Bazel running (the other account,
-  `neema`, runs one; never kill its processes).
-- **Receipts:** `~/legend/platform-architecture/receipts/` (`untangle-4b/`, `reference-differential/`,
-  `plan-audit-2026-09-26/`). Every gate saves its numbers there and records them in `GATES.md`.
-- **Commits:** `git -c user.name=neema2 -c user.email=neema2@gmail.com commit -F <file>` with the
-  trailers `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` and `Claude-Session:
-  https://claude.ai/code/session_0187ucQbj9UZpTg2HSpqDtK2`; rebase on `origin/main` before push;
-  never force-push; never bare `git stash`.
-- **Standing rulings (verbatim spirit):** no string identity for a function, ever; no PCT or
-  category checks in the compiler; no tolerant load mode; no caches before the algorithm is proven;
-  probe before switch; every deferral pinned with an owner; own everything the program needs.
+| step | what | record |
+|---|---|---|
+| 0 | annotations to `com.legend.base`; two leaf moves; `//core` as 29 Bazel targets | GATES.md 2026-09-26 "Execution plan step 0" |
+| 1 | the reference differential joins call by call | GATES.md 2026-09-26 "step 1" |
+| 2 | lowering registers by `FunctionId`; one identity | GATES.md 2026-09-26 "step 2" |
+| 3-homework | kernel reading, resolver per-statement fix, tier probe | GATES.md 2026-09-26 "step 3 homework" |
+| 3-probes | nine counts before any step-3 switch; tier classifier corrected | GATES.md 2026-09-27 "step 3, the probe push" |
+| audits | program audit; architecture review; stage readings | `plan-audit-2026-09-26/` |
+
+## 4. The waves
+
+Each item is one push unless it says otherwise. Estimates are in working sessions and are judgment, labelled as such.
+
+### W0 — Now: safety and confirmed defects (≈2–3 sessions)
+- **W0.1 Close `/engine/sql`** (arbitrary SQL, all interfaces, CORS `*`; `server/LegendHttpServer.java:40,53,248`). Owner:
+  the `server/` owner (the DataCube/warehouse session); announce in IN_FLIGHT. Delete it, or bind to localhost behind a
+  dev flag.
+- **W0.2 Five confirmed defects**, each with a failing test first: H2's test-only UDF (`sql/dialect/H2.java:719`,
+  `EngineStyleH2.java:1704,1899`); `StaticFold` `toOne` on a list (`StaticFold.java:692-694`); positional unify fallback
+  (`InferenceKernel.java:84-101`); the static-state guard's two-line escape (`exec/CanonicalDivergence.java:558-559`,
+  replace the regex with an ArchUnit field rule); `sql` → `compiler.element.type` via an inlined constant
+  (`EngineStyleH2.java:262`, `core/BUILD.bazel:85`).
+- **W0.3 Probe the latent ones** (a failing test or a recorded "not reproducible"): lowerer let scoping; inliner
+  capture; `TypedFilter.stamp` dropped at 12 rebuilds; `withChildren` field drops; import scope keyed by element FQN;
+  UTF-16 vs code-point columns; `ServiceTestRunner` hashCode keys; `PureDateLiteral` with validation off; the
+  NameResolver NPE; the store resolver's alias-prefix temporal bug. Evidence per item: the review's §4 table and the
+  stage readings.
+- **W0.4 The corpus certifies product SQL**: move the `legend.exec.engineScanOrder` pass out of the product DuckDB
+  dialect into the harness, or add a product-SQL lane (`DuckDb.java:218`, `MinimalCorpusTest.java:139`).
+
+### W1 — Gates and foundations (≈4–6 sessions). Everything later is judged by these.
+- **W1.1 The reference lane at the pinned release.** A Bazel `java_test` (tagged manual, `resources:memory:12288`, run
+  on every front-end slice) that loads `core_relational`'s 27-module closure from `@maven_upstream` with legend-pure's
+  interpreted runtime, compiles it, and dumps per call site the declaration id, resolved type parameters, and the type and
+  multiplicity of every expression; our side dumps the same from the typed HIR; the join (today `tools/reference/join.py`)
+  becomes Java in the lane; the disagreement set is pinned with a reason per row. Removes SOURCE_DRIFT (52,266 rows today,
+  jar 4.138.5 vs trees 4.145.0) and adds types. Homework: confirm the `-pure` jars ship their `.pure` resources; the load
+  order `loadAndCompileCore` → `loadAndCompileSystem` (tools/reference/README.md).
+- **W1.2 Diagnostics foundation**: `SourceFile`/`LineMap` with ONE column unit, `Span`, `Diagnostic`, a sink,
+  poison-and-continue; the parser, resolver and typer report into it first. The corpus harness classifies failures by
+  diagnostic code, not message text.
+- **W1.3 Phase verifier**: after each pass in tests, assert the IR's post-conditions (every typed node typed; no
+  store-only node after H; no SQL-spelling string in MIR…). Starts with today's IRs; each new IR adds its own.
+- **W1.4 Rosters by (name, failure class)** and the corpus as sharded dynamic tests; the stress lane's pass COUNT
+  (`StressServiceSuitesTest:154`) becomes a roster.
+- **W1.5 Golden dumps per pass** (typed HIR, MIR, SQL per dialect) for a fixed set of programs, blessed by
+  `update_generated`; replaces `sql.contains(...)` asserts over time.
+- **W1.6 The typer split along its stage seam** (the old step 4): `applyCore` and the 39 checkers out of `Typer.java`
+  (3,499/3,500) so W2 has room.
+
+### W2 — The resolved tree (≈6–9 sessions). The old step 3a/3b, widened by D2.
+- **W2.1 World tables**: per-kind declaration tables with ids; one `(package, name) → List<FunctionId>` index built once
+  per World (the lite partition applied at the index; 37 `meta::legend::lite` natives, GATES "probe push" #6);
+  duplicate ids refused (the four qualified-property collisions of step 2 stay walls until W3.5); a collision guard on
+  the mangle (`Pure.java:616` has none).
+- **W2.2 Import groups per section**, attached to each declaration by section, not keyed by element FQN (fixes the
+  first-wins bug, `NameResolver.java:258`, `ElementParser.java:325,393,478`); the core group is the reference's 29 for
+  Pure source and the engine's 32 for engine input (the parser's `Dialect` carried on `ParsedModel` and the query entry
+  points).
+- **W2.3 `ResolvedExpr` + calls.** The resolver emits `ResolvedExpr`; a call carries `Candidates(List<FunctionId>)` under
+  the reference's rule (imports ∪ core ∪ Root, no own-package tier; `reference-matching.md` 1–3); the merge point's
+  bare-name rule moves into the resolver (27 parsed bare names, 41 minted — probe push #8); zero candidates is a
+  positioned diagnostic poisoning the call. The typer reads `ResolvedExpr`. Proof: CANDIDATES multiset identical except
+  rows the reference lane explains.
+- **W2.4 `Member(name)`** for the dot spelling (106 names per corpus lane, program audit #1); the typer resolves it
+  against the receiver's type and emits the reference's rewrites (automap `map`, `extractEnumValue`, milestoning dates);
+  the arrow spelling is a function call only (7 qualified properties reached from it today become reference-lane rows).
+  `new` gets its catalog declaration (`new.pure:29`).
+- **W2.5 `VarId` for every binder** (lambda parameters, `let`); every reader switches (≈88 `new Variable(` and ≈118
+  `new TypedVariable(` constructions, ≈217 matches, 126 files — counted 2026-09-28). The four substitution engines key on
+  `VarId`; name-based alpha-renaming is deleted where `VarId` makes it moot.
+- **W2.6 Element references as ids** (`Ref<Class|Enum|Store|Mapping|Runtime…>`; ≈167 pointer/enum-value sites); the 175
+  element-name compares shrink to the ones that are genuinely type-shape tests.
+- **W2.7 Desugars bind their declaration**: the ~69 typing-time mints and the normalizer's bare-name mints name the ONE
+  declaration they mean; an overload group only where the reference itself searches (automap `map`).
+- **W2.8 The merge point by table** (old 3d): `FunctionCompiler.functionsAt` reads the declaration table only;
+  `isPlatformOwnedFunction`, the PCT stereotype check and `SUPPRESSED_ONCE` deleted; one declaration per id (task #43).
+
+### W3 — The typer is the reference's (≈6–10 sessions). Old 3c, 3e, steps 5 and 6, re-ordered.
+- **W3.1 TDS inventory first** (old 3e homework): the 45 `isRelation`/`relationValued` readers; decide the carrier
+  (recommended: nominal `TabularDataSet` as the type, the schema as a side fact, a widened `isRelationShaped` in
+  lowering); the parameter-half probe.
+- **W3.2 The matcher** (FEM/FM/GTM/TM/MM) as a self-contained module, one test per trap in `kernel-reading` §C;
+  meta-variables with union-find replace name-keyed `Bindings`.
+- **W3.3 The candidate loop** (FEP): lenient order, per-candidate lambda typing, strict re-rank, "Too many matches";
+  silent survival walled with the reference's reason and declared as a reference-lane elision. Both of today's overload
+  algorithms and their tie-breakers deleted. Gate: reference lane OVERLOAD 0 and TYPE-DIFF not grown.
+- **W3.4 TDS erasure out of the typer** per W3.1's decision (the eight `size` rows → 0; 32 → 14).
+- **W3.5 Kernel rules** (old step 6): classify the census's kernel failures against `TypeInferenceContext.register`
+  (LUB with variance, `GenericTypeOperation` for relation schema algebra, reverse inference); each rule gated by the
+  reference lane's type rows; checkers that existed only for kernel gaps retire.
+- **W3.6 Forms by a candidate's Form row** (old step 5), only for what W3.5 leaves special (legacy TDS, column-spec
+  post-match fix-ups); `CoreFn.of(spelling)` deleted.
+
+### W4 — The middle (≈10–15 sessions). New.
+- **W4.1 Mapping elaboration after F**: a typed mapping IR (per set: typed relation expression, `PropertyId`-keyed
+  bindings, join edges) replacing the normalizer's untyped text-Pure; embedded user fragments typed by the real typer;
+  the normalizer's private name resolvers and string typing (`DeclaredCoercions`) deleted.
+- **W4.2 One G½**: one hygienic substitution engine over typed HIR by `VarId`; the shape evaluator within the charter
+  ruling (old step 7: the ruling in `TENET_CHARTER.md` first); `StaticFold`, `SourceSubst`, `AlphaRename`,
+  `inlineNormalized` deleted; source-level β-expansion during typing ends.
+- **W4.3 Store resolution as passes** into a distinct physical IR: route (mapping dispatch, set choice incl.
+  aggregation-aware) → demand (one path trie by `PropertyId`) → temporal attribution (an immutable `NavId →
+  TemporalContext` map) → join planning (an explicit join tree with the strategy table as data) → read lowering to
+  `ColumnRef(JoinNodeId, column)`; physical names minted last; graph-fetch planning its own pass. Landed pass by pass,
+  each behind the corpus and golden dumps; the string identity schemes (`#` heads, dotted chain keys, prefixes) deleted
+  as each pass replaces them. The largest item in the program.
+- **W4.4 Load by manifest** (old step 9), names held constant: walls to zero, then the corpus loader reads the manifest
+  closure strictly (rule 0.9).
+
+### W5 — The back end (≈5–8 sessions).
+- **W5.1 One lowering table**: `FunctionId → rule`, immutable, duplicate-refusing, IS the implementation table; the five
+  mutable maps and six side channels and the 30 callee-name dispatches deleted; no type inference in the lowerer
+  (those decisions become typer annotations).
+- **W5.2 Semantic MIR**: units, parts, join kinds, frame roles as enums; no DuckDB spellings in MIR; deep immutability.
+- **W5.3 Legalisation per dialect** with declared pre/post-conditions and a verifier before emission; a fresh-name
+  supply; one `Identifier` value and one escaper per dialect (fixes the injectable DDL paths).
+- **W5.4 The ANSI split** with an embedded Postgres corpus lane (the old "later phase"): `Spellings.ANSI`, DuckDB as a
+  layer, H2's undo-overrides deleted; `SqlTyping` per dialect.
+
+### W6 — Plan, runner, periphery (≈6–10 sessions).
+- **W6.1 Plan IR**: a sealed plan tree; one printer (engine plan text), one row serializer, one renderer; `plan/`'s string
+  plans deleted.
+- **W6.2 The runner**: plans a test body whole, then runs it; `StatementExecutor` stops re-running G, G½, H, I; the
+  census and env tracing become an injected observer; global static state removed.
+- **W6.3 Judges**: the database judge is the only product judge; the host judge moves to the test module.
+- **W6.4 Periphery**: lineage over the typed HIR plus a binding map from H; test-data generation through the MIR and
+  the dialect; the server a thin adapter over one compiled workspace; test runners and the probe out of the product jar.
+
+### W7 — Close-out (≈3–5 sessions).
+- `compiler_mid` and the other cyclic groups split into per-stage targets; a below-top-level cycle rule.
+- Regex guards subsumed by types deleted (identity shapes, carrier idioms, string dispatch, funnel registers); the
+  ceremony guards deleted (A13 §2); the line-count guard dropped.
+- The query fuzzer (DuckDB vs H2) as a standing lane.
+
+**Size (judgment):** W0 2–3, W1 4–6, W2 6–9, W3 6–10, W4 10–15, W5 5–8, W6 6–10, W7 3–5 — roughly 45–65 working
+sessions. W4.3 (the store resolver) is the largest and least certain.
+
+## 5. Order and parallelism
+W0 and W1 first; W1.1 (the reference lane) before any W2 or W3 switch. W2 before W3. W4.1 after W2 (it needs ids). W4.3
+after W4.1 and W3 (it needs typed mappings and one declaration per call). W4.4 after W2–W3 (names constant while the world
+changes). W5 after W4.3 (it lowers the physical IR). W6 can start after W5.1. W0.1 and W5.4 have separate owners and can
+run in parallel with anything. Nothing runs against the same rosters as another slice in flight (rule 0.5).
+
+## 6. If D1 keeps the 2026-09-27 ruling
+W2.3–W2.6 put the resolution on the parse nodes instead: `AppliedFunction`'s callee becomes the sealed `Callee`
+(`Spelled` | `Bound` | a third case `Member(name)`); `VarId` and element ids become fields on `Variable`,
+`LambdaFunction` parameters, `PackageableElementPtr` and `EnumValue`, null before resolution. The typer switches on
+`Spelled` and throws "compiler bug". Everything else in this plan is unchanged; rule 0.10 is then waived for D.
+
+## 7. Session bootstrap
+- **Repo:** `~/legend/legend-lite`, worktree `.claude/worktrees/build-audit`, branch `datacube/app` tracking
+  `origin/main`. Bazel 9. Untracked `nlq/` is not ours.
+- **Read, in order:** `docs/IN_FLIGHT.md`; this page; `plan-audit-2026-09-26/architecture-review-2026-09-28.md`; the stage
+  reading for the area you touch; the last `docs/GATES.md` entries; for anything in D/F/G the reference research
+  (`reference-matching.md` with its corrections, `kernel-reading-2026-09-26.md`).
+- **Pinned trees:** `OB=$(bazel info output_base)`; `$OB/external/+http_archive+legend_pure_src` (5.99.0),
+  `…legend_engine_src` (4.145.0); jars at the same releases in `@maven_upstream`.
+- **Gates:** `bazel test //...` then `bazel test //tools/deps:all`. Corpus `//spec:corpus_duckdb`, `//spec:corpus_h2`.
+  Probe `--test_env=LL_SHADOW=1` (counts: `tools/untangle/probe_counts.py`, `bare_tiers.py`). One corpus test:
+  `--test_env=JAVA_TOOL_OPTIONS=-Drcorpus.test=<fqn>`.
+- **Receipts:** `~/legend/platform-architecture/receipts/` (not in git); every GATES.md entry names its receipt.
+- **Commits:** `git -c user.name=neema2 -c user.email=neema2@gmail.com commit -F <file>` with the session trailers.
