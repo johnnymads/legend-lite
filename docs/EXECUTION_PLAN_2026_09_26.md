@@ -195,7 +195,7 @@ names its gate.
 - **W1.8 The query fuzzer** (moved from W7) [W5-W7 #23] with a register of declared DuckDB/H2 divergences first; the oracle
   W5.2–W5.4 need.
 
-### W2 — The resolved tree (≈12–18 sessions). The old step 3a/3b, widened by D2.
+### W2 — The resolved tree (≈15–23 sessions). The old step 3a/3b, widened by D2.
 - **W2.0 = H2, the `ResolvedExpr` design note** — **written 2026-09-29** (`h2-resolved-expr-design-2026-09-29.md`; rulings D12; it sizes W2.3a at 6–8 sessions in four pushes) [W2 #1–#3]: what holds a resolved body (the ~15 body
   fields across `protocol` and `model`; `FunctionId` lives in `model`); the one builder that makes `ResolvedExpr` from a
   spelling and a scope, used by D, E and G; `Member`, `new`/`copy`, the `infix` and `propertyCall` flags; the binder
