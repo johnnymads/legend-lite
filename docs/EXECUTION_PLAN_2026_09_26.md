@@ -227,7 +227,14 @@ row of §1b is not done until that target exists and its line in `core-layers.tx
 - **W1.9 The `syntax` target** (rule 0.12, the first carve-out, and the proof the method works): the parser produces the
   syntax tree only; the conversion into semantic model records (`model/FromProtocol`, `MappingFromProtocol`, used 25 times
   in `parser/`) moves to the stage after it; `lexer`, `parser` and the syntax records become one target depending on base,
-  json and errors. Gate: rosters and the parser-equivalence lanes unchanged; `core-layers.txt` updated.
+  json and errors. **Proof by caching** (the user's point, 2026-09-29): the parser-equivalence lanes then rerun only
+  when parsing could change. Today `pe_tests_lib` depends on the whole `//core` and its data is every source tree
+  (`//core:srcs`, `//spec:srcs`, `//pct:srcs`, `parser-equivalence/BUILD.bazel` `_INPUTS`), so a typer-only change reruns
+  the ~85 s `parser_parity` lane. After W1.9: the lanes depend on `//core:syntax` alone, and the own-corpus snippet
+  harvest is a build action whose output file is their input (content-cached, so an edit that changes no snippet leaves
+  the lanes cached). The hand-kept trigger rule for `//parser-equivalence:diagnostics` (IN_FLIGHT rule 3) is then
+  replaced by Bazel's cache. Gate: rosters and the parser-equivalence lanes unchanged; `core-layers.txt` updated; a
+  no-op edit to a typer file leaves both parser-equivalence lanes `(cached)`, and an edit to a parser file reruns them.
 - **W1.8 The query fuzzer** (moved from W7) [W5-W7 #23] with a register of declared DuckDB/H2 divergences first; the oracle
   W5.2–W5.4 need.
 
