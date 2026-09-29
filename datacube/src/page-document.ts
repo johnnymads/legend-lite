@@ -12,8 +12,9 @@
 //   layout   where each view sits (tile-layout.ts, full width), and whether it was
 //            arranged by hand or is still arranging itself
 //
-// A cube with no charts is saved as a cube: the page exists when there is more than
-// the cube to keep. The same three rules as the cube's document: VERSIONED (a newer
+// ONE thing is saved, always the page (user ruling, 2026-09-28): a cube with no charts
+// is a page of its grid alone; a cube saved bare before that still opens, as a page of
+// its grid (`readSaved`). The same three rules as the cube's document: VERSIONED (a newer
 // page is refused by name), UNKNOWN FIELDS KEPT (written back verbatim), and a page
 // that cannot be read fails LOUDLY.
 //
