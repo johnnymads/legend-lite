@@ -14,9 +14,9 @@ Keep it current: when an item lands, move it to §3 with its GATES.md heading, a
 
 ## 0. Start here (a fresh session with no context)
 
-**Now (update in every push):** W0.6, fix the reproduced wrong-results defects. Homework:
-`plan-audit-2026-09-26/w0.6-homework/` (one report per defect group; each names the root cause at file:line, the fix,
-the blast radius and the gate). After W0.6: W1.0b (baselines), W0.4, then W1 in §5's order.
+**Now (update in every push):** W0.6, fix the reproduced wrong-results defects, in the push order of
+`plan-audit-2026-09-26/w0.6-homework/README.md` (homework done: each report names the root cause at file:line, the fix,
+the blast radius and the gate). Open decisions that block only single fixes: D20, D21. After W0.6: W1.0b (baselines), W0.4, then W1 in §5's order.
 
 **What this program is, in one paragraph.** legend-lite (`core/`, ~229k lines of product Java) is a clean-room
 replacement for legend-pure's compiler and legend-engine's query execution: Pure text → parse → resolve names → type →
@@ -53,18 +53,22 @@ faster, the cruft deleted, and wrong answers found and fixed first.
    package). Read the summary line (`Executed N out of M tests: M tests pass`), never only the exit code. For any
    front-end slice also `bazel test //spec:reference_lane` (manual, 8 GB). Read per-test times of the corpus lanes
    against the previous entry: a green lane that got 10× slower is a regression.
-7. A timing is a lane run alone with `--nocache_test_results`, `uptime` load under 3 at the start, nothing else
+7. One test class: `//core:core_tests` is one package-wide `junit_test` and ignores `--test_filter`
+   (`tools/junit/defs.bzl:25-66`); run the target, or drive the jars in `bazel-bin/core/core_tests.runfiles` from jshell
+   (JDK 25 under `external/rules_java++toolchains+remotejdk25_macos_aarch64`). One corpus test:
+   `--test_env=JAVA_TOOL_OPTIONS=-Drcorpus.test=<fqn>`. A PASSING `@KnownDefect` test means the defect is still present.
+8. A timing is a lane run alone with `--nocache_test_results`, `uptime` load under 3 at the start, nothing else
    building. A lane's time inside `bazel test //...` is not a timing.
-8. Commit: write the message to a file, then `git -c user.name=neema2 -c user.email=neema2@gmail.com commit -F <file>`;
+9. Commit: write the message to a file, then `git -c user.name=neema2 -c user.email=neema2@gmail.com commit -F <file>`;
    the message ends with the two trailers `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` and
    `Claude-Session: <this session's URL>`. Push: `git push origin HEAD:compiler/rebuild HEAD:main` (fast-forward only).
    Never force-push; never bare `git stash`.
-9. GATES.md entry (insert above the newest `— Rebuild` heading), template:
+10. GATES.md entry (insert above the newest `— Rebuild` heading), template:
    `## <date> — Rebuild <item>: <one-line result>` then: what changed and why (files); the probe and its numbers; the
    gate lanes with their summary lines and quiet timings if any; pins moved, each with its reason; what was deleted
    (lines); the program number the item moves (§1a); cost (commits, wall time, chain runs, red first chains); the
    receipt path.
-10. Receipts: `~/legend/platform-architecture/receipts/rebuild-<item>-<short-sha>/` (not in git): probe outputs, lane
+11. Receipts: `~/legend/platform-architecture/receipts/rebuild-<item>-<short-sha>/` (not in git): probe outputs, lane
     logs, timing tables; the GATES entry names the folder.
 
 **Definition of a session:** one working context of one agent, including the subagents it launches. Sizes in this plan
@@ -86,7 +90,7 @@ driver [L5 §2]. Every GATES entry logs the item's actual cost; sizes are re-fit
 5. **One variable at a time.** Names change with the world held constant; the world changes with names held constant; a
    new tree lands with today's rule, and the rule changes in a later push.
 6. **Every slice:** homework → probe → switch → gate → deletion → GATES.md record → push to `compiler/rebuild` and `main`.
-7. **A timing is a lane run alone** (§0 step 7).
+7. **A timing is a lane run alone** (§0 step 8).
 8. **Standing rulings:** no string identity for a declaration; no PCT or category checks in the compiler; no caches or
    memos for slowness before the algorithm is proven right (D10's per-model query memo is the semantics of demand-driven
    typing, ruled, not a performance cache); every deferral pinned with an owner; we own everything the program needs.
@@ -299,6 +303,8 @@ ClassDefinition 15; `FunctionId.of` 6; `Temporal.java:87,98,99`, `TypeClassifier
 | D17 | The program's goals | **RULED 2026-09-29 (the user): cleaner, more bulletproof, much less code, faster, cruft deleted.** §1a; rule 0b.15 |
 | D18 | Where the rebuild lands | **RULED 2026-09-29 (the user): on `main`**, every gated slice; `compiler/rebuild` kept only as the working branch name, always equal to `main` after a push |
 | D19 | D8's fence and helper functions | **OPEN; must be ruled before W4.2's schema evaluator.** The motivating function's branching sits in an unmarked private helper (`extendMatchColumns`, `tdsExtension.pure:66-95`) called by the marked `columnValueDifference` (:96-102), and its name arguments sit inside row lambdas (`$r.getInteger($col.name + '_1')`, :73) [L2 F6]. Recommendation: the fence is "schema positions reachable from a marked call site after inlining its callees", with TDSRow accessor name arguments listed as schema positions; the Relation API constructors among the marked functions (`over`, `rows`, `range`, `ascending`, `descending`, `lead`, `lag`) are already lite natives and fall under WORLD_MAP §8, not D8 |
+| D20 | `splitPart` with a multi-character separator | **OPEN; blocks only its W0.6 fix.** Pure's `split` doc says the separator is "matched literally" (`split.pure:17-21`) but the interpreter tokenizes on a character set (`Split.java:54-60`, `StringTokenizer`, adjacent separators collapse); the multi-character PCT is commented out as "incorrect behaviour … TODO" (`splitPart.pure:46-54`); engine-H2 uses a character set, engine-DuckDB the whole string. Lite: DuckDB whole string with collapse, H2 character set (report 4 F). Recommendation: the documented literal semantics on every dialect (the reference marks the other behaviour as incorrect), the empty-token rule taken from `split`'s documented contract; a register row for the engine-H2 difference |
+| D21 | Float literals: the magnitude cliff | **OPEN; blocks only its W0.6 fix.** Under NUMERIC_CHARTER Rule 1 literals render bare and the database types them; `AnsiSqlRenderer.plainFloat` (`:1370-1378`) switches to exponent form outside 1e-6..1e15, which DuckDB types DOUBLE, so `i * 0.00000013 == 0.00000039` is false on DuckDB and true on H2 and in the interpreter (report 4 G, ran). Whether the engine's `%s` formatting has the same cliff is not verified. Recommendation: no cliff (a value's kind must not depend on its magnitude, charter C2.2): spell plainly with per-value DECIMAL precision; register the engine difference if the engine has the cliff |
 
 ---
 
@@ -344,18 +350,21 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   DuckDB dialect has zero ScanOrder firings on the non-register tests (Census row); rosters LOST 0; the two new
   registers pinned; `TestLaneOrderGuardrailTest` re-pinned. Deletes: the system property and the product-side pass.
   Number: product SQL statements carrying harness ORDER BYs → only the registered set.
-- **W0.6 Fix the reproduced wrong-results defects now** (D14). Homework: `plan-audit-2026-09-26/w0.6-homework/` (four
-  reports). Pinned: `LowererLetScopeTest` (two), `InlinerMatchCaptureTest`, `NestedExistsCorrelationStampTest`,
-  `NavPrefixCollisionTemporalTest`, `SectionImportScopeKnownDefectTest`, `SourcelessPureMappingKnownDefectTest`,
-  `ServiceTestProvisionKeyTest`. Unpinned suspects from the meta-audit, each reproduced first (a failing test) or
-  recorded "not reproducible" with the query tried: the milestoned outer-join residual (`resolver/TemporalFrame.java:~1285-1322`)
-  and the rest of report 4 (null equality by operand shape, `NOT IN` with NULL, the null-strictness blacklist, filter
-  below a window, `splitPart` DuckDB vs H2, the Float literal cliff, empty-set aggregates, multi-row scalar subqueries,
-  Unicode length). One push per defect group; each fix is the principled one the homework names (e.g. a real scope
-  chain, capture-avoiding substitution, stamps carried by `withChildren`, a collision-free key), never a special case.
-  A defect whose correct fix needs the new structure keeps its pin and the report says why. Gate per push: the pin
-  removed and its test asserting the right answer; the homework's extra adversarial cases added; rosters LOST 0; the
-  chain green. Number: open wrong-results defects → 0.
+- **W0.6 Fix the reproduced wrong-results defects now** (D14). **Homework done:** `plan-audit-2026-09-26/w0.6-homework/`
+  (`README.md` is the index and the push order; four reports give each defect's root cause at file:line, every other
+  site of the same class, the fix, the blast radius and the gate). The defects, all correct to fix in today's structure
+  unless marked: `InlinerMatchCaptureTest` (capture-avoiding substitution; first), `LowererLetScopeTest` ×2 (lets as the
+  outermost scope), `NestedExistsCorrelationStampTest` (rebuilds carry the stamp; delete the 3-argument constructor),
+  `NavPrefixCollisionTemporalTest` (prefixes from the materialization map), **the killed head match** in
+  `TemporalFrame.java:1285-1322` (probed wrong rows, unpinned: pin it, count the fallback's corpus riders, then hoist and
+  delete the fallback), `SectionImportScopeKnownDefectTest` (sections carry imports, incl. the cross-file variant in
+  `Compiler.parseSources`), `SourcelessPureMappingKnownDefectTest` (drop `nn()` at `NameResolver.java:1148`),
+  `ServiceTestProvisionKeyTest` (value-record keys, ordinal names; the three latent content-hash ids), null-safe `==`
+  chosen by operand shape (report 4 A), ModelJoin/XStore conditions forced to plain `=` (A2, confirm first), `sum` of an
+  empty list giving NULL (H), `ANY_VALUE` missing on H2 (D). After D20/D21: `splitPart` (F), the Float literal cliff (G).
+  Every predicted defect gets a failing lite test first. Gate per push: pins removed and tests asserting the right
+  answer; the homework's adversarial cases added; rosters LOST 0 (read `docs/RELATIONAL_CORPUS.md`'s diff); the chain
+  green. Number: open wrong-results defects → 0.
 - **W0.7 Request-reachable static state** [L6 F12]: list the statics and ThreadLocals a concurrent request to
   `server/` can reach (the dispatcher is single-threaded today, `LegendHttpServer.java:314`); make each per-request or
   immutable, or record why the single-threaded dispatcher makes it safe with a test pinning single-threadedness.
