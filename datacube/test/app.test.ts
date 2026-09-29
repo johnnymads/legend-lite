@@ -1174,6 +1174,75 @@ describe('the bar says what you are looking at, and nothing else', () => {
     assert.match(toggle.title, /29 rows/);
     assert.match(toggle.title, /Click to go live/);
   });
+
+  it('says Snapped, and offers nothing, over rows already copied into the tab', async () => {
+    // An opened file or generated rows cannot move while the person works:
+    // "Live data, which may move" was false, and a click copied a copy (or,
+    // over a file's model with no snap table, claimed a snap that failed).
+    const engine = new CountingEngine();
+    const app = new CubeApp(root, SNAPSHOT, {
+      engine,
+      planner: new StubPlanner(),
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP') },
+      heldCopy: { label: 'trades.csv', takenAt: new Date(2026, 8, 29, 9, 30), rowCount: 1234 },
+    });
+    await app.open();
+    const toggle = root.querySelector('.dc-titlebar-toggle') as HTMLButtonElement;
+    assert.equal(toggle.textContent, 'Snapped');
+    assert.ok(toggle.classList.contains('dc-on'));
+    assert.equal(toggle.getAttribute('aria-disabled'), 'true');
+    assert.match(toggle.title, /^trades\.csv — copied into this tab at \d/);
+    assert.match(toggle.title, /1,234 rows/);
+
+    const before = engine.sql.length;
+    toggle.click();
+    await flush();
+    assert.equal(engine.sql.length, before, 'a click ran nothing');
+    assert.equal(toggle.textContent, 'Snapped');
+    assert.equal(app.controller.snaps.isSnapped, false);
+  });
+
+  it('shows the receipt of what answered, and an open Receipts window follows the plane', async () => {
+    class SigningEngine extends CountingEngine {
+      override async answer(sql: string, epoch: number): Promise<ResultTable> {
+        const r = await super.answer(sql, epoch);
+        return { ...r, receipt: { plane: 'warehouse', where: 'the warehouse at wh:9', as: 'rita', statementId: 'abcdef12-0000' } };
+      }
+    }
+    const app = new CubeApp(root, SNAPSHOT, {
+      engine: new SigningEngine(),
+      planner: new StubPlanner(),
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP') },
+    });
+    await app.open();
+    const chip = () => root.querySelector('.dc-status-receipt') as HTMLButtonElement;
+    assert.equal(chip().textContent, 'the warehouse at wh:9 · rita · #abcdef12');
+    assert.match(chip().title, /Server statement id: abcdef12-0000/);
+
+    app.openReceipts();
+    const body = () => root.querySelector('.dc-receipts')?.textContent ?? '';
+    assert.match(body(), /Ran on the warehouse at wh:9 as rita/);
+
+    (root.querySelector('.dc-titlebar-toggle') as HTMLButtonElement).click();
+    await flush();
+    assert.match(chip().textContent ?? '', /^this tab's copy/);
+    assert.match(body(), /Read from the snap copied into this tab/);
+  });
+
+  it('says Live, and offers no snap, where there is nowhere to snap into', async () => {
+    const app = new CubeApp(root, SNAPSHOT, {
+      engine: new CountingEngine(),
+      planner: new StubPlanner(),
+    });
+    await app.open();
+    const toggle = root.querySelector('.dc-titlebar-toggle') as HTMLButtonElement;
+    assert.equal(toggle.textContent, 'Live');
+    assert.equal(toggle.getAttribute('aria-disabled'), 'true');
+    assert.match(toggle.title, /no store in this tab to snap into/);
+    toggle.click();
+    await flush();
+    assert.equal(toggle.textContent, 'Live');
+  });
 });
 
 describe('applying the editor', () => {

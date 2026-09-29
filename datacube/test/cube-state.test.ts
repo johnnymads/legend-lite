@@ -152,6 +152,36 @@ describe('a query change is one transaction', () => {
     assert.equal(events.at(-1), 'refused');
   });
 
+  it('a refused change can be applied again as it was asked, undo step and all', async () => {
+    // Signing in again after an expired session: the sort that failed is sorted, not dropped.
+    const { o, e } = owner();
+    await landed(o, e);
+    const out = o.change(group(['region']), { label: 'group by region' });
+    e.refuse(1, 'the warehouse session for rita has expired');
+    assert.equal((await out).kind, 'refused');
+    const again = o.retryRefused();
+    assert.deepEqual(e.runs[2]?.state.snapshot.rows, ['region'], 'the refused state runs again');
+    e.land(2);
+    assert.equal((await again).kind, 'applied');
+    assert.deepEqual(o.committed.snapshot.rows, ['region']);
+    assert.equal(o.canUndo, true, 'it lands as the undo step it would have been');
+  });
+
+  it('with nothing refused since the last change began, a retry re-runs what is committed', async () => {
+    const { o, e } = owner();
+    await landed(o, e);
+    const out = o.change(group(['region']), { label: 'A' });
+    e.refuse(1);
+    await out;
+    const later = o.change(group(['desk']), { label: 'B' });
+    e.land(2);
+    await later;
+    const again = o.retryRefused();
+    assert.deepEqual(e.runs[3]?.state.snapshot.rows, ['desk'], 'the old refusal is not resurrected');
+    e.land(3);
+    await again;
+  });
+
   it('latest wins: an older change landing late is dropped', async () => {
     const { o, e } = owner();
     await landed(o, e);

@@ -142,6 +142,20 @@ describe('the engine executor', () => {
       fetch: fetchStub ?? stub(answers).fetchStub,
     });
 
+  it('receipts only what the engine sent: where it answered from, the SQL and note its activities report', async () => {
+    // The pure/v1 API issues no statement id and keeps no history: the receipt has neither,
+    // and nothing is added to what the engine returns.
+    const out = await executor([ANSWER]).execute(QUERY, SNAPSHOT);
+    assert.deepEqual(out.rows.receipt, {
+      plane: 'engine',
+      where: 'the engine at engine:6300',
+      serverSql: 'select "trades_0".region as "region" from TRADES as "trades_0"',
+      serverNote: '-- "executionTraceID" : "abc"',
+    });
+    const bare = await executor([{ ...ANSWER, activities: [] }]).execute(QUERY, SNAPSHOT);
+    assert.deepEqual(bare.rows.receipt, { plane: 'engine', where: 'the engine at engine:6300' });
+  });
+
   it('names the runtime in the query, sends the model as text, and asks the one endpoint', async () => {
     const { calls, fetchStub } = stub([ANSWER]);
     const out = await executor([], fetchStub)

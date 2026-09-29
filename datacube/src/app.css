@@ -85,6 +85,12 @@
   font-weight: 500;
 }
 
+/* A plane with no other to switch to: it states, it does not offer. */
+.dc-titlebar-toggle.dc-fixed {
+  cursor: default;
+  border-style: dashed;
+}
+
 .dc-titlebar-menu {
   font: inherit;
   font-size: var(--dc-text-xl-size);
@@ -2466,3 +2472,38 @@
   background: var(--dc-bg);
   box-shadow: var(--dc-popup-shadow);
 }
+
+/* THE RECEIPT: what answered the view, as the engine that ran it said. */
+.dc-status-receipt {
+  font: inherit;
+  border: none;
+  background: none;
+  padding: 0 var(--dc-pad-1, 4px);
+  cursor: pointer;
+  color: var(--tw-neutral-600);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40ch;
+}
+.dc-status-receipt:hover { text-decoration: underline; }
+.dc-status-receipt.dc-receipt-warehouse,
+.dc-status-receipt.dc-receipt-engine { color: var(--tw-sky-700); }
+.dc-receipts { padding: var(--dc-pad-2, 8px); overflow: auto; }
+.dc-receipt { padding: 6px 0; border-bottom: 1px solid var(--tw-neutral-200, #e5e5e5); }
+.dc-receipt-head { font-weight: 500; margin-bottom: 2px; }
+.dc-receipt-line { color: var(--tw-neutral-600); word-break: break-word; }
+.dc-receipt-check { font: inherit; margin-top: 4px; }
+.dc-receipt-answer { margin-top: 2px; }
+
+/* An expired sign-in, answered in the error that reports it. */
+.dc-alert-signin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--dc-pad-2, 8px) var(--dc-pad-2, 8px) 44px;
+}
+.dc-alert-signin-label { display: flex; align-items: center; gap: 6px; }
+.dc-alert-signin-password { font: inherit; width: 16ch; }
+.dc-alert-signin-said { flex-basis: 100%; color: var(--tw-neutral-600); }

@@ -15,6 +15,8 @@
 // decision it makes is about WHEN to call them, never about what
 // they mean.
 
+import { hostOf, receiptLabel, receiptLines } from './receipt.ts';
+import { sessionExpired, WarehouseEngine } from './warehouse.ts';
 import { isQueryFailure, type QueryRunner } from './runner.ts';
 import {
   CubeController,
@@ -58,6 +60,7 @@ import {
   buildAlert,
   buildCodeCheckAlert,
   buildExecutionErrorAlert,
+  signInAgain,
   type AlertOptions,
 } from './ui/alert.ts';
 import { pivotLabel, type PivotColumn } from './query.ts';
@@ -259,6 +262,25 @@ export interface CubeAppBaseOptions {
    * cube is planned as a live one is. Without one the cube cannot snap.
    */
   readonly snapTarget?: SnapTarget;
+  /**
+   * The rows are ALREADY a copy in this tab: a file opened into its DuckDB,
+   * rows generated there. Nothing can move them while the person works, so
+   * the cube is snapped from the moment it opens -- and snapping again would
+   * copy a copy. The plane indicator says Snapped, with when and how many,
+   * and offers nothing to click. What decides it is where the rows ARE, not
+   * which engine reads them: a remote file mounted in DuckDB-WASM is read
+   * afresh by every query, so it is live and can be snapped.
+   */
+  readonly heldCopy?: HeldCopy;
+}
+
+/** A source that is a copy in this tab from the start (`heldCopy`). */
+export interface HeldCopy {
+  /** What the rows are, as the person would name them (a file's name). */
+  readonly label: string;
+  /** When they were copied into the tab. */
+  readonly takenAt: Date;
+  readonly rowCount: number;
 }
 
 /**
@@ -404,6 +426,10 @@ export class CubeApp {
   #statsSlot: HTMLElement | null = null;
   /** Repaints the plane toggle, which is now the only plane badge. */
   #paintSnap: (() => void) | null = null;
+  /** Switch plane as the button does (a retry after signing in again); null with no toggle. */
+  #planeToggle: (() => void) | null = null;
+  /** The Receipts window's body while it is open (`#paintReceipts`). */
+  #receiptsBody: HTMLElement | null = null;
   /** Ad Hoc Analysis mode while it is on; the cube's own grid is hidden then. */
   #adhoc: AdHocMode | null = null;
   /** The shortcuts this app listens for on the DOCUMENT: see `dispose`. */
@@ -611,6 +637,7 @@ export class CubeApp {
     const deps: CubeControllerOptions = {
       ...(options.snapTarget ? { snapTarget: options.snapTarget } : {}),
       ...(options.runner === undefined && options.live ? { live: options.live } : {}),
+      onQueryFailure: (error) => this.#offerSignIn(error),
     };
     // NARROWED BY THE UNION, spelled out so the reader sees the two
     // forms as the type does: a runner, or a planner with a local
@@ -1008,6 +1035,7 @@ export class CubeApp {
     for (const chart of this.#charts.values()) chart.refresh();
     this.#reconcileSelections();
     this.#paintView(view);
+    this.#paintReceipts();
     this.#reportSchemaChanges(view);
     // The host LAST, once the app has taken the view in: told first, it read the app one view
     // behind (the snapshot was still the previous one), so "changed since saved" missed the
@@ -1148,6 +1176,7 @@ export class CubeApp {
     const rows = this.#readout(right, timingText(view, cols));
     rows.title = 'Rows and columns in the result, and how long the '
       + 'query took.';
+    this.#receiptChip(right, view);
 
     if (view.truncated.length > 0 && this.#config.showTruncationWarning) {
       right.append(this.#statusSeparator());
@@ -1166,6 +1195,94 @@ export class CubeApp {
     this.#renderSelectionStats();
 
     this.#statusTail(right);
+  }
+
+  /**
+   * WHAT ANSWERED THIS VIEW, as the engines that ran it said: the receipt of the query behind
+   * the rows (receipt.ts). The plane button is the tab's own account; this is the engine's --
+   * the warehouse's statement id, the SQL legend-engine reports, or "nothing left this tab".
+   */
+  #receiptChip(right: HTMLElement, view: CubeView): void {
+    const main = view.receipts.at(-1);
+    if (main === undefined) return;
+    const chip = this.#doc.createElement('button');
+    chip.type = 'button';
+    chip.className = `dc-status-receipt dc-receipt-${main.copy ? 'copy' : main.plane}`;
+    const more = view.receipts.length > 1 ? ` (+${view.receipts.length - 1})` : '';
+    chip.textContent = `${receiptLabel(main)}${more}`;
+    chip.title = `${receiptLines(main).join('\n')}\n\nClick for every query's receipt`
+      + (main.check ? ', and to check it with the server.' : '.');
+    chip.addEventListener('click', () => this.openReceipts());
+    right.append(this.#statusSeparator(), chip);
+  }
+
+  /** Every receipt behind the view on screen, each checkable with its server where it can be. */
+  openReceipts(): void {
+    this.#showOverlay('Receipts', (host) => {
+      host.classList.add('dc-receipts');
+      this.#receiptsBody = host;
+      this.#paintReceipts();
+    }, { replace: true });
+  }
+
+  /**
+   * The Receipts window's contents, for the view on screen NOW: repainted in place as each view
+   * lands, so an open window never shows the receipts of rows no longer displayed (it went on
+   * saying "the warehouse" over a snap's rows).
+   */
+  #paintReceipts(): void {
+    const host = this.#receiptsBody;
+    if (!host?.isConnected || host.closest<HTMLElement>('.dc-app-overlay')?.hidden) return;
+    host.replaceChildren();
+    const receipts = this.#view?.receipts ?? [];
+    {
+      if (receipts.length === 0) {
+        host.textContent = 'No query has answered this view yet.';
+        return;
+      }
+      receipts.forEach((r, i) => {
+        const box = this.#doc.createElement('div');
+        box.className = 'dc-receipt';
+        const head = this.#doc.createElement('div');
+        head.className = 'dc-receipt-head';
+        head.textContent = `Query ${i + 1} of ${receipts.length}: ${receiptLabel(r)}`;
+        box.append(head);
+        for (const line of receiptLines(r)) {
+          const p = this.#doc.createElement('div');
+          p.className = 'dc-receipt-line';
+          p.textContent = line;
+          box.append(p);
+        }
+        const check = r.check;
+        if (check) {
+          const button = this.#doc.createElement('button');
+          button.type = 'button';
+          button.className = 'dc-receipt-check';
+          button.textContent = 'Check with the server';
+          const answer = this.#doc.createElement('div');
+          answer.className = 'dc-receipt-answer';
+          button.addEventListener('click', () => {
+            button.disabled = true;
+            answer.textContent = 'asking the server…';
+            check().then((text) => {
+              answer.textContent = text;
+            }, (e: unknown) => {
+              answer.textContent = `The server could not be asked: ${e instanceof Error ? e.message : String(e)}`;
+            }).finally(() => {
+              button.disabled = false;
+            });
+          });
+          box.append(button, answer);
+        } else if (r.plane === 'engine') {
+          const note = this.#doc.createElement('div');
+          note.className = 'dc-receipt-line';
+          note.textContent = 'This server issues no statement id and keeps no history to check against: '
+            + 'its receipt is what its reply reported.';
+          box.append(note);
+        }
+        host.append(box);
+      });
+    }
   }
 
   /** The status bar emptied, and its two sides: what you can do, what is true. */
@@ -3034,13 +3151,64 @@ export class CubeApp {
     this.#debug('failure', error);
     if (!isQueryFailure(error)) return;
     const download = this.#options.download;
+    const signIn = this.#signInOffer(error);
     void this.#queryText(error.query).then((pure) => this.#showOverlay('Error', (host, close) => buildExecutionErrorAlert(host, {
       message: "Data Fetch Failure: Can't execute query.",
       text: `Error: ${message}`,
       pure,
       ...(error.sql !== undefined ? { sql: error.sql } : {}),
       ...(download ? { download } : {}),
-    }, close), { key: 'alert:execution', replace: true, size: EXECUTION_ERROR_WINDOW }));
+      ...(signIn ? { signIn } : {}),
+    }, close), {
+      key: 'alert:execution',
+      replace: true,
+      size: signIn ? { ...EXECUTION_ERROR_WINDOW, height: EXECUTION_ERROR_WINDOW.height + 60 } : EXECUTION_ERROR_WINDOW,
+    }));
+  }
+
+  /**
+   * An expired warehouse sign-in, answered where it is reported: sign in again as the same
+   * user at the same warehouse, then do again what failed. Snapped, only going live can have
+   * reached the warehouse, so that is retried; live, the refused change is applied again (a
+   * sort that failed is sorted, not dropped). Null for any other
+   * failure, or a cube whose live plane cannot sign in again.
+   */
+  #signInOffer(error: unknown): { who: string; where: string; submit: (password: string) => Promise<void> } | null {
+    const expired = sessionExpired(error);
+    const live = this.#options.runner === undefined ? this.#options.live : undefined;
+    if (!expired || !(live instanceof WarehouseEngine)) return null;
+    return {
+      who: expired.principal,
+      where: `the warehouse at ${hostOf(expired.baseUrl)}`,
+      submit: async (password) => {
+        await live.signInAgain(password);
+        this.#closeWindow('Sign in');
+        this.#status(`signed in again as ${expired.principal}`, 'ok');
+        // what failed runs again: the view (going live, or the refused change) and every chart
+        if (this.#controller.snaps.isSnapped) this.#planeToggle?.();
+        else void this.#owner.retryRefused();
+        for (const chart of this.#charts.values()) chart.refresh();
+      },
+    };
+  }
+
+  /**
+   * A query the cube's own view did not run (a chart, a drill-through, an export) found the
+   * warehouse sign-in expired: offer to sign in again, in a window of its own -- those report
+   * their failures where they are drawn, which had no way to offer it. One window, however many
+   * queries failed.
+   */
+  #offerSignIn(error: unknown): void {
+    const signIn = this.#signInOffer(error);
+    if (!signIn) return;
+    this.#showOverlay('Sign in', (host, close) => {
+      buildAlert(host, {
+        type: 'warning',
+        message: `The sign-in to ${signIn.where} has expired.`,
+        text: 'Sign in again and what failed runs again.',
+      }, close);
+      host.append(signInAgain(this.#doc, signIn, close));
+    }, { size: { ...ALERT_WINDOW, height: ALERT_WINDOW.height + 40 } });
   }
 
   /**
@@ -3306,47 +3474,73 @@ export class CubeApp {
     // rule 1 of snap mode is that what you are looking at is never
     // inferable, and WHEN it was frozen and HOW MANY rows it holds
     // is the part a label cannot carry.
-    const paint = (): void => {
-      const state = this.#controller.snaps.state;
-      const snapped = state.mode === 'snapped';
-      snap.textContent = snapped ? 'Snapped' : 'Live';
-      snap.classList.toggle('dc-on', snapped);
-      // Where the data is, when Live is a warehouse: the plane is a place.
-      const remote = this.#options.runner === undefined && this.#options.live !== undefined;
-      if (state.mode === 'snapped') {
-        const taken = state.snap.takenAt.toLocaleTimeString();
-        snap.title =
-          `${state.snap.label} — frozen at ${taken}, ` +
-          `${state.snap.rowCount.toLocaleString()} rows` +
-          (remote ? ', a copy in this tab' : '') + '. ' +
-          `Click to go live.`;
-      } else {
-        snap.title = remote
-          ? 'Live — running on the warehouse, as you. Click to snap a copy of your rows into this tab.'
-          : 'Live data, which may move while you work. Click to snap.';
-      }
-    };
-    this.#paintSnap = paint;
-    snap.addEventListener('click', () => {
-      snap.disabled = true;
-      const done = (): void => {
-        snap.disabled = false;
-        paint();
-        this.#options.onPlane?.();
+    //
+    // It is a TOGGLE only where both planes exist: a live source elsewhere
+    // (a warehouse, a remote file) and a store in this tab to snap into.
+    // Rows already held in the tab are a snap from the start; a plane with
+    // no local store (the engine) is live with no snap on offer. Either
+    // way it still states the plane, and a click does nothing -- a Live
+    // that only answers with a refusal, or a Snap of a copy, was a lie.
+    const held = this.#options.heldCopy;
+    const canSnap = this.#options.runner === undefined && this.#options.snapTarget !== undefined;
+    if (held !== undefined || !canSnap) {
+      snap.textContent = held !== undefined ? 'Snapped' : 'Live';
+      snap.classList.toggle('dc-on', held !== undefined);
+      snap.classList.add('dc-fixed');
+      snap.setAttribute('aria-disabled', 'true');
+      snap.title = held !== undefined
+        ? `${held.label} — copied into this tab at ${held.takenAt.toLocaleTimeString()}, ` +
+          `${held.rowCount.toLocaleString()} rows. Nothing can change it while you work.`
+        : 'Live — this plane has no store in this tab to snap into.';
+      host.append(snap);
+      this.#paintSnap = null;
+    } else {
+      const paint = (): void => {
+        const state = this.#controller.snaps.state;
+        const snapped = state.mode === 'snapped';
+        snap.textContent = snapped ? 'Snapped' : 'Live';
+        snap.classList.toggle('dc-on', snapped);
+        // Where the data is, when Live is a warehouse: the plane is a place.
+        const remote = this.#options.runner === undefined && this.#options.live !== undefined;
+        if (state.mode === 'snapped') {
+          const taken = state.snap.takenAt.toLocaleTimeString();
+          snap.title =
+            `${state.snap.label} — frozen at ${taken}, ` +
+            `${state.snap.rowCount.toLocaleString()} rows` +
+            (remote ? ', a copy in this tab' : '') + '. ' +
+            `Click to go live.`;
+        } else {
+          snap.title = remote
+            ? 'Live — running on the warehouse, as you. Click to snap a copy of your rows into this tab.'
+            : 'Live data, which may move while you work. Click to snap.';
+        }
       };
-      // The PLANE changes, the cube's state does not: freeze (or release)
-      // what is on screen, then the owner re-runs it -- not an undo step.
-      const work = (this.#controller.snaps.isSnapped
-        ? this.#controller.release()
-        : this.#controller.snap(this.#owner.committed.snapshot))
-        .then(() => this.#owner.refresh());
-      work.then(done, (e: unknown) => {
-        this.#status(e instanceof Error ? e.message : String(e), 'error');
-        done();
+      this.#paintSnap = paint;
+      this.#planeToggle = () => snap.click();
+      snap.addEventListener('click', () => {
+        snap.disabled = true;
+        const done = (): void => {
+          snap.disabled = false;
+          paint();
+          this.#options.onPlane?.();
+        };
+        // The PLANE changes, the cube's state does not: freeze (or release)
+        // what is on screen, then the owner re-runs it -- not an undo step.
+        // The new plane holds only once it has ANSWERED: a refused re-run puts
+        // the old plane back, so the badge never names a plane the rows are
+        // not from (a dead warehouse left a dropped snap's rows under "Live").
+        const rerun = () => this.#owner.refresh();
+        const work = this.#controller.snaps.isSnapped
+          ? this.#controller.goLive(rerun)
+          : this.#controller.snapAndRun(this.#owner.committed.snapshot, rerun);
+        work.then(done, (e: unknown) => {
+          this.#status(e instanceof Error ? e.message : String(e), 'error');
+          done();
+        });
       });
-    });
-    paint();
-    host.append(snap);
+      paint();
+      host.append(snap);
+    }
 
     // AND THE BAR FOLDS ITSELF: after the menu, in the fold column
     // (appended below, once the hamburger is in).

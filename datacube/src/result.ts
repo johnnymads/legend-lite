@@ -24,6 +24,8 @@
  * database's own text; an integer past 2^53 a bigint. Never a JS `Date`: an instant read
  * in the viewer's time zone is not a calendar day. What it means is the column's type.
  */
+import type { Receipt } from './receipt.ts';
+
 export type Scalar = string | number | bigint | boolean | null;
 
 export interface ResultColumn {
@@ -55,6 +57,8 @@ export interface ResultTable {
   readonly epoch: number;
   /** Wall time the engine spent, for the perf budget. */
   readonly elapsedMs: number;
+  /** What ran it, where, as whom: issued by the engine that did (receipt.ts). */
+  readonly receipt?: Receipt;
 }
 
 export function emptyResult(epoch: number): ResultTable {

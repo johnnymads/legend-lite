@@ -447,4 +447,21 @@ describe('number defaults follow the column KIND (the user, 2026-09-28)', () => 
     assert.equal(out['qty']?.displayCommas, undefined);
     assert.equal(out['id']?.displayCommas, true, 'a user\'s own setting wins over the default');
   });
+  it('a column that bounds its own places is not overruled by the type\'s fixed places', () => {
+    // The demo's money is currency at 0 places (maximumFractionDigits); the Float default's
+    // `decimals: 2` pinned both bounds over it, and every pivoted notional showed cents.
+    const money = { kind: 'currency' as const, currency: 'USD', locale: 'en-US', maximumFractionDigits: 0 };
+    const config = { ...DEFAULT_CONFIGURATION, columns: { notional: { format: money } } };
+    const out = leafFormats(config, [
+      { name: '2021__|__notional', path: ['2021', 'notional'], isDimension: false, type: 'Float' },
+      { name: 'pnl', path: ['pnl'], isDimension: false, type: 'Float' },
+    ]);
+    assert.equal(out['2021__|__notional']?.decimals, undefined, 'the default\'s fixed places are gone');
+    assert.equal(out['2021__|__notional']?.maximumFractionDigits, 0);
+    assert.equal(out['2021__|__notional']?.negativeParens, true, 'the rest of the default still applies');
+    assert.equal(out['pnl']?.decimals, 2, 'a column with no bounds of its own keeps the default');
+    const fixed = leafFormats({ ...DEFAULT_CONFIGURATION, columns: { q: { format: { kind: 'number' as const, decimals: 3 } } } },
+      [{ name: 'q', path: ['q'], isDimension: false, type: 'Float' }]);
+    assert.equal(fixed['q']?.decimals, 3, 'a column\'s own fixed places win');
+  });
 });

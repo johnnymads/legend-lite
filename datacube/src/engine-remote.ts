@@ -17,6 +17,7 @@
 import type { CubeSnapshot } from './snapshot.ts';
 import type { ResultColumn, ResultTable, Scalar } from './result.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
+import { hostOf } from './receipt.ts';
 import { PureV1Client, type PrintStyle, type PureV1Options } from './pure-v1.ts';
 import { pureType, relationColumns, type PlanColumn } from './relation-type.ts';
 import { hasTimeOfDay } from './types.ts';
@@ -65,7 +66,7 @@ interface TdsResponse {
       readonly type?: string;
     }[];
   };
-  readonly activities?: readonly { readonly sql?: string }[];
+  readonly activities?: readonly { readonly sql?: string; readonly comment?: string }[];
   readonly result?: {
     readonly columns?: readonly string[];
     readonly rows?: readonly { readonly values?: readonly Scalar[] }[];
@@ -127,8 +128,21 @@ export class LegendEngineExecutor implements RemoteExecutor {
   async execute(query: Lambda, snapshot: CubeSnapshot, signal?: AbortSignal): Promise<RemoteResult> {
     const started = Date.now();
     const body = (await this.#client.execute(query, signal)) as TdsResponse;
+    // The receipt is the response's own: the address it came back from and the SQL its
+    // `activities` report. The pure/v1 API issues no statement id and keeps no history to
+    // ask, so the receipt has none -- nothing is added to what the engine sends.
+    const ran = (body.activities ?? []).map((a) => a.sql).filter((s): s is string => s !== undefined);
+    const notes = (body.activities ?? []).map((a) => a.comment).filter((s): s is string => !!s);
     return {
-      rows: toResultTable(body, snapshot.epoch, Date.now() - started),
+      rows: {
+        ...toResultTable(body, snapshot.epoch, Date.now() - started),
+        receipt: {
+          plane: 'engine',
+          where: `the engine at ${hostOf(this.#client.baseUrl)}`,
+          ...(ran.length > 0 ? { serverSql: ran.join(';\n') } : {}),
+          ...(notes.length > 0 ? { serverNote: notes.join('; ') } : {}),
+        },
+      },
       sql: body.activities?.at(-1)?.sql ?? '',
     };
   }

@@ -89,6 +89,48 @@ export function buildAlert(
 
 // -- the two alerts that carry a query --------------------------------
 
+/** The expired sign-in's own way back: the password, and nothing else to find or retype. */
+export function signInAgain(
+  doc: Document,
+  signIn: NonNullable<ExecutionErrorOptions['signIn']>,
+  close: () => void,
+): HTMLElement {
+  const form = doc.createElement('form');
+  form.className = 'dc-alert-signin';
+  const label = doc.createElement('label');
+  label.className = 'dc-alert-signin-label';
+  label.textContent = `Sign in to ${signIn.where} as ${signIn.who}`;
+  const password = doc.createElement('input');
+  password.type = 'password';
+  password.className = 'dc-alert-signin-password';
+  password.autocomplete = 'current-password';
+  password.placeholder = 'password';
+  password.setAttribute('aria-label', `password for ${signIn.who}`);
+  label.append(password);
+  const go = doc.createElement('button');
+  go.type = 'submit';
+  go.className = 'dc-button dc-alert-action';
+  go.textContent = 'Sign in again';
+  const said = doc.createElement('div');
+  said.className = 'dc-alert-signin-said';
+  form.append(label, go, said);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    go.disabled = true;
+    said.textContent = 'signing in…';
+    signIn.submit(password.value).then(() => {
+      password.value = '';
+      close();
+    }, (e: unknown) => {
+      said.textContent = e instanceof Error ? e.message : String(e);
+      go.disabled = false;
+      password.select();
+    });
+  });
+  queueMicrotask(() => password.focus());
+  return form;
+}
+
 /** Upstream's execution-error window: room for the debug info. */
 export const EXECUTION_ERROR_WINDOW = {
   width: 600,
@@ -116,6 +158,16 @@ export interface ExecutionErrorOptions {
   readonly sql?: string;
   /** Hand a file to the host; absent, there is no download button. */
   readonly download?: (name: string, mime: string, text: string) => void;
+  /**
+   * The failure was an expired sign-in: offer to sign in again HERE, as the same user at the
+   * same place, rather than send the person looking for where signing in lives. `submit`
+   * resolves once signed in (the window then closes) and rejects with the reason to show.
+   */
+  readonly signIn?: {
+    readonly who: string;
+    readonly where: string;
+    readonly submit: (password: string) => Promise<void>;
+  };
 }
 
 /**
@@ -132,6 +184,7 @@ export function buildExecutionErrorAlert(
   buildAlert(host, { type: 'error', message: options.message,
     ...(options.text ? { text: options.text } : {}) }, close);
   host.classList.add('dc-alert-execution');
+  if (options.signIn) host.append(signInAgain(doc, options.signIn, close));
 
   const debug = doc.createElement('div');
   debug.className = 'dc-alert-debug';

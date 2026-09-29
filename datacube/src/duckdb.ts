@@ -14,6 +14,7 @@
 // arithmetic. Left alone it produces a crash far from its cause, so it
 // is narrowed here, once, at the boundary.
 
+import type { Receipt } from './receipt.ts';
 import type { QueryEngine, RawColumn, RawTable } from './engine.ts';
 import { QueryError, typedByPlan } from './engine.ts';
 import type { Plan } from './relation-type.ts';
@@ -259,9 +260,28 @@ export class DuckDbEngine implements QueryEngine {
   readonly #conn: ArrowishConnection;
   /** Tail of the queue of queries on this connection. See #serialised. */
   #chain: Promise<void> = Promise.resolve();
+  /** Remote files a mounted source reads over HTTP (`readsRemote`), for the receipt. */
+  readonly #reads: string[] = [];
 
   constructor(connection: ArrowishConnection) {
     this.#conn = connection;
+  }
+
+  /**
+   * The host mounted a remote file (remote.ts `mountRemote`): queries here read it over HTTP.
+   * Said on every receipt, so "ran in this tab" never hides that bytes came from elsewhere.
+   */
+  readsRemote(url: string): void {
+    if (!this.#reads.includes(url)) this.#reads.push(url);
+  }
+
+  /** What this engine can say for a query it ran: here, and what it read from elsewhere. */
+  receipt(): Receipt {
+    return {
+      plane: 'tab',
+      where: "this tab's DuckDB",
+      ...(this.#reads.length > 0 ? { reading: [...this.#reads] } : {}),
+    };
   }
 
   /**
@@ -295,7 +315,7 @@ export class DuckDbEngine implements QueryEngine {
    * stream can be cut short.
    */
   async execute(plan: Plan, epoch: number, signal?: AbortSignal): Promise<ResultTable> {
-    return typedByPlan(await this.run(plan.sql, epoch, signal), plan);
+    return { ...typedByPlan(await this.run(plan.sql, epoch, signal), plan), receipt: this.receipt() };
   }
 
   async run(

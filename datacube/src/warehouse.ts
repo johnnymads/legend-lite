@@ -22,6 +22,7 @@ import { Table, tableFromIPC, type RecordBatch } from 'apache-arrow';
 import { QueryError, typedByPlan, type QueryEngine, type RawTable } from './engine.ts';
 import type { Plan } from './relation-type.ts';
 import { toRawTable, type ArrowishTable } from './duckdb.ts';
+import { hostOf, type Receipt } from './receipt.ts';
 import type { ResultTable } from './result.ts';
 
 /** A signed-in session: where the warehouse is, and the bearer token. */
@@ -46,6 +47,15 @@ export interface CatalogObject {
 interface ApiError {
   readonly code: string;
   readonly message: string;
+}
+
+/** One statement on the warehouse's record (`GET /sql/v1/history`), as it writes it. */
+interface HistoryEntry {
+  readonly statementId: string;
+  readonly state: string;
+  readonly submittedAt: string;
+  readonly finishedAt?: string;
+  readonly rowCount: string | number;
 }
 
 interface StatementStatus {
@@ -115,15 +125,72 @@ Promise<{ readonly session: WarehouseSession; readonly objects: CatalogObject[] 
   return { session, objects };
 }
 
+/**
+ * The warehouse refused the token: expired, or issued by a warehouse that has since restarted.
+ * Its own type, so the cube can offer to sign in again right where it says so.
+ */
+export class SessionExpired extends Error {
+  readonly baseUrl: string;
+  readonly principal: string;
+  constructor(baseUrl: string, principal: string) {
+    super(`the warehouse session for ${principal} has expired — sign in again`);
+    this.name = 'SessionExpired';
+    this.baseUrl = baseUrl;
+    this.principal = principal;
+  }
+}
+
+/** Whether `error`, or anything in its cause chain, is a `SessionExpired`. */
+export function sessionExpired(error: unknown): SessionExpired | null {
+  for (let e = error, depth = 0; e && depth < 10; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e instanceof SessionExpired) return e;
+  }
+  return null;
+}
+
 export class WarehouseEngine implements QueryEngine {
   readonly name = 'warehouse';
-  /** Renewed in place when the same user signs in again (`renew`). */
+  /** Renewed in place when the same user signs in again (`renew`) or the token is refreshed. */
   #session: WarehouseSession;
   readonly #catalog: string;
+  /** The next refresh of the token, before it expires (`#schedule`). */
+  #refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(session: WarehouseSession, catalog = 'main') {
     this.#session = session;
     this.#catalog = catalog;
+    this.#schedule();
+  }
+
+  /**
+   * KEEP THE SIGN-IN ALIVE while the page is open: swap the token for a fresh one at 80% of its
+   * life (`POST /sql/v1/token/refresh`), so nobody is asked for a password mid-work. The server
+   * stops refreshing at its session limit; after that, and after a sleep that outlasted the
+   * token, the next query says the session expired and the cube offers to sign in again.
+   */
+  #schedule(): void {
+    clearTimeout(this.#refreshTimer);
+    const left = Date.parse(this.#session.expiresAt) - Date.now();
+    if (!Number.isFinite(left) || left <= 0) return;
+    this.#refreshTimer = setTimeout(() => {
+      this.refreshToken().catch(() => {
+        // not refreshed (the session's limit, the server gone): the next query says so, and
+        // the cube offers to sign in -- a background timer has no one to tell
+      });
+    }, Math.max(1_000, left * 0.8));
+    // a timer must not keep a process alive (node: a test, a CLI) for a page's convenience
+    (this.#refreshTimer as { unref?: () => void }).unref?.();
+  }
+
+  /** Swap the token for a fresh one now: same user, a new expiry. */
+  async refreshToken(): Promise<void> {
+    const t = await this.#call<{ token: string; expiresAt: string; principal: string }>('POST', '/sql/v1/token/refresh');
+    this.renew({ baseUrl: this.#session.baseUrl, token: t.token, principal: t.principal, expiresAt: t.expiresAt });
+  }
+
+  /** When the token in use expires (the server's word), for a host to show. */
+  get expiresAt(): string {
+    return this.#session.expiresAt;
   }
 
   /** The signed-in user, for the plane badge. */
@@ -137,6 +204,20 @@ export class WarehouseEngine implements QueryEngine {
    * expiry -- as the error asked -- never reached the cube (P2-297). Anyone else's session is
    * refused: what a cube reads is its user's, and it never changes hands quietly.
    */
+  /** Where this engine's warehouse is. */
+  get baseUrl(): string {
+    return this.#session.baseUrl;
+  }
+
+  /**
+   * Sign in again as THIS engine's user at THIS engine's warehouse, and go on with the new
+   * token: the one thing a person needs after the warehouse restarted. The password is sent
+   * once and not kept.
+   */
+  async signInAgain(password: string): Promise<void> {
+    this.renew(await signIn(this.#session.baseUrl, this.#session.principal, password));
+  }
+
   renew(session: WarehouseSession): void {
     if (session.principal !== this.#session.principal
       || session.baseUrl.replace(/\/+$/, '') !== this.#session.baseUrl.replace(/\/+$/, '')) {
@@ -144,6 +225,7 @@ export class WarehouseEngine implements QueryEngine {
         + `signed in as ${session.principal}, open a table to work as ${session.principal}`);
     }
     this.#session = session;
+    this.#schedule();
   }
 
   /**
@@ -178,8 +260,9 @@ export class WarehouseEngine implements QueryEngine {
   async run(sql: string, epoch: number, signal?: AbortSignal): Promise<RawTable> {
     const started = performance.now();
     const batches: RecordBatch[] = [];
+    let receipt: Receipt | undefined;
     try {
-      for await (const bytes of this.arrowChunks(sql, signal)) {
+      for await (const bytes of this.arrowChunks(sql, signal, (r) => { receipt = r; })) {
         batches.push(...tableFromIPC(bytes).batches);
       }
     } catch (error: unknown) {
@@ -187,7 +270,22 @@ export class WarehouseEngine implements QueryEngine {
       throw new QueryError(error instanceof Error ? error.message : String(error), sql, { cause: error });
     }
     const table = new Table(batches) as unknown as ArrowishTable;
-    return toRawTable(table, epoch, performance.now() - started);
+    const raw = toRawTable(table, epoch, performance.now() - started);
+    return receipt ? { ...raw, receipt } : raw;
+  }
+
+  /**
+   * Ask the warehouse, apart from the query, whether statement `id` is on its record for this
+   * user: its history (`GET /sql/v1/history`), which lists only the caller's own statements.
+   */
+  async check(id: string): Promise<string> {
+    const history = await this.#call<readonly HistoryEntry[]>('GET', '/sql/v1/history?limit=1000');
+    const found = history.find((h) => h.statementId === id);
+    const who = this.#session.principal;
+    if (!found) return `Not on the warehouse's record for ${who}: no statement ${id} in its last ${history.length}.`;
+    return `On the warehouse's record for ${who}: statement ${id}, ${found.state}, `
+      + `${Number(found.rowCount).toLocaleString()} rows, submitted ${new Date(found.submittedAt).toLocaleTimeString()}`
+      + (found.finishedAt ? `, finished ${new Date(found.finishedAt).toLocaleTimeString()}` : '') + '.';
   }
 
   /**
@@ -195,7 +293,11 @@ export class WarehouseEngine implements QueryEngine {
    * in order. What a snap loads into DuckDB-WASM as it is, unconverted.
    * The statement is closed once every chunk is read, so the server frees it.
    */
-  async *arrowChunks(sql: string, signal?: AbortSignal): AsyncGenerator<Uint8Array> {
+  async *arrowChunks(
+    sql: string,
+    signal?: AbortSignal,
+    onReceipt?: (receipt: Receipt) => void,
+  ): AsyncGenerator<Uint8Array> {
     let status = await this.#call<StatementStatus>('POST', '/sql/v1/statements', signal, {
       sql,
       catalog: this.#catalog,
@@ -213,12 +315,22 @@ export class WarehouseEngine implements QueryEngine {
         const e = status.error;
         throw new Error(e ? `${e.code}: ${e.message}` : `the statement ended ${status.state}`);
       }
+      // What the SERVER issued for it: its id and its count, never the tab's.
+      onReceipt?.({
+        plane: 'warehouse',
+        where: `the warehouse at ${hostOf(this.#session.baseUrl)}`,
+        as: this.#session.principal,
+        statementId: id,
+        ...(status.result ? { serverRows: Number(status.result.rowCount) } : {}),
+        check: () => this.check(id),
+      });
       const chunks = status.result?.chunkCount ?? 0;
       for (let i = 0; i < chunks; i++) {
-        const r = await fetch(url(this.#session.baseUrl, `/sql/v1/statements/${id}/chunks/${i}`), {
+        const r = await this.#fetch(url(this.#session.baseUrl, `/sql/v1/statements/${id}/chunks/${i}`), {
           headers: this.#auth(),
           ...(signal ? { signal } : {}),
         });
+        if (r.status === 401) throw new SessionExpired(this.#session.baseUrl, this.#session.principal);
         if (!r.ok) throw new Error(await failure(r));
         yield new Uint8Array(await r.arrayBuffer());
       }
@@ -236,21 +348,36 @@ export class WarehouseEngine implements QueryEngine {
   }
 
   async close(): Promise<void> {
-    // nothing held open: every statement is closed as it finishes
+    // nothing held open: every statement is closed as it finishes; the refresh stops
+    clearTimeout(this.#refreshTimer);
   }
 
   #auth(): Record<string, string> {
     return { Authorization: `Bearer ${this.#session.token}` };
   }
 
+  /**
+   * `fetch`, with a refused connection said as what it is. The browser's own words are
+   * "Failed to fetch", which names neither the server nor the fact it could not be reached.
+   */
+  async #fetch(target: string, init: RequestInit): Promise<Response> {
+    try {
+      return await fetch(target, init);
+    } catch (error: unknown) {
+      if (init.signal?.aborted) throw error;
+      throw new Error(`cannot reach the warehouse at ${this.#session.baseUrl} — `
+        + `${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+  }
+
   async #call<T>(method: string, path: string, signal?: AbortSignal, body?: unknown): Promise<T> {
-    const r = await fetch(url(this.#session.baseUrl, path), {
+    const r = await this.#fetch(url(this.#session.baseUrl, path), {
       method,
       headers: body === undefined ? this.#auth() : { ...this.#auth(), 'Content-Type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       ...(signal ? { signal } : {}),
     });
-    if (r.status === 401) throw new Error('the warehouse session has expired — sign in again');
+    if (r.status === 401) throw new SessionExpired(this.#session.baseUrl, this.#session.principal);
     if (!r.ok && r.status !== 202) throw new Error(await failure(r));
     return await r.json() as T;
   }

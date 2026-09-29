@@ -544,6 +544,22 @@ export function numberDefaults(
 }
 
 /**
+ * A column's own settings over its type's defaults. A setting that bounds the places ITSELF
+ * (`maximumFractionDigits`, `minimumFractionDigits`) takes the default's `decimals` out: fixed
+ * places pin both bounds and win over them (format.ts `fractionDigits`), so the Float default of
+ * 2 overrode a host's money at 0 places -- the demo's notional showed cents (2026-09-29).
+ */
+function overDefaults(
+  defaults: ReturnType<typeof numberDefaults>,
+  own: ColumnFormat | undefined,
+): ColumnFormat {
+  const bounded = own !== undefined && own.decimals === undefined
+    && (own.maximumFractionDigits !== undefined || own.minimumFractionDigits !== undefined);
+  const { decimals: _placesDefault, ...rest } = defaults ?? {};
+  return { kind: 'auto', ...(bounded ? rest : defaults), ...own };
+}
+
+/**
  * The formats the screen RENDERS: every column's own settings over
  * its type's defaults (`numberDefaults`). Distinct from `toFormats`,
  * which is what a cube SAVES -- a default written into a save is an
@@ -563,7 +579,7 @@ export function renderFormats(
     const { name, type } = c;
     const defaults = numberDefaults(type, 'kind' in c ? c.kind : undefined);
     if (!defaults) continue;
-    out[name] = { kind: 'auto', ...defaults, ...out[name] };
+    out[name] = overDefaults(defaults, out[name]);
   }
   return out;
 }
@@ -589,7 +605,7 @@ export function leafFormats(
     const measure = leaf.isDimension ? undefined : leaf.path[leaf.path.length - 1];
     const set = own[leaf.name] ?? (measure === undefined ? undefined : own[measure]);
     const defaults = numberDefaults(leaf.type, leaf.kind);
-    out[leaf.name] = set || defaults ? { kind: 'auto', ...defaults, ...set } : undefined;
+    out[leaf.name] = set || defaults ? overDefaults(defaults, set) : undefined;
   }
   return out;
 }

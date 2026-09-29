@@ -92,6 +92,46 @@ describe('settings', () => {
 });
 
 describe('alerts that carry a query', () => {
+  it('an expired sign-in is answered in the error: the password, signed in, then closed', async () => {
+    const tried: string[] = [];
+    let closed = 0;
+    buildExecutionErrorAlert(root, {
+      message: "Data Fetch Failure: Can't execute query.",
+      text: 'Error: the warehouse session for rita has expired — sign in again',
+      signIn: {
+        who: 'rita',
+        where: 'the warehouse at wh:9090',
+        submit: async (pw) => {
+          tried.push(pw);
+          if (pw !== 'right') throw new Error('sign-in failed — UNAUTHENTICATED: bad password');
+        },
+      },
+    }, () => { closed += 1; });
+    const form = root.querySelector('.dc-alert-signin') as HTMLFormElement;
+    assert.match(form.textContent ?? '', /Sign in to the warehouse at wh:9090 as rita/);
+    const password = form.querySelector('input[type=password]') as HTMLInputElement;
+    const said = form.querySelector('.dc-alert-signin-said') as HTMLElement;
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    password.value = 'wrong';
+    form.dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+    await settle();
+    assert.match(said.textContent ?? '', /bad password/);
+    assert.equal(closed, 0, 'a failed sign-in keeps the window, and says why');
+
+    password.value = 'right';
+    form.dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+    await settle();
+    assert.deepEqual(tried, ['wrong', 'right']);
+    assert.equal(closed, 1);
+    assert.equal(password.value, '', 'the password is not left in the page');
+  });
+
+  it('an error that is not an expired sign-in offers none', () => {
+    buildExecutionErrorAlert(root, { message: 'x', text: 'Error: boom' }, () => {});
+    assert.equal(root.querySelector('.dc-alert-signin'), null);
+  });
+
   it('the execution error hides its debug info until asked, and downloads it', () => {
     const files: [string, string, string][] = [];
     buildExecutionErrorAlert(root, {

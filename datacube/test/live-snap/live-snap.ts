@@ -35,7 +35,7 @@ import { inferModel } from '../../src/infer.ts';
 import type { ResultTable } from '../../src/result.ts';
 import { PlanThenRun } from '../../src/runner.ts';
 import { SnapManager } from '../../src/snap.ts';
-import { listObjects, signIn, WarehouseEngine } from '../../src/warehouse.ts';
+import { listObjects, SessionExpired, sessionExpired, signIn, WarehouseEngine } from '../../src/warehouse.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
 import { levelLambda } from '../../src/query.ts';
 import { accessor, from } from '../../../pure-protocol/src/index.ts';
@@ -206,4 +206,65 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
 
 it('a table the reader was not granted is refused, live', async () => {
   await assert.rejects(live.run('SELECT * FROM secret', 0), /FORBIDDEN/);
+});
+
+it('every live answer carries the server\'s receipt, and the server confirms it; a snap names its pull', async () => {
+  // Receipts come from what the server issued (its statement id, its count), and `check` asks
+  // the server's own history -- which lists only the caller's statements -- apart from the query.
+  const out = await new PlanThenRun(planner, live).run(queries()[0]!.query, CASES[0]!.snapshot, CASES[0]!.scope);
+  const r = out.rows.receipt;
+  assert.ok(r, 'a live answer has a receipt');
+  assert.equal(r.plane, 'warehouse');
+  assert.equal(r.as, 'rita');
+  assert.match(r.statementId ?? '', /^[0-9a-f-]{36}$/);
+  assert.equal(r.serverRows, out.rows.rowCount);
+  assert.match(await r.check!(), new RegExp(`^On the warehouse's record for rita: statement ${r.statementId}, succeeded`));
+  // an id the server never issued is not on its record
+  assert.match(await live.check('00000000-0000-0000-0000-000000000000'), /^Not on the warehouse's record for rita/);
+
+  const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
+  const snaps = new SnapManager(local, live);
+  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE } });
+  assert.equal(info.pulledBy?.as, 'rita');
+  assert.match(await info.pulledBy!.check!(), /^On the warehouse's record for rita/);
+  // snapped, the tab's own engine answers, and its receipt says so
+  const here = await new PlanThenRun(planner, local).run(queries()[0]!.query, CASES[0]!.snapshot, CASES[0]!.scope);
+  assert.equal(here.rows.receipt?.plane, 'tab');
+  assert.equal(here.rows.receipt?.statementId, undefined);
+  await snaps.release();
+});
+
+it('a token the warehouse no longer honours is SessionExpired, and signing in again goes on as the same user', async () => {
+  // What a restarted warehouse does to an open cube: its token is refused.
+  const stale = new WarehouseEngine({ baseUrl: base, token: 'cml0YXwx.bm90LWEtcmVhbC1zaWduYXR1cmU', principal: 'rita', expiresAt: '' });
+  const refused = await stale.run('SELECT 1 AS one', 0).catch((e: unknown) => e);
+  const expired = sessionExpired(refused);
+  assert.ok(expired instanceof SessionExpired, `not a SessionExpired: ${String(refused)}`);
+  assert.equal(expired.principal, 'rita');
+  assert.equal(expired.baseUrl, base);
+
+  await assert.rejects(stale.signInAgain('wrong'), /sign-in failed/);
+  await stale.signInAgain('rita-pw');
+  const again = await stale.run('SELECT 1 AS one', 0);
+  assert.equal(again.rowCount, 1);
+  assert.match(await again.receipt!.check!(), /^On the warehouse's record for rita/);
+});
+
+it('the token refreshes: on asking, and by itself before it expires', async () => {
+  const s = await signIn(base, 'rita', 'rita-pw');
+  const engine = new WarehouseEngine(s);
+  await engine.refreshToken();
+  assert.ok(Date.parse(engine.expiresAt) >= Date.parse(s.expiresAt), 'a refreshed token lives at least as long');
+  const out = await engine.run('SELECT 1 AS one', 0);
+  assert.match(await out.receipt!.check!(), /^On the warehouse's record for rita/, 'the fresh token is rita, on the server');
+  await engine.close();
+
+  // BY ITSELF: a session the page believes ends in 1.5s is refreshed at 80% of that, unasked
+  const soon = new WarehouseEngine({ ...s, expiresAt: new Date(Date.now() + 1_500).toISOString() });
+  const before = soon.expiresAt;
+  await new Promise((r) => setTimeout(r, 2_000));
+  assert.notEqual(soon.expiresAt, before, 'the timer swapped the token');
+  assert.ok(Date.parse(soon.expiresAt) > Date.now() + 30 * 60_000, 'for one with the server\'s full life');
+  assert.equal((await soon.run('SELECT 1 AS one', 0)).rowCount, 1);
+  await soon.close();
 });

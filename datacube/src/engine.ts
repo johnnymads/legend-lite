@@ -13,6 +13,7 @@
 // rest rather than performance.
 
 import type { Plan } from './relation-type.ts';
+import type { Receipt } from './receipt.ts';
 import type { ResultTable, Scalar } from './result.ts';
 
 /** A raw read's column: its name and values, and NO Pure type -- no compiler typed it. */
@@ -27,6 +28,8 @@ export interface RawTable {
   readonly rowCount: number;
   readonly epoch: number;
   readonly elapsedMs: number;
+  /** What ran it (receipt.ts); `typedByPlan` carries it onto the typed result. */
+  readonly receipt?: Receipt;
 }
 
 export interface QueryEngine {

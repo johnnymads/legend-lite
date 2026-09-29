@@ -239,3 +239,97 @@ describe('the snapped plane actually redirects', () => {
     assert.equal(c.snaps.isSnapped, false);
   });
 });
+
+describe('a plane holds only once it has answered', () => {
+  const refused = async () => ({ kind: 'refused', error: new Error('cannot reach the warehouse at http://wh') });
+  const applied = async () => ({ kind: 'applied' });
+
+  it('stays on the snap, its table kept, when live does not answer', async () => {
+    // Going live dropped the snap first: a dead warehouse then left the dropped
+    // copy's rows on screen under "Live" (2026-09-29).
+    const engine = new RecordingEngine();
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    await c.run(at(SNAPSHOT));
+    await c.snap(SNAPSHOT, 'test');
+    engine.sql.length = 0;
+    await assert.rejects(c.goLive(refused), /could not go live — cannot reach the warehouse at http:\/\/wh\. Still on the snap/);
+    assert.equal(c.snaps.isSnapped, true);
+    assert.equal(engine.sql.some((q) => /DROP TABLE/i.test(q)), false, engine.sql.join(' ;; '));
+  });
+
+  it('drops the snap once live has answered', async () => {
+    const engine = new RecordingEngine();
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    await c.run(at(SNAPSHOT));
+    await c.snap(SNAPSHOT, 'test');
+    await c.goLive(applied);
+    assert.equal(c.snaps.isSnapped, false);
+    assert.ok(engine.sql.some((q) => /DROP TABLE IF EXISTS "TRADES_SNAP"/.test(q)), engine.sql.join(' ;; '));
+  });
+
+  it('is live again when the snap it took cannot be read', async () => {
+    // A file's model with no snap table: the badge said Snapped over a failed query.
+    const engine = new RecordingEngine();
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    await c.run(at(SNAPSHOT));
+    await assert.rejects(c.snapAndRun(SNAPSHOT, refused), /could not snap — .*Still live\./);
+    assert.equal(c.snaps.isSnapped, false);
+    assert.ok(engine.sql.some((q) => /DROP TABLE/i.test(q)), 'the unreadable snap is dropped');
+  });
+});
+
+describe('receipts', () => {
+  /** An engine that signs what it runs, as a server would. */
+  class SigningEngine extends RecordingEngine {
+    #n = 0;
+    override async answer(sql: string, epoch: number): Promise<ResultTable> {
+      const r = await super.answer(sql, epoch);
+      return { ...r, receipt: { plane: 'warehouse', where: 'the warehouse at wh:1', as: 'rita', statementId: `s${++this.#n}` } };
+    }
+  }
+
+  it('the view carries the receipt of every query that answered it', async () => {
+    const c = new CubeController(new SigningEngine(), new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const view = await c.run(at(SNAPSHOT));
+    assert.ok(typeof view !== 'symbol');
+    assert.ok(view.receipts.length > 0);
+    assert.deepEqual(view.receipts.map((r) => r.as), view.receipts.map(() => 'rita'));
+    assert.match(view.receipts.at(-1)?.statementId ?? '', /^s\d+$/);
+  });
+
+  it('while snapped, each receipt names the copy it read', async () => {
+    const c = new CubeController(new SigningEngine(), new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    await c.run(at(SNAPSHOT));
+    await c.snap(SNAPSHOT, 'test');
+    const view = await c.run(at(SNAPSHOT));
+    assert.ok(typeof view !== 'symbol');
+    const taken = c.snaps.state.mode === 'snapped' ? c.snaps.state.snap.takenAt : undefined;
+    assert.ok(view.receipts.length > 0 && view.receipts.every((r) => r.copy?.takenAt === taken));
+  });
+
+  it('a result with no receipt adds none: nothing is made up for an engine that says nothing', async () => {
+    const c = new CubeController(new RecordingEngine(), new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const view = await c.run(at(SNAPSHOT));
+    assert.ok(typeof view !== 'symbol');
+    assert.deepEqual(view.receipts, []);
+  });
+});
+
+describe('a query a host asked for itself', () => {
+  it('reports its failure to the host (a chart has no other way to say the sign-in expired)', async () => {
+    class Failing extends RecordingEngine {
+      override async answer(sql: string, epoch: number): Promise<ResultTable> {
+        if (sql.includes('planned_')) throw new Error('the warehouse session for rita has expired');
+        return super.answer(sql, epoch);
+      }
+    }
+    const seen: unknown[] = [];
+    const c = new CubeController(new Failing(), new RecordingPlanner(), { onQueryFailure: (e) => seen.push(e) });
+    await assert.rejects(c.runQuery(SNAPSHOT.source.query as never, SNAPSHOT), /expired/);
+    assert.equal(seen.length, 1);
+    const stopped = new AbortController();
+    stopped.abort();
+    await assert.rejects(c.runQuery(SNAPSHOT.source.query as never, SNAPSHOT, undefined, stopped.signal));
+    assert.equal(seen.length, 1, 'a query the host cancelled is not a failure to report');
+  });
+});

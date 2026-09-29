@@ -190,6 +190,8 @@ export class StateOwner<S, V> {
   #rendered: S;
   #view: V | null = null;
   #pending: Pending<S> | null = null;
+  /** The last change refused, until another starts: what `retryRefused` applies again. */
+  #refused: Pending<S> | null = null;
   #seq = 0;
   readonly #run: Runner<S, V>;
   readonly #rules: StateRules<S, V>;
@@ -258,6 +260,18 @@ export class StateOwner<S, V> {
   /** Run the committed state and show it: the first load, a refresh after a snap. Not a step. */
   async refresh(): Promise<StateOutcome<V>> {
     return this.change((s) => s, { record: false, force: true, label: 'refresh' });
+  }
+
+  /**
+   * Apply again the change that was last refused -- once what refused it is put right (the
+   * person signed in again) -- as it was asked for: its state, its undo step, its labels.
+   * Nothing refused since the last change started: the committed state is re-run.
+   */
+  async retryRefused(): Promise<StateOutcome<V>> {
+    const refused = this.#refused;
+    if (!refused) return this.refresh();
+    this.#refused = null;
+    return this.#transact(refused.state, refused.labels.join(', ') || 'refresh', refused.record, refused.move);
   }
 
   /**
@@ -407,6 +421,7 @@ export class StateOwner<S, V> {
 
   async #transact(next: S, label: string, record: boolean, move?: Move): Promise<StateOutcome<V>> {
     const id = (this.#seq += 1);
+    this.#refused = null;
     // A history move REPLACES a pending move rather than building on it; anything else is
     // carried: a change made on a pending one is reverted with it, and one made on a pending
     // move lands the move too.
@@ -428,6 +443,7 @@ export class StateOwner<S, V> {
       const pending = this.#pending;
       if (pending?.id !== id) return { kind: 'superseded' };
       this.#pending = null;
+      this.#refused = pending;
       this.#emit({ kind: 'refused', error, reverted: pending.labels });
       return { kind: 'refused', error, reverted: pending.labels };
     }

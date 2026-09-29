@@ -10,7 +10,7 @@
 
 import * as duckdb from '@duckdb/duckdb-wasm';
 
-import { CubeApp } from '../src/app.ts';
+import { CubeApp, type HeldCopy } from '../src/app.ts';
 import {
   DEFAULT_CONFIGURATION,
   type CubeConfiguration,
@@ -310,6 +310,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   // refers to.
   const params = new URLSearchParams(location.search);
   const remote = params.get('remote');
+  /** Generated rows are a copy in this tab from the start; a mounted remote file is live. */
+  let generated: HeldCopy | undefined;
   if (remote) {
     status.textContent = `mounting ${remote}…`;
     const format = params.get('format');
@@ -326,6 +328,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       // range. A bucket that needs them is configured by the
       // embedding application.
     });
+    // said on every receipt: this tab's DuckDB answers, reading the file over HTTP
+    engine.readsRemote(remote);
     status.textContent = `reading ${remote}`;
   } else {
 
@@ -344,6 +348,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      FROM range(${ROWS}) t(i)`,
     0,
   );
+  generated = { label: 'trades (generated in this tab)', takenAt: new Date(), rowCount: ROWS };
   }
 
   // -- the cube ------------------------------------------------------
@@ -422,6 +427,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       readonly cubeSource?: CubeSource;
       /** The groups a saved cube had open. */
       readonly tree?: TreeState;
+      /** The rows are a copy in this tab already: an opened file, generated rows. */
+      readonly heldCopy?: HeldCopy;
     } = {},
   ): CubeApp {
     // PARK THE STATUS TEXT FIRST.
@@ -455,6 +462,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       snapTarget: place.snapTarget ?? snapTarget,
       ...(place.cubeSource ? { cubeSource: place.cubeSource } : {}),
       ...(place.tree ? { tree: place.tree } : {}),
+      ...(place.heldCopy ? { heldCopy: place.heldCopy } : {}),
       // "Changed since saved" is re-read on every change of the cube's state,
       // a presentation change (a width, a colour) included: it runs no query.
       onChange: () => onCubeView?.(),
@@ -582,7 +590,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   let copyShareLink: (() => Promise<void>) | undefined;
   /** Told when a view lands: "changed since saved" is re-read then. */
   let onCubeView: (() => void) | undefined;
-  let app = makeApp(snapshot, configuration, DEMO_DIMENSIONS);
+  let app = makeApp(snapshot, configuration, DEMO_DIMENSIONS, generated ? { heldCopy: generated } : {});
 
   await app.open();
 
@@ -847,6 +855,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       note.textContent = `reading ${file.name}…`;
       try {
         const opened = await ingestFile(engine, db, file, local.fromCatalog);
+        const loadedAt = new Date();
         if (!newest()) {
           // overtaken: nothing of this open is kept -- unless a newer open, or the cube on
           // screen, reads a table of the same name
@@ -897,7 +906,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           };
         }
         app.dispose();
-        app = makeApp(snap, config, [], { cubeSource: source, ...(tree ? { tree } : {}) });
+        app = makeApp(snap, config, [], {
+          cubeSource: source,
+          heldCopy: { label: opened.fileName, takenAt: loadedAt, rowCount: opened.rowCount },
+          ...(tree ? { tree } : {}),
+        });
         current = {
           source,
           file,

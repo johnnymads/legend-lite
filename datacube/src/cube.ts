@@ -31,7 +31,8 @@ import {
 } from './query.ts';
 import { planPivot, typeColumns, type PivotPlan, type SchemaChange } from './plan.ts';
 import type { ResultTable } from './result.ts';
-import { SnapManager, type RemoteSource, type SnapTarget } from './snap.ts';
+import { SnapManager, type PlaneState, type RemoteSource, type SnapTarget } from './snap.ts';
+import type { Receipt } from './receipt.ts';
 import {
   PlanThenRun,
   type QueryRunner,
@@ -108,6 +109,11 @@ export interface CubeView {
   readonly query: Lambda;
   readonly sql: string;
   /**
+   * What answered this view, one receipt per query that returned rows, as the engine that
+   * ran each issued it (receipt.ts). The status bar shows them; a person can check them.
+   */
+  readonly receipts: readonly Receipt[];
+  /**
    * A pivoted cube's first step, answered: the values it found and
    * every column the pivot makes, with what each one IS. The column
    * model, the tool panel, calculated columns, formats and
@@ -174,6 +180,43 @@ export interface CubeControllerOptions {
    * is an error, not quietly answered from a snap (snap.ts, rule 2).
    */
   readonly live?: QueryEngine & RemoteSource;
+  /**
+   * A query a host asked for itself failed (`runQuery`, `streamQuery`: a chart, a drill-through,
+   * an export). The cube's own view reports through its state owner; these have no other way to
+   * say, for example, that the warehouse wants a new sign-in.
+   */
+  readonly onQueryFailure?: (error: unknown) => void;
+}
+
+/**
+ * `runner`, noting the receipt of every query it answers into `into`. While snapped, each is
+ * stamped with the copy it read and the pull that made it: the tab's engine ran it, and the
+ * receipt says which data that was.
+ */
+/** An error's message, for a sentence that goes on to say what happened instead. */
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function recording(runner: QueryRunner, into: Receipt[], plane: PlaneState): QueryRunner {
+  const note = (out: RunOutcome): RunOutcome => {
+    const r = out.rows.receipt;
+    if (r) {
+      into.push(plane.mode === 'snapped'
+        ? { ...r, copy: { takenAt: plane.snap.takenAt, ...(plane.snap.pulledBy ? { from: plane.snap.pulledBy } : {}) } }
+        : r);
+    }
+    return out;
+  };
+  return {
+    name: runner.name,
+    run: async (query, snapshot, scope, signal) => note(await runner.run(query, snapshot, scope, signal)),
+    stream: (query, snapshot, onChunk, signal) => runner.stream(query, snapshot, onChunk, signal),
+    compile: (query, snapshot, signal) => runner.compile(query, snapshot, signal),
+    relationType: (query, signal) => runner.relationType(query, signal),
+    parse: (text, signal) => runner.parse(text, signal),
+    print: (query, style, signal) => runner.print(query, style, signal),
+  };
 }
 
 export class CubeController {
@@ -347,7 +390,12 @@ export class CubeController {
     scope?: LevelScope,
     signal?: AbortSignal,
   ): Promise<RunOutcome> {
-    return this.#runner.run(query, snapshot, scope, signal);
+    try {
+      return await this.#runner.run(query, snapshot, scope, signal);
+    } catch (error: unknown) {
+      if (!signal?.aborted) this.#options.onQueryFailure?.(error);
+      throw error;
+    }
   }
 
   /** A query's rows a chunk at a time, none kept (`QueryRunner.stream`). */
@@ -357,7 +405,12 @@ export class CubeController {
     onChunk: (chunk: ResultTable) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    return this.#runner.stream(query, snapshot, onChunk, signal);
+    try {
+      await this.#runner.stream(query, snapshot, onChunk, signal);
+    } catch (error: unknown) {
+      if (!signal?.aborted) this.#options.onQueryFailure?.(error);
+      throw error;
+    }
   }
 
   /** What a person typed, as its lambda: the compiler's parse (E1, or its twin in the tab). */
@@ -379,6 +432,11 @@ export class CubeController {
   async run(state: RunState): Promise<CubeView | Stale> {
     const { snapshot, tree } = state;
     return this.#guard.issue(async (epoch, signal) => {
+      // EVERY QUERY'S RECEIPT, from the engine that ran it: the view says what answered it
+      // (receipt.ts). Collected by wrapping the runner for this run, so a tree's levels, a
+      // pivot's values and the type query are all on it, not just the query behind the rows.
+      const receipts: Receipt[] = [];
+      const runner = recording(this.#runner, receipts, this.#snaps.state);
       // The snapshot's own epoch is advisory; the guard's is
       // authoritative, so a stale answer cannot win a race.
       // The PLANE decides what a query reads from. Without this
@@ -391,14 +449,14 @@ export class CubeController {
       };
       // STEP 0: the columns' types, from the compiler, before any query
       // reads them to choose an aggregate (plan.ts, `typeColumns`).
-      const typed = await typeColumns(reading, this.#runner, signal);
+      const typed = await typeColumns(reading, runner, signal);
       const withEpoch: CubeSnapshot = typed.snapshot;
       const withChanges = typed.changes.length > 0 ? { schemaChanges: typed.changes } : {};
       const measureNames = withEpoch.measures.map((m) => m.name);
       // STEP 1 of a pivoted cube: its values, from their own query,
       // on this refresh's data (plan.ts). Every level is then one
       // groupBy written with them.
-      const pivot = await planPivot(withEpoch, this.#runner, signal);
+      const pivot = await planPivot(withEpoch, runner, signal);
       const pivotPaths = pivotHeaderPaths(pivot?.columns);
       const withPivot = pivot ? { pivot } : {};
 
@@ -406,7 +464,7 @@ export class CubeController {
       // each open branch are separate queries, stitched in order.
       if (withEpoch.rows.length > 0) {
         const view = await fetchTree(withEpoch, tree, {
-          runner: this.#runner,
+          runner: runner,
           guard: this.#guard,
           epoch,
           signal,
@@ -431,6 +489,7 @@ export class CubeController {
           sql:
             view.levels.get(requestKey({ level: 1, parent: [] }))?.sql ??
             '',
+          receipts,
           ...withPivot,
           ...withChanges,
         } satisfies CubeView;
@@ -448,7 +507,7 @@ export class CubeController {
         ? undefined
         : ({ level: 1, parent: [], limit: maxRows + 1 } as const);
       const query = levelLambda(withEpoch, scope, pivot?.facts);
-      const { rows: full, sql } = await this.#runner.run(
+      const { rows: full, sql } = await runner.run(
         query,
         withEpoch,
         scope,
@@ -472,6 +531,7 @@ export class CubeController {
         truncated: cut ? [{ level: 1, parent: [] }] : [],
         query,
         sql,
+        receipts,
         ...withPivot,
         ...withChanges,
       } satisfies CubeView;
@@ -528,6 +588,39 @@ export class CubeController {
   /** Back to live; the owner re-runs the state, as after a snap. */
   async release(): Promise<void> {
     await this.#snaps.release();
+  }
+
+  /**
+   * Go live, and stay live only if live answers: `rerun` re-runs the state on the live plane;
+   * refused, the snap (kept until then) is back and the refusal is thrown. The copy's rows are
+   * never left on screen under "Live".
+   */
+  async goLive(rerun: () => Promise<{ readonly kind: string; readonly error?: unknown }>): Promise<void> {
+    const held = this.#snaps.detach();
+    if (!held) return;
+    const out = await rerun();
+    if (out.kind === 'refused') {
+      this.#snaps.reattach(held);
+      throw new CubeRefusal(`could not go live — ${reason(out.error)}. `
+        + `Still on the snap taken at ${held.takenAt.toLocaleTimeString()}.`);
+    }
+    await this.#snaps.discard(held);
+  }
+
+  /**
+   * Snap, and stay snapped only if the snap answers: refused, the snap goes and the cube is
+   * live again -- a snap the view cannot read is not shown as one.
+   */
+  async snapAndRun(
+    snapshot: CubeSnapshot,
+    rerun: () => Promise<{ readonly kind: string; readonly error?: unknown }>,
+  ): Promise<void> {
+    await this.snap(snapshot);
+    const out = await rerun();
+    if (out.kind === 'refused') {
+      await this.#snaps.release();
+      throw new CubeRefusal(`could not snap — ${reason(out.error)}. Still live.`);
+    }
   }
 
   /**

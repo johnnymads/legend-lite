@@ -30,6 +30,7 @@
 
 import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
+import type { Receipt } from './receipt.ts';
 
 /**
  * A LIVE plane on another machine (the warehouse): where a snap's rows come
@@ -39,7 +40,8 @@ import type { QueryEngine } from './engine.ts';
 export interface RemoteSource {
   /** Raw SQL on the remote plane: the preflight count. */
   run: QueryEngine['run'];
-  arrowChunks(sql: string, signal?: AbortSignal): AsyncIterable<Uint8Array>;
+  /** `onReceipt` hears, once the statement has succeeded, what the server issued for it. */
+  arrowChunks(sql: string, signal?: AbortSignal, onReceipt?: (receipt: Receipt) => void): AsyncIterable<Uint8Array>;
 }
 
 /** A local store that can take Arrow chunks (DuckDbEngine). */
@@ -71,6 +73,8 @@ export interface SnapInfo {
    * SQL identifier -- the query is Pure before it is SQL.
    */
   readonly source: ValueSpecification;
+  /** The pull from a remote live plane that made it: the server's receipt. */
+  readonly pulledBy?: Receipt;
 }
 
 /**
@@ -224,6 +228,7 @@ export class SnapManager {
     }
 
     this.#counter += 1;
+    let pulledBy: Receipt | undefined;
     const schema = options.target.schema;
     const bare = options.target.table;
     const table = qualified(schema, bare);
@@ -236,13 +241,15 @@ export class SnapManager {
       if (typeof loader.loadArrow !== 'function') {
         throw new SnapRefusal('the local store cannot load Arrow data, so a remote live plane cannot be snapped');
       }
-      await loader.loadArrow({ ...(schema ? { schema } : {}), table: bare }, this.#remote.arrowChunks(sourceSql));
+      await loader.loadArrow({ ...(schema ? { schema } : {}), table: bare },
+        this.#remote.arrowChunks(sourceSql, undefined, (r) => { pulledBy = r; }));
     } else {
       await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${sourceSql}`, epoch);
     }
 
     const takenAt = new Date();
     const snap: SnapInfo = {
+      ...(pulledBy ? { pulledBy } : {}),
       label: options.label ?? defaultLabel(takenAt),
       takenAt,
       rowCount: estimate.rowCount,
@@ -256,11 +263,31 @@ export class SnapManager {
 
   /** Drop the snap and return to live. */
   async release(): Promise<void> {
-    if (this.#state.mode !== 'snapped') return;
-    const { table, schema } = this.#state.snap;
+    const held = this.detach();
+    if (held) await this.discard(held);
+  }
+
+  /**
+   * Back to live, KEEPING the snap's table: going live is only done once a live
+   * query has answered. Dropping first left a warehouse that could not be
+   * reached showing the dropped copy's rows under "Live" (2026-09-29).
+   */
+  detach(): SnapInfo | null {
+    if (this.#state.mode !== 'snapped') return null;
+    const held = this.#state.snap;
     this.#state = { mode: 'live' };
+    return held;
+  }
+
+  /** Live did not answer: back on the snap `detach` kept. */
+  reattach(snap: SnapInfo): void {
+    this.#state = { mode: 'snapped', snap };
+  }
+
+  /** Live answered: the kept snap's table goes. */
+  async discard(snap: SnapInfo): Promise<void> {
     await this.#localStore()
-      .run(`DROP TABLE IF EXISTS ${qualified(schema, table)}`, 0);
+      .run(`DROP TABLE IF EXISTS ${qualified(snap.schema, snap.table)}`, 0);
   }
 }
 
