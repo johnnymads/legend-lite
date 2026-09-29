@@ -5,21 +5,21 @@
 reference functions	12380
 our functions	16076
 our bodies typed	17156
-our bodies FAILED	1521
+our bodies FAILED	1515
 our sources DROPPED	32
 functions in both	11840
 reference only	540
 ours only	4236
-reference typed, we FAILED	1342
+reference typed, we FAILED	1336
 
 == buckets
-AGREE	72081
+AGREE	72271
 OVERLOAD	769
 PACKAGE	14
 DRIFT	32
-ABSENT	68232
+ABSENT	68450
 PROPERTY_AS_CALL	39
-EXTRA	15825
+EXTRA	15864
 
 == dropped sources
 /core/pure/corefunctions/unit.pure
@@ -826,7 +826,6 @@ meta::protocols::pure::v1_33_0::transformation::toPureGraph::connection::transfo
 meta::protocols::pure::vX_X_X::invocation::execution::execute::legendBuildResultFromJSON_String_1__Any_1__GenericType_1__Mapping_1__Runtime_1__ExecutionContext_$0_1$__Extension_MANY__Result_1_
 meta::protocols::pure::vX_X_X::invocation::execution::execute::legendExecute_FunctionDefinition_1__Mapping_1__Runtime_1__ExecutionContext_$0_1$__String_1__Integer_1__String_1__String_1__String_1__Extension_MANY__Result_1_
 meta::protocols::pure::vX_X_X::invocation::execution::execute::processCSV_M2M_String_1__Class_1__JSONObject_1__Pair_1_
-meta::protocols::pure::vX_X_X::invocation::execution::execute::processTDSResult_RelationalTDSResult_1__GenericType_1__Extension_MANY__Pair_1_
 meta::protocols::pure::vX_X_X::invocation::execution::execute::transformActivities_ExecutionActivity_MANY__Extension_MANY__Activity_MANY_
 meta::protocols::pure::vX_X_X::transformation::fromPureGraph::buildBasePureModelFromAllElementsInPackageStr_String_1__Extension_MANY__String_1_
 meta::protocols::pure::vX_X_X::transformation::fromPureGraph::buildBasePureModelFromMappingStr_String_1__Extension_MANY__String_1_
@@ -960,7 +959,6 @@ meta::pure::graphFetch::addPropertyGraphFetchTrees_GraphFetchTree_1__PropertyPat
 meta::pure::graphFetch::addPropertyGraphFetchTrees_GraphFetchTree_1__PropertyPathTree_1__Class_1__PropertyPathNode_1__GraphFetchTree_1_
 meta::pure::graphFetch::addSubTrees_GraphFetchTree_1__PropertyGraphFetchTree_MANY__GraphFetchTree_1_
 meta::pure::graphFetch::addSubTypeTrees_GraphFetchTree_1__SubTypeGraphFetchTree_MANY__GraphFetchTree_1_
-meta::pure::graphFetch::domain::extractDomainTypeClassFromGraphFetchTree_RootGraphFetchTree_1__Boolean_1__Boolean_1__Mapping_$0_1$__Runtime_$0_1$__Binding_$0_1$__ExtractedDomainClassWithParameters_MANY_
 meta::pure::graphFetch::enrichSourceTreeNodeForPropertyPath_GraphFetchTree_1__Class_1__ScanPropertiesState_$0_1$__GraphFetchTree_1_
 meta::pure::graphFetch::enrichSourceTreeNodeForProperty_GraphFetchTree_1__Mapping_1__PureInstanceSetImplementation_1__PropertyGraphFetchTree_1__Extension_MANY__Map_1__Pair_1_
 meta::pure::graphFetch::ensureFunctionRequirementsFromLambda_GraphFetchTree_1__Class_1__FunctionDefinition_1__Class_MANY__Boolean_1__GraphFetchTree_1_
@@ -1010,7 +1008,6 @@ meta::pure::mapping::modelToModel::chain::createInFunctionExpression_VariableExp
 meta::pure::mapping::modelToModel::chain::createNestedIfElseFunctionExpression_EnumValueMapping_MANY__VariableExpression_1__SimpleFunctionExpression_1_
 meta::pure::mapping::modelToModel::chain::executeChain_StoreQuery_1__StoreMappingRoutedValueSpecification_$0_1$__Mapping_1__ModelChainConnection_1__Runtime_1__ExecutionContext_1__Extension_MANY__DebugContext_1__Result_1_
 meta::pure::mapping::modelToModel::chain::identifyTDSColumns_FunctionExpression_1__Extension_MANY__TDSColumn_MANY_
-meta::pure::mapping::modelToModel::chain::planExecutionChain_StoreQuery_1__StoreMappingRoutedValueSpecification_$0_1$__Mapping_$0_1$__ModelChainConnection_1__Runtime_$0_1$__ExecutionContext_1__Extension_MANY__DebugContext_1__ExecutionNode_1_
 meta::pure::mapping::modelToModel::chain::reprocess_ValueSpecification_1__StoreMappingRoutedValueSpecification_$0_1$__Mapping_1__Mapping_MANY__FunctionRoutedValueSpecification_$0_1$__Boolean_1__Extension_MANY__Res_1_
 meta::pure::mapping::modelToModel::contract::supports_FunctionExpression_1__Boolean_1_
 meta::pure::mapping::modelToModel::graphFetch::executionPlan::planCrossStoreGraphFetchExecutionInMemory_StoreMappingClusteredGraphFetchTree_1__String_MANY__String_1__Map_1__Mapping_1__Runtime_1__ExecutionContext_1__Boolean_1__Boolean_1__Extension_MANY__DebugContext_1__InMemoryCrossStoreGraphFetchExecutionNode_1_
@@ -1258,9 +1255,7 @@ meta::relational::functions::pureToSqlQuery::nestFilters_SelectSQLQuery_1__Relat
 meta::relational::functions::pureToSqlQuery::processAt_FunctionExpression_1__PropertyMapping_MANY__SelectWithCursor_1__Map_1__State_1__JoinType_1__String_1__List_1__DebugContext_1__Extension_MANY__RelationalOperationElement_1_
 meta::relational::functions::pureToSqlQuery::processColumnsInRelationalOperationElements_RelationalOperationElement_1__State_1__SelectWithCursor_1__String_1__List_1__Boolean_1__DebugContext_1__Extension_MANY__SelectWithCursor_1_
 meta::relational::functions::pureToSqlQuery::processCrossPropertyMapping_CrossSetImplementationPropertyMapping_MANY__AbstractProperty_1__Class_1__SelectWithCursor_1__State_1__JoinType_1__String_1__List_1__DebugContext_1__Extension_MANY__RelationalOperationElement_1_
-meta::relational::functions::pureToSqlQuery::processFunctionDefinition_FunctionDefinition_1__PropertyMapping_MANY__SelectWithCursor_1__Map_1__State_1__JoinType_1__String_1__List_1__DebugContext_1__Extension_MANY__OperationWithParentPropertyMapping_MANY_
 meta::relational::functions::pureToSqlQuery::processLateral_FunctionExpression_1__PropertyMapping_MANY__SelectWithCursor_1__Map_1__State_1__JoinType_1__String_1__List_1__DebugContext_1__Extension_MANY__RelationalOperationElement_1_
-meta::relational::functions::pureToSqlQuery::processMap_FunctionExpression_1__PropertyMapping_MANY__SelectWithCursor_1__Map_1__State_1__JoinType_1__String_1__List_1__DebugContext_1__Extension_MANY__OperationWithParentPropertyMapping_1_
 meta::relational::functions::pureToSqlQuery::processQuery_ValueSpecification_1__State_1__DebugContext_1__Extension_MANY__SelectWithCursor_1_
 meta::relational::functions::pureToSqlQuery::processRelationalPropertyMapping_RelationalPropertyMapping_MANY__AbstractProperty_1__Class_1__SelectWithCursor_1__State_1__JoinType_1__String_1__List_1__DebugContext_1__Extension_MANY__RelationalOperationElement_1_
 meta::relational::functions::pureToSqlQuery::processSemiStructuredRelationalPropertyMapping_SemiStructuredRelationalPropertyMapping_MANY__AbstractProperty_1__Class_1__SelectWithCursor_1__State_1__JoinType_1__String_1__List_1__DebugContext_1__Extension_MANY__RelationalOperationElement_1_
@@ -1278,7 +1273,6 @@ meta::relational::functions::pureToSqlQuery::union::addPkForAggregationInUnion_S
 meta::relational::functions::pureToSqlQuery::union::canJoinTreeNodesBeSimplyMergedUsingOrOperation_RelationalPropertyMapping_MANY__Mapping_1__State_$0_1$__Boolean_1_
 meta::relational::functions::pureToSqlQuery::union::getDefaultLiteralValue_DataType_1__Literal_1_
 meta::relational::functions::pureToSqlQuery::union::removeUnionOrJoins_RelationalTreeNode_1__Extension_MANY__RelationalTreeNode_1_
-meta::relational::functions::pureToSqlQuery::union::simplyMergeJoinTreeNodeUsingOrOperation_Pair_MANY__State_$0_1$__Mapping_1__Extension_MANY__JoinTreeNode_$0_1$_
 meta::relational::functions::pureToSqlQuery::validate_SelectSQLQuery_1__Extension_MANY__Boolean_1_
 meta::relational::functions::pureToSqlQuery::validate_SelectWithCursor_1__ValueSpecification_$0_1$__Extension_MANY__Boolean_1_
 meta::relational::functions::pureToSqlQuery::zeroToOneBasedIndex_ValueSpecification_1__ValueSpecification_1_
@@ -1598,7 +1592,7 @@ ABSENT	asc			53
 ABSENT	ascending			986
 ABSENT	assert			108
 ABSENT	assertEmpty			2
-ABSENT	assertEquals			33
+ABSENT	assertEquals			34
 ABSENT	assertFalse			5
 ABSENT	assertIsNot			1
 ABSENT	assertNotContains			1
@@ -1614,7 +1608,7 @@ ABSENT	buildClass			1
 ABSENT	buildUniqueName			1
 ABSENT	builderGeneration			1
 ABSENT	byPassRouterInfo			1
-ABSENT	cast			4133
+ABSENT	cast			4154
 ABSENT	class			1
 ABSENT	classMappingById			1
 ABSENT	col			647
@@ -1623,10 +1617,10 @@ ABSENT	colSpecArray			196
 ABSENT	columnValues			12
 ABSENT	columns			6
 ABSENT	compare			2
-ABSENT	concatenate			913
+ABSENT	concatenate			917
 ABSENT	connectionByElement			26
 ABSENT	contains			10
-ABSENT	copy			1444
+ABSENT	copy			1463
 ABSENT	count			1
 ABSENT	createDbConfig			2
 ABSENT	createSchemaState			2
@@ -1664,16 +1658,16 @@ ABSENT	extend			354
 ABSENT	extractDBs			1
 ABSENT	extractEnumValue			2033
 ABSENT	extractTableAliasColumns			1
-ABSENT	fail			130
+ABSENT	fail			131
 ABSENT	fetchDbColumnsMetaData			6
 ABSENT	fetchDbPrimaryKeysMetaData			6
 ABSENT	fetchDbSchemasMetaData			4
 ABSENT	fetchDbTablesMetaData			7
-ABSENT	filter			2541
+ABSENT	filter			2542
 ABSENT	findFunctionSequenceMultiplicity			1
 ABSENT	firmProjected			9
 ABSENT	flatten			13
-ABSENT	fold			199
+ABSENT	fold			201
 ABSENT	format			6
 ABSENT	from			52
 ABSENT	func			16
@@ -1698,6 +1692,7 @@ ABSENT	getMilestoningContextFromTemporalDates			1
 ABSENT	getPCTTestFunctions			2
 ABSENT	getPropertyValues			3
 ABSENT	getRuntimeWithModelConnection			2
+ABSENT	getTabularDataSetFromProtocol			1
 ABSENT	getTestFunctions			2
 ABSENT	getUpperBound			2
 ABSENT	graphFetch			246
@@ -1710,7 +1705,7 @@ ABSENT	hasToOneUpperBound			1
 ABSENT	hasUpperBound			2
 ABSENT	head			4
 ABSENT	id			1
-ABSENT	if			3486
+ABSENT	if			3504
 ABSENT	in			1
 ABSENT	indexOf			3
 ABSENT	inferRelationalType			1
@@ -1729,7 +1724,7 @@ ABSENT	length			4
 ABSENT	lenientPathToElement			1
 ABSENT	lessThan			4
 ABSENT	lessThanEqual			4
-ABSENT	letFunction			18017
+ABSENT	letFunction			18106
 ABSENT	limit			36
 ABSENT	list			262
 ABSENT	literal			1
@@ -1737,8 +1732,8 @@ ABSENT	loadCsvDataToDbTable			1
 ABSENT	loadPCTManifest			1
 ABSENT	loadValuesToDbTable2			1
 ABSENT	makeString			20
-ABSENT	map			7418
-ABSENT	match			1276
+ABSENT	map			7446
+ABSENT	match			1284
 ABSENT	maxBy			2
 ABSENT	meta::alloy::service::execution::setUpDataSQLs			1
 ABSENT	meta::alloy::test::mayExecuteAlloyTest			28
@@ -1795,7 +1790,8 @@ ABSENT	mod			2
 ABSENT	month			1
 ABSENT	monthNumber			3
 ABSENT	mutateAdd			5
-ABSENT	new			6180
+ABSENT	new			6204
+ABSENT	newLambdaFunction			1
 ABSENT	newMap			2
 ABSENT	newTDSRelationAccessor			1
 ABSENT	noDebug			2
@@ -3027,7 +3023,7 @@ EXTRA	meta::protocols::pure::vX_X_X::extension::transformTempTableStrategy			4
 EXTRA	meta::protocols::pure::vX_X_X::invocation::execution::execute::processDataTypeResult			1
 EXTRA	meta::protocols::pure::vX_X_X::invocation::execution::execute::processRelationalClassResult			1
 EXTRA	meta::protocols::pure::vX_X_X::invocation::execution::execute::processTDSResult			1
-EXTRA	meta::protocols::pure::vX_X_X::invocation::execution::execute::transformActivities			2
+EXTRA	meta::protocols::pure::vX_X_X::invocation::execution::execute::transformActivities			3
 EXTRA	meta::protocols::pure::vX_X_X::transformation::fromPureGraph::buildBasePureModelFromMapping			4
 EXTRA	meta::protocols::pure::vX_X_X::transformation::fromPureGraph::buildDomain			2
 EXTRA	meta::protocols::pure::vX_X_X::transformation::fromPureGraph::buildPureModelContextPointer			4
@@ -3141,7 +3137,7 @@ EXTRA	meta::pure::functions::asserts::assertNotEq			4
 EXTRA	meta::pure::functions::asserts::assertNotSize			1
 EXTRA	meta::pure::functions::boolean::and			164
 EXTRA	meta::pure::functions::boolean::eq			5
-EXTRA	meta::pure::functions::boolean::equal			478
+EXTRA	meta::pure::functions::boolean::equal			482
 EXTRA	meta::pure::functions::boolean::greaterThan			5
 EXTRA	meta::pure::functions::boolean::greaterThanEqual			7
 EXTRA	meta::pure::functions::boolean::is			5
@@ -3166,21 +3162,21 @@ EXTRA	meta::pure::functions::collection::intersection			1
 EXTRA	meta::pure::functions::collection::isEmpty			720
 EXTRA	meta::pure::functions::collection::isNotEmpty			195
 EXTRA	meta::pure::functions::collection::keyValues			21
-EXTRA	meta::pure::functions::collection::last			69
+EXTRA	meta::pure::functions::collection::last			71
 EXTRA	meta::pure::functions::collection::list			23
-EXTRA	meta::pure::functions::collection::newMap			111
+EXTRA	meta::pure::functions::collection::newMap			112
 EXTRA	meta::pure::functions::collection::newMultiValueMap			1
 EXTRA	meta::pure::functions::collection::or			2
-EXTRA	meta::pure::functions::collection::pair			173
+EXTRA	meta::pure::functions::collection::pair			176
 EXTRA	meta::pure::functions::collection::put			7
-EXTRA	meta::pure::functions::collection::putAll			6
+EXTRA	meta::pure::functions::collection::putAll			8
 EXTRA	meta::pure::functions::collection::range			26
 EXTRA	meta::pure::functions::collection::removeAll			1
 EXTRA	meta::pure::functions::collection::removeDuplicates			76
 EXTRA	meta::pure::functions::collection::removeDuplicatesBy			8
 EXTRA	meta::pure::functions::collection::replaceTreeNode			4
 EXTRA	meta::pure::functions::collection::reverse			2
-EXTRA	meta::pure::functions::collection::size			46
+EXTRA	meta::pure::functions::collection::size			47
 EXTRA	meta::pure::functions::collection::sort			1
 EXTRA	meta::pure::functions::collection::tail			69
 EXTRA	meta::pure::functions::collection::zip			11
@@ -3191,11 +3187,11 @@ EXTRA	meta::pure::functions::io::println			6
 EXTRA	meta::pure::functions::lang::dynamicNew			4
 EXTRA	meta::pure::functions::lang::evaluate			5
 EXTRA	meta::pure::functions::lang::extractEnumValue			15
-EXTRA	meta::pure::functions::lang::orElse			2
+EXTRA	meta::pure::functions::lang::orElse			3
 EXTRA	meta::pure::functions::math::abs			5
 EXTRA	meta::pure::functions::math::divide			2
 EXTRA	meta::pure::functions::math::floor			2
-EXTRA	meta::pure::functions::math::minus			56
+EXTRA	meta::pure::functions::math::minus			57
 EXTRA	meta::pure::functions::math::mod			3
 EXTRA	meta::pure::functions::math::plus			72
 EXTRA	meta::pure::functions::math::sum			2
@@ -3205,7 +3201,7 @@ EXTRA	meta::pure::functions::meta::bypassExtendedPrimitives			1
 EXTRA	meta::pure::functions::meta::elementToPath			1532
 EXTRA	meta::pure::functions::meta::enumName			18
 EXTRA	meta::pure::functions::meta::enumValues			19
-EXTRA	meta::pure::functions::meta::evaluateAndDeactivate			73
+EXTRA	meta::pure::functions::meta::evaluateAndDeactivate			74
 EXTRA	meta::pure::functions::meta::functionReturnMultiplicity			22
 EXTRA	meta::pure::functions::meta::functionReturnType			97
 EXTRA	meta::pure::functions::meta::functionType			40
@@ -3229,7 +3225,7 @@ EXTRA	meta::pure::functions::meta::ownerClass			2
 EXTRA	meta::pure::functions::meta::pathToElement			3
 EXTRA	meta::pure::functions::meta::properties			1
 EXTRA	meta::pure::functions::meta::reactivate			15
-EXTRA	meta::pure::functions::meta::removeAutomap			2
+EXTRA	meta::pure::functions::meta::removeAutomap			3
 EXTRA	meta::pure::functions::meta::reprocessLambdaWithInScopeVars			2
 EXTRA	meta::pure::functions::meta::reprocessVSWithInScopeVars			3
 EXTRA	meta::pure::functions::meta::reprocessVariableExpressionsName			3
@@ -3238,19 +3234,19 @@ EXTRA	meta::pure::functions::meta::sourceInformation			3
 EXTRA	meta::pure::functions::meta::stereotype			3
 EXTRA	meta::pure::functions::meta::stringToDataType			15
 EXTRA	meta::pure::functions::meta::type			24
-EXTRA	meta::pure::functions::multiplicity::toOne			2958
-EXTRA	meta::pure::functions::multiplicity::toOneMany			15
+EXTRA	meta::pure::functions::multiplicity::toOne			2967
+EXTRA	meta::pure::functions::multiplicity::toOneMany			16
 EXTRA	meta::pure::functions::relation::sort			1
 EXTRA	meta::pure::functions::relation::toString			1
 EXTRA	meta::pure::functions::string::endsWith			2
-EXTRA	meta::pure::functions::string::format			8
+EXTRA	meta::pure::functions::string::format			9
 EXTRA	meta::pure::functions::string::joinStrings			22
 EXTRA	meta::pure::functions::string::lastIndexOf			1
 EXTRA	meta::pure::functions::string::length			13
 EXTRA	meta::pure::functions::string::makeString			55
 EXTRA	meta::pure::functions::string::parseDate			60
 EXTRA	meta::pure::functions::string::parseInteger			1
-EXTRA	meta::pure::functions::string::plus			1636
+EXTRA	meta::pure::functions::string::plus			1637
 EXTRA	meta::pure::functions::string::regexpReplace			2
 EXTRA	meta::pure::functions::string::replace			9
 EXTRA	meta::pure::functions::string::startsWith			24
@@ -3264,8 +3260,10 @@ EXTRA	meta::pure::graphFetch::addPassThroughSubTrees			1
 EXTRA	meta::pure::graphFetch::addPassThroughSubTreesAtPath			1
 EXTRA	meta::pure::graphFetch::addSubTrees			1
 EXTRA	meta::pure::graphFetch::copyPropertiesFromBaseTreeToSubTypeTrees			1
+EXTRA	meta::pure::graphFetch::domain::generateFunctionExpressionByOperationType			1
 EXTRA	meta::pure::graphFetch::domain::generateInitializeFunction			1
-EXTRA	meta::pure::graphFetch::domain::reprocessVariables			3
+EXTRA	meta::pure::graphFetch::domain::lambdaParamsByOperationType			1
+EXTRA	meta::pure::graphFetch::domain::reprocessVariables			4
 EXTRA	meta::pure::graphFetch::ensureConstraintsRequirements			4
 EXTRA	meta::pure::graphFetch::executionPlan::buildXStorePropertyFetchDetails			1
 EXTRA	meta::pure::graphFetch::executionPlan::getRoutedDependencyTree			1
@@ -3308,7 +3306,7 @@ EXTRA	meta::pure::mapping::aggregationAware::reprocessVS			1
 EXTRA	meta::pure::mapping::aggregationAware::rewriteValueSpecification			3
 EXTRA	meta::pure::mapping::allPropertyMappings			47
 EXTRA	meta::pure::mapping::buildClassMappingsByClassMap			2
-EXTRA	meta::pure::mapping::buildClassMappingsById			2
+EXTRA	meta::pure::mapping::buildClassMappingsById			4
 EXTRA	meta::pure::mapping::classMappingById			5
 EXTRA	meta::pure::mapping::classMappings			2
 EXTRA	meta::pure::mapping::enumerationMappingByName			15
@@ -3423,6 +3421,7 @@ EXTRA	meta::relational::functions::pureToSqlQuery::buildNodeId			4
 EXTRA	meta::relational::functions::pureToSqlQuery::buildRfpmDummyRootSet			1
 EXTRA	meta::relational::functions::pureToSqlQuery::buildSimpleSQL			1
 EXTRA	meta::relational::functions::pureToSqlQuery::buildTree			1
+EXTRA	meta::relational::functions::pureToSqlQuery::buildUnionJoinName			1
 EXTRA	meta::relational::functions::pureToSqlQuery::buildUniqueName			9
 EXTRA	meta::relational::functions::pureToSqlQuery::calendarAggregations::andColumns			6
 EXTRA	meta::relational::functions::pureToSqlQuery::excludeNullsFromQuantifiedSubSelect			1
@@ -3443,6 +3442,7 @@ EXTRA	meta::relational::functions::pureToSqlQuery::flatten			15
 EXTRA	meta::relational::functions::pureToSqlQuery::freshAliasName			1
 EXTRA	meta::relational::functions::pureToSqlQuery::genericTypeToDataType			11
 EXTRA	meta::relational::functions::pureToSqlQuery::getAllNodes			3
+EXTRA	meta::relational::functions::pureToSqlQuery::getClassMapping			2
 EXTRA	meta::relational::functions::pureToSqlQuery::getContextBasedSupportedFunctions			3
 EXTRA	meta::relational::functions::pureToSqlQuery::getDistinct			31
 EXTRA	meta::relational::functions::pureToSqlQuery::getEnumPropMappingTransformer			2
@@ -3569,6 +3569,7 @@ EXTRA	meta::relational::mapping::updateConnection			9
 EXTRA	meta::relational::metamodel::children			12
 EXTRA	meta::relational::metamodel::datatype::dataTypeToCompatiblePureType			5
 EXTRA	meta::relational::metamodel::datatype::dataTypeToSqlText			6
+EXTRA	meta::relational::metamodel::datatype::pureTypeForDbColumn			1
 EXTRA	meta::relational::metamodel::execute::createTempTable			1
 EXTRA	meta::relational::metamodel::execute::executeInDb			1
 EXTRA	meta::relational::metamodel::mainRelation			4

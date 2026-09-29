@@ -4,10 +4,9 @@
 package com.legend.lowering;
 
 import com.legend.compiler.element.type.Type;
-import com.legend.compiler.spec.typed.TypedLambda;
 import com.legend.compiler.spec.typed.TypedMatchRuntime;
 import com.legend.compiler.spec.typed.TypedSpec;
-import com.legend.compiler.spec.typed.TypedVariable;
+import com.legend.compiler.spec.typed.TypedSubst;
 import com.legend.error.NotImplementedException;
 import com.legend.sql.SqlExpr;
 import com.legend.values.PureDateLiteral;
@@ -33,7 +32,9 @@ final class MatchFold {
         }
         for (TypedMatchRuntime.Arm arm : mr.arms()) {
             if (staticConforms(mr.input().info().type(), arm.typeFqn())) {
-                return inlineParam(arm.body(), arm.param(), mr.input());
+                // capture-avoiding: a binder in the arm body that the input
+                // reads free is renamed (rebuild W0.6 push 1)
+                return TypedSubst.apply(arm.body(), java.util.Map.of(arm.param(), mr.input()));
             }
         }
         throw new NotImplementedException("scalar match: no arm statically"
@@ -58,19 +59,6 @@ final class MatchFold {
         }
         return "meta::pure::metamodel::type::Number".equals(armFqn)
                 && p.isNumeric();
-    }
-
-    /** β-inline the arm parameter (generic mapChildren walk; lambda
-     * bodies shadow-checked by name). */
-    private static TypedSpec inlineParam(TypedSpec n, String param,
-            TypedSpec input) {
-        if (n instanceof TypedVariable v && v.name().equals(param)) {
-            return input;
-        }
-        if (n instanceof TypedLambda tl && tl.parameters().contains(param)) {
-            return n;
-        }
-        return n.mapChildren(k -> inlineParam(k, param, input));
     }
 
     /** Date literals: full dates/timestamps render typed; PARTIAL dates

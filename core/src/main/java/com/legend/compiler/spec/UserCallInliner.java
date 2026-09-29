@@ -5,6 +5,7 @@ import com.legend.platform.WalledBodies;
 import com.legend.compiler.spec.typed.TypedAggCol;
 import com.legend.compiler.spec.typed.TypedCBoolean;
 import com.legend.compiler.spec.typed.TypedEval;
+import com.legend.compiler.spec.typed.FreeVars;
 import com.legend.compiler.spec.typed.TypedLambda;
 import com.legend.compiler.spec.typed.TypedLet;
 import com.legend.compiler.spec.typed.TypedMap;
@@ -47,10 +48,12 @@ import java.util.Optional;
  *       {@code let x = e;} statements substitute forward (Pure lets are
  *       single-assignment), so a call becomes ONE expression. Query-level
  *       lets are untouched (the lowerer owns those).</li>
- *   <li><b>&alpha;-hygiene</b> &mdash; INSIDE an inlined body every binder
- *       (lambda parameter, let name, match parameter) is renamed to a fresh
- *       {@code _i&lt;N&gt;}, unconditionally: an argument's free variables can
- *       never be captured. (Occurrences keep their own infos.)</li>
+ *   <li><b>&alpha;-hygiene</b> &mdash; a binder (lambda parameter, let
+ *       name, match parameter) is renamed to a fresh {@code _i&lt;N&gt;} when
+ *       a term substituted beneath it mentions its name: EVERY site that
+ *       extends the substitution runs under {@link #underSubst}, so a
+ *       substituted term's free variables can never be captured.
+ *       (Occurrences keep their own infos.)</li>
  *   <li><b>recursion is loud</b> &mdash; a call cycle throws naming the
  *       path ({@code f/1 -> g/2 -> f/1}); SQL cannot express it.</li>
  *   <li><b>eval of a literal lambda</b> &mdash; after substitution a
@@ -96,9 +99,11 @@ public final class UserCallInliner {
      * (extraction reads them structurally); variables still substitute. */
     private boolean configMode;
     private int fresh;
-    /** Per call frame: the names the frame's arguments mention (see
-     * {@link #bind}); empty outside any frame (top-level rewriting keeps
-     * the unconditional fresh renaming). */
+    /** The names a binder may not keep (see {@link #bind}): a call frame
+     * pushes the names its arguments mention; every other substitution
+     * site pushes the enclosing set plus the free variables of the terms
+     * it substitutes ({@link #underSubst}). Empty when nothing is being
+     * substituted. */
     private final ArrayDeque<java.util.Set<String>> captureRisk = new ArrayDeque<>();
 
     public UserCallInliner(SpecCompiler specs) {
@@ -166,22 +171,31 @@ public final class UserCallInliner {
         // order) the two splices may disagree where real pure's
         // single-evaluation binding could not; CTE sharing is the future fix.
         Map<String, TypedSpec> scope = new LinkedHashMap<>();
-        for (int i = 0; i < body.size() - 1; i++) {
-            if (!(body.get(i) instanceof TypedLet let)) {
-                throw new NotImplementedException(
-                        "only let statements may precede the query expression");
+        int pushed = 0;
+        try {
+            for (int i = 0; i < body.size() - 1; i++) {
+                if (!(body.get(i) instanceof TypedLet let)) {
+                    throw new NotImplementedException(
+                            "only let statements may precede the query expression");
+                }
+                TypedSpec value = rewrite(let.value(), scope);
+                scope.put(let.name(), value);
+                // the value lands under every later binder
+                pushRisk(List.of(value));
+                pushed++;
             }
-            scope.put(let.name(), rewrite(let.value(), scope));
+            // graph-tree args are NOT β-reduced (source spelling is the
+            // serialize key) — the resolver reads consumed lets through this
+            // (engine inScopeVars)
+            queryLets.putAll(scope);
+            TypedSpec last = body.get(body.size() - 1);
+            TypedSpec root = last instanceof TypedLet let
+                    ? rewrite(let.value(), scope)
+                    : rewrite(last, scope);
+            return List.of(root);
+        } finally {
+            popRisk(pushed);
         }
-        // graph-tree args are NOT β-reduced (source spelling is the
-        // serialize key) — the resolver reads consumed lets through this
-        // (engine inScopeVars)
-        queryLets.putAll(scope);
-        TypedSpec last = body.get(body.size() - 1);
-        TypedSpec root = last instanceof TypedLet let
-                ? rewrite(let.value(), scope)
-                : rewrite(last, scope);
-        return List.of(root);
     }
 
     private void reserveFreshNames(TypedSpec n) {
@@ -791,6 +805,16 @@ public final class UserCallInliner {
      * the value. One expression comes out.
      */
     private TypedSpec reduceStatements(List<TypedSpec> body, Map<String, TypedSpec> env) {
+        int[] pushed = {0};
+        try {
+            return reduceStatements(body, env, pushed);
+        } finally {
+            popRisk(pushed[0]);
+        }
+    }
+
+    private TypedSpec reduceStatements(List<TypedSpec> body, Map<String, TypedSpec> env,
+            int[] pushed) {
         Map<String, TypedSpec> scope = new LinkedHashMap<>(env);
         for (int i = 0; i < body.size() - 1; i++) {
             if (!(body.get(i) instanceof TypedLet let)) {
@@ -817,7 +841,11 @@ public final class UserCallInliner {
                                         + " of " + sc.args().get(0).getClass().getSimpleName() : "") : "")
                         + ") in an inlined function body is not supported");
             }
-            scope.put(let.name(), rewrite(let.value(), scope));
+            TypedSpec value = rewrite(let.value(), scope);
+            scope.put(let.name(), value);
+            // the value lands under every later binder
+            pushRisk(List.of(value));
+            pushed[0]++;
         }
         // A TRAILING let IS its value (real pure: the let statement yields
         // it) — `{ let r = $x + 100 }` returns the sum, and no let node
@@ -915,7 +943,8 @@ public final class UserCallInliner {
                     for (TypedSpec e : LiteralUnroll.elements(src)) {
                         Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
                         inner.put(m.mapper().parameters().get(0), e);
-                        TypedSpec r = reduceStatements(m.mapper().body(), inner);
+                        TypedSpec r = underSubst(List.of(e),
+                                () -> reduceStatements(m.mapper().body(), inner));
                         if (!(r instanceof com.legend.compiler.spec.typed.TypedCollection)
                                 && !(r.info().multiplicity() instanceof
                                         com.legend.compiler.element.type.Multiplicity.Bounded rb
@@ -945,7 +974,8 @@ public final class UserCallInliner {
                     for (TypedSpec e : LiteralUnroll.elements(src)) {
                         Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
                         inner.put(f.predicate().parameters().get(0), e);
-                        TypedSpec pred = reduceStatements(f.predicate().body(), inner);
+                        TypedSpec pred = underSubst(List.of(e),
+                                () -> reduceStatements(f.predicate().body(), inner));
                         if (pred instanceof TypedCBoolean keep) {
                             if (keep.value()) {
                                 out.add(e);
@@ -980,11 +1010,20 @@ public final class UserCallInliner {
                     yield Optional.empty();
                 }
                 TypedSpec acc = rewrite(fd.init(), env);
+                // the accumulator grows around its previous value: its free
+                // variables are read step by step, never the whole again
+                java.util.Set<String> accFree = FreeVars.of(acc);
                 for (TypedSpec e : LiteralUnroll.elements(src)) {
                     Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
+                    TypedSpec soFar = acc;
+                    java.util.Set<String> soFarFree = accFree;
                     inner.put(fd.reducer().parameters().get(0), e);
-                    inner.put(fd.reducer().parameters().get(1), acc);
-                    acc = reduceStatements(fd.reducer().body(), inner);
+                    inner.put(fd.reducer().parameters().get(1), soFar);
+                    java.util.Set<String> landing = new java.util.HashSet<>(soFarFree);
+                    landing.addAll(FreeVars.of(e));
+                    acc = underNames(landing,
+                            () -> reduceStatements(fd.reducer().body(), inner));
+                    accFree = FreeVars.of(acc, soFar, soFarFree);
                 }
                 yield Optional.of(acc);
             }
@@ -1007,7 +1046,8 @@ public final class UserCallInliner {
                 for (TypedSpec e : LiteralUnroll.elements(src)) {
                     Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
                     inner.put(keyFn.parameters().get(0), e);
-                    TypedSpec key = reduceStatements(keyFn.body(), inner);
+                    TypedSpec key = underSubst(List.of(e),
+                            () -> reduceStatements(keyFn.body(), inner));
                     Optional<Object> k = LiteralUnroll.scalarValue(key);
                     if (k.isEmpty()) {
                         yield Optional.of(gb.withChildren(List.of(src, lambda(keyFn, env))));
@@ -1054,12 +1094,8 @@ public final class UserCallInliner {
                 Optional<com.legend.compiler.spec.typed.TypedMatchRuntime.Arm> arm =
                         dynEmpty ? LiteralUnroll.arm(mr, input, specs.ctx()) : Optional.empty();
                 if (arm.isPresent()) {
-                    Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
-                    inner.put(arm.get().param(), input);
-                    if (mr.extraParam().isPresent()) {
-                        inner.put(mr.extraParam().get(), extra.orElse(input));
-                    }
-                    yield Optional.of(rewrite(arm.get().body(), inner));
+                    yield Optional.of(dispatchArm(arm.get().param(), mr.extraParam(),
+                            arm.get().body(), input, extra, env));
                 }
                 // STATIC RE-DISPATCH on the input's declared type: an arm whose
                 // class no model class shares with the input's static type can
@@ -1072,12 +1108,8 @@ public final class UserCallInliner {
                 if (dynEmpty && live.size() == 1 && mr.arms().size() > 1
                         && input.info().multiplicity() instanceof com.legend.compiler.element.type.Multiplicity.Bounded ib
                         && ib.lower() == 1 && Integer.valueOf(1).equals(ib.upper())) {
-                    Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
-                    inner.put(live.get(0).param(), input);
-                    if (mr.extraParam().isPresent()) {
-                        inner.put(mr.extraParam().get(), extra.orElse(input));
-                    }
-                    yield Optional.of(rewrite(live.get(0).body(), inner));
+                    yield Optional.of(dispatchArm(live.get(0).param(), mr.extraParam(),
+                            live.get(0).body(), input, extra, env));
                 }
                 List<TypedSpec> kids = new ArrayList<>();
                 kids.add(input);
@@ -1250,12 +1282,7 @@ public final class UserCallInliner {
             case TypedMatch m -> {
                 TypedSpec input = rewrite(m.input(), env);
                 Optional<TypedSpec> extra = m.extra().map(e -> rewrite(e, env));
-                Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
-                inner.put(m.param(), input);
-                if (m.extraParam().isPresent()) {
-                    inner.put(m.extraParam().get(), extra.orElse(input));
-                }
-                yield rewrite(m.body(), inner);
+                yield dispatchArm(m.param(), m.extraParam(), m.body(), input, extra, env);
             }
             case TypedLet let -> {
                 // Reached only for QUERY-LEVEL lets (callee lets reduce in
@@ -1322,7 +1349,8 @@ public final class UserCallInliner {
                             && mb.upper() == 1) {
                         Map<String, TypedSpec> inner = new LinkedHashMap<>();
                         inner.put(lam.parameters().get(0), args.get(0));
-                        yield reduceStatements(lam.body(), inner);
+                        yield underSubst(List.of(args.get(0)),
+                                () -> reduceStatements(lam.body(), inner));
                     }
                     yield new TypedMap(args.get(0), lam, c.info());
                 }
@@ -1425,17 +1453,76 @@ public final class UserCallInliner {
         }
     }
 
+    /** A dispatched match arm is a β-redex: the input (and the extra
+     * argument) substitute into the chosen body, under their own capture
+     * set. */
+    private TypedSpec dispatchArm(String param, Optional<String> extraParam, TypedSpec body,
+            TypedSpec input, Optional<TypedSpec> extra, Map<String, TypedSpec> env) {
+        Map<String, TypedSpec> inner = new LinkedHashMap<>(env);
+        List<TypedSpec> terms = new ArrayList<>(2);
+        inner.put(param, input);
+        terms.add(input);
+        if (extraParam.isPresent()) {
+            TypedSpec bound = extra.orElse(input);
+            inner.put(extraParam.get(), bound);
+            terms.add(bound);
+        }
+        return underSubst(terms, () -> rewrite(body, inner));
+    }
+
+    /** Run {@code k}, which substitutes {@code terms} beneath binders:
+     * the capture set is the ENCLOSING one (its substitutions are still
+     * in the environment) plus the terms' free variables. */
+    private <T> T underSubst(List<TypedSpec> terms, java.util.function.Supplier<T> k) {
+        return underNames(FreeVars.of(terms), k);
+    }
+
+    /** {@link #underSubst} for terms whose free variables are already
+     * known. */
+    private <T> T underNames(java.util.Set<String> free, java.util.function.Supplier<T> k) {
+        pushNames(free);
+        try {
+            return k.get();
+        } finally {
+            captureRisk.pop();
+        }
+    }
+
+    private void pushRisk(List<TypedSpec> terms) {
+        pushNames(FreeVars.of(terms));
+    }
+
+    private void pushNames(java.util.Set<String> free) {
+        java.util.Set<String> enclosing =
+                captureRisk.isEmpty() ? java.util.Set.of() : captureRisk.peek();
+        if (enclosing.containsAll(free)) {
+            // nothing new lands: the enclosing set stands (sets are never
+            // changed once pushed)
+            captureRisk.push(enclosing);
+            return;
+        }
+        java.util.Set<String> risk = new java.util.HashSet<>(enclosing);
+        risk.addAll(free);
+        captureRisk.push(risk);
+    }
+
+    private void popRisk(int count) {
+        for (int i = 0; i < count; i++) {
+            captureRisk.pop();
+        }
+    }
+
     /** Bind {@code name} into {@code scope}; returns the binder's name in
-     * the inlined body. A binder keeps its SOURCE name unless an
-     * argument of the call being inlined mentions that name (the one
-     * capture hazard of β-reduction: the argument lands under the
-     * binder) — the plan surface prints binders
+     * the inlined body. A binder keeps its SOURCE name unless a term
+     * substituted beneath it mentions that name (the one capture hazard
+     * of β-reduction: the term lands under the binder) — the plan
+     * surface prints binders
      * ({@code functionParameters = [optionalID:String[0..1]]}), so a
      * name is renamed only when hygiene demands it. */
     private String bind(String name, Map<String, TypedSpec> scope,
             com.legend.compiler.element.type.ExprType info) {
-        // outside any call frame nothing is substituted under the binder
-        // (query-level lets stay put): no hazard, the source name stands
+        // nothing substituted under the binder mentions its name: no
+        // hazard, the source name stands
         if (captureRisk.isEmpty() || !captureRisk.peek().contains(name)) {
             scope.put(name, new TypedVariable(name, info));
             return name;

@@ -27,6 +27,12 @@ public record CString(String value, @com.legend.base.Nullable com.legend.protoco
         this(value, pos, false);
     }
 
+    /** This literal with another value (an α-renamed let's name):
+     *  position and form kept. */
+    public CString withValue(String newValue) {
+        return new CString(newValue, pos, multiLine);
+    }
+
     /**
      * <b>Position is excluded from equality on purpose.</b> These records are compared
      * structurally by the compiler and by 111 hand-built test assertions of the form

@@ -14,7 +14,13 @@ principled fix, whether it is correct today, the blast radius, and the gate (the
 
 ## Push list (rev H3: the homework dry-run against the code by `../tractability-2026-09-29/1-…` and `2-…`)
 
-One push per line, in order; each gated by the full chain (plan §0 step 6), each removing its pin(s) and adding its
+**Order (D22, ruled by the user 2026-09-29):** push 1 is done (GATES "Rebuild W0.6 push 1"). Pushes 2, 3, 6, 6b, 7, 8,
+9, 11, 12, 13 run next, in that order. Pushes 4, 5, 5b and 10 run after the engine row oracle (plan W1.10c) and take
+legend-engine's rows on their fixtures as the expected values. Push 12's repros over a mixed literal list
+(`[1, 2.5]`) meet a loud DuckDB failure first (`+(JSON, INTEGER)`, with any binder names); use a `cast(@Number)`
+input as `InlinerMatchCaptureTest.loweringSideMatchFoldIsNotCaptured` does, or fix that failure first.
+
+One push per line; each gated by the full chain (plan §0 step 6), each removing its pin(s) and adding its
 adversarial cases. "T1"/"T2" cite the dry-run reports; "E" the engineering decisions in `../tractability-2026-09-29/README.md`.
 
 | # | push | report | design (decided) | tests / gate specifics | size |

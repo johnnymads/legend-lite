@@ -5682,6 +5682,132 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild W0.6 push 1: capture-avoiding substitution in all three engines; the pin removed; six library bodies type
+
+**What changed and why.** A term substituted under a binder that spells one of the term's free variables was captured:
+`|[1,2,3]->map(x | $x->match([i: Integer[1] | [10,20]->map(x | $i + $x)->sum()]))` returned `[60, 60, 60]`, not
+`[32, 34, 36]` (the `InlinerMatchCaptureTest` pin, owner W4.2). The defect sat in every substitution engine, so the fix
+is in all three (homework `plan-audit-2026-09-26/w0.6-homework/README.md` "Push 1"):
+- `compiler/spec/typed/FreeVars.java` (new): the free-variable function of the typed tree; binders are lambda
+  parameters, a let (over the later statements), `TypedMatch.param`/`extraParam`, each `TypedMatchRuntime` arm's parameter
+  and the node's `extraParam`. `TypedSerializeGraph.rowVar` is deliberately not a binder (reporting a bound name free
+  costs a rename; the converse is a capture).
+- `compiler/spec/UserCallInliner.java`: every site that extends the substitution runs under `underSubst` (the enclosing
+  capture set plus the free variables of the substituted terms): the three match dispatches (one helper,
+  `dispatchArm`), the four literal unrolls (map, filter, fold with the accumulator, groupBy key), the higher-order map,
+  and the let scopes of `inlineBody` and `reduceStatements` (each let value joins the set for the statements after it;
+  the homework listed the query-level one only). `bind` is unchanged.
+- `compiler/spec/SourceSubst.java`: `substitute` renames a lambda parameter or a lambda-body let that is free in the
+  value of an entry its scope reads, to `b_<k>`, the smallest free `k` (E2: no counter, no state). The values' free
+  variables are read once per call and only when the walk meets a binder some value mentions (see the stress below).
+  Two protocol helpers (`Variable.renamed`, `CString.withValue`) keep `PROTOCOL_DESUGAR_DEBT`'s `SourceSubst` row at 10.
+- `compiler/spec/typed/TypedSubst.java` (new): the same rule over the typed tree; `lowering/MatchFold.java` calls it
+  and its own `inlineParam` is deleted.
+
+**Defects found beyond the homework, each with a failing test first, fixed here.** (1) A let inside an evaluated
+zero-parameter lambda, `{| let c = $y; [10,20]->map(y | $c + $y)->sum();}->eval()` under `map(y | …)`: `[60, 60, 60]`.
+(2) `MatchFold` reproduced end to end (the homework had no case): a runtime match over a `cast(@Number)` input whose
+arm holds a same-named binder: `[60, 60]`, now `[33.0, 35.0]`. (3) A match over a computed input: `[62.0, 62.0]`, now
+`[43.0, 47.0]`. **Looked for and not reproduced:** standing runtime-match arms rewritten without binding their own
+parameters (five queries, all correct before and after; unchanged). **Seen, not this push's:** a lambda over a mixed
+literal list (`[1, 2.5]->map(y | … $n + $x …)`) fails loudly in DuckDB (`+(JSON, INTEGER)`), with or without a
+same-named binder; before this push the same-named form returned `[60, 60]` silently. Push 12's repros use that list
+shape and meet it first.
+
+**The probe** (local only, never committed; receipt `receipts/rebuild-W0.6-p1-probe-327d43365/`, with the patch): each
+engine printed `CAPTURE_RENAME <engine> <binder>` when the new rule renamed where the old one did not, over
+`bazel test //... --nocache_test_results` (128 of 129; `//core:guardrails` red on `ObservabilityGuardrailTest` only, as
+expected with a stderr print) and `//spec:reference_lane`.
+
+| lane | renames | where |
+|---|---|---|
+| `//core:core_tests` | 22 | all in this push's three test classes (run alone: 22) |
+| `//spec:corpus_duckdb`, `//spec:corpus_h2` | 2 each | one library body, typed in the host prerun and the main run: `meta::pure::graphFetch::domain::extractDomainTypeClassFromGraphFetchTree` (`domainManagement.pure`: `map(x | let parametersValueByName = …$x…; … )` read under a later binder `x`) |
+| `//spec:reference_lane` | 52 | 13 binder sites in the engine's own Pure (the router's `currentLast`/`routed`/`lastFirstPass`, `pureToSqlQuery`'s `processMap` and `processFunctionDefinition`, the M2M chain, the protocol's TDS result, the graph-fetch domain helper) |
+| every other lane | 0 | |
+
+Every hit outside the new tests is a latent capture in library code that the typer's let fold (`SourceSubst.inlineLets`)
+produced while typing; none changed a corpus verdict (rosters unchanged).
+
+**The reference lane moved, in the right direction** (golden updated in this push): six bodies that legend-pure types
+and lite failed on now type, because a captured variable no longer carries the wrong type.
+
+| line | before | after |
+|---|---|---|
+| our bodies FAILED | 1,521 | 1,515 |
+| reference typed, we FAILED | 1,342 | 1,336 |
+| AGREE | 72,081 | 72,271 |
+| ABSENT | 68,232 | 68,450 |
+| EXTRA | 15,825 | 15,864 |
+| OVERLOAD, PACKAGE, DRIFT, PROPERTY_AS_CALL | 769, 14, 32, 39 | unchanged |
+
+The six: `processTDSResult`, `extractDomainTypeClassFromGraphFetchTree`, `planExecutionChain`,
+`processFunctionDefinition`, `processMap`, `simplyMergeJoinTreeNodeUsingOrOperation`. ABSENT and EXTRA grow by the form
+nodes and calls of those bodies: seven new classes, all under the existing per-kind reasons (ABSENT
+`getTabularDataSetFromProtocol`, `newLambdaFunction`; EXTRA `generateFunctionExpressionByOperationType`,
+`lambdaParamsByOperationType`, `buildUnionJoinName`, `getClassMapping`, `pureTypeForDbColumn`); no class left.
+
+**The stress (asked for by the user before any push; receipt `…/stress/`, harness `Stress.java`).** The 100K lane
+does not reach this code (100 one-line queries, no user function, let, match or unroll), so a harness was written for
+the worry itself: compile only (type, inline, resolve, lower, render; no database), seven program shapes generated at
+growing sizes, HEAD's jars against the change's, two alternating runs, each started at a one-minute load under 3, the
+median of nine after four warm-ups. The first version of this push failed it:
+
+| shape | size | HEAD | first version | this push |
+|---|---|---|---|---|
+| a fold unrolled over a spelled list (the accumulator grows) | 3,200 | 393 ms | 713 ms | 377 ms |
+| nested lambdas, a let at every level | depth 32 | 9.2 ms | 29.7 ms | 9.2 ms |
+| chained lets in one function | 512 | 25.6 ms | 30.7 ms | 29.0 ms |
+| chained query-level lets | 512 | 18.6 ms | 23.8 ms | 22.2 ms |
+| map unroll 3,200; call chain depth 12; nested matches depth 32 | | | within 5% | within 5% |
+
+Cause: the first version re-read terms it had already read (the whole accumulator at every fold step; every lambda's
+free variables and every value's at every binder). Fixed in the algorithm, no cache: `FreeVars.of(term, known,
+knownFree)` does not enter a subterm whose free variables are known, so the accumulator is read in the size of the
+step; both renaming engines first ask whether any substituted value mentions the binder's name at all and read a scope
+only then. **Residual, stated:** chained lets still re-read the spliced values, 13% at 512 chained lets in one body
+and 20% at 512 query-level lets (about 3.5 ms); under 128 lets it is inside the noise. The same-name forms cost more
+than HEAD only where HEAD returned wrong rows (it did no renaming). SQL is byte-identical to HEAD's for every shape
+with distinct names. `//core:scale_stresstest100k`, HEAD against the change, alone, two runs each: build 15.2 s and
+15.1 s against 15.2 s and 14.7 s; 100 queries 480 and 433 ms against 429 and 457 ms: no difference. **Found in
+passing:** plan §1a gave the 100K build as 2.7 s; this branch measures 15 s at `327d43365` (not this push's; the
+figure is corrected in the plan and owned by W1.0b). A call chain of depth 16 compiles to 1.8 MB of SQL and depth 32
+runs out of memory, at HEAD and here alike (a let used twice is spliced twice; W4.2's note). DuckDB's own planning
+time grows steeply with lambda nesting (a 40-step unrolled fold did not plan in ten minutes), so the permanent
+test keeps its executed cases small.
+
+**Tests.** `InlinerMatchCaptureTest` (the pin removed; ten end-to-end cases, each with its old value in a comment),
+`FreeVarsTest` (both typed functions: every binder kind, the let rule, the known-subterm walk, renaming, name
+avoidance), `SourceSubstCaptureTest`, and `CaptureStressTest`: the correctness half of the stress, permanent. Each
+program is generated with distinct binder names and with one name for every binder; the two must return the same rows
+at depth 4 and 8 (nested lets), 4, 8 and 16 (nested matches), 8 (call chain) and over a six-step unrolled fold. HEAD
+fails three of its four tests. Sites with no end-to-end case (`TypedMatchRuntime` dispatch in the inliner, the
+higher-order map, the groupBy key, the `inlineBody` root) are covered by the unit tests and the probe only.
+
+**Gate lanes.** `bazel test //core:guardrails //core:census //parser-equivalence:parser_parity //spec:spec_tests`
+"Executed 4 out of 4 tests: 4 tests pass"; `bazel test //...` 129 of 129; `bazel test //tools/deps:all` "Executed 0 out
+of 5 tests: 5 tests pass"; `bazel test //spec:reference_lane` PASSED (45.3 s); `//core:scale_stresstest100k` PASSED.
+Corpus rosters LOST 0, GAINED 0.
+**Quiet timings** (each lane alone, `--nocache_test_results`, one-minute load under 3 at the start; baselines H5 at
+`ed85b5166`): `//spec:corpus_duckdb` 76.3 s (75.7 s), `//spec:corpus_h2` 78.0 s (79.8 s), `//core:core_tests` 32.8 s
+(29.9 s; 4,255 tests now). Three DuckDB corpus runs of this push's code gave 77.4, 75.9 and 76.3 s: the lane's noise
+is about 2%, and the new code's own time, counted in process over one run, is about 0.3 s of it. `CaptureStressTest`'s
+first form cost the core lane 12 s (DuckDB executing 65,536 innermost rows at depth 16); cut to depth 8, it costs 0.2 s.
+
+**Pins moved.** `@KnownDefect(owner = "W4.2")` on `matchArmInputIsNotCapturedByAnInnerBinder` removed (fixed, D14).
+`OwnCorpusParityTest.MIN_MATCHED` 2598 → 2602 (the new tests' four model functions joined the own corpus).
+`reference-lane/core_relational.txt` (above).
+
+**Deleted.** `MatchFold.inlineParam` (12 lines). The duplicate engines go with W4.2. **Number:** open wrong-results
+defects 14 → 13. **Net product lines:** +745 (831 added, 86 deleted; Phase 1, before rule 0b.17 binds): two
+free-variable functions and two renaming rules exist because there are two trees and three engines.
+
+**Cost.** One session, one commit; chain runs: one with the probe, two on the code, one after the documents; two red
+pre-chain lanes (`MIN_MATCHED`, twice: once per new test file with a model). The same session wrote the independent
+plan audit the user asked for (`docs/plan-audit-2026-09-26/independent-audit-2026-09-29.md`, input for C1). **Ruled by
+the user in this session (D22):** W0.6's four resolver pushes (4, 5, 5b, 10) run after the engine row oracle (W1.10c)
+and take the engine's rows as their expected values; plan §4 Phase 1 and the homework README's push list say so.
+
 ## 2026-09-29 — Rebuild rev H4: the re-cut — learn and decide first, the middle before the front end
 
 **What.** A macro review (the user's question "is the plan actually good / expert?") found the target and the checking

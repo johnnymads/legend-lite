@@ -17,10 +17,12 @@ Keep it current: when an item lands, move it to §3 with its GATES.md heading, a
 
 ## 0. Start here (a fresh session with no context)
 
-**Now (update in every push):** W0.6 push 1 (capture-avoiding substitution). The exact order, scope, design choice, tests
-and gate of every W0.6 push are in `plan-audit-2026-09-26/w0.6-homework/README.md` §"Push list" (homework and a dry run
-against the code done). Open decisions that block only single fixes: D20, D21. Then the rest of **Phase 1** (§4): W1.0b, the mapping-heavy set,
-W1.10c, W1.10a (lite versus the engine), W3.7, W0.7, and **C1**.
+**Now (update in every push):** W0.6 push 2 (the lowerer's let scope). Push 1 is done (§3). The scope, design choice,
+tests and gate of every W0.6 push are in `plan-audit-2026-09-26/w0.6-homework/README.md` §"Push list" (homework and a
+dry run against the code done); **the order is §4 Phase 1's (D22): pushes 2, 3, 6, 6b, 7, 8, 9, 11, 12, 13 now; pushes
+4, 5, 5b and 10 after the engine row oracle (W1.10c).** Open decisions that block only single fixes: D20, D21. Then the
+rest of **Phase 1** (§4): W1.0b, the mapping-heavy set, W1.10c, the four resolver pushes, W1.10a (lite versus the
+engine), W3.7, W0.7, and **C1**.
 
 **What this program is, in one paragraph.** legend-lite (`core/`, ~229k lines of product Java) is a clean-room
 replacement for legend-pure's compiler and legend-engine's query execution: Pure text → parse → resolve names → type →
@@ -204,7 +206,7 @@ program runs).
 | 3 | routing, joins, milestoning and SQL proved on adversarial data; the middle smaller | engine-row disagreements → 0 or registered; resolver lines 35,925 → down; lowering lines → down |
 | 4 | overload picks and types match legend-pure by our own solver; names bound by id | OVERLOAD rows 769 → pinned residue; "reference typed, we FAILED" bodies 1,342 → shrinking; heap after resolve on `//core:scale_stresstest100k` |
 | 5 | a thin runner; a multi-request-safe server; dialect breadth | request-reachable static state → 0 (W0.7 starts it); PCT fail rosters by class |
-| every phase | less code, faster | net product lines (229k at `89dc45871`) → down (rule 0b.17); plan latency p50/p95; WASM bytes; `//wasm` cold start; 100K-model build time (2.7 s) and heap |
+| every phase | less code, faster | net product lines (229k at `89dc45871`) → down (rule 0b.17); plan latency p50/p95; WASM bytes; `//wasm` cold start; 100K-model build time (15.1 s measured at `327d43365`, GATES "Rebuild W0.6 push 1"; an earlier 2.7 s on this page was not reproduced on this branch; W1.0b prints the baseline) and heap |
 
 Known baselines at `89dc45871`: corpus fail rosters DuckDB 107, H2 361 (`spec/src/test/resources/rcorpus/*-fail-roster.txt`);
 reference lane AGREE 72,081, OVERLOAD 769, ABSENT 68,232, EXTRA 15,825, bodies FAILED 1,521, sources DROPPED 32
@@ -344,6 +346,7 @@ over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its 
 | D18 | Where the rebuild lands | **RULED 2026-09-29 (the user): on `main`**, every gated slice; `compiler/rebuild` kept only as the working branch name, always equal to `main` after a push |
 | D19 | D8's fence and helper functions | **OPEN; to be ruled at C1 (before W4.2's schema evaluator).** The motivating branching sits in an unmarked private helper (`extendMatchColumns`, `tdsExtension.pure:68-94`) called by the marked `rowValueDifference` (declared :22/:29, calls at :39 and :56); name arguments sit inside row lambdas (`$r.isNull($col.name + '_1')` at :73; `$r.getInteger($col.name + '_1')` at :114 inside `columnValueDifference`) [L2 F6, T5]. Recommendation: the fence is "schema positions reachable from a marked call site after inlining its callees", with TDSRow accessor name arguments listed as schema positions; the Relation API constructors among the marked functions (`over`, `rows`, `range`, `ascending`, `descending`, `lead`, `lag`) are already lite natives and fall under WORLD_MAP §8, not D8 |
 | D20 | `splitPart` with a multi-character separator | **OPEN; blocks only its W0.6 fix.** Pure's `split` doc says the separator is "matched literally" (`split.pure:17-21`) but the interpreter tokenizes on a character set (`Split.java:54-60`, `StringTokenizer`, adjacent separators collapse); the multi-character PCT is commented out as "incorrect behaviour … TODO" (`splitPart.pure:46-54`); engine-H2 uses a character set, engine-DuckDB the whole string. Lite: DuckDB whole string with collapse, H2 character set (report 4 F). Recommendation: the documented literal semantics on every dialect (the reference marks the other behaviour as incorrect), the empty-token rule taken from `split`'s documented contract; a register row for the engine-H2 difference |
+| D22 | W0.6's resolver pushes and the engine row oracle | **RULED 2026-09-29 (the user):** pushes 4 (prefix keys), 5 and 5b (the killed head match, both channels) and 10 (the equality-kind node) change temporal joins and equality in the store resolver, and their expected rows were derived by reading. They run after W1.10c and take legend-engine's rows on their fixtures as the expected values (an engine defect is registered, not copied, rule 0b.13). Every other W0.6 push runs first, in the homework README's order |
 | D21 | Float literals: the magnitude cliff | **OPEN; blocks only its W0.6 fix.** Under NUMERIC_CHARTER Rule 1 literals render bare and the database types them; `AnsiSqlRenderer.plainFloat` (`:1370-1378`) switches to exponent form outside 1e-6..1e15, which DuckDB types DOUBLE, so `i * 0.00000013 == 0.00000039` is false on DuckDB and true on H2 and in the interpreter (report 4 G, ran). Whether the engine's `%s` formatting has the same cliff is not verified. Recommendation: no cliff (a value's kind must not depend on its magnitude, charter C2.2): spell plainly with per-value DECIMAL precision; register the engine difference if the engine has the cliff |
 
 ---
@@ -365,6 +368,8 @@ over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its 
 | W0.6 homework | four root-cause reports and the push order; D20, D21 opened | `plan-audit-2026-09-26/w0.6-homework/`; GATES "Rebuild W1.0" |
 | W1.0 | the documents executable: rev H2, the register, routing, banners; the cold read passed after fixes (its 15 contradictions and 12 gaps fixed) | `plan-audit-2026-09-26/cold-read/2026-09-29-rev-H2.md`; GATES "Rebuild W1.0" |
 | rev H3 | the tractability audit (five reviewers) folded in: every W0.6 push dry-run against the code and fully specified; W1 items given tools, spikes, sizes; W2.3a, W3.3, W4.3 decomposed; W3.7 made runnable; C4 given a rule; the consistency sweep's fixes; E1–E13 | `plan-audit-2026-09-26/tractability-2026-09-29/`; GATES "Rebuild rev H3" |
+| W0.6 push 1 | capture-avoiding substitution in the inliner, `SourceSubst` and `MatchFold`; the `InlinerMatchCaptureTest` pin removed; three further wrong answers reproduced and fixed; 14 latent captures in library code fixed; six bodies newly typed in the reference lane; a purpose-built stress (compile time by size against the previous commit, and a permanent correctness test) | GATES "Rebuild W0.6 push 1" |
+| independent audit; D22 | one session's own audit of rev H4 against the code (input for C1); the user ruled the W0.6 reorder | `plan-audit-2026-09-26/independent-audit-2026-09-29.md` |
 | rev H4 | the re-cut (approved by the user): phases in §4; learn and decide before building; the middle before the front end; net-deletion and build-don't-re-plan rules; the gate diet | GATES "Rebuild rev H4" |
 
 ---
@@ -380,10 +385,13 @@ then build by risk and value, with the front end rebuilt where and when it pays.
 identifiers in the §5 catalogue, not an order; this section is the order.
 
 **Phase 1 — Correctness and knowledge** (≈14–20 sessions). Ends at **C1**.
-1. W0.6, pushes 1–13 (the homework README's push list).
+1. W0.6, every push but the four resolver ones: 1 (done), 2, 3, 6, 6b, 7, 8, 9, 11, 12, 13 (the homework README's
+   push list; D22).
 2. W1.0b baselines, including **net product lines** (rule 0b.17's number).
-3. The mapping-heavy set (the definition part of W1.5 only).
+3. The mapping-heavy set (the definition part of W1.5 only), drawn first from the stress corpus, which is engine
+   grammar already; corpus-derived cases join once `RowsMain` runs.
 4. W1.10c, legend-engine as a row oracle (`RowsMain`).
+4b. W0.6 pushes 4, 5, 5b and 10, each judged by the engine's rows on its fixture (D22).
 5. W1.10a, the fixture mutator (spike, then build). **Phase 1 runs it as lite versus the engine** on the mutated fixtures of
    the mapping-heavy set (the old-vs-new use waits for W1.7): every disagreement attributed to a stage (H, I, J) with the
    files a fix would touch — the defect list that orders Phase 3. A disagreement that is a small, reproduced wrong answer
@@ -431,7 +439,8 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
 
 - **W0.6 Fix the reproduced wrong-results defects now** (D14). **Homework done** (`plan-audit-2026-09-26/w0.6-homework/`)
   **and dry-run against the code** (`plan-audit-2026-09-26/tractability-2026-09-29/1-…`, `2-…`); the homework README's
-  "Push list" is the exact order, scope, design choice, test table and gate of every push. In order: (1) capture-avoiding
+  "Push list" is the exact scope, design choice, test table and gate of every push; **the order is §4 Phase 1's (D22:
+  pushes 4, 5, 5b and 10 after W1.10c); push 1 is done.** By number: (1) capture-avoiding
   substitution in the inliner, `SourceSubst` and `MatchFold`; (2) the lowerer's let scope, by the Barendregt convention at
   the lowering boundary (E1); (3) the `TypedFilter` stamp (46 constructor sites); (4) prefix keys from the materialization
   map; (5) the killed head match, nav channel, then (5b) the association channel (E3); (6) section imports as a keying

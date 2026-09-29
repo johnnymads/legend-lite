@@ -72,6 +72,12 @@ public record Variable(
         this(name, null, null, null);
     }
 
+    /** This variable under another name (an α-renamed binder or read):
+     *  type, multiplicity and position kept. */
+    public Variable renamed(String newName) {
+        return new Variable(newName, type, multiplicity, pos);
+    }
+
     /** Position is excluded from equality — see {@code ValueSpecEqualityTest}. */
     @Override
     public boolean equals(Object o) {
