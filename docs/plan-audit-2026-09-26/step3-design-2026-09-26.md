@@ -1,5 +1,9 @@
 # Step 3 design, revision 2 (2026-09-26, after the audit; the callee shape RULED 2026-09-27)
 
+> **SUPERSEDED 2026-09-29.** The call-node shape it rules (a run-time `Callee` slot) was replaced by the user's ruling D1
+> of 2026-09-29 (a distinct `ResolvedExpr` family); binding scope widened by D2. See `docs/EXECUTION_PLAN_2026_09_26.md`
+> §2 and W2. Its reference-matching content (the matcher, the loop, TDS) remains homework for W3.
+
 Supersedes §1, §2.3(1), §3.4, §5 and §8 of `step3-design.md` (v1); everything else in v1 stands
 where this file does not say otherwise. Every audit finding (`step3-homework-audit-2026-09-26.md`,
 numbered #1–#30) is dispositioned in §6. Still read-only: nothing under the tree changed for this.

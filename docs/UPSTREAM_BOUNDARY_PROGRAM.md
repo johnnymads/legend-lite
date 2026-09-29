@@ -227,6 +227,9 @@ Every upstream fact in `core` becomes a generated resource with a parity test in
 
 ### D — The implemented surface: the untangle (rewritten 2026-09-24)
 
+> **SUPERSEDED 2026-09-29 for its order and steps** by `docs/EXECUTION_PLAN_2026_09_26.md` (waves W0–W7). The rulings
+> below still stand where the plan's §0 repeats them.
+
 > **Ordering superseded 2026-09-25 from step 4c on** by `docs/REAL_PLAN_2026_09_25.md`: bind the
 > tree first (A1 the overload set as declarations, A2 the pick carried through lowering, A3 mints by
 > declaration), then forms by declaration (B), one evaluator (C), the kernel (D), one ownership

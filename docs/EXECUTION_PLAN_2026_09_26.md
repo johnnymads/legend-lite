@@ -80,9 +80,8 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 Each item is one push unless it says otherwise. Estimates are in working sessions and are judgment, labelled as such.
 
 ### W0 — Now: safety and confirmed defects (≈2–3 sessions)
-- **W0.1 Close `/engine/sql`** (arbitrary SQL, all interfaces, CORS `*`; `server/LegendHttpServer.java:40,53,248`). Owner:
-  the `server/` owner (the DataCube/warehouse session); announce in IN_FLIGHT. Delete it, or bind to localhost behind a
-  dev flag.
+- **W0.1 Close `/engine/sql`** (arbitrary SQL, all interfaces, CORS `*`; `server/LegendHttpServer.java:40,53,248`). Ours
+  since 2026-09-29 (one session owns the repository). Delete it, or bind to localhost behind a dev flag.
 - **W0.2 Five confirmed defects**, each with a failing test first: H2's test-only UDF (`sql/dialect/H2.java:719`,
   `EngineStyleH2.java:1704,1899`); `StaticFold` `toOne` on a list (`StaticFold.java:692-694`); positional unify fallback
   (`InferenceKernel.java:84-101`); the static-state guard's two-line escape (`exec/CanonicalDivergence.java:558-559`,
@@ -217,8 +216,14 @@ W2.3–W2.6 put the resolution on the parse nodes instead: `AppliedFunction`'s c
 `Spelled` and throws "compiler bug". Everything else in this plan is unchanged; rule 0.10 is then waived for D.
 
 ## 7. Session bootstrap
-- **Repo:** `~/legend/legend-lite`, worktree `.claude/worktrees/build-audit`, branch `datacube/app` tracking
-  `origin/main`. Bazel 9. Untracked `nlq/` is not ours.
+- **Repo:** `~/legend/legend-lite`, worktree `.claude/worktrees/build-audit`. The program runs on branch
+  `compiler/rebuild` (from `main` at `caf0cf71f`, 2026-09-29; draft PR against `main` so CI runs on every push); `main`
+  fast-forwards at wave boundaries. One session owns the whole repository since 2026-09-29. Bazel 9. Untracked `nlq/`
+  is not ours.
+- **Homework before W0 code (2026-09-29, in this order):** H6 superseded docs marked (done with the branch's first
+  commit); H1 an adversarial audit of THIS plan; H2 the `ResolvedExpr` design note; H3 a reference-lane spike from the
+  `@maven_upstream` jars; H4 the diagnostics design note; H5 quiet baselines at the branch point (needs the other
+  account's processes stopped).
 - **Read, in order:** `docs/IN_FLIGHT.md`; this page; `plan-audit-2026-09-26/architecture-review-2026-09-28.md`; the stage
   reading for the area you touch; the last `docs/GATES.md` entries; for anything in D/F/G the reference research
   (`reference-matching.md` with its corrections, `kernel-reading-2026-09-26.md`).

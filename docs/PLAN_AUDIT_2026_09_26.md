@@ -1,5 +1,8 @@
 # Audit of the real plan, the compiler design and the first-step homework (2026-09-26)
 
+> **SUPERSEDED 2026-09-29 by `docs/EXECUTION_PLAN_2026_09_26.md`** (the one living plan, rewritten 2026-09-28 for the
+> whole compiler, waves W0–W7). Kept as history and as homework where the plan cites it; do not execute from this page.
+
 Six read-only research lines, each against primary sources, before any code: the pinned
 legend-pure compiler's Java (how it binds and chooses overloads), the pinned legend-engine
 compiler's Java (how engine-grammar input is resolved), our own code for every step A–G, the
