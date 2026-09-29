@@ -143,7 +143,8 @@ class ErrorShapeGuardrailTest {
             // the deleted ExecCallFinder.sideSqlText, same discipline
             // (every failure lands in the H2Verify decline census)
             Map.entry("QuotedSpecParser.java", 1),
-            Map.entry("Typer.java", 1),
+            // Typer.java's one catch moved with the overload machinery (2026-09-29, plan W1.6)
+            Map.entry("Overloads.java", 1),
             Map.entry("ValidateDesugar.java", 2));
 
     /** Broad type ANYWHERE in the catch parameter — multi-catch included

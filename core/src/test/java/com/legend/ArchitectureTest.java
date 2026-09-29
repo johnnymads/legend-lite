@@ -1247,7 +1247,11 @@ final class ArchitectureTest {
                     java.util.Map.entry("com.legend.compiler.spec.TdsNullForms", 1),
                     java.util.Map.entry("com.legend.compiler.spec.TypeAnnotations", 1),
                     // 127 -> 126 (audit burn 2026-09-25): aliasNormalized's respelling mint deleted
-                    java.util.Map.entry("com.legend.compiler.spec.Typer", 126),
+                    // 126 -> 33 (2026-09-29, plan W1.6): the typer split moved 89 to TdsDesugars and
+                    // 4 to Overloads, unchanged: the total is the same 126
+                    java.util.Map.entry("com.legend.compiler.spec.Typer", 33),
+                    java.util.Map.entry("com.legend.compiler.spec.TdsDesugars", 89),
+                    java.util.Map.entry("com.legend.compiler.spec.Overloads", 4),
                     java.util.Map.entry("com.legend.lineage.ScanRelations", 2),
                     java.util.Map.entry("com.legend.model.MappingFromProtocol", 4),
                     java.util.Map.entry("com.legend.test.PureTestRunner", 2),
