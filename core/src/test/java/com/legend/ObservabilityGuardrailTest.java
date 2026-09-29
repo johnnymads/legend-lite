@@ -59,7 +59,11 @@ class ObservabilityGuardrailTest {
             "LL_TMP_DEBUG", "LL_TMP_SQL", "LL_TOL_COUNT",
             // deployment config for the HTTP server entrypoint (moved in
             // with the engine-module deletion) — not a debug flag
-            "PORT");
+            "PORT",
+            // 2026-09-29, plan W0.1: the same entrypoint's other two settings —
+            // the listen address (loopback by default) and the extra page
+            // origins the server serves; deployment config, not debug flags
+            "LEGEND_LITE_BIND", "LEGEND_LITE_ALLOWED_ORIGINS");
 
     // 40 compiler sites + 3 server-shell sites that moved in with the
     // engine-module deletion (DiagramHandler crash report, the two

@@ -443,6 +443,13 @@ class JdbcSurfaceCensusTest {
             "core/src/test/java/com/legend/resolver/RuntimeIfClassQueryTest.java",
             "core/src/test/java/com/legend/resolver/PivotOverClassQueryTest.java",
             "core/src/test/java/com/legend/lowering/QuotedColumnNameTest.java",
+            // 2026-09-29, plan W0.2(a): Pure's splitPart run on a PLAIN H2 session (none of the
+            // engine's extension functions installed); the table is created and filled by
+            // hand, the query is compiled and the database computes every value
+            "core/src/test/java/com/legend/sql/dialect/H2SplitPartTest.java",
+            // 2026-09-29, plan W0.1: test-only seeding on a runtime's resolved connection,
+            // replacing the deleted product route /engine/sql; DDL/DML only, no value read back
+            "core/src/test/java/com/legend/server/Seed.java",
             "core/src/test/java/com/legend/TabularFunctionTest.java",
             // names java.sql only to assert it ABSENT: runs the planner in a JVM
             // limited to java.base (no connection, no statement)
