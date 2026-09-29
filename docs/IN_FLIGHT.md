@@ -125,6 +125,15 @@ saved" compares the page.
 
 ## Status lines (update in place; newest first)
 
+- 2026-09-29 untangle: **W0 started** (`EXECUTION_PLAN` §4). **For the `server/` owner (W0.1):** please close
+  `/engine/sql` — it runs arbitrary SQL, `LegendHttpServer` binds all interfaces (`new InetSocketAddress(port)`, :40) and
+  answers with `Access-Control-Allow-Origin: *` (:248), so any web page can reach it; delete it or bind to localhost behind
+  a dev flag. **Cross-area edits coming from us (rule 7), one small push each with a failing test first:**
+  `sql/dialect/H2.java` + `EngineStyleH2.java` (the product H2 dialect emits a UDF only the test harness defines);
+  `sql/dialect/EngineStyleH2.java` + `core/BUILD.bazel` (drop `sql_dialect`'s dependency on `compiler_element_type`, move
+  `TDS_NULL_CELL` into `sql`); `exec/CanonicalDivergence.java` + `spec/.../rcorpus/MinimalCorpus.java` (the two-line
+  `static volatile` field the guard misses); `sql/dialect/DuckDb.java` + `spec/.../MinimalCorpusTest.java` (W0.4: the
+  engine-scan-order pass leaves the product dialect). NOT building a timed run.
 - 2026-09-28 untangle: **the plan is rewritten for the whole compiler** (`EXECUTION_PLAN_2026_09_26.md`, waves W0–W7;
   docs only). What changes for you: W0.1 asks the `server/` owner to close `/engine/sql` (arbitrary SQL, all interfaces,
   CORS `*`; `server/LegendHttpServer.java:40,53,248`); W6.4 later moves the server onto one compiled workspace. Nothing

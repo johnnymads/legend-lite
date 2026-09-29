@@ -60,7 +60,7 @@ each IR's post-conditions after every pass in tests; per-pass golden dumps; the 
 |---|---|---|
 | D1 | The call node's type: the 2026-09-27 ruling (one `AppliedFunction`, a sealed `Callee` slot `Spelled`/`Bound`, checked at run time) or a distinct `ResolvedExpr` family so javac proves no unresolved tree reaches the typer | **RULED 2026-09-29 (the user): a distinct `ResolvedExpr` family.** It supersedes the 2026-09-27 run-time `Callee` slot; W2 is written for it; §6 is kept only as the record of the alternative |
 | D2 | Binding scope | **RULED 2026-09-28: everything** — calls, members, binders (`VarId`), element references. Landed as separate pushes on one new tree type (W2.3–W2.6) so each roster change is attributable |
-| D3 | A reference lane at the pinned release | **Needs the user's approval of W1.1's shape.** No new downloads appear needed: all 27 modules of `core_relational`'s closure are already resolved in `maven_upstream_install.json` at 4.145.0 / 5.99.0 (checked 2026-09-28); the lane is a new test target over them |
+| D3 | A reference lane at the pinned release | **RULED 2026-09-29 (the user): build it as W1.1 describes.** No new downloads appear needed: all 27 modules of `core_relational`'s closure are already resolved in `maven_upstream_install.json` at 4.145.0 / 5.99.0 (checked 2026-09-28); the lane is a new test target over them |
 | D4 | "No tolerant modes" | **RULED 2026-09-28**: rule 0.9 |
 | D5 | Plan the whole program now | **RULED 2026-09-28**: this page |
 
