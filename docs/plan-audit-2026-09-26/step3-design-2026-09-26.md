@@ -616,7 +616,7 @@ is `Nil[0]` and `Bottom` ranks below `NonConcrete`; C4 Any skips type args, a la
 `Simple(1)`; C5 `[1..*]` rejects `[*]`, beats `[*]` for `[3]`; C6 `MAX_VALUE` uppers; C8 raw, then
 args, then LENGTH; C9 types before multiplicities across all positions; C11 lenient Null last,
 strict rejects; C12/C13 the accept rule and "Too many matches" on a real tie; C19 the
-short-circuit; C23 automap trigger on `[0]`, `[2]`, `[*]`, `[1..*]`, `m` and NOT `[0..1]`; C31 C3
+short-circuit; C23 automap trigger on `[0]`, `[2]`, `[*]`, `[1..*]`, `m` and ALSO `[0..1]` [corrected 2026-09-29: FEP calls `isToOne(m, true)`, see kernel-reading's correction]; C31 C3
 distance under multiple inheritance (a diamond). Plus the reference's own examples from
 `reference-matching.md`: `map`'s `{T[m]->V[m]}` vs `{T[0..1]->V[0..1]}` for a `[1]` source,
 `filter/map/if/match/fold/sortBy` lambda families, `elementToPath(Type)` vs `(PackageableElement)`.

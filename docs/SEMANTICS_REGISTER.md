@@ -7,8 +7,8 @@ with a different representation, the difference is a row here. A difference that
 
 Rules for this file: one row per difference; each row names the evidence (file:line in lite and in the pinned trees
 `$(bazel info output_base)/external/+http_archive+legend_{pure,engine}_src`), who decided it and when, and the owner item
-if it is expected to change. The reference lane (`spec/src/test/resources/reference-lane/reasons.tsv`), the engine-input
-lane (W1.13) and the dialect divergence register (W1.8) cite rows by id. A row is removed only when the difference is.
+if it is expected to change. The reference lane (`spec/src/test/resources/reference-lane/reasons.tsv`, from W1.1b), the
+engine-input lane (W1.13) and the dialect divergence register (W5.0) will cite rows by id. A row is removed only when the difference is.
 
 ## Kinds
 
@@ -32,12 +32,12 @@ lane (W1.13) and the dialect divergence register (W1.8) cite rows by id. A row i
 | S9 | outcome (arithmetic) | Pure Float | computed as DECIMAL in SQL for engine parity | NUMERIC_CHARTER Rule 1 | `docs/NUMERIC_CHARTER_2026_09_17.md` | W5.2 reviews |
 | S10 | scope | parsed twins of `meta::pure::functions::*` | the platform's own natives, signatures verified against the pinned sources; parsed twins suppressed | AGENTS.md reference-checkout tenet | `compiler/element/FunctionCompiler.java:79-115` (`isPlatformOwnedFunction`, `SUPPRESSED_ONCE`); `spec/…/rcorpus/LibraryPlatformNamespaceGuardTest.java` | — |
 | S11 | scope | mapping testSuites and service tests run by the engine's Testable framework | deleted; Studio's "run tests" against lite fails | 2026-08 (engine module deletion) | `docs/DEFERRED_TEST_EXECUTION.md` | scope at C3 |
-| S12 | scope | cross-store queries | walled with a clear error | — | `CrossStoreGuard.java` | — |
-| S13 | scope | external formats (binding, schema sets) | not verified; treat as out of scope until ruled | — | — | ruled at C3 |
+| S12 | scope | cross-store queries | walled with a clear error | a standing product decision predating the rebuild; confirmed in plan rev H2 (2026-09-29) | `CrossStoreGuard.java` | — |
+| S13 | pending | external formats (binding, schema sets) | not verified; treat as out of scope until ruled | to be ruled at C3 | — | ruled at C3 |
 | S14 | outcome (test harness) | engine tests rely on H2 insertion order | the scan-order ORDER BY lives only in the harness, for tests whose rows depend on scan order | D6, the user, 2026-09-29 | `sql/ScanOrder.java`; `lowering/CanonicalRenderSql.java:436` | W0.4 |
-| S15 | outcome (test judge) | the engine compares exact decimals | the host judge compares Floats within 2 ULP | D7 keeps both judges; `exec/Equality.java:71-83` | OPEN_REGISTER V8/X6 | open |
-| S16 | outcome (spec conflict) | PCT `testExtendFilterOutNull` and every relational engine adapter: a filter before a window is applied before it; the Pure interpreter disagrees and is excluded in its PCT manifest | lite follows PCT and the engine (`lowering/Fold.java:265-295`); excluded from TLP/NoREC | W0.6 homework report 4 E | `core_functions_relation/relation/tests/composition.pure:1115-1155`; `pct-manifests/core-interpreted/RelationFunctions_manifest.json:9-10` | — |
+| S15 | outcome (test judge) | the engine compares exact decimals | the host judge compares Floats within 2 ULP | D7 keeps both judges (the user, 2026-09-29) | `exec/Equality.java:71-83`; OPEN_REGISTER V8/X6 | W6.3 (the judge SPI) |
+| S16 | outcome (spec conflict) | PCT `testExtendFilterOutNull` and every relational engine adapter: a filter before a window is applied before it; the Pure interpreter disagrees and is excluded in its PCT manifest | lite follows PCT and the engine (`lowering/Fold.java:265-295`); excluded from TLP/NoREC | found by W0.6 homework report 4 E (2026-09-29); lite follows PCT and the engine per rule 0b.13 | `core_functions_relation/relation/tests/composition.pure:1115-1155`; `pct-manifests/core-interpreted/RelationFunctions_manifest.json:9-10` | — |
 | S17 | pending | Pure `splitPart`: doc says literal separator, interpreter a character set; engine-H2 character set, engine-DuckDB whole string | DuckDB whole string with collapse, H2 character set | D20 (open) | `sql/dialect/DuckDb.java:576-587`, `H2.java:719-735`; report 4 F | W0.6 |
 | S18 | outcome (nondeterminism) | `first()` in a group and unordered `joinStrings` are unordered in the engine too | `ANY_VALUE` (skips empties, the Pure-faithful choice) and unordered `STRING_AGG`; tests judge by set-of-valid-answers | ruling of 2026-09-20; report 4 D | `lowering/Aggregates.java:43-48`, `Lowerer.java:1323-1332` | W0.4 classifies |
-| S19 | outcome (engine parity) | Pure `average([])` fails; the engine's correlated reducer subquery returns NULL | NULL, as the engine | report 4 H | `lowering/RelationPredicates.java:264-295` | — |
+| S19 | outcome (engine parity) | Pure `average([])` fails; the engine's correlated reducer subquery returns NULL | NULL, as the engine | rule 0b.13 (engine rows); found by report 4 H (2026-09-29) | `lowering/RelationPredicates.java:264-295` | — |
 | S20 | pending | Float literal kind by magnitude (DuckDB DOUBLE outside 1e-6..1e15) | see D21 | D21 (open) | `sql/dialect/AnsiSqlRenderer.java:1370-1378`; report 4 G | W0.6 |

@@ -180,13 +180,15 @@ PROGRAMS (input to the compiler, whoever wrote them). Consequences:
   (`core_relational/relational/tds/tdsExtension.pure`). The compiler must know those columns to type the rest of the
   query and to report the result, with no database present. The type checker therefore evaluates such expressions at
   compile time, inside this fence and nowhere else:
-  1. **Where:** only the schema positions of a body marked `<<functionType.NormalizeRequiredFunction>>`, and the
+  1. **Where:** only the schema positions of a body marked `<<functionType.NormalizeRequiredFunction>>` (whether the fence
+     reaches unmarked helpers such a body calls, e.g. `extendMatchColumns`, is decision D19, open), and the
      column-metadata reads (`$tds.columns`, `$col.name`, `$col.type`). A schema position is one whose value becomes part
      of the query's type: a column name, a list of column names, a rename pair, a column spec's name, or the condition
      of an `if` that selects between column expressions.
   2. **What:** a closed, pinned list of operations over names and column metadata (string `+` over strings, `map`,
-     `filter`, `sortBy`, `indexOf`, `in`, `concatenate`, `removeDuplicates` over lists of names, `pair`, `$col.name`,
-     `$col.type ==`), the list drawn from what those library bodies actually use and pinned by a test.
+     `filter`, `sortBy`, `indexOf`, `in`, `concatenate`, `removeDuplicates`, `removeAll` over lists of names, `pair`,
+     `$col.name`, `$col.type ==`), illustrative until W4.2's homework pins the list from what those library bodies
+     actually use.
   3. **Never a row value.** An expression in any other position is left for the database, even when every input is a
      literal (`'a' + 'b'` inside a filter stays SQL). A test pins that a data-position expression is never folded.
   4. **Anything else is a clear error**, naming the expression and the fence; never a guess and never a partial fold.

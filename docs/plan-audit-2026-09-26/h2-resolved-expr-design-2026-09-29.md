@@ -4,7 +4,7 @@ Design note for plan item W2.0, drafted read-only at `compiler/rebuild` @ `23b21
 the drafting agent could not write files). Paths are relative to `core/src/main/java/com/legend/` unless they start with
 `core/` or `docs/`. Every count comes from a grep named beside it. The pinned reference trees were not re-verified and no
 bazel was run. It answers `h1-plan-audit-2026-09-29/W2-resolved-tree.md` findings #1, #2, #3, #4, #9, #11, #14, #15, #20,
-#21 (index in §8). **Status: RULED 2026-09-29 (the user, D12), with the revision below, which supersedes §1, the `Legacy` field in §2 and §7's rulings 1, 3 and 6.**
+#21 (index in §8). **Status: RULED 2026-09-29 (the user, D12), with the revision below, which supersedes §1, the `Legacy` field in §2, §6's `ResolvedBodies` wording and totals, and §7's rulings 1, 3, 4 and 6; plan rev H3 refines §6 into ten pushes (plan W2.3a).**
 
 ## Revision, ruled 2026-09-29: a resolved declaration family, not a side table
 
@@ -26,7 +26,7 @@ rule to stop a reader using them: the run-time boundary D1 rejected. The user ru
    `ResolvedExpr` through the one builder (§3); the element compiler (F) builds `TypedFunction` and friends from resolved
    declarations; the typer's inputs are `ResolvedExpr` only. The resolved mapping records are what W4.1a later elaborates
    into the typed mapping IR, so none of this is throwaway.
-3. **No callee strings on the node** (supersedes the `Legacy` field): a `Call` carries its `Candidates`; every reader that
+3. **No callee strings used for dispatch** (supersedes the `Legacy` field; a `Call` keeps a `spelled` string fenced to diagnostics and printers): a `Call` carries its `Candidates`; every reader that
    dispatches on a name today gets it from the declaration id (`FunctionId`'s FQN), so the 134 name-dispatching readers
    switch to ids in W2.3a rather than keeping strings for a wave.
 4. **Identity keys (ruling 6) are moot**: bodies live in their resolved declarations.
@@ -48,8 +48,8 @@ carries `Candidates(List<FunctionId>)` and `String spelled`, and `spelled` is fe
 guard in W2.3a push 1 fails any other reader). The consequence the meta-audit found (lens 1 finding 8): the 134
 name-dispatching readers (18 `CoreFn.of`, 31 `ResolvedNames`, 85 `.function()`) cannot switch to ids by taking "the"
 FQN, because a candidate set may span packages before the typer picks. So **form recognition by declaration id moves into
-W2.3a**: a table `FunctionId → Form` (the plan's "Form row"), consulted on the candidate set; a set whose members disagree
-on the form is a resolution error, reported, never guessed. This is the work W3.6 was going to do for the typer's 16
+W2.3a**: a table `FunctionId → Form` (the plan's "Form table"), consulted on the candidate set; a set whose members disagree
+on the form is a resolution error, reported, never guessed. This is the work W3.6 was going to do for the typer's 18
 `CoreFn.of` sites, pulled forward; W2.3a's size (9–13) already includes the reader switch but not this table: add about
 one session. Every other statement in §2–§7 stands unless the revision above says otherwise. Also per the meta-audit
 (lens 1 finding 3, lens 4 §4.3): `span` is not part of any record's `equals`; node identity is an explicit `ExprId(body,
@@ -64,7 +64,7 @@ local)` allocated by D beside `VarId` (plan W2.3a), and spans are a table keyed 
 | C | One builder, `compiler/Resolve`: NameResolver's call arm and the typer's bare-name path in one method with four scopes reproducing today's four rules. E and G mint through it. E.6 deleted in push 3. | §3 |
 | D | `TypedSpec` construction unchanged. Entry points, `TypedFunction.body`, `Env` aliases, 4 raw-payload HIR fields and all five untyped rewriters ported to `ResolvedExpr` **in one push**. No back-converter. | §4 |
 | E | `VarId(int body, int local)`, rustc `HirId` style. D allocates ids for explicit and implicit binders; the minting side keeps a counter per body. Names stay as display fields. | §5 |
-| F | Four pushes; a converter from D's output is the seam: shadow, then the typer's entries, then E, then deleted when D emits the resolved model. **9–13 sessions** with the ruled revision (first draft: 6–8). | §6 |
+| F | Four pushes; a converter from D's output is the seam: shadow, then the typer's entries, then E, then deleted when D emits the resolved model. **9–13 sessions** (plan rev H3: 11–15 in ten pushes) with the ruled revision (first draft: 6–8). | §6 |
 | G | Six rulings: RULED 2026-09-29 with the revision above. | §7 |
 
 ## 1. (A) What holds a resolved body
@@ -298,7 +298,7 @@ Fresh supply: a counter per body on the minting side — E's builder for a lifte
 
 Names stay as display fields in W2.3a: every substitution engine keys on names (`Env.java:20-21,109-134`, SourceSubst,
 AlphaRename, StatementInline, `UserCallInliner.java:1167`, `RelationReads.java:183-190`, `XStorePureEnds.java:285-300`, H and I);
-rule 0.5 (the key changes in its own push); diagnostics and the differential print names.
+rule 0b.5 (the key changes in its own push); diagnostics and the differential print names.
 
 ## 6. (F) The push sequence for W2.3a
 
@@ -314,7 +314,7 @@ changes for the 962 single-match rewrites.
 | **3. E builds `ResolvedExpr`; E.6 deleted** | E's 294 mints in 12 files (MappingNormalizer 88, RelOpTranslator 59, JoinChainEmission 44, ViewRelation 38, …) plus 7 `withParameters`, 9 `mapChildren`, 5 `infixRun` through the Synthesized builder; declare-then-define; `ResolvedBodies` with the extension layer (lifted bodies by `FunctionId`, read by F first); user subtrees via the converter. | As push 2, plus mapping-heavy goldens; `normalizer` leaves the rule's allowed constructors; a quiet corpus timing (E.6's universe build was once 13–15% of the lane, `ModelNormalizer.java:151-156`). | 2 |
 | **4. D emits `ResolvedExpr`; converter deleted** | NameResolver's body walk (`resolveVs` `:1672-1846`) writes `ResolvedBodies` (boot table cached with `Boot`) and stops rebuilding body fields (removes the `:1147-1156` rebuild path); the D½ chain ported (StatementInline, ValidateDesugar, LiteralMapUnroll; `Compiler.java:869-889`) and `PlanAllocations:370-470`; `ResolvedNames` reads `Legacy`; `candidateFqns`, the IDEMPOTENT branch, `FromParse` and the parse SourceSubst deleted; zero declarations produce `RESOLVE_NO_FUNCTION` in the sink plus an `Error` node; a new ArchUnit rule: the 19 body accessors are called only from parser, protocol, model, NameResolver and the emitters. | CANDIDATES identical; rosters identical (`Error` replays today's failure); the new diagnostic count reported against the UNKNOWN-FN baseline (21 names, 410 census failures) — D10's number; NameResolver debt row 0. | 1.5–2 |
 
-**W2.3a totals 6–8 sessions.** D10's switch (failing on undemanded poison) is its own push after W2.3a (G4).
+**W2.3a totals 6–8 sessions** (first draft; superseded: 11–15 in ten pushes, plan W2.3a). D10's switch (failing on undemanded poison) is its own push after W2.3a (G4).
 
 ## 7. (G) Rulings (ruled 2026-09-29: 1, 3 and 6 as revised above; 2, 4, 5 as written)
 

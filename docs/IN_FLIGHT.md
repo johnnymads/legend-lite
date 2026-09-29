@@ -8,7 +8,7 @@ of its own (plan rule 0b.16).
   handshake that lived here is retired; its text is in git history at `caf0cf71f`.
 - **The compiler rebuild lands on `main`** slice by slice (D18): each slice is gated by `bazel test //...` and `bazel test
   //tools/deps:all` on the exact tree, then pushed with `git push origin HEAD:compiler/rebuild HEAD:main`.
-- **Paused while the rebuild runs:** `docs/SERVER_PROGRAM_2026_09_26.md` (its legs are S0–S3, not the rebuild's W0–W7),
+- **Paused while the rebuild runs:** `docs/SERVER_PROGRAM_2026_09_26.md` (its legs are SV0–SV3, not the rebuild's W0–W7),
   the DataCube feature programs (`docs/DATACUBE_*`), NLQ (the untracked `nlq/` directory is not ours; leave it).
 
 ## Rules between sessions

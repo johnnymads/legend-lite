@@ -5682,6 +5682,26 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild rev H3: the tractability audit; every W0.6 push dry-run and specified; the plan re-cut
+
+**What.** The user asked for a final audit that the plan is tractable and implementable. Five read-only reviewers checked
+rev H2 at `34c49baad` against the code (`docs/plan-audit-2026-09-26/tractability-2026-09-29/`, synthesis in its README):
+W0.6 pushes 1–3 and 3–6 mentally implemented against the real types and call sites, every test case re-derived; every
+W0/W1 item checked for the tools it assumes; W2–W7 checked for ordering, decomposition and decidable checkpoints; a
+mechanical consistency sweep (52 findings). Main outcomes, all folded into plan rev H3 and the homework README's new
+"Push list": W0.6 is 13 fully specified pushes (the let-scope push decided as the Barendregt convention at the lowering
+boundary, E1; renaming without a counter, E2; both channels of the head-match defect, E3; the equality-kind node pulled
+forward for ModelJoin/XStore conditions, E4; the `###` import leak as its own push, E6); three new suspects (MatchFold's
+arm choice and `extraParam`, MatchChecker's parameter name); W1's missing tools named (a fixture mutator, an engine
+`RowsMain`, an Error Prone check spike, a pure negative-corpus spike), W1.10b's TLP formula corrected to Pure's two-valued
+logic, W1.8 moved to W5.0; W2.3a split into ten pushes, W3.3 given a shadow period, W4.3 a step 0 and row-based gates for
+steps 6–9, W3.7 made runnable before W3.6 with a C3a, C4 given a rule; sizes re-cut to ≈127–202 sessions (the first week
+suggests the low end); a glossary in §0; the ResolvedExpr note, TENET_CHARTER C6.2a, the register, `AGENTS.md`,
+`reasons.tsv` and IN_FLIGHT corrected.
+
+**Gate.** Documents plus one test resource (`reasons.tsv` owners); `bazel test //...` and `//tools/deps:all` green
+(summary lines in the commit's chain run). **Cost:** five reviewer agents (~1.1M tokens), one session's synthesis.
+
 ## 2026-09-29 — Rebuild W1.0: the cold read passes after fixes; W0.6's first push fully specified
 
 **What.** W1.0's gate: a fresh agent with only the repository (`708947202`) explained the program, the current item and
@@ -5695,8 +5715,9 @@ specified (scope, the design choice for each of the three substitution engines, 
 with hand-computed expected values, the gate). `AGENTS.md`'s `ArchitectureTest` description corrected;
 `CORPUS_BURNDOWN_HANDOFF.md` bannered; `KnownDefect`'s javadoc cites rule 0b.11 and D14.
 
-**Gate.** Documents plus one javadoc; `bazel test //...` and `//tools/deps:all` green on the tree. The next cold read runs
-at checkpoint C1.
+**Gate.** Documents plus one javadoc; `bazel test //...` "Executed 8 out of 129 tests: 129 tests pass"; `//tools/deps:all`
+"Executed 0 out of 5 tests: 5 tests pass" (commit `34c49baad`). Cost: one cold-read agent (~140k tokens), one session's
+fixes. The next cold read runs at checkpoint C1.
 
 ## 2026-09-29 — Rebuild rev H2: the plan revised after the meta-audit; D13–D18 ruled; the program lands on main
 
@@ -5723,10 +5744,10 @@ over other guards' comments; rule 1, readers iff writers for every static slot, 
 register (tests execute queries by nature; production JDBC is funnelled in bytecode and its register stays);
 ShadowWalkerCensusTest's 15 rows pinned at 0 for methods that no longer exist. Kept, with reasons in the plan:
 ParkedWorkLedgerTest, `preludeIsCurrent`/`signatureTextIsCurrent`, the claims `also` column. 528 lines deleted. Chain
-green at the time (129/129, 5/5).
+green at the time (128/128 and 4/4, as the next entry at `06eeb8142` reports; the fifth `//tools/deps` test came later).
 
-**Gate.** Documents only; `bazel test //...` and `//tools/deps:all` green on the tree (summary lines in the commit's chain
-run). The cold-read test (W1.0's gate) runs next; its receipt goes in `plan-audit-2026-09-26/cold-read/`.
+**Gate.** Documents only; `bazel test //...` "Executed 0 out of 129 tests: 129 tests pass"; `//tools/deps:all` "Executed 0
+out of 5 tests: 5 tests pass" (commit `60e746cc9`). The cold-read test (W1.0's gate) runs next; its receipt goes in `plan-audit-2026-09-26/cold-read/`.
 
 **Cost.** Meta-audit: six read-only agents plus the parent's synthesis; rev H2: one session. Receipts:
 `~/legend/platform-architecture/receipts/meta-audit-2026-09-29/`.

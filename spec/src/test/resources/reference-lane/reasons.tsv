@@ -7,7 +7,7 @@ OVERLOAD	max	W3.3	numeric and [1..*] overload families: the reference's paramete
 OVERLOAD	min	W3.3	numeric and [1..*] overload families: the reference's parameter-by-parameter type-then-multiplicity ordering
 OVERLOAD	greaterThan	W3.3	comparison overloads over [0..1]: the reference's multiplicity ordering
 OVERLOAD	*	W3.3	the reference's overload ordering (FunctionMatch: type first, then multiplicity, parameter by parameter; smallest wins) differs from both of our overload algorithms
-PACKAGE	size	W3.4	our typer erases a TDS to the collection surface at typing time, so size binds to collection::size where the reference binds the TDS function (homework-2026-09-26.md §1)
+PACKAGE	size	W3.3a	our typer erases a TDS to the collection surface at typing time, so size binds to collection::size where the reference binds the TDS function (homework-2026-09-26.md §1)
 PACKAGE	divide	W1.2	an operator-span artefact: our parser's span for an infix run puts the call on a neighbouring operator's column
 PACKAGE	plus	W3.3	infix run splitting: a mixed run is split into different calls on each side
 PACKAGE	*	W2.3b	a different declaration chosen: the candidate rule (imports, core, Root) differs from the reference's
@@ -17,7 +17,7 @@ ABSENT	map	W2.4	the automap rewrite: the reference spells a dot over a collectio
 ABSENT	new	W2.4	we type ^Class(...) as a node; the reference calls new(Class, String, KeyExpression[*])
 ABSENT	copy	W2.4	we type ^$x(...) as a node; the reference calls copy
 ABSENT	extractEnumValue	W2.4	we fold Enum.VALUE to an enum literal; the reference calls extractEnumValue
-ABSENT	*	W3.6	forms typed as nodes, not calls (cast, if, eval, match, filter, project, getAll, colSpec, sort, ...), and calls our desugars rewrite before they are typed; W1.1's second push gives form nodes ids and spans so these rows can join
+ABSENT	*	W2.3a	forms typed as nodes, not calls (cast, if, eval, match, filter, project, getAll, colSpec, sort, ...), and calls our desugars rewrite before they are typed; W1.1's second push gives form nodes ids and spans so these rows can join
 PROPERTY_AS_CALL	meta::core::runtime::connectionByElement	W2.4	a qualified property we model as a function
 PROPERTY_AS_CALL	*	W2.4	a member read on the reference's side that is a call on ours: the arrow and dot spellings are not yet told apart (Member)
 EXTRA	meta::pure::functions::multiplicity::toOne	W3.3	our typer inserts toOne where the reference's multiplicity rule accepts the argument as written
