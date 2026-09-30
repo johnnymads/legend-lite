@@ -31,6 +31,7 @@ java_library(
         "@maven_runner//:org_finos_legend_engine_legend_engine_protocol_pure",
         "@maven_runner//:org_finos_legend_engine_legend_engine_shared_core",
         "@maven_runner//:org_finos_legend_engine_legend_engine_testable",
+        "@maven_runner//:org_finos_legend_engine_legend_engine_language_pure_dsl_service",
         "@maven_runner//:org_antlr_antlr4_runtime",
     ],
 )
