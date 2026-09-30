@@ -7,7 +7,6 @@ import com.legend.Compiler;
 import com.legend.model.ConnectionDefinition;
 import com.legend.model.ServiceDefinition;
 import com.legend.test.ServiceTestRunner;
-import com.legend.testing.KnownDefect;
 import com.legend.testing.Own;
 import org.junit.jupiter.api.Test;
 
@@ -17,8 +16,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Review #15: ServiceTestRunner keys a provisioned CSV by its 32-bit String.hashCode, so two services whose
- * test data differ but collide ("Aa" vs "BB") share one test runtime and the second runs on the first's rows.
+ * Review #15, fixed by rebuild W0.6 push 8: ServiceTestRunner keyed a provisioned CSV by its 32-bit String.hashCode,
+ * so two services whose test data differed but collided ("Aa" vs "BB") shared one test runtime and the second ran on
+ * the first's rows; the runtime's NAME was a hash of the same key, so under the SHARED policy they also shared a
+ * session. Provisions are keyed by value now and runtimes are named by ordinal.
  */
 class ServiceTestProvisionKeyTest {
 
@@ -98,8 +99,13 @@ class ServiceTestProvisionKeyTest {
             + service("ServiceB", "/b", "suiteB", "readsB", "BB");
 
     private static ServiceTestRunner runner(com.legend.compiler.element.ModelContext ctx) {
+        return runner(ctx, ServiceTestRunner.Sessions.FRESH_PER_TEST);
+    }
+
+    private static ServiceTestRunner runner(com.legend.compiler.element.ModelContext ctx,
+            ServiceTestRunner.Sessions policy) {
         return new ServiceTestRunner(ctx, () -> DriverManager.getConnection("jdbc:duckdb:"),
-                ServiceTestRunner.Sessions.FRESH_PER_TEST, ConnectionDefinition.DatabaseType.DuckDB);
+                policy, ConnectionDefinition.DatabaseType.DuckDB);
     }
 
     private static ServiceDefinition service(String fqn) {
@@ -118,8 +124,6 @@ class ServiceTestProvisionKeyTest {
     }
 
     @Test
-    @KnownDefect(owner = "W6.4", reason = "ServiceTestRunner keys provisioned CSV by String.hashCode: two suites"
-            + " whose CSVs collide share one test runtime and the second runs on the first's data")
     void collidingCsvHashesDoNotShareATestRuntime() {
         if (CSV_A.equals(CSV_B) || CSV_A.hashCode() != CSV_B.hashCode()) {
             throw new IllegalStateException("the probe needs two different CSVs with one hashCode");
@@ -140,7 +144,41 @@ class ServiceTestProvisionKeyTest {
                 throw new IllegalStateException("control: A failed: " + ra.reason());
             }
             ServiceTestRunner.Result rb = only(shared.run(b));
+            // was FAIL: B read A's rows
             assertEquals(ServiceTestRunner.Status.PASS, rb.status(), rb.reason());
+            // A again on the same runner: its own runtime is still its own
+            assertEquals(ServiceTestRunner.Status.PASS, only(shared.run(a)).status());
+        }
+    }
+
+    @Test
+    void collidingCsvHashesDoNotShareASessionUnderSharedPolicy() {
+        var ctx = Compiler.compileModel(MODEL);
+        try (ServiceTestRunner shared = runner(ctx, ServiceTestRunner.Sessions.SHARED)) {
+            assertEquals(ServiceTestRunner.Status.PASS, only(shared.run(service("local::ServiceA"))).status());
+            ServiceTestRunner.Result rb = only(shared.run(service("local::ServiceB")));
+            assertEquals(ServiceTestRunner.Status.PASS, rb.status(), rb.reason());
+            // two provisionings, two sessions (the runtime name used to be a hash of the key, so one)
+            assertEquals(2, shared.sessions().size());
+        }
+    }
+
+    @Test
+    void identicalCsvSharesOneRuntimeAndSession() {
+        // two services with the SAME data: sharing is preserved
+        String twin = MODEL.replace(service("ServiceB", "/b", "suiteB", "readsB", "BB"),
+                service("ServiceB", "/b", "suiteB", "readsB", "Aa"));
+        var ctx = Compiler.compileModel(twin);
+        ServiceDefinition a = Own.model(twin).elements().stream()
+                .filter(e -> e instanceof ServiceDefinition s && s.qualifiedName().equals("local::ServiceA"))
+                .map(e -> (ServiceDefinition) e).findFirst().orElseThrow();
+        ServiceDefinition b = Own.model(twin).elements().stream()
+                .filter(e -> e instanceof ServiceDefinition s && s.qualifiedName().equals("local::ServiceB"))
+                .map(e -> (ServiceDefinition) e).findFirst().orElseThrow();
+        try (ServiceTestRunner shared = runner(ctx, ServiceTestRunner.Sessions.SHARED)) {
+            assertEquals(ServiceTestRunner.Status.PASS, only(shared.run(a)).status());
+            assertEquals(ServiceTestRunner.Status.PASS, only(shared.run(b)).status());
+            assertEquals(1, shared.sessions().size());
         }
     }
 }

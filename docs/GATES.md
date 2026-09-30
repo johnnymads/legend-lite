@@ -5683,6 +5683,33 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild W0.6 push 8: service-test provisions keyed by value; the pin removed; three latent hash ids pinned
+
+**What changed and why.** `ServiceTestRunner` keyed a suite's provisioned CSV by `String.hashCode` of the data, and
+named the test runtime by a hash of that key. Two suites whose CSVs differ but hash alike (`Aa`/`BB`, and every
+same-position substitution of them) shared one runtime: the second suite ran on the first's rows and failed; under the
+SHARED policy they also shared one session. Now (E7): value records `CsvTableKey(schema, table, values)`,
+`ProvisionKey(store, tables)` and `RuntimeKey(runtimeFqn, provisions)` key the runtime cache (no source positions, so the
+same data declared inline or through a `###Data` reference is one provisioning, as before); the runtime name is an
+ordinal within the runner. `core/test/ServiceTestRunner.java` only; no catch or JDBC call added (the registers that name
+the file are unchanged).
+
+**Tests.** `ServiceTestProvisionKeyTest`: the pin removed (B passes after A on one runner, and A again after B); under
+SHARED, B passes after A and there are two sessions (was one: the runtime NAME collided); two suites with identical data
+still share one runtime and one session. Two of three fail on `8b177b26d`. **Pinned, not fixed (E7):** the three
+content-hash ids the homework found beside this one (`FunctionBodyRows.scopeId`, `ConstructedInstances.rowId`,
+`PlanRows.scopeId`'s spanless fallback) are `@KnownDefect(owner = "W6.4")` in `ContentHashIdentityKnownDefectTest`
+(the lambda case reproduces the collision at unit level; the other two are named in its reason); none is reproduced
+from a user query.
+
+**Gate lanes.** Pre-chain "Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out
+of 129 tests: 129 tests pass"; `//tools/deps:all` 5 of 5. Not a front-end change: no reference lane. Rosters LOST 0,
+GAINED 0. No timing: a test runner's cache key.
+
+**Pins moved.** `@KnownDefect(owner = "W6.4")` on `collidingCsvHashesDoNotShareATestRuntime` removed (fixed, D14); one
+new `@KnownDefect(owner = "W6.4")` pin (above). **Number:** open wrong-results defects 10 → 9. **Net product lines:**
+21. **Cost:** under half a session.
+
 ## 2026-09-30 — Rebuild W0.6 push 7: a Pure class mapping without `~src` resolves; the pin removed
 
 **What changed and why.** `Mapping my::M ( Person: Pure { name: 'x' } )` under `import my::*` threw
