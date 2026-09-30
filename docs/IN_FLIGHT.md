@@ -77,6 +77,9 @@ In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new
   the upstream `pure/v1` endpoints the Query app needs and lite lacks, each in legend-engine's shape, measured
   against 4.145.0 -- `execute` with `parameterValues` (landed on the branch), `compilation/compile`,
   `compilation/lambdaReturnType`, `analytics/mapping/modelCoverage`, `analytics/dataSpace/render`, the query store.
+- `core/src/main/java/com/legend/Compiler.java`: `executeWire(model, ValueSpecification, ...)` gains the graph-fetch
+  branch its text twin already has (one `if`, no compiler logic) -- `execute` answers graphFetch as the engine does.
+- `core/src/main/java/com/legend/server/QueryStore.java` (new): the engine's query store, `LEGEND_QUERY_STORE`.
 - `wasm/src/main/java/planner/Wasm.java`: `modelJsonOrError` (E2's twin, byte-identical to the server's).
 - `MODULE.bazel`: a second `npm_translate_lock` (`npm_query`, `//query:pnpm-lock.yaml`), so `datacube/`'s lock
   is not touched.

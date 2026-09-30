@@ -697,6 +697,17 @@ public final class Compiler {
             java.sql.Connection connection, java.io.Writer out) throws java.io.IOException {
         Lowered l = lowerParsed(model, query, runtimeFqn, false);
         com.legend.plan.ResultShape shape = com.legend.plan.ResultShape.of(l.root());
+        if (shape == com.legend.plan.ResultShape.GRAPH) {
+            // a graph fetch: the database renders the objects' JSON array, as the text
+            // path above does (the Query app's G2)
+            com.legend.sql.dialect.SqlDialect dialect = dialectOf(l.ctx(), runtimeFqn, connection);
+            com.legend.exec.CsvSeed.run(com.legend.exec.CsvSeed.declaredSteps(runtimeFqn, l.ctx(), dialect),
+                    connection, dialect, null);
+            String sql = dialect.render(l.plan());
+            var r = com.legend.exec.Executor.execute(sql, l.plan(), l.root().info(), shape, connection, dialect, null);
+            out.write(r instanceof com.legend.exec.ExecutionResult.Graph g && g.json() != null ? g.json() : "[]");
+            return new com.legend.plan.QueryPlan(sql, l.root().info(), shape);
+        }
         if (shape != com.legend.plan.ResultShape.TABULAR) {
             throw new com.legend.error.NotImplementedException(
                     "execute: a " + shape + " result's serialization is unprobed");

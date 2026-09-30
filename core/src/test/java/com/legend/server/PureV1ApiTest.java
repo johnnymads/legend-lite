@@ -205,6 +205,26 @@ class PureV1ApiTest {
         assertEquals(200, stray.status(), stray.json());
     }
 
+    /**
+     * G2: a graph fetch through execute is the engine's JSON result -- its recorded answers for
+     * the Query app's demo model, compared as JSON trees: one object bare, none as [], checked
+     * results with their defects, nesting across to-one and to-many, derived properties.
+     */
+    @Test
+    void e8_execute_graphFetch_isTheEnginesJsonResult() throws IOException {
+        String trading = resource("upstream-api/query-app/trading.pure");
+        String modelContext = Json.toCompact(Map.of("_type", "text", "code", trading));
+        Json.Arr cases = (Json.Arr) Json.parse(resource("upstream-api/query-app/graph-fetch-execute.json"));
+        for (Json.Node n : cases.items()) {
+            Json.Obj c = (Json.Obj) n;
+            String q = c.getString("query");
+            String lam = PureV1Api.grammarToJsonLambda(q, false).json();
+            PureV1Api.Answer a = PureV1Api.execute("{\"function\":" + lam + ",\"model\":" + modelContext + "}");
+            assertEquals(200, a.status(), q + " -> " + a.json());
+            assertEquals(Json.toCompact(c.get("engine")), Json.toCompact(Json.parse(a.json())), q);
+        }
+    }
+
     /** C1: a model compiles whole -- elements and every body -- or answers its first failure, 400. */
     @Test
     void c1_compile_okOrTheFirstFailure_asTheEngineAnswers() {

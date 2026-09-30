@@ -1,0 +1,198 @@
+[
+ {
+  "query": "|demo::trading::Trade.all()->filter(x|$x.tradeId == 1)->graphFetch(#{demo::trading::Trade{tradeId}}#)->serialize(#{demo::trading::Trade{tradeId}}#)->from(demo::trading::TradingMapping, demo::trading::H2Runtime)",
+  "engine": {
+   "builder": {
+    "_type": "json"
+   },
+   "values": {
+    "tradeId": 1
+   }
+  }
+ },
+ {
+  "query": "|demo::trading::Trade.all()->filter(x|$x.tradeId == 99)->graphFetch(#{demo::trading::Trade{tradeId}}#)->serialize(#{demo::trading::Trade{tradeId}}#)->from(demo::trading::TradingMapping, demo::trading::H2Runtime)",
+  "engine": {
+   "builder": {
+    "_type": "json"
+   },
+   "values": []
+  }
+ },
+ {
+  "query": "|demo::trading::Trade.all()->filter(x|$x.tradeId < 3)->graphFetchChecked(#{demo::trading::Trade{tradeId}}#)->serialize(#{demo::trading::Trade{tradeId}}#)->from(demo::trading::TradingMapping, demo::trading::H2Runtime)",
+  "engine": {
+   "builder": {
+    "_type": "json"
+   },
+   "values": [
+    {
+     "defects": [],
+     "value": {
+      "tradeId": 1
+     }
+    },
+    {
+     "defects": [],
+     "value": {
+      "tradeId": 2
+     }
+    }
+   ]
+  }
+ },
+ {
+  "query": "|demo::trading::Firm.all()->graphFetch(#{demo::trading::Firm{legalName,region,founded,employees{firstName,age,trades{tradeId,side}}}}#)->serialize(#{demo::trading::Firm{legalName,region,founded,employees{firstName,age,trades{tradeId,side}}}}#)->from(demo::trading::TradingMapping, demo::trading::H2Runtime)",
+  "engine": {
+   "builder": {
+    "_type": "json"
+   },
+   "values": [
+    {
+     "legalName": "Meridian Capital",
+     "region": "AMER",
+     "founded": "1998-04-01",
+     "employees": [
+      {
+       "firstName": "Maria",
+       "age": 48,
+       "trades": [
+        {
+         "tradeId": 1,
+         "side": "BUY"
+        },
+        {
+         "tradeId": 4,
+         "side": "BUY"
+        }
+       ]
+      },
+      {
+       "firstName": "Sofia",
+       "age": 31,
+       "trades": [
+        {
+         "tradeId": 7,
+         "side": "BUY"
+        },
+        {
+         "tradeId": 11,
+         "side": "BUY"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "legalName": "Halberd Securities",
+     "region": "EMEA",
+     "founded": "2004-09-15",
+     "employees": [
+      {
+       "firstName": "Aoife",
+       "age": 42,
+       "trades": [
+        {
+         "tradeId": 3,
+         "side": "BUY"
+        },
+        {
+         "tradeId": 5,
+         "side": "SELL"
+        }
+       ]
+      },
+      {
+       "firstName": "Peter",
+       "age": 26,
+       "trades": [
+        {
+         "tradeId": 6,
+         "side": "BUY"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "legalName": "Kestrel Partners",
+     "region": "APAC",
+     "founded": null,
+     "employees": [
+      {
+       "firstName": "Kenji",
+       "age": 37,
+       "trades": [
+        {
+         "tradeId": 2,
+         "side": "SELL"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "legalName": "Northgate Asset Management",
+     "region": "AMER",
+     "founded": "2011-01-20",
+     "employees": [
+      {
+       "firstName": "David",
+       "age": null,
+       "trades": [
+        {
+         "tradeId": 9,
+         "side": "BUY"
+        }
+       ]
+      },
+      {
+       "firstName": "Amara",
+       "age": 35,
+       "trades": [
+        {
+         "tradeId": 8,
+         "side": "SELL"
+        },
+        {
+         "tradeId": 10,
+         "side": "SELL"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "query": "|demo::trading::Trade.all()->filter(x|$x.tradeId < 3)->graphFetch(#{demo::trading::Trade{tradeId,side,product{ticker},trader{fullName()}}}#)->serialize(#{demo::trading::Trade{tradeId,side,product{ticker},trader{fullName()}}}#)->from(demo::trading::TradingMapping, demo::trading::H2Runtime)",
+  "engine": {
+   "builder": {
+    "_type": "json"
+   },
+   "values": [
+    {
+     "tradeId": 1,
+     "side": "BUY",
+     "product": {
+      "ticker": "AAPL"
+     },
+     "trader": {
+      "fullName()": "Maria Alvarez"
+     }
+    },
+    {
+     "tradeId": 2,
+     "side": "SELL",
+     "product": {
+      "ticker": "AAPL"
+     },
+     "trader": {
+      "fullName()": "Kenji Watanabe"
+     }
+    }
+   ]
+  }
+ }
+]
