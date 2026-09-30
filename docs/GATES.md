@@ -5683,6 +5683,27 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild W0.6 push 13: `first()` over a group runs on the product's H2
+
+**What changed and why.** Pure's `first()` over a group is any non-empty value of the group (empties vanish from a
+collection; the engine's own spelling is unordered too). Lite spells it `ANY_VALUE`, which the product's H2 (2.1.214)
+does not have, so `groupBy(…, y|$y->first())` failed on a plain H2 with `Function "ANY_VALUE" not found`: a loud
+failure, not a wrong result (homework 4 D). E5: `sql/dialect/H2.java`'s reducer spells it `MIN(x)` for a comparable
+scalar (a valid "any non-empty value"), and refuses a JSON carrier with a `DialectCapability` wall ("no order to take a
+minimum over"). `H2Modern` inherits the arm; rows are the same either way.
+
+**Tests.** `H2FirstInGroupTest`: `first()` over a group on a plain H2 session, string and integer columns, with a NULL
+in the group that must be skipped (was the H2 error).
+
+**Gate lanes.** Pre-chain "3 tests pass and 1 fails" on `MIN_MATCHED` (2608 → 2611: the test's model joined the own
+corpus), then green; `bazel test //...` 129 of 129; `//tools/deps:all` 5 of 5. Not a front-end change. Rosters LOST 0,
+GAINED 0. No timing: a spelling.
+
+**Pins moved.** `OwnCorpusParityTest.MIN_MATCHED` 2608 → 2611. **Number:** open wrong-results defects unchanged at 8
+(D was never counted: a loud failure). **Net product lines:** +17. **Cost:** under half a session.
+
+**W0.6's six small pushes are done (1, 2, 3, 7, 8, 11, 13). Next, per D23: the wrong-rows tool on the stress corpus.**
+
 ## 2026-09-30 — Rebuild W0.6 push 11: `sum`, `plus` and `times` over an empty list give their unit
 
 **What changed and why.** Pure's `plus([])` and `sum([])` are 0 and `times([])` is 1 (`plus.pure:20-23`, the
