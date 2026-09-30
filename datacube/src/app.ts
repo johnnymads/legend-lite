@@ -224,6 +224,12 @@ export interface CubeAppBaseOptions {
    * cannot -- a cube over a model waits for the model home.
    */
   readonly cubeSource?: CubeSource;
+  /**
+   * Where the cube's windows (dialogs) float, and what they are kept inside: a page of several
+   * cubes gives its whole area, so a dialog opened from a small tile is not squeezed into the
+   * tile (plan F6, blocker #4). It must be positioned (relative or absolute). Default: the cube.
+   */
+  readonly windowHost?: HTMLElement;
   readonly writeClipboard?: (text: string) => void | Promise<void>;
   /**
    * Hand a file to the user.
@@ -321,6 +327,26 @@ function timingText(view: CubeView, cols: number): string {
 }
 
 /**
+ * What a cube tells whoever listens (`CubeApp#on`): a page, a pinned chart and the host can all
+ * listen at once, where the options' callbacks had room for one (plan F6, blocker #5).
+ */
+export interface CubeEvents {
+  /** A view landed (after the cube took it in). */
+  readonly view: readonly [view: CubeView];
+  /** The cube's state changed: a view landed, or a presentation change that runs no query. */
+  readonly change: readonly [];
+  /** A status line. */
+  readonly status: readonly [text: string, kind: 'ok' | 'warn' | 'error'];
+  /** The snap state changed. */
+  readonly plane: readonly [];
+}
+
+/** The z-index windows start from, above the cube's own layers. */
+const WINDOW_Z_BASE = 20;
+/** The top of each window host's stack of windows (`CubeApp#raise`). */
+const windowStack = new WeakMap<HTMLElement, number>();
+
+/**
  * Which cube on a document a keystroke from OUTSIDE every cube belongs to: the one last
  * clicked or focused. With several cubes on a page (plan F6), Ctrl-Z pressed on the page's
  * body must undo one cube, not all of them; with one, it still undoes that one.
@@ -388,8 +414,6 @@ export class CubeApp {
   #editor: CubeEditor | null = null;
   /** The windows on screen, by title. See `#showOverlay`. */
   readonly #open = new Map<string, HTMLElement>();
-  /** The z-index the most recently touched window was given. */
-  #zTop = 20;
   /** What is running, for the status bar's progress (upstream's TaskService). */
   readonly #tasks: { readonly description: string }[] = [];
   #endFetch: (() => void) | null = null;
@@ -446,6 +470,7 @@ export class CubeApp {
   #onDocKey: ((event: KeyboardEvent) => void) | null = null;
   /** Marks this cube as the document's last touched (see `lastTouched`). */
   readonly #onTouch = (): void => { lastTouched.set(this.#doc, this); };
+  readonly #listeners = new Map<keyof CubeEvents, Set<unknown>>();
 
   constructor(
     root: HTMLElement,
@@ -812,11 +837,11 @@ export class CubeApp {
         return;
       case 'committed':
         this.#onView(event.view);
-        this.#options.onChange?.();
+        this.#emit('change');
         return;
       case 'presentation':
         if (this.#view) this.#paintView(this.#view);
-        this.#options.onChange?.();
+        this.#emit('change');
         return;
       case 'refused':
         if (this.#view) this.#paintView(this.#view);
@@ -874,8 +899,7 @@ export class CubeApp {
   }
 
   #status(text: string, kind: 'ok' | 'warn' | 'error' = 'ok'): void {
-    if (this.#disposed) return;
-    this.#options.onStatus?.(text, kind);
+    this.#emit('status', text, kind);
   }
 
   #isDimension(column: string): boolean {
@@ -1049,7 +1073,7 @@ export class CubeApp {
     // The host LAST, once the app has taken the view in: told first, it read the app one view
     // behind (the snapshot was still the previous one), so "changed since saved" missed the
     // change that had just landed.
-    this.#options.onView?.(view);
+    this.#emit('view', view);
   }
 
   /**
@@ -2374,7 +2398,7 @@ export class CubeApp {
 
   /** The views and their layout changed: "changed since saved" re-reads the page. */
   #pageChanged(): void {
-    if (!this.#disposed) this.#options.onChange?.();
+    this.#emit('change');
   }
 
   /**
@@ -3373,7 +3397,12 @@ export class CubeApp {
     if (!open) {
       win.className = 'dc-app-overlay';
       win.dataset['window'] = key;
-      this.#els.root.append(win);
+      // still this cube's, wherever it floats: its drags land here, its keys are this cube's
+      win.dataset['dcCube'] = this.#els.root.dataset['dcCube'] ?? '';
+      const host = this.#options.windowHost ?? this.#els.root;
+      // outside the cube it does not inherit the cube's type and colours, so it carries them
+      if (host !== this.#els.root) win.classList.add('dc-app-floating');
+      host.append(win);
       this.#open.set(key, win);
       // Whichever window is touched comes to the front.
       win.addEventListener('pointerdown', () => this.#raise(win));
@@ -3417,7 +3446,7 @@ export class CubeApp {
     const remembered = this.#windows.get(key);
     this.#windows.set(
       key,
-      makeWindow(win, head, this.#els.root, {
+      makeWindow(win, head, this.#options.windowHost ?? this.#els.root, {
         ...(options.size ?? {}),
         ...(remembered ? { spec: remembered } : {}),
         onChange: (spec) => this.#windows.set(key, spec),
@@ -3429,8 +3458,12 @@ export class CubeApp {
 
   /** Put a window above every other. */
   #raise(win: HTMLElement): void {
-    this.#zTop += 1;
-    win.style.zIndex = String(this.#zTop);
+    // one stack per place windows float: several cubes sharing a `windowHost` share it too,
+    // so the window touched last is on top whichever cube opened it
+    const host = this.#options.windowHost ?? this.#els.root;
+    const top = (windowStack.get(host) ?? WINDOW_Z_BASE) + 1;
+    windowStack.set(host, top);
+    win.style.zIndex = String(top);
   }
 
   /** Close one window, by its title. */
@@ -3576,7 +3609,7 @@ export class CubeApp {
         const done = (): void => {
           snap.disabled = false;
           paint();
-          this.#options.onPlane?.();
+          this.#emit('plane');
         };
         // The PLANE changes, the cube's state does not: freeze (or release)
         // what is on screen, then the owner re-runs it -- not an undo step.
@@ -3733,6 +3766,30 @@ export class CubeApp {
       }
     };
     this.#doc.addEventListener('keydown', this.#onDocKey);
+  }
+
+  /**
+   * Listen to what the cube tells (`CubeEvents`); returns the way to stop. Any number of
+   * listeners, beside the options' callbacks; none are called once the cube is disposed.
+   */
+  on<K extends keyof CubeEvents>(event: K, fn: (...args: CubeEvents[K]) => void): () => void {
+    let set = this.#listeners.get(event);
+    if (!set) this.#listeners.set(event, set = new Set());
+    set.add(fn);
+    return () => { set.delete(fn); };
+  }
+
+  /** Tell the options' callback, then every listener; nothing once disposed. */
+  #emit<K extends keyof CubeEvents>(event: K, ...args: CubeEvents[K]): void {
+    if (this.#disposed) return;
+    const o = this.#options;
+    switch (event) {
+      case 'view': o.onView?.(...(args as CubeEvents['view'])); break;
+      case 'change': o.onChange?.(); break;
+      case 'status': o.onStatus?.(...(args as CubeEvents['status'])); break;
+      case 'plane': o.onPlane?.(); break;
+    }
+    for (const fn of [...(this.#listeners.get(event) ?? [])]) (fn as (...a: CubeEvents[K]) => void)(...args);
   }
 
   /**

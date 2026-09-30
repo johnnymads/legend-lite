@@ -129,6 +129,9 @@
 .dc-app input:focus-visible,
 .dc-app button:focus-visible,
 .dc-app select:focus-visible,
+.dc-app-floating input:focus-visible,
+.dc-app-floating button:focus-visible,
+.dc-app-floating select:focus-visible,
 .dc-grid:focus-visible,
 .dc-menu button:focus-visible {
   outline: 1.5px solid var(--tw-sky-600);

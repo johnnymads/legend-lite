@@ -20,9 +20,10 @@ let a: CubeApp;
 let b: CubeApp;
 let rootA: HTMLElement;
 let rootB: HTMLElement;
+let page: HTMLElement;
 
 beforeEach(async () => {
-  dom = new JSDOM('<!doctype html><p id="outside">text</p><div id="a"></div><div id="b"></div>');
+  dom = new JSDOM('<!doctype html><p id="outside">text</p><div id="page"><div id="a"></div><div id="b"></div></div>');
   const g = globalThis as unknown as Record<string, unknown>;
   g['window'] = dom.window;
   g['document'] = dom.window.document;
@@ -35,8 +36,10 @@ beforeEach(async () => {
   const planner = new StubPlanner();
   rootA = dom.window.document.getElementById('a') as unknown as HTMLElement;
   rootB = dom.window.document.getElementById('b') as unknown as HTMLElement;
-  a = new CubeApp(rootA, BY_REGION, { engine, planner });
-  b = new CubeApp(rootB, BY_REGION, { engine, planner });
+  page = dom.window.document.getElementById('page') as unknown as HTMLElement;
+  // the page's whole area is where both cubes' windows float
+  a = new CubeApp(rootA, BY_REGION, { engine, planner, windowHost: page });
+  b = new CubeApp(rootB, BY_REGION, { engine, planner, windowHost: page });
   await a.open();
   await b.open();
   await settle();
@@ -94,5 +97,42 @@ describe('several cubes on one page', () => {
     ctrlZ(dom.window.document.getElementById('outside')!);
     await settle();
     assert.deepEqual(b.snapshot.rows, ['region'], 'the other still undoes');
+  });
+
+  it('any number of listeners hear a cube, each can stop, and none hear a disposed cube', async () => {
+    const heard: string[] = [];
+    const stopPage = a.on('change', () => heard.push('page'));
+    a.on('change', () => heard.push('chart'));
+    a.on('view', (view) => heard.push(`view:${view !== undefined}`));
+    await groupByDesk(rootA);
+    assert.deepEqual([...new Set(heard)].sort(), ['chart', 'page', 'view:true']);
+    assert.ok(!heard.includes('b'), 'nothing from the other cube');
+    heard.length = 0;
+    stopPage();
+    ctrlZ(rootA);
+    await settle();
+    assert.ok(heard.includes('chart') && !heard.includes('page'), `the stopped listener is gone: ${heard.join(',')}`);
+    heard.length = 0;
+    a.dispose();
+    await groupByDesk(rootB);
+    assert.deepEqual(heard, [], 'a disposed cube tells no one');
+  });
+
+  it('a window floats in the page, not the tile, and is still its cube\'s', async () => {
+    await groupByDesk(rootA);
+    await groupByDesk(rootB);
+    a.openEditor();
+    await settle();
+    const win = page.querySelector(':scope > .dc-app-overlay') as HTMLElement | null;
+    assert.ok(win, 'the window is in the page');
+    assert.equal(rootA.querySelector('.dc-app-overlay'), null, 'not squeezed into its cube');
+    assert.equal(win.dataset['dcCube'], rootA.dataset['dcCube']);
+    assert.ok(win.classList.contains('dc-app-floating'));
+    // a keystroke in it is its cube's
+    ctrlZ(win.querySelector('.dc-overlay-body') ?? win);
+    await settle();
+    assert.deepEqual([a.snapshot.rows, b.snapshot.rows], [['region'], ['region', 'desk']]);
+    a.dispose();
+    assert.equal(page.querySelector(':scope > .dc-app-overlay'), null, 'disposing the cube closes its windows');
   });
 });

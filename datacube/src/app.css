@@ -677,6 +677,16 @@
   position: relative;
 }
 
+/* A window a page floats outside the cube (the `windowHost` option): it
+   carries the type and colours it would have inherited from the cube. */
+.dc-app-floating {
+  font-family: var(--dc-font);
+  font-size: var(--dc-text-base-size);
+  line-height: var(--dc-text-base-line);
+  color: var(--tw-black);
+  background: var(--tw-white);
+}
+
 /* A dialog was a block appended after the grid: opening one pushed
    the page down and showed it BELOW the data it was about. This is
    the floating window DataCube has. */
