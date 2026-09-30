@@ -184,6 +184,33 @@ In order: each step makes the tool usable for something more.
 
 ### B1. Charts, complete (M0 finished) — L
 
+**One chart spec under every chart** (agreed 2026-09-30). A chart is a small declarative description,
+not a hand-written type:
+
+- A mark (bar, line, area, point, arc, cell, box, …), and fields on the channels x, y, colour, size,
+  facet and tooltip.
+  - Each field has its aggregate, bin or time unit.
+  - Sort, top-N with an "Other" bucket, and reference lines.
+- **The database computes it:** the spec lowers to the cube's query (bins, quantiles, top-N and "Other"
+  through the query builder), then to ECharts options.
+- **Adding a type is a mapping, not a subsystem.**
+- **Two ways to build the same spec, and a user can switch between them freely:**
+  1. **From the grid (the fast path, ours).** The page has one **live chart**, badged "Following the
+     grid", that re-draws as the grid is pivoted, grouped and filtered: Excel's PivotChart, for people who
+     think in pivots.
+     - **Pin** freezes a copy onto the page as a standalone tile. It keeps the *query and the spec*, not
+       the data, so it still refreshes and still answers page filters and cross-filters (B3). Pivoting the
+       grid never changes a pinned chart.
+     - **Open in grid** takes a pinned chart's query back into the grid to re-pivot, then **Pin** again
+       (as a new chart, or replacing it). No other tool has this round trip.
+  2. **On shelves (the standard path).** A pinned chart is edited directly: drag fields onto channels, with
+     a suggested chart type for the fields chosen. This is what Tableau and Power BI users expect.
+- **Naming:** "Pin", not "Freeze" or "Snap". **Snap** stays the word for a data snapshot (a tab table).
+- **Migration:** today's "Freeze" becomes Pin. Today's several chart tiles that follow the grid become one
+  live chart plus pinned ones.
+
+**Chart types and features:**
+
 - Treemap moved onto ECharts. New types: histogram and box plot (binning and quantiles computed by
   **the database** through the query builder), combo/dual axis, small multiples, KPI tile (value, change,
   trend line), sparklines and bars inside grid cells, and later maps (geographic, from a region or
@@ -191,8 +218,13 @@ In order: each step makes the tool usable for something more.
 - An options UI for several measures; reference lines and bands (target, average); annotations; a dark
   theme from design tokens; keyboard access to marks; sampling and zoom for large series (LTTB,
   `dataZoom`); an "other" bucket in place of a silent top-N cut.
-- **Done when:** each type has node SVG tests and a browser check; a 100,000-point series stays
-  interactive; axe-core finds no violations on a chart page.
+- More types from the spec: sunburst, sankey, funnel, gauge, radar, waterfall and candlestick.
+- **Done when:**
+  - each type has node SVG tests and a browser check;
+  - a 100,000-point series stays interactive;
+  - axe-core finds no violations on a chart page;
+  - a browser harness pivots the grid and sees the live chart change and a pinned one not change, then
+    opens the pinned one in the grid and pins it back.
 
 ### B2. Pages — L (needs F6 and F7)
 
