@@ -139,8 +139,26 @@ public final class ServiceTestRunner implements AutoCloseable {
     private record TestRuntime(PureModelContext ctx, String runtimeFqn) {
     }
 
+    /** One test's computed answer, as its serialization format spells it,
+     *  before any assertion judges it (rebuild D23: the rows a second engine
+     *  is compared with). */
+    public record Rows(String serviceFqn, String suiteId, String testId,
+                       @com.legend.base.Nullable Object actual) {
+    }
+
+    /** Where every test's computed answer is offered before judging; null
+     *  when nobody asked. */
+    private final java.util.function.@com.legend.base.Nullable Consumer<Rows> rowsSink;
+
     public ServiceTestRunner(ModelContext ctx, PureTestRunner.Sessions opener, Sessions policy,
             ConnectionDefinition.DatabaseType sessionType) {
+        this(ctx, opener, policy, sessionType, null);
+    }
+
+    public ServiceTestRunner(ModelContext ctx, PureTestRunner.Sessions opener, Sessions policy,
+            ConnectionDefinition.DatabaseType sessionType,
+            java.util.function.@com.legend.base.Nullable Consumer<Rows> rowsSink) {
+        this.rowsSink = rowsSink;
         if (!(ctx instanceof PureModelContext pmc)) {
             throw new IllegalArgumentException("a service test runtime is an execution overlay"
                     + " on the compiled model; got " + ctx.getClass().getSimpleName());
@@ -232,6 +250,9 @@ public final class ServiceTestRunner implements AutoCloseable {
                 return fail(svc, suite, test, "execute: the platform produced no result");
             }
             Object actual = serialize(result, test.serializationFormat());
+            if (rowsSink != null) {
+                rowsSink.accept(new Rows(svc.qualifiedName(), suite.id(), test.id(), actual));
+            }
             for (Protocol.PTestAssertion a : test.assertions()) {
                 String diff = judge(a, actual);
                 if (diff != null) {

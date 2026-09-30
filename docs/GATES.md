@@ -5683,6 +5683,48 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild D23 (1): the wrong-rows tool runs; the engine and lite compared on the seed data
+
+**What it is** (`tools/wrongrows/README.md`). Both runners gained a ROWS mode and a DATA switch. legend-engine
+(`tools/engine-runner:testable`): `--rows=<dir>` writes every test's actual rows, pass or fail (every `EqualToJson`
+expectation is replaced by a sentinel before the run, so the framework hands over what it computed); `--data=<file>`
+replaces the model's elements by path from an override file, so a damaged `###Data` element stands in for the seed
+without a corpus file changing. Lite (`//core:stress_suites`): `-Dstress.rows=<dir>` through a new
+`ServiceTestRunner.Rows` sink offered every computed answer before judging; `-Dstress.data=<file>` puts the override
+sources FIRST, since `Compiler.compileModel(List<ModelSource>)` keeps the first definition and reports the dropped one;
+with an override the lane judges nothing (the expectations describe the seeds). `tools/wrongrows/compare.py`
+compares two row directories as multisets (D6), normalising numbers and midnight timestamps, into EQUAL / SPELLING /
+COUNT / VALUES / SHAPE / ENGINE-ONLY / LITE-ONLY. `tools/wrongrows/engine-rows.sh` drives the engine in batches of a
+hundred services, each its own JVM with a time limit: the first whole-corpus attempt hung forever on a connection
+pool inside one service and, because the engine prints results only at the end, lost everything; a hang now costs one
+batch (the one that hung: `stress::X1_ExternalEntityProjection`'s batch, re-run in fives; alone it errors, not hangs).
+
+**The first run: the seed data, 4,735 services** (receipt `receipts/rebuild-D23-tool-1aedc43ac/`; the dossier
+`docs/plan-audit-2026-09-26/wrongrows/seed-disagreements-2026-09-30.md`, the report `seed-compare-2026-09-30.tsv`).
+Engine: 4,729 row files in 48 batches, about 0.6 s per test plus 15 s of parse and compile per batch, 62 minutes
+in all; lite: 4,714 row files in 18 s.
+
+| class | tests | what it is |
+|---|---|---|
+| EQUAL | 4,686 | the same rows |
+| SPELLING | 3 | equal once normalised (a midnight timestamp for a date; a float's last digit) |
+| COUNT | 2 | `CV6_PillarEmptiness` (engine 1,072 rows, lite 192: an `isEmpty()` over a navigation fans the engine's projection out), `F41_RelationFirst` (engine 4 rows, lite 1: `first()` after `sort` on a relation) |
+| VALUES | 17 | counts over navigations (`->count()` on an association: engine 1 where lite and the corpus say 0, `F0`–`F6`, `LE2`), three-valued booleans (`F39`: `startsWith` over a NULL column is `false` in the engine, `null` in lite), a negative hours difference off by one (`DSLocal_RegulatorySubmission`), `dayOfYear` (engine 3 for June 3rd, lite 155), `REGX_*`, `MO2`, `LE0`, `CV7`, `DSLocal_*` |
+| ENGINE-ONLY | 21 | lite produced no rows: the four excluded files' services (`M1`, `M2`, `MU0`, …), the hierarchy services of `97-hier-execution.pure`, `F37_SubstringPure`, four `*_HypotheticalPnl`, `N4` multi-execution, `SP_*`, `X0` |
+| LITE-ONLY | 6 | the engine errored (an enumeration mapping over a value not in the mapping; a DuckDB syntax error in engine SQL) or produced nothing |
+
+**Read carefully:** every one of the 22 row disagreements is a test lite PASSES, so on each the independent Python
+oracle that wrote the corpus's expectations sided with lite and the engine is the outlier. That does not make lite
+right: `dayOfYear` is plainly the engine's defect; the three-valued booleans are a null-semantics choice the register
+must rule on (W5.2); the association counts and the fan-out need the data read row by row. **Attribution to a stage,
+with the files a fix would touch, is the next slice**, together with the damaged data (`damage.py`), which is what the
+tool was built for: on the seeds, 99.5% agreement says the fixtures are friendly, not that the middle is right.
+
+**Gate lanes.** Pre-chain "Executed 4 out of 4 tests: 4 tests pass"; `bazel test //...` "Executed 38 out of 129
+tests: 129 tests pass" (the stress lane unchanged in its default mode); `//tools/deps:all` 5 of 5. Not a front-end
+change. **Pins moved:** none. **Net product lines:** +26 (`ServiceTestRunner`'s sink). **Cost:** one session, two
+whole-corpus engine runs (one lost to the hang).
+
 ## 2026-09-30 — Rebuild W0.6 push 13: `first()` over a group runs on the product's H2
 
 **What changed and why.** Pure's `first()` over a group is any non-empty value of the group (empties vanish from a
