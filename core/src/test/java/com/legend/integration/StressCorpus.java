@@ -86,6 +86,21 @@ final class StressCorpus {
         return sb.toString();
     }
 
+    /** The corpus as SOURCES, the {@code overrides} FIRST: the model builder keeps
+     *  the first definition of an element and reports the dropped one, so a
+     *  damaged {@code ###Data} element in an override file replaces the seed of
+     *  the same name without a corpus file changing (rebuild D23). */
+    static List<com.legend.Compiler.ModelSource> sources(List<Path> overrides) throws Exception {
+        List<com.legend.Compiler.ModelSource> out = new ArrayList<>();
+        for (Path p : overrides) {
+            out.add(new com.legend.Compiler.ModelSource(p.toString(), Files.readString(p)));
+        }
+        for (Path p : files()) {
+            out.add(new com.legend.Compiler.ModelSource(p.getFileName().toString(), Files.readString(p)));
+        }
+        return out;
+    }
+
     static void reportExclusions() {
         EXCLUDED.forEach((f, why) ->
                 System.out.println("  EXCLUDED " + f + ": " + why));

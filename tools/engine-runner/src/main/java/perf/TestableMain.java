@@ -42,11 +42,29 @@ public class TestableMain
         // measure which ones OUR corpus exercises, which is a different question and the
         // one that makes corpus work countable.
         String pmcdJson = null;
+        // --rows=<dir> (rebuild D23): the engine's ACTUAL rows for EVERY test, pass or
+        // fail, one JSON file per test. Every EqualToJson expectation is replaced by a
+        // sentinel before the run, so the framework reports each test as failing and
+        // hands over what it computed; the summary counts ran/errored, never passed.
+        String rowsDir = null;
+        // --data=<file.pure> (rebuild D23): elements in this file REPLACE the model's
+        // elements of the same path (a damaged ###Data element in place of the seed);
+        // the seed files are never edited. Several allowed; later ones win.
+        List<String> dataOverrides = new ArrayList<>();
         for (String a : args)
         {
             if (a.startsWith("--testable="))
             {
                 testables.add(a.substring("--testable=".length()));
+            }
+            else if (a.startsWith("--rows="))
+            {
+                rowsDir = a.substring("--rows=".length());
+                Files.createDirectories(Cwd.of(rowsDir));
+            }
+            else if (a.startsWith("--data="))
+            {
+                dataOverrides.add(a.substring("--data=".length()));
             }
             else if (a.startsWith("--pmcd-json="))
             {
@@ -66,6 +84,14 @@ public class TestableMain
         PureGrammarParser parser = PureGrammarParser.newInstance();
         long t0 = System.nanoTime();
         PureModelContextData pmcd = parser.parseModel(src.toString());
+        for (String f : dataOverrides)
+        {
+            pmcd = override(pmcd, parser.parseModel(Files.readString(Cwd.of(f))), f);
+        }
+        if (rowsDir != null)
+        {
+            pmcd = failEveryAssertion(pmcd);
+        }
         double parseMs = (System.nanoTime() - t0) / 1e6;
         t0 = System.nanoTime();
         if (pmcdJson != null)
@@ -128,6 +154,18 @@ public class TestableMain
             TestExecuted te = (TestExecuted) r;
             boolean allPass = te.assertStatuses.stream().allMatch(a -> !(a instanceof AssertFail));
             if (allPass) { pass++; System.out.println("PASS  " + id); continue; }
+            if (rowsDir != null)
+            {
+                // the rows mode: every assertion fails by construction; the actual is the point
+                String base = id.replaceAll("[^A-Za-z0-9_.-]", "_");
+                String actual = te.assertStatuses.stream()
+                        .filter(a -> a instanceof EqualToJsonAssertFail)
+                        .map(a -> ((EqualToJsonAssertFail) a).actual)
+                        .findFirst().orElse(null);
+                Files.writeString(Cwd.of(rowsDir, base + ".rows.json"), actual == null ? "null" : actual);
+                System.out.println("ROWS  " + id + "  -> " + base + ".rows.json");
+                continue;
+            }
             fail++;
             System.out.println("FAIL  " + id);
             for (AssertionStatus a : te.assertStatuses)
@@ -155,6 +193,75 @@ public class TestableMain
         System.out.printf("%n%d passed, %d failed, %d errored, %d total%n",
             pass, fail, err, res.results.size());
         System.exit(0);
+    }
+
+    /** The model with every element of {@code over} replacing the element of the same
+     *  path, reported one by one. */
+    static PureModelContextData override(PureModelContextData base, PureModelContextData over, String from)
+    {
+        java.util.Map<String, org.finos.legend.engine.protocol.pure.m3.PackageableElement> byPath =
+                new java.util.LinkedHashMap<>();
+        for (var e : base.getElements())
+        {
+            byPath.put(e.getPath(), e);
+        }
+        for (var e : over.getElements())
+        {
+            if (e instanceof org.finos.legend.engine.protocol.pure.v1.model.packageableElement.section.SectionIndex)
+            {
+                continue;   // the override file's own section bookkeeping
+            }
+            System.out.println((byPath.containsKey(e.getPath()) ? "REPLACED " : "ADDED    ")
+                    + e.getPath() + "  (" + from + ")");
+            byPath.put(e.getPath(), e);
+        }
+        return PureModelContextData.newBuilder()
+                .withOrigin(base.getOrigin())
+                .withSerializer(base.getSerializer())
+                .withElements(new ArrayList<>(byPath.values()))
+                .build();
+    }
+
+    /** Every EqualToJson expectation replaced by a sentinel no result equals, so the
+     *  framework reports each test's ACTUAL. The protocol objects are mutated in place;
+     *  nothing is written back. */
+    static PureModelContextData failEveryAssertion(PureModelContextData pmcd)
+    {
+        int n = 0;
+        for (var e : pmcd.getElements())
+        {
+            if (!(e instanceof org.finos.legend.engine.protocol.pure.v1.model.packageableElement.service.Service svc)
+                    || svc.testSuites == null)
+            {
+                continue;
+            }
+            for (var suite : svc.testSuites)
+            {
+                if (suite.tests == null)
+                {
+                    continue;
+                }
+                for (var test : suite.tests)
+                {
+                    if (!(test instanceof org.finos.legend.engine.protocol.pure.v1.model.packageableElement.service.ServiceTest st)
+                            || st.assertions == null)
+                    {
+                        continue;
+                    }
+                    for (var a : st.assertions)
+                    {
+                        if (a instanceof org.finos.legend.engine.protocol.pure.v1.model.test.assertion.EqualToJson eq
+                                && eq.expected != null)
+                        {
+                            eq.expected.data = "[{\"__rows_mode__\":\"no expectation\"}]";
+                            n++;
+                        }
+                    }
+                }
+            }
+        }
+        System.out.println("rows mode: " + n + " expectation(s) replaced");
+        return pmcd;
     }
 
     static String oneLine(String s, int max)

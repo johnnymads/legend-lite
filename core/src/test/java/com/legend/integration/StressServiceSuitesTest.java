@@ -29,14 +29,29 @@ class StressServiceSuitesTest {
     @Test
     void suites() throws Exception {
         long t0 = System.nanoTime();
-        String model = StressCorpus.model();
         StressCorpus.reportExclusions();
-        var ctx = com.legend.Compiler.compileModel(model);
+        // -Dstress.data=<file.pure>[,<file.pure>] (rebuild D23): every element in these
+        // files replaces the corpus element of the same name -- a damaged ###Data
+        // element in place of a seed; the corpus files are never edited
+        List<Path> overrides = java.util.Arrays.stream(System.getProperty("stress.data", "").split(","))
+                .map(String::trim).filter(x -> !x.isEmpty()).map(Path::of).toList();
+        // -Dstress.rows=<dir> (rebuild D23): every test's computed answer, one JSON file
+        // per test, whatever the verdict -- what a second engine is compared with
+        String rowsDirName = System.getProperty("stress.rows", "").trim();
+        Path rowsDir = rowsDirName.isEmpty() ? null : Path.of(rowsDirName);
+        if (rowsDir != null) {
+            Files.createDirectories(rowsDir);
+        }
+        var module = com.legend.Compiler.parseSources(StressCorpus.sources(overrides));
+        for (String d : module.duplicateElements()) {
+            System.out.println("[suites] " + (overrides.isEmpty() ? "DUPLICATE " : "REPLACED  ") + d);
+        }
+        var ctx = com.legend.Compiler.buildModel(module.model());
         long tModel = System.nanoTime();
-        System.out.printf("[suites] model: %d KB, parse+build %d ms%n",
-                model.length() / 1024, (tModel - t0) / 1_000_000);
+        System.out.printf("[suites] model: %d elements, parse+build %d ms%n",
+                module.model().elements().size(), (tModel - t0) / 1_000_000);
 
-        var services = com.legend.testing.Own.model(model).elements().stream()
+        var services = module.model().elements().stream()
                 .filter(el -> el instanceof com.legend.model.ServiceDefinition svc
                         && svc.qualifiedName().startsWith("stress::")
                         && svc.testSuites() != null)
@@ -80,8 +95,17 @@ class StressServiceSuitesTest {
         Path progressPath = Repo.out("stress-suites-progress" + (h2 ? "-h2" : "") + ".txt");
         int done = 0;
         long lastReport = System.nanoTime();
+        java.util.function.Consumer<ServiceTestRunner.Rows> sink = rowsDir == null ? null : rows -> {
+            String base = (rows.suiteId() + " / " + rows.testId()).replaceAll("[^A-Za-z0-9_.-]", "_");
+            try {
+                Files.writeString(rowsDir.resolve(base + ".rows.json"),
+                        com.legend.sql.Json.canonical(rows.actual()));
+            } catch (java.io.IOException e) {
+                throw new java.io.UncheckedIOException(e);
+            }
+        };
         try (var runner = new ServiceTestRunner(ctx,
-                () -> DriverManager.getConnection(jdbcUrl), policy, sessionType);
+                () -> DriverManager.getConnection(jdbcUrl), policy, sessionType, sink);
              var progress = Files.newBufferedWriter(progressPath)) {
             for (var svc : services) {
                 if (!only.isEmpty() && !svc.qualifiedName().contains(only)) {
@@ -135,6 +159,12 @@ class StressServiceSuitesTest {
                 .collect(java.util.stream.Collectors.groupingBy(s -> s, TreeMap::new,
                         java.util.stream.Collectors.counting()))
                 .forEach((k, v) -> System.out.printf("[suites] SKIP %5d  %s%n", v, k));
+        if (!overrides.isEmpty()) {
+            // damaged data: the corpus's expectations describe the seeds, so the
+            // verdicts mean nothing here -- the rows written above are the output
+            System.out.println("[suites] data overridden: no verdict is judged; rows are the output");
+            return;
+        }
         assertFalse(pass.isEmpty(), "nothing passed — the harness itself is broken");
         if (only.isEmpty()) {
             // THE RATCHET (2026-09-16, first full run: 2,702 / 2,028 / 6 of 4,736 in
