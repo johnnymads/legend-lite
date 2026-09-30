@@ -264,6 +264,9 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
   if ((a = step('groupBy')) && a.length === 3) {
     groupBy = { keys: colSpecs(a[1]!).map((c) => c.name), aggs: colSpecs(a[2]!) };
     n = a[0]!;
+  } else if ((a = step('aggregate')) && a.length === 2) {
+    groupBy = { keys: [], aggs: colSpecs(a[1]!) };
+    n = a[0]!;
   }
   a = step('project');
   if (!a || a.length !== 2) return fail(isFunc(n) ? `${funcName(n)}() where the form expects project(~[...])` : 'a query that does not project columns');

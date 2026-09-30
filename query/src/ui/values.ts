@@ -76,6 +76,33 @@ export interface ValueEditorOptions {
   /** Parameters whose type fits, offered as values. */
   readonly parameters: readonly Parameter[];
   readonly onChange: (v: Value) => void;
+  /** Values that start with what was typed (a string property's typeahead); none when absent. */
+  readonly suggest?: (prefix: string) => Promise<string[]>;
+}
+
+let listIds = 0;
+
+/** Suggestions under an input as it is typed: at least 2 characters, 300 ms after the last key. */
+function withTypeahead(input: HTMLInputElement, suggest: ((prefix: string) => Promise<string[]>) | undefined): Child {
+  if (!suggest) return null;
+  const id = `q-suggest-${++listIds}`;
+  const list = h('datalist', { id });
+  input.setAttribute('list', id);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: AbortController | undefined;
+  input.addEventListener('input', () => {
+    if (timer) clearTimeout(timer);
+    const prefix = input.value;
+    if (prefix.length < 2) return;
+    timer = setTimeout(() => {
+      abort?.abort();
+      abort = new AbortController();
+      suggest(prefix).then((values) => {
+        mount(list, values.map((v) => h('option', { value: v })));
+      }, () => undefined);
+    }, 300);
+  });
+  return list;
 }
 
 /** An editor for one value (or a list): the control, and a menu of parameters and relative dates. */
@@ -159,7 +186,7 @@ function single(o: ValueEditorOptions, family: string): Child {
     return s;
   }
   const text = v && 'value' in v && typeof v.value !== 'boolean' ? String(v.value) : '';
-  const input = h('input', {
+  const input: HTMLInputElement = h('input', {
     class: 'q-input',
     type: family === 'date' ? (standardPrimitive(o.type) === 'DateTime' ? 'datetime-local' : 'date') : 'text',
     inputmode: isNumericFamily(primitiveFamily(o.type)) ? 'decimal' : undefined,
@@ -174,7 +201,7 @@ function single(o: ValueEditorOptions, family: string): Child {
       if (parsed) o.onChange(parsed);
     },
   });
-  return input;
+  return [input, family === 'string' ? withTypeahead(input, o.suggest) : null];
 }
 
 /** A list: chips, an input that adds on Enter or comma, and pasted CSV split into values. */
@@ -203,7 +230,9 @@ function listEditor(o: ValueEditorOptions): Child {
     },
   });
   const enumList = o.graph.enumerations.get(o.type);
+  const typeahead = !enumList && primitiveFamily(o.type) === 'string' ? withTypeahead(input, o.suggest) : null;
   return [
+    typeahead,
     values.map((v, i) => h('span', { class: 'q-chip' }, valueLabel(v),
       h('button', { class: 'q-icon-btn', style: 'padding:0 2px', title: 'Remove', onclick: () => set(values.filter((_, j) => j !== i)) }, '×'))),
     input,

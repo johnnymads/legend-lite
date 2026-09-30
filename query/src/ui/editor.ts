@@ -8,8 +8,9 @@ import { emptyQuery, type ClassSource } from '../builder/state.ts';
 import { simpleName } from '../model/graph.ts';
 import { confirmDialog, h, mount, select, type Child } from './dom.ts';
 import { renderColumns } from './columns.ts';
-import { Explorer } from './explorer.ts';
+import { Explorer, showPreview } from './explorer.ts';
 import { renderFilter } from './filter.ts';
+import { suggest } from '../app/probe.ts';
 import { renderParameters } from './params.ts';
 import { openQueryDialog, save, saveAs } from './queries.ts';
 import { Results } from './results.ts';
@@ -45,7 +46,7 @@ function offeredClasses(app: AppContext, session: Session, coverage: Coverage | 
 
 export function renderEditor(root: HTMLElement, app: AppContext, session: Session): EditorHandle {
   const graph = session.project.graph;
-  const explorer = new Explorer(session, { humanized: true, showUnmapped: false });
+  const explorer = new Explorer(session, { humanized: true, showUnmapped: false }, (path) => void showPreview(app, session, path));
   const results = new Results(app, session);
   const setup = h('div', { class: 'q-setup' });
   const params = h('div');
@@ -138,7 +139,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
     } else {
       buildArea.replaceChildren(columns, filter);
       renderColumns(columns, session, () => explorer.options.humanized);
-      renderFilter(filter, session);
+      renderFilter(filter, session, (path, prefix) => suggest(app, session, path, prefix));
     }
   };
   const buildArea = h('div', { class: 'q-build' });

@@ -10,7 +10,10 @@ import type { PropertyPath } from '../builder/state.ts';
 import {
   humanize, isToMany, multiplicityText, primitiveFamily, simpleName, type ModelGraph, type PropertyInfo,
 } from '../model/graph.ts';
-import { h, mount, showMenu, tooltip, type Child } from './dom.ts';
+import { dialog, h, mount, showMenu, tooltip, type Child } from './dom.ts';
+import { preview, probeable } from '../app/probe.ts';
+import type { AppContext } from '../app/context.ts';
+import { cellText } from './format.ts';
 
 export interface ExplorerOptions {
   humanized: boolean;
@@ -36,7 +39,10 @@ export class Explorer {
   #coverage: Coverage | Error | undefined;
   #search = '';
 
-  constructor(session: Session, options: ExplorerOptions) {
+  readonly #onPreview: (path: PropertyPath) => void;
+
+  constructor(session: Session, options: ExplorerOptions, onPreview: (path: PropertyPath) => void) {
+    this.#onPreview = onPreview;
     this.#session = session;
     this.#graph = session.project.graph;
     this.options = options;
@@ -126,6 +132,7 @@ export class Explorer {
             ? [{ label: 'Add all properties as columns', action: () => this.#addAll(p.type, path) }]
             : [{ label: 'Add as column', action: () => this.#addColumn(path) }]),
           ...(isClass ? [] : [{ label: 'Add as filter condition', action: () => this.#addFilter(path) }]),
+          ...(isClass ? [] : ['separator' as const, { label: 'Preview data', action: () => this.#onPreview(path), disabled: !mapped || !probeable(this.#session, path) }]),
         ]);
       },
     },
@@ -201,4 +208,21 @@ function stepOf(p: PropertyInfo): PropertyPath[number] {
 
 function key(path: PropertyPath): string {
   return path.map((s) => s.property).join('.');
+}
+
+/** A property's preview in a dialog: its commonest values, or a number's aggregates. */
+export async function showPreview(app: AppContext, session: Session, path: PropertyPath): Promise<void> {
+  const body = h('div', null, h('span', { class: 'q-spinner' }), ' Loading…');
+  dialog(`Preview: ${path.map((s) => humanize(s.property)).join(' / ')}`, (d) => ({
+    body,
+    foot: h('button', { class: 'q-btn primary', onclick: () => d.close() }, 'Close'),
+  }));
+  try {
+    const p = await preview(app, session, path);
+    mount(body, h('table', { class: 'q-table' },
+      h('thead', null, h('tr', null, p.columns.map((c) => h('th', null, c)))),
+      h('tbody', null, p.rows.map((r) => h('tr', null, r.map((v) => h('td', { class: typeof v === 'number' ? 'mono' : '' }, v === null ? 'null' : cellText(v))))))));
+  } catch (e) {
+    mount(body, h('div', { class: 'q-error-box' }, (e as Error).message));
+  }
 }

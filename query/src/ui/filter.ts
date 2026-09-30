@@ -4,7 +4,8 @@
 
 import { addCondition, mapGroup, mapNode, newCondition, propertyAt, prune } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
-import { freshId, type Condition, type FilterNode, type Group, type Operator, type QueryState } from '../builder/state.ts';
+import { freshId, type Condition, type FilterNode, type Group, type Operator, type PropertyPath, type QueryState } from '../builder/state.ts';
+import { probeable } from '../app/probe.ts';
 import { humanize, isNumericFamily, isOptional, isToMany, primitiveFamily, type ModelGraph } from '../model/graph.ts';
 import { h, mount, showMenu, type Child } from './dom.ts';
 import { propertyDropZone } from './columns.ts';
@@ -32,7 +33,10 @@ export function operatorsFor(graph: ModelGraph, type: string, optional: boolean)
   return [...empty];
 }
 
-export function renderFilter(container: HTMLElement, session: Session): void {
+/** Typeahead for a condition's path, when the editor offers it. */
+export type Suggestions = (path: PropertyPath, prefix: string) => Promise<string[]>;
+
+export function renderFilter(container: HTMLElement, session: Session, suggestions?: Suggestions): void {
   const q = session.query;
   const graph = session.project.graph;
   const update = (f: (q: QueryState) => QueryState): void => session.update(f);
@@ -84,6 +88,7 @@ export function renderFilter(container: HTMLElement, session: Session): void {
       needsValue ? valueEditor({
         graph, type, many: c.operator === 'in' || c.operator === 'notIn', value: c.value, parameters: q.parameters,
         onChange: (v) => setRoot((g) => mapNode(g, c.id, (n) => ({ ...(n as Condition), value: v }))),
+        ...(suggestions && probeable(session, c.path) ? { suggest: (prefix: string) => suggestions(c.path, prefix) } : {}),
       }) : null,
       error ? h('span', { class: 'q-error' }, error) : null,
       h('span', { class: 'q-spacer' }),

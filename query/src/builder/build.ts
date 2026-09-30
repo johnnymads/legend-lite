@@ -172,7 +172,9 @@ export function buildLambda(graph: ModelGraph, q: QueryState, options: BuildOpti
   if (aggregated.length > 0) {
     const keys = q.columns.filter((c) => c.aggregate === undefined).map((c) => c.name);
     // the aggregate replaces its column: map the row to the column, reduce the values
-    r = r.groupBy(keys, aggregated.map((c) => agg(c.name, lambda(['x'], property(variable('x'), c.name)), reducer(c.aggregate!))));
+    const aggs = aggregated.map((c) => agg(c.name, lambda(['x'], property(variable('x'), c.name)), reducer(c.aggregate!)));
+    // with no key: `aggregate(~[...])` -- legend-engine fails on `groupBy(~[], ...)` (measured, 4.145.0)
+    r = keys.length > 0 ? r.groupBy(keys, aggs) : r.apply('aggregate', colSpecs(aggs));
   }
   if (q.options.distinct) r = r.distinct();
   if (q.options.sort.length > 0) {

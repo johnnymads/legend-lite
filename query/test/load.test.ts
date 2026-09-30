@@ -56,6 +56,13 @@ describe('load', () => {
     });
   });
 
+  it('aggregates every column with aggregate(), which legend-engine runs (groupBy with no key it cannot)', async () => {
+    await roundTrip({
+      ...emptyQuery(SOURCE),
+      columns: [{ ...col('Trades', 'tradeId'), aggregate: 'count' }, { ...col('Quantity', 'quantity'), aggregate: 'sum' }],
+    });
+  });
+
   it("opens the data space's curated queries in the form", async () => {
     const ds = graph.dataSpaces.get('demo::trading::TradingDataSpace')!;
     for (const e of ds.executables ?? []) {
