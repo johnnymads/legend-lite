@@ -1,0 +1,122 @@
+# Legend Query, rebuilt light (docs/QUERY_APP_DESIGN_2026_09_30.md): plain TypeScript and DOM,
+# bundled by esbuild, tested with node's own runner. Its npm packages are its own lock
+# (MODULE.bazel `npm_query`), so DataCube's lock never moves for it.
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_library", "js_test")
+load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@npm_query//:defs.bzl", "npm_link_all_packages")
+load("@npm_query//query:esbuild/package_json.bzl", esbuild = "bin")
+load("@npm_query//query:typescript/package_json.bzl", typescript = "bin")
+
+npm_link_all_packages(name = "node_modules")
+
+exports_files(["pnpm-lock.yaml", "package.json"])
+
+js_library(
+    name = "src",
+    srcs = glob(["src/**/*.ts", "src/**/*.css"]) + ["package.json", "tsconfig.json"],
+    deps = ["//pure-protocol:pure_protocol"],
+)
+
+# entry point -> bundle
+_BUNDLES = {
+    "demo/main.ts": "demo/bundle.js",
+    "src/backend/planner-worker.ts": "demo/planner-worker.js",
+}
+
+[esbuild.esbuild(
+    name = "bundle_" + out[len("demo/"):-len(".js")].replace("-", "_"),
+    srcs = glob(["demo/**/*.ts"]) + [":src"],
+    outs = [out],
+    args = [
+        entry,
+        "--bundle",
+        "--format=esm",
+        "--target=es2022",
+        "--log-level=warning",
+        "--outfile=" + out,
+    ],
+    chdir = package_name(),
+) for entry, out in _BUNDLES.items()]
+
+# legend-lite's planner, which the page runs in a worker (grammar and typing in the tab)
+copy_to_directory(
+    name = "vendor",
+    srcs = ["//wasm:planner"],
+    out = "demo/vendor",
+    include_srcs_patterns = [
+        "wasm/planner/classes.wasm",
+        "wasm/planner/wasm-gc-module-runtime.js",
+    ],
+    replace_prefixes = {"wasm/planner/": ""},
+)
+
+# Everything a browser fetches.
+filegroup(
+    name = "site",
+    srcs = glob([
+        "demo/*.html",
+        "demo/*.json",
+        "demo/models/*.pure",
+        "src/**/*.css",
+    ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [":vendor"],
+)
+
+# `bazel run //query:serve [-- --port 8100]`: the site, on loopback.
+js_binary(
+    name = "serve",
+    data = [":site"],
+    entry_point = "demo/serve.mjs",
+)
+
+_TESTS = glob(["test/*.test.ts"])
+
+_WASM_TESTS = [
+    "build",
+]
+
+[js_test(
+    name = t[len("test/"):-len(".test.ts")].replace("-", "_") + "_test",
+    size = "small",
+    chdir = package_name(),
+    data = [
+        ":node_modules/jsdom",
+        ":src",
+        "test/strict-reporter.mjs",
+    ] + glob(["test/*.ts"], exclude = ["test/*.test.ts"]) + glob(["demo/models/*.pure"]) + (
+        ["//pure-protocol:pure_protocol", "//wasm:planner"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
+    ),
+    entry_point = t,
+    node_options = [
+        "--experimental-strip-types",
+    ] + (["--experimental-wasm-exnref"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []) + [
+        "--disable-warning=ExperimentalWarning",
+        "--test-reporter=spec",
+        "--test-reporter-destination=stdout",
+        "--test-reporter=./test/strict-reporter.mjs",
+        "--test-reporter-destination=stderr",
+    ],
+) for t in _TESTS]
+
+typescript.tsc_test(
+    name = "typecheck_test",
+    size = "small",
+    args = ["-p", "tsconfig.json"],
+    chdir = package_name(),
+    data = glob([
+        "src/**/*.ts",
+        "test/**/*.ts",
+        "demo/**/*.ts",
+    ]) + [
+        "package.json",
+        "tsconfig.json",
+        "//pure-protocol:pure_protocol",
+        ":node_modules/@types/jsdom",
+        ":node_modules/@types/node",
+        ":node_modules/jsdom",
+    ],
+)
+
+test_suite(
+    name = "tests",
+    tests = [t[len("test/"):-len(".test.ts")].replace("-", "_") + "_test" for t in _TESTS] + [":typecheck_test"],
+)

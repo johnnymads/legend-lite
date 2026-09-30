@@ -86,6 +86,13 @@ In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new
 
 Nothing in `datacube/`, the compiler packages, `warehouse/`.
 
+**Found for the compiler's owners (not fixed on this line):** (1) `Compiler.resultType` on a lambda WITH parameters
+types the lambda itself (`LambdaFunction<{Integer[1] -> Relation<...>}>`), so `lambdaRelationType`/`lambdaReturnType`
+answer a function type where legend-engine 4.145.0 types the result with the parameters in scope
+(`SpecCompiler.typeQueryBody` handles only zero-parameter lambdas). (2) A derived property `{$this.quantity *
+$this.price}: Float[1]` (Integer * Float) compiles in lite; legend-engine refuses it ("'Number' is not a subtype of
+'Float'").
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).

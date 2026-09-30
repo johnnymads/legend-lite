@@ -1,0 +1,13 @@
+{
+  "engine": "http://localhost:8090/api",
+  "planner": { "worker": "./planner-worker.js", "vendor": "./vendor/" },
+  "projects": [
+    {
+      "groupId": "demo",
+      "artifactId": "trading",
+      "versionId": "0.0.0",
+      "title": "Trading demo",
+      "models": ["./models/trading.pure"]
+    }
+  ]
+}
