@@ -29,7 +29,7 @@ export interface DocExportOptions {
   readonly formats?: Readonly<Record<string, ColumnFormat>>;
   /** Cap on a rendered cell before it is truncated. */
   readonly maxCellWidth?: number;
-  /** The board, when it holds charts: a first page laid out as it is, then the whole grid. */
+  /** The board, when it holds charts: the file is one page, laid out as the board is. */
   readonly page?: ExportPage;
 }
 
@@ -101,6 +101,8 @@ export function toPlainText(table: ExportTable, options: DocExportOptions = {}):
 const A4_SHORT = 595;
 const A4_LONG = 842;
 const MARGIN = 36;
+/** The dashboard's margin: a quarter inch, inside what office printers can print. */
+const DASH_MARGIN = 18;
 const FONT_MAX = 9;
 const FONT_MIN = 6;
 const TITLE_SIZE = 14;
@@ -316,9 +318,9 @@ function drawTable(s: Stream, missing: Set<string>, table: ExportTable, p: Prepa
  * totals, value colours, heatmaps), its text colour, weight, slant, alignment and decoration as
  * the grid resolves them (export-model.ts), the grid's lines, and a plain gray header.
  *
- * With charts on the board, the first page is the board as laid out, the table drawn in the grid's
- * tile; when the whole table fits there that page is the whole file, else the whole table follows.
- * Columns that fit the page at the font floor share a page; past it they continue on the next
+ * With charts on the board, the file is ONE page: the board as laid out, the table drawn in the
+ * grid's tile (the rows that fit it, and a line saying so when that is not all of them).
+ * Without charts, columns that fit the page at the font floor share a page; past it they continue on the next
  * page set, the first column repeated so every page is readable on its own.
  */
 export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8Array {
@@ -337,7 +339,8 @@ export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8
   const size = Math.max(FONT_MIN, natural > room ? p.nominal * room / natural : p.nominal);
 
   const pages: PdfPage[] = [];
-  if (!board.complete) {
+  // with charts, the dashboard IS the file: the board as laid out, on one page
+  if (board.pages.length === 0) {
     const groups: number[][] = [];
     let current: number[] = [];
     for (const i of all) {
@@ -402,33 +405,34 @@ export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8
 }
 
 /**
- * THE DASHBOARD PAGE, when the board holds charts: landscape, the title across the top, each
+ * THE DASHBOARD PAGE, when the board holds charts: landscape, quarter-inch margins, the title
+ * centred across the top, each
  * tile where the board puts it (its columns across the page, its rows down it) -- each chart as
  * its picture fitted into its tile without distortion, the TABLE drawn in the grid's tile, fitted
- * to its width (down to the font floor). `complete` when the whole table fitted: that page is
- * then the whole file; else the tile says so, and the whole table follows.
+ * to its width (down to the font floor) and centred in it; when not every row fits, the tile says
+ * how many it shows.
  */
 function dashboard(table: ExportTable, page: ExportPage | undefined, p: Prepared, missing: Set<string>):
-  { readonly pages: PdfPage[]; readonly complete: boolean } {
-  if (!page || !page.tiles.some((t) => t.kind === 'chart')) return { pages: [], complete: false };
+  { readonly pages: PdfPage[] } {
+  if (!page || !page.tiles.some((t) => t.kind === 'chart')) return { pages: [] };
   const width = A4_LONG;
   const height = A4_SHORT;
   const s = new Stream();
-  let top = height - MARGIN;
+  let top = height - DASH_MARGIN;
   if (table.title) {
-    s.text(`0 0 0 rg BT /F2 ${TITLE_SIZE} Tf 1 0 0 1 ${MARGIN} ${(top - TITLE_SIZE).toFixed(2)} Tm `);
+    const tw = textWidth([...table.title].length, TITLE_SIZE, 'sans', true);
+    s.text(`0 0 0 rg BT /F2 ${TITLE_SIZE} Tf 1 0 0 1 ${((width - tw) / 2).toFixed(2)} ${(top - TITLE_SIZE).toFixed(2)} Tm `);
     s.string(table.title, missing);
     s.text(' Tj ET\n');
     top -= TITLE_SIZE * 1.8;
   }
   const rows = Math.max(1, ...page.tiles.map((t) => t.y + t.h));
-  const unitW = (width - MARGIN * 2) / page.cols;
-  const unitH = (top - MARGIN) / rows;
+  const unitW = (width - DASH_MARGIN * 2) / page.cols;
+  const unitH = (top - DASH_MARGIN) / rows;
   const GUTTER = 6;
   const images: { name: string; jpeg: Uint8Array; width: number; height: number }[] = [];
-  let complete = false;
   for (const t of page.tiles) {
-    const x = MARGIN + t.x * unitW + GUTTER / 2;
+    const x = DASH_MARGIN + t.x * unitW + GUTTER / 2;
     const w = t.w * unitW - GUTTER;
     const yTop = top - t.y * unitH - GUTTER / 2;
     const h = t.h * unitH - GUTTER;
@@ -463,14 +467,14 @@ function dashboard(table: ExportTable, page: ExportPage | undefined, p: Prepared
       const everything = cols.length === all.length && p.rows.length * lineHeight <= room;
       const fit = Math.max(0, Math.floor((room - (everything ? 0 : lineHeight)) / lineHeight));
       const count = everything ? p.rows.length : Math.min(p.rows.length, fit);
-      const bottom = drawTable(s, missing, table, p, { cols, left: x + 6, top: innerTop, size, start: 0, count });
-      if (everything) {
-        complete = true;
-      } else {
+      // centred across its tile, as the charts are in theirs
+      const left = x + 6 + Math.max(0, (innerW - needWidth(p, cols, size)) / 2);
+      const bottom = drawTable(s, missing, table, p, { cols, left, top: innerTop, size, start: 0, count });
+      if (!everything) {
         const shown = `${count.toLocaleString()} of ${p.rows.length.toLocaleString()} rows`
           + (cols.length < all.length ? `, ${cols.length} of ${all.length} columns` : '');
-        s.text(`0.33 0.33 0.33 rg BT /F1 ${Math.max(FONT_MIN, size).toFixed(2)} Tf 1 0 0 1 ${(x + 6).toFixed(2)} ${(bottom - size - 3).toFixed(2)} Tm `);
-        s.string(`Showing ${shown} here; the whole table follows on the next pages.`, missing);
+        s.text(`0.33 0.33 0.33 rg BT /F1 ${size.toFixed(2)} Tf 1 0 0 1 ${left.toFixed(2)} ${(bottom - size - 3).toFixed(2)} Tm `);
+        s.string(`Showing the first ${shown}; the whole table is in the Excel and CSV exports.`, missing);
         s.text(' Tj ET\n');
       }
     } else {
@@ -479,7 +483,7 @@ function dashboard(table: ExportTable, page: ExportPage | undefined, p: Prepared
       s.text(' Tj ET\n');
     }
   }
-  return { pages: [{ bytes: s.bytes, width, height, images }], complete };
+  return { pages: [{ bytes: s.bytes, width, height, images }] };
 }
 
 /** One page of a PDF: its drawing, its size, and the images it draws (a chart's JPEG). */

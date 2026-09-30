@@ -158,10 +158,11 @@ describe('the whole page in a PDF: the board as laid out, the table in its tile'
     consistent(pdf);
   });
 
-  it('a table too long for its tile: the rows that fit, a note, then the whole table on its own pages', () => {
+  it('a table too long for its tile: still one page, the rows that fit, and a line saying so', () => {
     const pdf = latin1(toPdf(shown(result(200), 'Trades'), { page: board(8) }));
-    assert.match(pdf, /Showing \d+ of 200 rows here; the whole table follows/);
-    assert.match(pdf, /\/MediaBox \[0 0 842 595\][^]*\/MediaBox \[0 0 595 842\]/, 'a landscape dashboard, then the table\'s own pages');
+    assert.match(pdf, /Showing the first \d+ of 200 rows; the whole table is in the Excel and CSV exports/);
+    assert.match(pdf, /\/Count 1 /, 'the dashboard is the whole file');
+    assert.ok(!pdf.includes('/MediaBox [0 0 595 842]'), 'no table pages after it');
     consistent(pdf);
   });
 });
