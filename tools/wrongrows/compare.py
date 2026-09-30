@@ -26,8 +26,12 @@ def norm_scalar(v):
         return v
     if isinstance(v, (int, float)):
         f = float(v)
+        if f != f or f in (float('inf'), float('-inf')):
+            return str(f)
         return int(f) if f == int(f) and abs(f) < 1e15 else round(f, 9)
     if isinstance(v, str):
+        if v.lower() in ('nan', 'inf', '-inf', 'infinity', '-infinity'):
+            return v.lower().replace('infinity', 'inf')   # one spelling of the non-finite floats
         m = TS.match(v)
         if m:
             return m.group(1)          # a midnight timestamp is the date it spells
