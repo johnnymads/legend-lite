@@ -5683,6 +5683,29 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild D23 (2): the damaged data; a loader defect fixed; the engine's `count()` over an empty navigation
+
+**What.** `tools/wrongrows/damage.py` writes the damaged data set from the seeds (duplicate keys, NULLs in every nullable
+column, an orphan per join, type extremes; schema-aware: primary keys, NOT NULL, small integer ranges, string widths in
+UTF-16 units); `engine-rows.sh` now snapshots the runner's jars so a build during the hour-long run cannot replace them
+under the JVMs; `compare.py` normalises non-finite floats. Both engines ran on it; the dossier is
+`docs/plan-audit-2026-09-26/wrongrows/damaged-2026-09-30.md`. **Product fix, found by the first damaged load:**
+`core/src/main/duckdb/…/DuckDbAppenderLoad.java` dropped its staging table through the statement that had just raised
+(DuckDB closes it), so every load error surfaced as "Statement was closed" and the staging table leaked into every later
+test ("legend_row_load already exists"); the drop has its own statement and a failure keeps the real cause, the drop's
+own error suppressed onto it.
+
+**Findings.** 37 new row disagreements on the damaged data, all one class: legend-engine's `count()` over an association
+navigation from a parent with no children is 1; lite and Pure say 0. The same class explains 9 of the 22 seed
+disagreements. Register row **S22** (engine defect, not copied). No lite wrong answer found yet that the seeds hid; run 2
+(the engine over the fixed extremes) is in the background; milestone versions and sort-key ties are the next damage
+kinds. Lite loud failures on the damaged data for the list: integer overflow on extremes (6), a scalar subquery meeting
+the duplicate row (1).
+
+**Gate lanes.** Pre-chain "Executed 4 out of 4 tests: 4 tests pass"; `bazel test //...` 129 of 129; `//tools/deps:all`
+5 of 5. **Pins moved:** none. **Net product lines:** +16 (the loader). **Cost:** one session; three whole-corpus engine
+runs so far today (seeds; damaged run 1 with 446 loader errors; run 2 running).
+
 ## 2026-09-30 — Rebuild D23 (1): the wrong-rows tool runs; the engine and lite compared on the seed data
 
 **What it is** (`tools/wrongrows/README.md`). Both runners gained a ROWS mode and a DATA switch. legend-engine
