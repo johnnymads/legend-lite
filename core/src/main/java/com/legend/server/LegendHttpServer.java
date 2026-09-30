@@ -36,6 +36,8 @@ public class LegendHttpServer {
     private final HttpServer server;
     private final PureLspServer lspServer;
     private final Origins origins;
+    /** The query store {@code LEGEND_QUERY_STORE} names, or null (its calls are then refused). */
+    private final @com.legend.base.Nullable QueryStore queryStore = QueryStore.fromEnv();
 
     /** On the loopback interface, loopback origins only: the development server. */
     public LegendHttpServer(int port) throws IOException {
@@ -106,6 +108,29 @@ public class LegendHttpServer {
         // legend-engine's own pure/v1 API, exactly (PureV1Api; the user's ruling of
         // 2026-09-27: lite serves upstream's APIs and nothing of its own)
         route("/api/pure/v1/", new PureV1Handler());
+        // legend-engine's query store and current user (QueryStore; the Query app's G5/G7)
+        route("/api/pure/v1/query", exchange -> {
+            addCorsHeaders(exchange);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            String body = readBody(exchange);
+            String rest = exchange.getRequestURI().getRawPath().substring("/api/pure/v1/query".length());
+            PureV1Api.Answer a = QueryStore.answer(queryStore, exchange.getRequestMethod(), rest,
+                    exchange.getRequestURI().getRawQuery(), body, QueryStore.ANONYMOUS);
+            if (a.status() == 204) {
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+            } else {
+                sendResponse(exchange, a.status(), a.json(), a.contentType());
+            }
+        });
+        route("/api/server/v1/currentUser", exchange -> {
+            addCorsHeaders(exchange);
+            sendResponse(exchange, 200, "\"" + QueryStore.ANONYMOUS + "\"");
+        });
         route("/engine/diagram", new DiagramHandler());
 
         // Health check
@@ -238,7 +263,7 @@ public class LegendHttpServer {
         }
         headers.add("Access-Control-Allow-Origin", origin);
         headers.add("Vary", "Origin");
-        headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         headers.add("Access-Control-Allow-Headers", "Content-Type");
     }
 
