@@ -21,6 +21,8 @@
 // yields one group per distinct amount: never meant, and expensive
 // to find out.
 
+import { cubeScopeOf } from './scope.ts';
+
 export type Zone = 'rows' | 'columns';
 
 /** What is being dragged, and where from. */
@@ -37,13 +39,19 @@ export interface HeaderDrag {
   readonly from?: Zone | 'panel';
 }
 
+// One drag per document, so one slot -- with the cube it started in (ui/scope.ts): a drop
+// target in another cube does not see it.
 let dragging: HeaderDrag | null = null;
+let draggingIn: string | null = null;
 
-export function currentHeaderDrag(): HeaderDrag | null {
-  return dragging;
+/** What is being dragged, as seen from `at` (the drop target): nothing, if it is from another cube. */
+export function currentHeaderDrag(at: EventTarget | null): HeaderDrag | null {
+  return dragging && draggingIn === cubeScopeOf(at) ? dragging : null;
 }
-export function setHeaderDrag(drag: HeaderDrag | null): void {
+/** Start a drag from `from` (the dragged element), or end it with `null`. */
+export function setHeaderDrag(drag: HeaderDrag | null, from?: EventTarget | null): void {
   dragging = drag;
+  draggingIn = drag ? cubeScopeOf(from) : null;
 }
 
 /** Both zones' members, in order. */
@@ -188,7 +196,7 @@ export class PivotPanel {
     }
 
     el.addEventListener('dragover', (event) => {
-      const drag = currentHeaderDrag();
+      const drag = currentHeaderDrag(el);
       if (!drag) return;
       // A MEASURE IS REFUSED, AND SAYS SO. Grouping by a notional
       // means one group per amount -- upstream does not offer it
@@ -225,7 +233,7 @@ export class PivotPanel {
     el.addEventListener('drop', (event) => {
       el.classList.remove('dc-drop-target', 'dc-refuse');
       this.#markInsert(el, null);
-      const drag = currentHeaderDrag();
+      const drag = currentHeaderDrag(el);
       if (!drag) return;
       event.preventDefault();
       this.#drop(zone, drag, this.#indexAt(el, event));
@@ -255,7 +263,7 @@ export class PivotPanel {
     chip.append(remove);
 
     chip.addEventListener('dragstart', (event) => {
-      setHeaderDrag({ column, from: zone });
+      setHeaderDrag({ column, from: zone }, chip);
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', column);
@@ -370,7 +378,7 @@ export function makeHeaderDraggable(
   el.draggable = true;
   el.classList.add('dc-draggable');
   el.addEventListener('dragstart', (event) => {
-    setHeaderDrag(from ? { column, from } : { column });
+    setHeaderDrag(from ? { column, from } : { column }, el);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = 'move';
       event.dataTransfer.setData('text/plain', column);

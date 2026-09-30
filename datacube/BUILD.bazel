@@ -61,6 +61,7 @@ _EXTRA_DATA = {
     "cube-lifecycle": ["test/cube-fixture.ts", "test/gate.ts"],
     "cube-editors-app": ["test/cube-fixture.ts", "test/gate.ts"],
     "cube-adhoc-shell": ["test/cube-fixture.ts", "test/gate.ts"],
+    "multi-cube": ["test/cube-fixture.ts", "test/gate.ts"],
     "guardrails": glob(["demo/**/*.ts"]) + [
         "test/wasm-differential/compare.ts",
         "//wasm:differential",

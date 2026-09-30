@@ -154,7 +154,7 @@ describe('a whole gesture is one change (B1c)', () => {
   it('a chip dragged from Row Groups to Column Labels is ONE change: refused, it names one (P2-103)', async () => {
     const zones = zoneChips();
     engine.gate.fail = 'the engine said no';
-    setHeaderDrag({ column: 'desk', from: 'rows' });
+    setHeaderDrag({ column: 'desk', from: 'rows' }, root.querySelector('.dc-zone-rows'));
     (root.querySelector('.dc-app-side .dc-zone-columns') as HTMLElement)
       .dispatchEvent(new dom.window.MouseEvent('drop', { bubbles: true, cancelable: true }));
     await settle();
@@ -163,7 +163,7 @@ describe('a whole gesture is one change (B1c)', () => {
     assert.equal(statuses.some(([t]) => /changes were undone/.test(t)), false,
       `one gesture, one change: ${statuses.map(([t]) => t).join(' | ')}`);
     engine.gate.fail = null;
-    setHeaderDrag({ column: 'desk', from: 'rows' });
+    setHeaderDrag({ column: 'desk', from: 'rows' }, root.querySelector('.dc-zone-rows'));
     (root.querySelector('.dc-app-side .dc-zone-columns') as HTMLElement)
       .dispatchEvent(new dom.window.MouseEvent('drop', { bubbles: true, cancelable: true }));
     await settle();

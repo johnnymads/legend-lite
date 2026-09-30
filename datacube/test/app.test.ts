@@ -491,7 +491,7 @@ describe('the app', () => {
   });
 
   it('a column dropped in the row zone regroups the cube', async () => {
-    setHeaderDrag({ column: 'desk' });
+    setHeaderDrag({ column: 'desk' }, root.querySelector('.dc-zone-rows'));
     (
       root.querySelector('.dc-zone-rows') as HTMLElement
     ).dispatchEvent(new dom.window.Event('drop', { bubbles: true }));
@@ -499,7 +499,7 @@ describe('the app', () => {
   });
 
   it('a measure dropped in the row zone is REFUSED', () => {
-    setHeaderDrag({ column: 'notional' });
+    setHeaderDrag({ column: 'notional' }, root.querySelector('.dc-zone-rows'));
     (
       root.querySelector('.dc-zone-rows') as HTMLElement
     ).dispatchEvent(new dom.window.Event('drop', { bubbles: true }));

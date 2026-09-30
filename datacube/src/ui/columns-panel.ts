@@ -230,7 +230,7 @@ export class ColumnsToolPanel {
     // Column Labels onto this list leaves that axis. The two zones
     // and this list are three sections of one surface.
     list.addEventListener('dragover', (event) => {
-      const drag = currentHeaderDrag();
+      const drag = currentHeaderDrag(list);
       if (!drag || (drag.from !== 'rows' && drag.from !== 'columns')) return;
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
@@ -240,7 +240,7 @@ export class ColumnsToolPanel {
       list.classList.remove('dc-drop-target'));
     list.addEventListener('drop', (event) => {
       list.classList.remove('dc-drop-target');
-      const drag = currentHeaderDrag();
+      const drag = currentHeaderDrag(list);
       if (!drag || (drag.from !== 'rows' && drag.from !== 'columns')) return;
       event.preventDefault();
       setHeaderDrag(null);
@@ -437,7 +437,7 @@ export class ColumnsToolPanel {
       return event.clientY > box.top + box.height / 2 ? 'after' : 'before';
     };
     const held = (): string | null => {
-      const drag = currentHeaderDrag();
+      const drag = currentHeaderDrag(row);
       // From this list only: a chip dragged out of a zone is a
       // REMOVAL, which the list itself handles, and a grid header
       // drag is already the grid's own reorder.

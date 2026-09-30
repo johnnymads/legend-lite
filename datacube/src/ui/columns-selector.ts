@@ -24,6 +24,8 @@
 // drop target cannot decide whether to accept a drag from it. The
 // transfer is still populated, for drags that leave the document.
 
+import { cubeScopeOf } from './scope.ts';
+
 export interface SelectorColumn {
   readonly name: string;
 }
@@ -34,14 +36,18 @@ interface DragPayload {
   readonly names: readonly string[];
 }
 
+// One drag per document, with the cube it started in (ui/scope.ts): another cube's lists ignore it.
 let dragging: DragPayload | null = null;
+let draggingIn: string | null = null;
 
-/** Exposed for tests and for a host that needs to cancel a drag. */
-export function currentDrag(): DragPayload | null {
-  return dragging;
+/** What is being dragged, as seen from `at` (the drop target): nothing, if it is from another cube. */
+export function currentDrag(at: EventTarget | null): DragPayload | null {
+  return dragging && draggingIn === cubeScopeOf(at) ? dragging : null;
 }
-export function setDrag(payload: DragPayload | null): void {
+/** Start a drag from `from` (the dragged element), or end it with `null`. */
+export function setDrag(payload: DragPayload | null, from?: EventTarget | null): void {
   dragging = payload;
+  draggingIn = payload ? cubeScopeOf(from) : null;
 }
 
 // --------------------------------------------------------------------
@@ -353,7 +359,7 @@ export class ColumnsSelector {
 
   #wireDropZone(list: HTMLElement, which: Pane['which']): void {
     list.addEventListener('dragover', (event) => {
-      const drag = currentDrag();
+      const drag = currentDrag(list);
       if (!drag) return;
       // Dropping back into the pane it came from is a reorder, which
       // only the selected pane allows; the available pane's order is
@@ -368,7 +374,7 @@ export class ColumnsSelector {
     );
     list.addEventListener('drop', (event) => {
       list.classList.remove('dc-drop-target');
-      const drag = currentDrag();
+      const drag = currentDrag(list);
       if (!drag) return;
       event.preventDefault();
       this.#drop(which, drag, this.#indexAt(list, event));
@@ -486,7 +492,7 @@ export class ColumnsSelector {
       // what a user means; dragging a highlighted one takes the whole
       // highlight with it.
       const names = pane.picked.has(name) ? [...pane.picked] : [name];
-      setDrag({ from: pane.which, names });
+      setDrag({ from: pane.which, names }, row);
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', names.join('\n'));

@@ -71,6 +71,7 @@ import { toXlsx, XLSX_MIME } from './export-xlsx.ts';
 import { toBarChart, toTreemap } from './chart.ts';
 import type { MarkKey } from './chart-option.ts';
 import { ChartPanel } from './ui/chart-panel.ts';
+import { newCubeScope } from './ui/scope.ts';
 import { Board, BOARD_COLUMNS } from './layout/board.ts';
 import { addToRow, below } from './layout/tile-layout.ts';
 import { PAGE_CUBE, pageToJson, writePage, type ChartView, type PageDocument, type PageView, type PageViews } from './page-document.ts';
@@ -319,6 +320,13 @@ function timingText(view: CubeView, cols: number): string {
   );
 }
 
+/**
+ * Which cube on a document a keystroke from OUTSIDE every cube belongs to: the one last
+ * clicked or focused. With several cubes on a page (plan F6), Ctrl-Z pressed on the page's
+ * body must undo one cube, not all of them; with one, it still undoes that one.
+ */
+const lastTouched = new WeakMap<Document, object>();
+
 /** A change's refusal in the words the user reads, or null when it was not refused. */
 function refusal(out: Outcome): string | null {
   if (out.kind !== 'refused') return null;
@@ -436,6 +444,8 @@ export class CubeApp {
   #adhoc: AdHocMode | null = null;
   /** The shortcuts this app listens for on the DOCUMENT: see `dispose`. */
   #onDocKey: ((event: KeyboardEvent) => void) | null = null;
+  /** Marks this cube as the document's last touched (see `lastTouched`). */
+  readonly #onTouch = (): void => { lastTouched.set(this.#doc, this); };
 
   constructor(
     root: HTMLElement,
@@ -466,6 +476,8 @@ export class CubeApp {
     Object.assign(this.#formats, renderFormats(this.#config, this.#snapshot));
 
     root.classList.add('dc-app');
+    // which cube this is, on a page of several: its drags land only on it (ui/scope.ts)
+    root.dataset['dcCube'] = newCubeScope();
     this.#els = {
       // The window container: a dialog is positioned inside the app,
       // not inside the document, so it cannot wander off over the
@@ -656,7 +668,7 @@ export class CubeApp {
       // measure cannot be grouped by, and the zones used to refuse
       // it in silence -- so dragging notional into Row Groups looked
       // like a product that does not support dragging.
-      const drag = currentHeaderDrag();
+      const drag = currentHeaderDrag(root);
       root.classList.toggle(
         'dc-drag-nogroup',
         drag !== null && !this.#isDimension(drag.column),
@@ -2826,9 +2838,21 @@ export class CubeApp {
     this.#setBusy(false);
     if (this.#onDocKey) this.#doc.removeEventListener('keydown', this.#onDocKey);
     this.#onDocKey = null;
+    this.#els.root.removeEventListener('pointerdown', this.#onTouch, true);
+    this.#els.root.removeEventListener('focusin', this.#onTouch, true);
+    if (lastTouched.get(this.#doc) === this) lastTouched.delete(this.#doc);
     this.exitAdHoc();
     this.#menu.close();
     for (const key of [...this.#open.keys()]) this.#closeWindow(key);
+    // EVERYTHING it built, torn down (plan F6): a page that removes a tile must not leave its
+    // grid's and board's resize observers, its charts (their ECharts instances and queries) or
+    // its column editors alive behind it.
+    for (const chart of this.#charts.values()) chart.dispose();
+    this.#charts.clear();
+    for (const editor of this.#columnEditors.values()) editor.dispose();
+    this.#columnEditors.clear();
+    this.#board?.board.dispose();
+    this.#grid.destroy();
   }
 
   // -- Ad Hoc Analysis mode -------------------------------------------------
@@ -3677,8 +3701,12 @@ export class CubeApp {
    * Ctrl-Z undid several steps (P2-220); `dispose` takes this one away.
    */
   #listenForKeys(): void {
+    if (!lastTouched.has(this.#doc)) lastTouched.set(this.#doc, this);
+    this.#els.root.addEventListener('pointerdown', this.#onTouch, true);
+    this.#els.root.addEventListener('focusin', this.#onTouch, true);
     this.#onDocKey = (event: KeyboardEvent): void => {
       if (!(event.ctrlKey || event.metaKey)) return;
+      if (!this.#ownsKey(event.target)) return;
       const key = event.key.toLowerCase();
 
       if (key === 'e') {
@@ -3705,6 +3733,21 @@ export class CubeApp {
       }
     };
     this.#doc.addEventListener('keydown', this.#onDocKey);
+  }
+
+  /**
+   * Whether a keystroke from `target` is this cube's: from inside it (its root, or one of its
+   * windows), or from outside every cube while this is the one last touched. A keystroke inside
+   * ANOTHER cube is never this one's.
+   */
+  #ownsKey(target: EventTarget | null): boolean {
+    const node = target && typeof (target as Node).nodeType === 'number' ? target as Node : null;
+    if (!node) return lastTouched.get(this.#doc) === this;
+    if (this.#els.root.contains(node)) return true;
+    for (const win of this.#open.values()) if (win.contains(node)) return true;
+    const el = node.nodeType === 1 ? node as Element : node.parentElement;
+    if (el?.closest('.dc-app')) return false;
+    return lastTouched.get(this.#doc) === this;
   }
 
   /**

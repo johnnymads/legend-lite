@@ -747,7 +747,7 @@ export class DataGrid {
     el.draggable = true;
     el.classList.add('dc-reorderable');
     el.addEventListener('dragstart', (event) => {
-      setHeaderDrag({ column: leaf.name });
+      setHeaderDrag({ column: leaf.name }, el);
       if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', leaf.name);
@@ -763,7 +763,7 @@ export class DataGrid {
       return event.clientX > box.left + box.width / 2 ? 'after' : 'before';
     };
     const held = (): string | null => {
-      const drag = currentHeaderDrag();
+      const drag = currentHeaderDrag(el);
       if (!drag) return null;
       // The MEASURE behind what is being dragged, so a pivoted leaf
       // is compared with this one on the same footing. Two leaves of

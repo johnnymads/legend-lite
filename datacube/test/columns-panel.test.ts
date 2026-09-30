@@ -65,11 +65,11 @@ describe('the columns tool panel', () => {
     // the grid accepts a column it is not showing only from here.
     const region = rows()[0] as HTMLElement;
     region.dispatchEvent(new dom.window.Event('dragstart', { bubbles: true }));
-    assert.deepEqual(currentHeaderDrag(), { column: 'region', from: 'panel' });
+    assert.deepEqual(currentHeaderDrag(region), { column: 'region', from: 'panel' });
 
     const notional = rows()[3] as HTMLElement;
     notional.dispatchEvent(new dom.window.Event('dragstart', { bubbles: true }));
-    assert.deepEqual(currentHeaderDrag(),
+    assert.deepEqual(currentHeaderDrag(notional),
       { column: 'notional', from: 'panel' });
   });
 
