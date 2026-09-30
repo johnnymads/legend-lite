@@ -114,8 +114,12 @@ public final class Statements implements AutoCloseable {
     /** The server's own principal: its internal statements (the catalog API) run as it, an owner. */
     public static final String SERVER = "warehouse";
 
-    /** Who may do what: owners anything; every other user a reader, checked by the authorizer. */
-    public record Access(List<String> owners, Grants grants, Authorizer authorizer) {
+    /**
+     * Who may do what: owners anything; every other user a reader, checked by the authorizer.
+     * {@code knownUser}: whether a user of that name can sign in (a grant to one who cannot is refused).
+     */
+    public record Access(List<String> owners, Grants grants, Authorizer authorizer,
+            java.util.function.Predicate<String> knownUser) {
     }
 
     public record Limits(int concurrency, int queue, long maxRows, Duration retain, long resultMemory) {
@@ -356,14 +360,66 @@ public final class Statements implements AutoCloseable {
             case AdminStatements.CreateRole r -> g.createRole(r.role());
             case AdminStatements.DropRole r -> g.dropRole(r.role());
             case AdminStatements.Select s -> {
-                if (s.grant()) g.grantSelect(s.target());
-                else g.revokeSelect(s.target());
+                if (s.grant()) {
+                    refuseDangling(s.target());
+                    g.grantSelect(s.target());
+                } else {
+                    g.revokeSelect(s.target());
+                }
             }
             case AdminStatements.Membership m -> {
-                if (m.grant()) g.grantRole(m.role(), m.member());
-                else g.revokeRole(m.role(), m.member());
+                if (m.grant()) {
+                    requireGrantee(m.member());
+                    g.grantRole(m.role(), m.member());
+                } else {
+                    g.revokeRole(m.role(), m.member());
+                }
             }
             case AdminStatements.ShowGrants s -> throw new IllegalStateException("SHOW GRANTS is a query");
+        }
+    }
+
+    /**
+     * A GRANT names something that is there, for someone who is. A grant on a table not yet made,
+     * or to a name no user or role holds, was accepted and waited: whoever later made that table,
+     * or signed in under that name, was already granted it (2026-09-29). Revoking stays open, so a
+     * grant made before this check can still be taken away.
+     */
+    private void refuseDangling(Grants.Grant g) throws DuckException {
+        requireGrantee(g.grantee());
+        String where = g.catalog() + "." + g.schema() + (g.name().isEmpty() ? "" : "." + g.name());
+        Conn c = catalogs.connect(g.catalog(), SERVER);
+        if (c == null) throw new IllegalArgumentException("no catalog " + g.catalog() + " to grant on");
+        // DuckDB's own catalog, in the grant's catalog database; names compare without case, as grants do
+        String sql = g.name().isEmpty()
+                ? "SELECT 1 FROM duckdb_schemas() WHERE database_name = current_database() AND lower(schema_name) = ?"
+                : "SELECT 1 FROM duckdb_tables() WHERE database_name = current_database()"
+                    + " AND lower(schema_name) = ? AND lower(table_name) = ?"
+                    + " UNION ALL SELECT 1 FROM duckdb_views() WHERE database_name = current_database()"
+                    + " AND lower(schema_name) = ? AND lower(view_name) = ?"
+                    + " UNION ALL SELECT 1 FROM duckdb_functions() WHERE database_name = current_database()"
+                    + " AND lower(schema_name) = ? AND lower(function_name) = ?";
+        String sc = Grants.norm(g.schema());
+        String n = Grants.norm(g.name());
+        Object[] params = g.name().isEmpty() ? new Object[] {sc} : new Object[] {sc, n, sc, n, sc, n};
+        boolean there;
+        try (c; Result r = c.execute(sql, params)) {
+            there = !Collect.json(r, 1).isEmpty();
+        } catch (DuckException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("could not look up " + where, e);
+        }
+        if (!there) {
+            throw new IllegalArgumentException("nothing to grant on: no "
+                    + (g.name().isEmpty() ? "schema " : "table, view or function ") + where);
+        }
+    }
+
+    /** The grantee (or member) must be a user who can sign in, or a role. */
+    private void requireGrantee(String who) {
+        if (!access.knownUser().test(who) && !access.grants().isRole(who)) {
+            throw new IllegalArgumentException("no user or role " + who + " to grant to");
         }
     }
 

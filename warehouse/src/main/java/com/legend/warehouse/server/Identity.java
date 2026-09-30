@@ -59,6 +59,14 @@ public final class Identity {
         this.clock = clock;
     }
 
+    /** Whether a user of that name can sign in (names compare without case, as grants do). */
+    public boolean hasUser(String name) {
+        for (String u : users.keySet()) {
+            if (u.equalsIgnoreCase(name)) return true;
+        }
+        return false;
+    }
+
     public static boolean validPrincipal(String name) {
         return PRINCIPAL.matcher(name).matches();
     }

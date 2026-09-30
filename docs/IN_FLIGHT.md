@@ -18,6 +18,9 @@ line each, announced here before landing):
 - `server/Identity.java`, `server/WarehouseServer.java`: `POST /sql/v1/token/refresh` (a valid token for a fresh one,
   never past the sign-in's session limit, 12h default); tokens carry their sign-in time (`principal|expiry|signedInAt`);
   `--token-key-file` (a key kept across restarts), `--token-minutes`, `--session-hours`; `Config.sessionLimit`.
+- `server/Statements.java` (+ `Identity.hasUser`): a GRANT must name an object (or schema) that exists and a
+  grantee (or role member) who is a user or role; REVOKE stays open. Test:
+  `WarehouseEntitlementsTest.aGrantNamesSomethingThatIsThereForSomeoneWhoIs`.
 - `sqlapi/SqlApiBinding.java`, `sqlapi/NativeBinding.java`: `refresh(token)`. Tests: `IdentityTest` (new),
   `WarehouseServerTest.aValidTokenRefreshesAndTheFreshOneWorks`.
 

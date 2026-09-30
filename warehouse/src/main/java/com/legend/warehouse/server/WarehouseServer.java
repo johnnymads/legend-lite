@@ -131,7 +131,7 @@ public final class WarehouseServer implements AutoCloseable {
             throw new IOException("could not read DuckDB's functions", e);
         }
         statements = new Statements(catalogs, sessions, results, history,
-                new Statements.Access(config.owners(), grants, authorizer), config.limits(), clock);
+                new Statements.Access(config.owners(), grants, authorizer, identity::hasUser), config.limits(), clock);
         allowedOrigins = java.util.Set.copyOf(config.allowedOrigins());
         http = HttpServer.create(new InetSocketAddress("127.0.0.1", config.port()), 0);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());

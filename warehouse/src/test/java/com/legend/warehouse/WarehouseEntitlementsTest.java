@@ -235,6 +235,29 @@ class WarehouseEntitlementsTest {
     }
 
     @Test
+    void aGrantNamesSomethingThatIsThereForSomeoneWhoIs() throws Exception {
+        // A grant on a table not yet made waited, and whoever made the table later was already
+        // granted it (2026-09-29, found by hand: the grant "succeeded" on a CREATE that failed).
+        assertEquals(ErrorCode.BAD_REQUEST, fail(alice, StatementRequest.of("GRANT SELECT ON TABLE not_yet TO dave")));
+        assertEquals(ErrorCode.BAD_REQUEST, fail(alice, StatementRequest.of("GRANT SELECT ON sales.not_yet TO dave")));
+        assertEquals(ErrorCode.BAD_REQUEST, fail(alice, StatementRequest.of("GRANT SELECT ON SCHEMA nowhere TO dave")));
+        ok(alice, "CREATE TABLE not_yet AS SELECT 'made later' AS s");
+        forbidden(dave, "SELECT s FROM not_yet");          // the refused grant left nothing behind
+
+        // nor to a name nobody signs in as, nor a role nobody made: a typo waits for its owner
+        assertEquals(ErrorCode.BAD_REQUEST, fail(alice, StatementRequest.of("GRANT SELECT ON not_yet TO mallory")));
+        assertEquals(ErrorCode.BAD_REQUEST, fail(alice, StatementRequest.of("GRANT analysts TO mallory")));
+
+        // what IS there, for who IS: granted, names without case as DuckDB compares them
+        ok(alice, "GRANT SELECT ON TABLE Not_Yet TO Dave");
+        assertEquals("made later", cell(dave, "SELECT s FROM not_yet"));
+        // revoking stays open, so a grant made before this check can still go
+        ok(alice, "REVOKE SELECT ON TABLE never_was FROM dave");
+        ok(alice, "REVOKE SELECT ON TABLE not_yet FROM dave");
+        ok(alice, "DROP TABLE not_yet");
+    }
+
+    @Test
     void ownersSeeTheGrants() throws Exception {
         List<List<Json.Node>> rows = query(alice, StatementRequest.of("SHOW GRANTS"));
         Set<String> seen = new TreeSet<>();
