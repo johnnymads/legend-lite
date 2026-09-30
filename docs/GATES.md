@@ -5683,6 +5683,30 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild W0.6 push 7: a Pure class mapping without `~src` resolves; the pin removed
+
+**What changed and why.** `Mapping my::M ( Person: Pure { name: 'x' } )` under `import my::*` threw
+`NullPointerException("resolver passthrough")` from the name resolver: `~src` is optional (engine grammar
+`(mappingSrc | mappingFilter)*`, M3 `srcClass: Type[0..1]`, lite's own record `@Nullable`), but the resolver's rebuild of
+the mapping wrapped the source class in `nn(...)` whenever anything in it resolved to a new spelling. One line:
+`sourceClass` passes through (`compiler/NameResolver.java`, the `ClassMapping.Pure` arm). **Found while pinning the
+gate's case (d):** lite refuses such a mapping at MODEL BUILD ("declares no ~src, so it has no source extent to map from",
+`MappingNormalizer.synthM2M`), while the engine compiles it and fails at execution. Not a wrong answer, a loud difference
+in where the refusal happens; recorded as register row **S21** (owner W4.1a; keep or match, to be ruled), and pinned as
+today's behaviour in the test.
+
+**Tests.** `SourcelessPureMappingKnownDefectTest` → `SourcelessPureMappingTest`: the bare class name resolves with no
+source class (was the NPE); a fully qualified class whose binding names a bare enum value (was the NPE); a bare `~src`
+still resolves; the model build refuses it naming `~src`, never an NPE. Three of four fail on `6947ceddc`.
+
+**Gate lanes.** Pre-chain "3 tests pass and 1 fails" on `MIN_MATCHED` (2602 → 2608: the test's models joined the own
+corpus), then "Executed 4 out of 4 tests: 4 tests pass"; `bazel test //...` 129 of 129; `//tools/deps:all` 5 of 5;
+`//spec:reference_lane` PASSED (46.2 s). Rosters LOST 0, GAINED 0. No timing: one line.
+
+**Pins moved.** `@KnownDefect(owner = "W2.3a")` removed (fixed, D14); `OwnCorpusParityTest.MIN_MATCHED` 2602 → 2608.
+**Number:** open wrong-results defects 11 → 10 (the homework counted this NPE among the pinned seven). **Net product
+lines:** +3 (a comment). **Cost:** under half a session.
+
 ## 2026-09-30 — Rebuild W0.6 push 3: a rebuilt filter keeps its stamp; the nested-exists pin removed
 
 **What changed and why.** `m::Firm.all()->filter(f|$f.staff->exists(s|$s.cars->exists(c|$c.make=='VW')))` over a
