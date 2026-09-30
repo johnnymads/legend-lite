@@ -84,7 +84,7 @@ public final class ChainNormalizer {
             case TypedFilter f -> {
                 TypedSpec inner = flipNearestSort(f.source());
                 yield inner == null ? null
-                        : new TypedFilter(inner, f.predicate(), f.info());
+                        : f.rebuilt(inner, f.predicate(), f.info());
             }
             case TypedCast tc -> {
                 TypedSpec inner = flipNearestSort(tc.source());

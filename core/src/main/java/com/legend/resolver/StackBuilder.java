@@ -1872,7 +1872,7 @@ final class StackBuilder {
             case TypedFilter f -> {
                 TypedSpec inner = demandBelow(f.source(), cols);
                 yield inner == f.source() ? pipeline
-                        : new TypedFilter(inner, f.predicate(),
+                        : f.rebuilt(inner, f.predicate(),
                                 new ExprType(inner.info().type(), Multiplicity.Bounded.ONE));
             }
             case TypedNavigate nav -> {
@@ -1895,7 +1895,7 @@ final class StackBuilder {
             if (inner == f.source()) {
                 return pipeline;
             }
-            return new TypedFilter(inner, f.predicate(),
+            return f.rebuilt(inner, f.predicate(),
                     new ExprType(inner.info().type(), Multiplicity.Bounded.ONE));
         }
         // a ONE-thread union (a lone projected member)

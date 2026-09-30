@@ -47,20 +47,41 @@ public final class TypedSubst {
             free.put(name, f);
             mentioned.addAll(f);
         });
-        return new Scope(env, free, Map.of(), mentioned).walk(body);
+        return new Scope(env, free, Map.of(), mentioned, Set.of(), Set.of()).walk(body);
+    }
+
+    /** The term with every binder spelled like a reserved name renamed to
+     * {@code b_<k>}, its reads following; nothing else changes. A lambda
+     * or match parameter is renamed when spelled like a name in
+     * {@code reserved}; a let inside a lambda when spelled like a name in
+     * {@code reservedForLets}. The lowerer and the store resolver reserve
+     * the names of their query-level lets and plan parameters for both,
+     * and the names of every nested let for the parameters only (rebuild
+     * W0.6 push 2): their let environments are one flat map read ahead of
+     * every binder, so a binder spelled like an entry would be read from
+     * the map, and a nested let spelled like a query-level one would
+     * overwrite it. */
+    public static TypedSpec renameBinders(TypedSpec term, Set<String> reserved,
+            Set<String> reservedForLets) {
+        if (reserved.isEmpty() && reservedForLets.isEmpty()) {
+            return term;
+        }
+        return new Scope(Map.of(), Map.of(), Map.of(), Set.of(), reserved, reservedForLets).walk(term);
     }
 
     /** One position of the walk: the entries still live (not shadowed),
      * the free variables of each entry's term, and the binders renamed
      * above. */
     private record Scope(Map<String, TypedSpec> env, Map<String, Set<String>> free,
-            Map<String, String> renames, Set<String> mentioned) {
+            Map<String, String> renames, Set<String> mentioned, Set<String> reserved,
+            Set<String> reservedForLets) {
 
         /** Whether a binder named {@code b} can capture at all: only a
-         * name some term mentions free, or a name given to a binder
-         * above. Every other binder passes with no further reading. */
-        private boolean mayCapture(String b) {
-            return mentioned.contains(b) || renames.containsValue(b);
+         * name some term mentions free, a name given to a binder above,
+         * or a reserved name. Every other binder passes with no further
+         * reading. */
+        private boolean mayCapture(String b, Set<String> reservedHere) {
+            return mentioned.contains(b) || renames.containsValue(b) || reservedHere.contains(b);
         }
 
         private Scope shadowed(String b) {
@@ -71,11 +92,12 @@ public final class TypedSubst {
             e.remove(b);
             Map<String, String> r = new LinkedHashMap<>(renames);
             r.remove(b);
-            return new Scope(e, free, r, mentioned);
+            return new Scope(e, free, r, mentioned, reserved, reservedForLets);
         }
 
         TypedSpec walk(TypedSpec n) {
-            if (env.isEmpty() && renames.isEmpty()) {
+            if (env.isEmpty() && renames.isEmpty() && reserved.isEmpty()
+                    && reservedForLets.isEmpty()) {
                 return n;
             }
             return switch (n) {
@@ -118,7 +140,7 @@ public final class TypedSubst {
                 }
                 TypedSpec value = s.walk(let.value());
                 List<TypedSpec> rest = body.subList(i + 1, body.size());
-                Bound b = s.bind(let.name(), () -> {
+                Bound b = s.bindLet(let.name(), () -> {
                     Set<String> reads = new LinkedHashSet<>(FreeVars.ofBody(rest));
                     // the let's own reads below it are its scope, not the environment's
                     reads.remove(let.name());
@@ -201,18 +223,29 @@ public final class TypedSubst {
          * the binder can capture at all). */
         private Bound bind(String b, java.util.function.Supplier<Set<String>> reads,
                 java.util.function.Supplier<Set<String>> inside) {
+            return bind(b, reads, inside, reserved);
+        }
+
+        /** A let inside a lambda: a binder over the statements after it. */
+        private Bound bindLet(String b, java.util.function.Supplier<Set<String>> reads,
+                java.util.function.Supplier<Set<String>> inside) {
+            return bind(b, reads, inside, reservedForLets);
+        }
+
+        private Bound bind(String b, java.util.function.Supplier<Set<String>> reads,
+                java.util.function.Supplier<Set<String>> inside, Set<String> reservedHere) {
             Scope below = shadowed(b);
-            if (!mayCapture(b)) {
+            if (!mayCapture(b, reservedHere)) {
                 return new Bound(b, below);
             }
             Set<String> read = reads.get();
-            if (!below.captures(b, read)) {
+            if (!reservedHere.contains(b) && !below.captures(b, read)) {
                 return new Bound(b, below);
             }
             String fresh = fresh(b, read, inside.get());
             Map<String, String> r = new LinkedHashMap<>(below.renames);
             r.put(b, fresh);
-            return new Bound(fresh, new Scope(below.env, free, r, mentioned));
+            return new Bound(fresh, new Scope(below.env, free, r, mentioned, reserved, reservedForLets));
         }
 
         private boolean captures(String b, Set<String> reads) {
@@ -233,7 +266,8 @@ public final class TypedSubst {
             for (int k = 1;; k++) {
                 String candidate = b + "_" + k;
                 if (reads.contains(candidate) || inside.contains(candidate)
-                        || renames.containsValue(candidate)) {
+                        || renames.containsValue(candidate) || reserved.contains(candidate)
+                        || reservedForLets.contains(candidate)) {
                     continue;
                 }
                 if (!mentioned.contains(candidate)) {

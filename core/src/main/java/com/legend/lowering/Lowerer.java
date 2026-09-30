@@ -281,19 +281,38 @@ public final class Lowerer {
      * trace of the lets); the final statement is the query.
      */
     public SqlQuery lower(List<TypedSpec> body) {
+        // QUERY SCOPE is one flat map read ahead of every row scope
+        // (letBindings: plan parameters, the lets below, lets met in
+        // expression position). A binder inside the body spelled like one
+        // of those names would be read from it instead of its own scope,
+        // so every such binder is renamed first (the Barendregt
+        // convention at the lowering boundary, rebuild W0.6 push 2 / E1):
+        // the map then never meets a name it does not own.
+        java.util.Set<String> queryScope = new java.util.HashSet<>(letBindings.keySet());
+        java.util.Set<String> reserved = new java.util.HashSet<>(letBindings.keySet());
+        for (TypedSpec st : body) {
+            if (st instanceof TypedLet let) {
+                queryScope.add(let.name());
+                reserved.add(let.name());
+            }
+            reserved.addAll(com.legend.compiler.spec.typed.FreeVars.lets(st));
+        }
         for (int i = 0; i < body.size() - 1; i++) {
             if (!(body.get(i) instanceof TypedLet let)) {
                 throw new IllegalStateException(
                         "only let statements may precede the query expression");
             }
-            letBindings.put(let.name(), scalar(let.value(), (var, name) -> {
+            TypedSpec value = com.legend.compiler.spec.typed.TypedSubst
+                    .renameBinders(let.value(), reserved, queryScope);
+            letBindings.put(let.name(), scalar(value, (var, name) -> {
                 throw new IllegalStateException(
                         "a query-level let has no row scope for $" + var);
             }));
         }
         // J-tail: demand-driven subselect column pruning (engine parity —
         // isolated composites enumerate only consumed columns)
-        return SubselectPrune.prune(lower(body.get(body.size() - 1)));
+        return SubselectPrune.prune(lower(com.legend.compiler.spec.typed.TypedSubst
+                .renameBinders(body.get(body.size() - 1), reserved, queryScope)));
     }
 
     /** Lower a typed query to SQL: relation pipelines and scalar roots. */

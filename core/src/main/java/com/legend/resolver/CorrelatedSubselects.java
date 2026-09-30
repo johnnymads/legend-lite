@@ -292,7 +292,7 @@ final class CorrelatedSubselects {
                 aj.targetSlotPrefixes(), aj.targetSubNavs(),
                 pc.mat().slotPrefixes(),
                 pc.subNavs(), corrRowVar, corrJoinedRow);
-        return new CorrAggSub(new TypedFilter(joinedSub, where, jInfo),
+        return new CorrAggSub(new TypedFilter(joinedSub, where, jInfo, TypedFilter.Stamp.NONE /* correlated join; equality kind is push 10 */),
                 keyCols, pcRow, corrTp, corrRowVar, corrJoinedRow, pc);
     }
 
@@ -370,7 +370,7 @@ final class CorrelatedSubselects {
                     aj.targetSlotPrefixes(), aj.targetSubNavs(),
                     pc.mat().slotPrefixes(), pc.subNavs(),
                     cjVar, jRow);
-            filtered = new TypedFilter(joinedSub, where, jInfo);
+            filtered = new TypedFilter(joinedSub, where, jInfo, TypedFilter.Stamp.NONE /* correlated join; equality kind is push 10 */);
         }
         // TAIL-hop parked CORRELATED preds (#69 second filter — the
         // firm#f0.address#f1 chain): a target sub-nav head carrying a
@@ -387,7 +387,7 @@ final class CorrelatedSubselects {
             TypedLambda w2 = assocMaterial.corrPredOnJoinedRowForSubNav(
                     parked, cs, aj.target(), corrTp, snE.getValue(),
                     pc.mat().slotPrefixes(), pc.subNavs(), cjVar, jRow);
-            filtered = new TypedFilter(filtered, w2, jInfo);
+            filtered = new TypedFilter(filtered, w2, jInfo, TypedFilter.Stamp.NONE /* correlated join; equality kind is push 10 */);
         }
         var cjInfo = new ExprType(jRow,
                 com.legend.compiler.element.type.Multiplicity
@@ -1943,7 +1943,7 @@ static TypedSpec predFilteredPipe(TypedSpec tPipe, ClassSource target,
                 Substitution.TemporalView.NONE,
                 true, true));
         return new TypedFilter(tPipe, predSub.rewriteLambda(pred),
-                tPipe.info());
+                tPipe.info(), TypedFilter.Stamp.NONE /* substituted predicate */);
     }
 
 
@@ -2173,7 +2173,7 @@ static void scanLambda(TypedLambda lambda, Set<List<String>> out) {
                 return new TypedPropertyAccess(
                         new TypedFilter(mnav,
                                 witnessPred(mnavCt, mwKey, isNotEmpty),
-                                mnav.info()),
+                                mnav.info(), TypedFilter.Stamp.NONE /* witness predicate */),
                         flat, outer.info());
             }
         }
@@ -2198,7 +2198,7 @@ static void scanLambda(TypedLambda lambda, Set<List<String>> out) {
                 TypedSpec nav0 = sc0.args().get(0);
                 List<TypedSpec> newArgs = new ArrayList<>(em.args());
                 newArgs.set(0, new TypedFilter(nav0,
-                        witnessPred(navCt0, wKey0, isNotEmpty), nav0.info()));
+                        witnessPred(navCt0, wKey0, isNotEmpty), nav0.info(), TypedFilter.Stamp.NONE /* witness predicate */));
                 if (em.args().size() == 2
                         && em.args().get(1) instanceof TypedLambda pl0
                         && pl0.parameters().size() == 1) {
@@ -2263,7 +2263,7 @@ static void scanLambda(TypedLambda lambda, Set<List<String>> out) {
                 ? pa.property() : stc;
         return new TypedPropertyAccess(
                 new TypedFilter(nav, witnessPred(navCt, wKey, isNotEmpty),
-                        nav.info()),
+                        nav.info(), TypedFilter.Stamp.NONE /* witness predicate */),
                 read, pa.info());
     }
 

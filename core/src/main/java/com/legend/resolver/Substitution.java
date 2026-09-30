@@ -612,7 +612,7 @@ final class Substitution {
                                     Multiplicity.Bounded.ONE)),
                             Multiplicity.Bounded.ONE));
             TypedSpec tFiltered = new TypedFilter(tq.relation(), tPred,
-                    tq.relation().info());
+                    tq.relation().info(), TypedFilter.Stamp.NONE /* constructed EXISTS equality; kind open, push 10 */);
             return new TypedNativeCall(neCallee(),
                     List.of(tFiltered), n.info());
     }
@@ -680,7 +680,7 @@ final class Substitution {
                                 Multiplicity.Bounded.ONE)),
                         Multiplicity.Bounded.ONE));
         TypedSpec tFiltered = new TypedFilter(tq.relation(), tPred,
-                tq.relation().info());
+                tq.relation().info(), TypedFilter.Stamp.NONE /* constructed EXISTS equality; kind open, push 10 */);
         return new TypedNativeCall(neCallee(),
                 List.of(tFiltered), n.info());
     }
@@ -1125,7 +1125,7 @@ final class Substitution {
                                             Multiplicity.Bounded.ONE)),
                                     Multiplicity.Bounded.ONE));
                     TypedSpec filtered = new TypedFilter(q.relation(), qPred,
-                            q.relation().info());
+                            q.relation().info(), TypedFilter.Stamp.NONE /* constructed EXISTS equality; kind open, push 10 */);
                     return new TypedNativeCall(neCallee(),
                             List.of(filtered), n.info());
                 }
@@ -2058,7 +2058,7 @@ final class Substitution {
                     // body-only rewrite: the lambda's OWN param binds its
                     // relation row and must survive (rewriteLambda would
                     // rebind it to THIS scope's row var, orphaning reads)
-                    new TypedFilter(rewrite(f.source()),
+                    f.rebuilt(rewrite(f.source()),
                             rewriteLambdaBodyOnly(f.predicate()), f.info());
             // RESOLVED RELATION MATERIAL in value position (the SubQueryLift
             // scalar subquery: an uncorrelated [0..1] single-column project
@@ -2817,7 +2817,7 @@ final class Substitution {
                         exPipe, corr, exPipe.info(),
                         com.legend.compiler.spec.typed.TypedFilter
                                 .Stamp.CORRELATION),
-                memberPred, exPipe.info());
+                memberPred, exPipe.info(), TypedFilter.Stamp.NONE /* member predicate */);
         return new TypedNativeCall(neCallee(), List.of(rel),
                 new ExprType(Type.Primitive.BOOLEAN, Multiplicity.Bounded.ONE));
     }
@@ -3032,7 +3032,7 @@ final class Substitution {
         if (n instanceof TypedFilter f
                 && !Type.isRelation(f.source().info().type())
                 && target.nested() && foreignRootedNav(f.source())) {
-            return new TypedFilter(f.source(),
+            return f.rebuilt(f.source(),
                     rewriteLambdaBodyOnly(f.predicate()), f.info());
         }
         if (n instanceof com.legend.compiler.spec.typed.TypedGroupBy g
@@ -3306,7 +3306,7 @@ final class Substitution {
                                     Multiplicity.Bounded.ONE)),
                             Multiplicity.Bounded.ONE));
             rel = new TypedFilter(rel, cfCorr,
-                    rel.info());
+                    rel.info(), TypedFilter.Stamp.NONE /* user chain predicate */);
         }
         List<TypedSpec> newArgs = new ArrayList<>();
         newArgs.add(rel);

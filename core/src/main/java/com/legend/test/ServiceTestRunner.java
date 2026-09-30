@@ -112,10 +112,28 @@ public final class ServiceTestRunner implements AutoCloseable {
      *  it, so the platform picks that dialect (an H2 session refuses a
      *  runtime whose connections declare anything else). */
     private final ConnectionDefinition.DatabaseType sessionType;
-    /** provisioning identity → the shared session (SHARED policy). */
+    /** test runtime name → the shared session (SHARED policy). */
     private final Map<String, Connection> shared = new LinkedHashMap<>();
-    /** provisioning identity → the test runtime (an overlay context + its runtime name). */
-    private final Map<String, TestRuntime> runtimes = new LinkedHashMap<>();
+    /** the runtime and its provisioning, BY VALUE → the test runtime (an
+     *  overlay context + its runtime name). Value records, never a hash of
+     *  the data: two suites whose CSVs differ but hash alike ("Aa"/"BB")
+     *  used to share one runtime and the second ran on the first's rows
+     *  (rebuild W0.6 push 8). */
+    private final Map<RuntimeKey, TestRuntime> runtimes = new LinkedHashMap<>();
+
+    /** One CSV table of a provisioning, by value (no source position: the
+     *  same data declared twice, inline or through a {@code ###Data}
+     *  reference, is the same provisioning). */
+    private record CsvTableKey(String schema, String table, String values) {
+    }
+
+    /** A provisioning unit by value: the store and its tables. */
+    private record ProvisionKey(String store, List<CsvTableKey> tables) {
+    }
+
+    /** A test runtime's identity: the service runtime and every provisioning. */
+    private record RuntimeKey(String runtimeFqn, List<ProvisionKey> provisions) {
+    }
 
     /** A suite's test runtime: the overlay context that resolves it, by name. */
     private record TestRuntime(PureModelContext ctx, String runtimeFqn) {
@@ -134,7 +152,14 @@ public final class ServiceTestRunner implements AutoCloseable {
     }
 
     /** One provisioning unit: the store and the CSV data that seeds it. */
-    private record Provision(String store, Protocol.PRelationalCsvData data, String identity) {
+    private record Provision(String store, Protocol.PRelationalCsvData data) {
+        ProvisionKey key() {
+            List<CsvTableKey> tables = new java.util.ArrayList<>(data.tables().size());
+            for (Protocol.PRelationalCsvTable t : data.tables()) {
+                tables.add(new CsvTableKey(t.schema(), t.table(), t.values()));
+            }
+            return new ProvisionKey(store, List.copyOf(tables));
+        }
     }
 
     // ---- RUN -----------------------------------------------------------------
@@ -299,10 +324,8 @@ public final class ServiceTestRunner implements AutoCloseable {
     /** Resolves references down to a concrete value and records it. */
     private void addProvision(List<Provision> out, String store, Protocol.PEmbeddedDataValue v) {
         Protocol.PEmbeddedDataValue value = v;
-        StringBuilder identity = new StringBuilder(store).append('=');
         while (value instanceof Protocol.PDataReference ref) {
             String path = ref.dataElement().path();
-            identity.append("ref:").append(path).append('>');
             DataDefinition dd = ctx.findData(path).orElseThrow(
                     () -> new Skip("data element '" + path + "' is not in the model"));
             if (dd.body().value() == null) {
@@ -317,12 +340,7 @@ public final class ServiceTestRunner implements AutoCloseable {
                     + value.getClass().getSimpleName().substring(1)
                     + "' is not provisioned by this runner");
         }
-        identity.append("csv:");
-        for (Protocol.PRelationalCsvTable t : csv.tables()) {
-            identity.append(t.schema()).append('.').append(t.table()).append(':')
-                    .append(t.values().hashCode()).append(';');
-        }
-        out.add(new Provision(store, csv, identity.toString()));
+        out.add(new Provision(store, csv));
     }
 
     /** The suite's TEST RUNTIME: the service runtime's mappings, its one
@@ -331,15 +349,15 @@ public final class ServiceTestRunner implements AutoCloseable {
      *  seeds on establishment). One per distinct provisioning; overlays are
      *  allocation-cheap views of the compiled model. */
     private TestRuntime testRuntime(RuntimeDefinition runtime, List<Provision> provisions) {
-        StringBuilder key = new StringBuilder(runtime.qualifiedName()).append('|');
-        provisions.forEach(p -> key.append(p.identity()).append('|'));
-        TestRuntime cached = runtimes.get(key.toString());
+        RuntimeKey key = new RuntimeKey(runtime.qualifiedName(),
+                provisions.stream().map(Provision::key).toList());
+        TestRuntime cached = runtimes.get(key);
         if (cached != null) {
             return cached;
         }
         if (provisions.isEmpty()) {
             TestRuntime plain = new TestRuntime(ctx, runtime.qualifiedName());
-            runtimes.put(key.toString(), plain);
+            runtimes.put(key, plain);
             return plain;
         }
         String store = provisions.get(0).store();
@@ -362,8 +380,11 @@ public final class ServiceTestRunner implements AutoCloseable {
                         .append(t.values());
             }
         }
-        // the '$' sigil: a name no user can write, so the overlay shadows nothing
-        String rtName = runtime.qualifiedName() + "$test$" + Integer.toHexString(key.toString().hashCode());
+        // the '$' sigil: a name no user can write, so the overlay shadows
+        // nothing; the ordinal is unique within this runner (a hash of the
+        // key was not: colliding keys shared a name and, under SHARED, a
+        // session)
+        String rtName = runtime.qualifiedName() + "$test$" + runtimes.size();
         String connName = rtName + "$conn";
         ConnectionDefinition conn = new ConnectionDefinition(connName, store, sessionType,
                 new ConnectionSpecification.LocalH2(null, csv.toString(), null),
@@ -373,7 +394,7 @@ public final class ServiceTestRunner implements AutoCloseable {
         RuntimeDefinition rt = new RuntimeDefinition(rtName, runtime.mappings(),
                 Map.of(store, List.of(connName)), List.of(), List.of(), ids);
         TestRuntime built = new TestRuntime(ctx.withExecutionOverlay(rt, conn), rtName);
-        runtimes.put(key.toString(), built);
+        runtimes.put(key, built);
         return built;
     }
 

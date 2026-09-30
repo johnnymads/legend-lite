@@ -1502,7 +1502,7 @@ final class AssociationJoins {
         TypedLambda corr = new TypedLambda(List.of(tVar), corrBody,
                 new ExprType(boolFn, one));
         TypedSpec rel = new com.legend.compiler.spec.typed.TypedFilter(
-                aj.targetPipeline(), corr, aj.targetPipeline().info());
+                aj.targetPipeline(), corr, aj.targetPipeline().info(), com.legend.compiler.spec.typed.TypedFilter.Stamp.NONE /* XStore parent navigation; equality kind is push 10 */);
         return GraphEmission.scalarLeafSubquery(rel,
                 aj.target().rowVar(), aj.targetRow(), leafProp, leafBind);
     }

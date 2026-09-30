@@ -530,6 +530,23 @@ public class H2 extends AnsiSqlRenderer {
      * reducers render on the base. */
     @Override
     protected String reducer(com.legend.sql.SqlAgg.Reducer r) {
+        if (r.fn() == com.legend.sql.SqlAgg.Fn.ANY_VALUE && r.args().size() == 1
+                && !r.distinct() && r.orderBy().isEmpty()) {
+            // Pure's first() over a group is ANY non-empty value (empties
+            // vanish from a collection); H2 2.1.214 has no ANY_VALUE, so a
+            // comparable scalar takes MIN, which is such a value. A JSON or
+            // array carrier has no order to take a minimum over: a wall,
+            // never a guess (rebuild W0.6 push 13, E5).
+            SqlExpr arg = r.args().get(0);
+            if (arg.type() instanceof com.legend.sql.TypeFact.Typed t
+                    && t.type() instanceof com.legend.sql.SqlType.Scalar sc
+                    && sc != com.legend.sql.SqlType.Scalar.JSON) {
+                return "MIN(" + expr(arg, 0) + ")";
+            }
+            throw new DialectCapability("first() over a group of "
+                    + (arg.type() instanceof com.legend.sql.TypeFact.Typed t2 ? t2.type() : arg.type())
+                    + " values has no H2 spelling: this H2 has no ANY_VALUE and MIN needs a comparable scalar");
+        }
         if ((r.fn() == com.legend.sql.SqlAgg.Fn.QUANTILE_CONT
                     || r.fn() == com.legend.sql.SqlAgg.Fn.QUANTILE_DISC)
                 && r.args().size() == 2 && !r.distinct()

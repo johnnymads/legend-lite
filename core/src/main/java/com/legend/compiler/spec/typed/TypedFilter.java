@@ -28,8 +28,12 @@ public record TypedFilter(TypedSpec source, TypedLambda predicate, ExprType info
     /** Resolver provenance classes, in engine WHERE order. */
     public enum Stamp { NONE, CORRELATION, TEMPORAL }
 
-    public TypedFilter(TypedSpec source, TypedLambda predicate, ExprType info) {
-        this(source, predicate, info, Stamp.NONE);
+    /** This filter over other children or another type, its stamp KEPT: a
+     * rebuild never chooses provenance (rebuild W0.6 push 3: a rebuilt
+     * EXISTS filter lost CORRELATION and lowered null-safe). A NEW filter
+     * writes its stamp explicitly, with the reason beside it. */
+    public TypedFilter rebuilt(TypedSpec source, TypedLambda predicate, ExprType info) {
+        return new TypedFilter(source, predicate, info, stamp);
     }
 
     @Override
