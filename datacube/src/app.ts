@@ -95,7 +95,9 @@ import {
   type DerivedColumn,
   type FilterNode,
   type FilterValue,
+  type Measure,
 } from './snapshot.ts';
+import { measureName, type ChartSpec } from './chart-spec.ts';
 import { columnRange, heatColour } from './style.ts';
 import type { HeatmapRange, HeatmapSpec } from './style.ts';
 import { TreeState, parsePathKey, pathKey, type TreeRow } from './tree.ts';
@@ -427,6 +429,10 @@ export class CubeApp {
   /** Charts on the board, by tile id: each follows the cube. */
   readonly #charts = new Map<string, ChartPanel>();
   #chartCount = 0;
+  /** Each chart tile's repaint of its buttons (`#paintCharts`). */
+  readonly #chartPaint = new Map<string, () => void>();
+  /** The pinned chart opened in the grid, which the live chart's Pin updates (`#openInGrid`). */
+  #editing: string | null = null;
   /** The board of tiles, once a chart is added; until then the grid sits alone. */
   /** The board, once a chart is open; `auto` until its layout is arranged by hand. */
   #board: { readonly board: Board; readonly host: HTMLElement; auto: boolean } | null = null;
@@ -2301,13 +2307,28 @@ export class CubeApp {
   // -- export -----------------------------------------------------------
 
   /**
-   * Add a chart of the cube to the board, below the grid: the cube's query
-   * regrouped by the chart's options, drawn by ECharts (`ui/chart-panel.ts`).
-   * It follows the cube -- a filter added to the grid narrows it -- and a
-   * click on a mark selects it: the cube is filtered to that mark (see
-   * `#select`).
+   * A chart of the cube on the board, below the grid: the cube's query regrouped by the chart's
+   * options, drawn by ECharts (`ui/chart-panel.ts`). A click on a mark selects it: the cube is
+   * filtered to that mark (see `#select`).
+   *
+   * ONE LIVE CHART (plan B1, agreed 2026-09-30). The board has at most one chart that follows
+   * the grid -- re-drawn as the grid is pivoted, grouped and filtered -- badged "Following the
+   * grid". Pin keeps a copy of it as its own chart: the copy keeps its grouping (its query and
+   * spec, not its data: it still refreshes and still answers the cube's filter), and pivoting the
+   * grid never changes it. Open in grid takes a pinned chart's grouping back into the grid, to
+   * re-pivot there; the live chart then offers to update that chart, or to pin a new one.
+   *
+   * Asked for a chart when the live one is on the board already, it pins a copy of it.
    */
-  openChart(restore?: ChartView): void {
+  openChart(restore?: ChartView, pinnedSpec?: ChartSpec): void {
+    const live = this.#liveChart();
+    if (!restore && !pinnedSpec && live) {
+      const spec = this.#charts.get(live)?.spec;
+      if (spec) {
+        this.openChart(undefined, spec);
+        return;
+      }
+    }
     const { board } = this.#ensureBoard();
     this.#chartCount += 1;
     const id = restore?.id ?? this.#freshChartId();
@@ -2320,31 +2341,49 @@ export class CubeApp {
     chip.className = 'dc-tile-chip';
     chip.hidden = true;
     chip.addEventListener('click', () => this.#select(id, null));
-    // live (follows the grid's pivots) until frozen
-    const freeze = doc.createElement('button');
-    freeze.type = 'button';
-    freeze.className = 'dc-tile-button';
-    const paintFreeze = (frozen: boolean): void => {
-      freeze.textContent = frozen ? 'Frozen' : 'Freeze';
-      freeze.setAttribute('aria-pressed', String(frozen));
-      freeze.title = frozen
-        ? 'This chart keeps its own grouping. Click to follow the grid\'s pivots again.'
-        : 'This chart follows the grid\'s pivots. Click to keep its grouping as it is.';
+    const button = (text: string, title: string): HTMLButtonElement => {
+      const el = doc.createElement('button');
+      el.type = 'button';
+      el.className = 'dc-tile-button';
+      el.textContent = text;
+      el.title = title;
+      return el;
     };
-    paintFreeze(false);
-    const options = doc.createElement('button');
-    options.type = 'button';
-    options.className = 'dc-tile-button';
-    options.textContent = 'Options';
+    // the live chart's: what it is, and the ways to keep it
+    const badge = doc.createElement('span');
+    badge.className = 'dc-tile-badge';
+    badge.textContent = 'Following the grid';
+    badge.title = 'This chart re-draws as the grid is pivoted, grouped and filtered. Pin keeps a copy as it is.';
+    const pin = button('Pin', 'Keep a copy of this chart as it is now: pivoting the grid will not change the copy.');
+    const pinNew = button('Pin new', 'Keep a copy as a new chart, and leave the chart being edited as it was.');
+    // a pinned chart's: back into the grid, to re-pivot
+    const edit = button('Open in grid', 'Group the grid the way this chart is, to change it there; then update it from the live chart.');
+    const options = button('Options', 'This chart\'s mark, columns and options.');
     options.setAttribute('aria-pressed', 'false');
-    paintFreeze(restore?.spec.frozen === true);
+    // a restored page's charts: the first that follows the grid stays live, the others were
+    // live too before one-live-chart, and are kept as pinned copies of what they showed
+    const initial = restore
+      ? (restore.spec.frozen || this.#liveChart() !== undefined ? { ...restore.spec, frozen: true as const } : restore.spec)
+      : pinnedSpec ? { ...pinnedSpec, frozen: true as const } : undefined;
+    const paint = (): void => {
+      const pinned = panel.frozen;
+      const editing = this.#editing !== null && this.#charts.has(this.#editing) ? this.#editing : null;
+      badge.hidden = pinned;
+      pin.hidden = pinned;
+      pin.textContent = editing ? `Update ${this.#board?.board.title(editing) ?? 'chart'}` : 'Pin';
+      pinNew.hidden = pinned || editing === null;
+      edit.hidden = !pinned;
+      // a scatter plots rows, not groups: the grid has no grouping to take from it
+      edit.disabled = panel.spec?.mark === 'scatter';
+    };
     const panel = new ChartPanel(body, {
-      onFrozen: (frozen) => {
-        paintFreeze(frozen);
+      onFrozen: () => {
+        // an edit to the live chart's grouping in its form pins it: it no longer follows
+        this.#paintCharts();
         this.#pageChanged();
       },
       onSpec: () => this.#pageChanged(),
-      ...(restore ? { initial: restore.spec } : {}),
+      ...(initial ? { initial } : {}),
       snapshot: () => this.#snapshot,
       run: async (query, snapshot, signal) =>
         (await this.#controller.runQuery(query, snapshot, undefined, signal)).rows,
@@ -2355,17 +2394,22 @@ export class CubeApp {
     options.addEventListener('click', () => {
       options.setAttribute('aria-pressed', String(panel.toggleForm()));
     });
-    freeze.addEventListener('click', () => panel.setFrozen(!panel.frozen));
+    pin.addEventListener('click', () => this.#pin(id, false));
+    pinNew.addEventListener('click', () => this.#pin(id, true));
+    edit.addEventListener('click', () => void this.#openInGrid(id));
     this.#charts.set(id, panel);
+    this.#chartPaint.set(id, paint);
     this.#selections.set(id, {
       chip,
       conditions: restore?.selection ? [...restore.selection] : [],
       key: restore?.selection ? JSON.stringify(restore.selection) : '',
     });
     if (restore?.selection) this.#paintSelection(id);
+    const actions = [chip, badge, pin, pinNew, edit, options];
     if (restore) {
       // placed by the page's layout, once every view is on the board (`restoreViews`)
-      board.add({ id, title: restore.title, element: body, actions: [chip, freeze, options], minW: 3, minH: TILE_MIN_ROWS });
+      board.add({ id, title: restore.title, element: body, actions, minW: 3, minH: TILE_MIN_ROWS });
+      this.#paintCharts();
       return;
     }
     const before = board.layout;
@@ -2373,7 +2417,7 @@ export class CubeApp {
       id,
       title: `Chart ${this.#chartCount}`,
       element: body,
-      actions: [chip, freeze, options],
+      actions,
       minW: 3,
       minH: TILE_MIN_ROWS,
     }, { w: 6, h: 10 });
@@ -2385,7 +2429,65 @@ export class CubeApp {
         CHARTS_PER_ROW, 3));
     }
     board.reveal(id);
+    this.#paintCharts();
     this.#pageChanged();
+  }
+
+  /** The chart that follows the grid, if one is on the board. */
+  #liveChart(): string | undefined {
+    for (const [id, panel] of this.#charts) if (!panel.frozen) return id;
+    return undefined;
+  }
+
+  /** Every chart tile's buttons, as the charts now are (which is live, which is being edited). */
+  #paintCharts(): void {
+    for (const paint of this.#chartPaint.values()) paint();
+  }
+
+  /**
+   * PIN: keep the live chart as it is. After Open in grid, it updates the chart being edited
+   * (unless `asNew`); else it is a new pinned chart beside the live one.
+   */
+  #pin(liveId: string, asNew: boolean): void {
+    const spec = this.#charts.get(liveId)?.spec;
+    if (!spec) return;
+    const target = !asNew && this.#editing !== null ? this.#charts.get(this.#editing) : undefined;
+    this.#editing = null;
+    if (target) {
+      target.setSpec({ ...spec, frozen: true });
+      this.#paintCharts();
+      this.#pageChanged();
+      return;
+    }
+    this.openChart(undefined, spec);
+  }
+
+  /**
+   * OPEN IN GRID: group the grid the way a pinned chart is -- its column across and its split as
+   * the row groups, its measures as the cube's, no column pivot -- as one change (undo puts the
+   * grid back). The live chart follows (made, if there is none), and offers to update this one.
+   */
+  async #openInGrid(id: string): Promise<void> {
+    const spec = this.#charts.get(id)?.spec;
+    if (!spec || spec.mark === 'scatter' || spec.x === undefined) return;
+    const keys = [spec.x, ...(spec.split !== undefined ? [spec.split] : [])];
+    const outcome = await this.#query((s) => {
+      const used = new Set<string>();
+      const measures = spec.y.map((m): Measure => {
+        // the cube's own measure of that column and aggregate keeps its name (its format)
+        const own = s.measures.find((c) => c.column === m.column && c.fn === m.fn);
+        const name = own?.name ?? (used.has(m.column) ? measureName(m) : m.column);
+        used.add(name);
+        return { name, column: m.column, fn: m.fn };
+      });
+      return { ...s, rows: keys, pivotOn: [], measures };
+    }, 'open a chart in the grid');
+    if (refusal(outcome) !== null) return;
+    this.#editing = id;
+    if (this.#liveChart() === undefined) this.openChart();
+    this.#paintCharts();
+    const live = this.#liveChart();
+    if (live) this.#board?.board.reveal(live);
   }
 
   /** A chart id not on the board (a restored page's ids may run ahead of the count). */
@@ -2534,7 +2636,10 @@ export class CubeApp {
     this.#selections.delete(id);
     this.#charts.get(id)?.dispose();
     this.#charts.delete(id);
+    this.#chartPaint.delete(id);
+    if (this.#editing === id) this.#editing = null;
     b.board.remove(id);
+    this.#paintCharts();
     this.#pageChanged();
     if (b.board.size > 1) {
       this.#arrange();

@@ -62,6 +62,7 @@ _EXTRA_DATA = {
     "cube-editors-app": ["test/cube-fixture.ts", "test/gate.ts"],
     "cube-adhoc-shell": ["test/cube-fixture.ts", "test/gate.ts"],
     "multi-cube": ["test/cube-fixture.ts", "test/gate.ts"],
+    "chart-tiles": ["test/cube-fixture.ts", "test/gate.ts"],
     "guardrails": glob(["demo/**/*.ts"]) + [
         "test/wasm-differential/compare.ts",
         "//wasm:differential",
@@ -677,6 +678,7 @@ _HARNESSES = [
     "shots",
     "torture",
     "verify-calc-vocabulary",
+    "verify-charts",
     "verify-cubes",
     "verify-engine",
     "verify-engine-differential",
@@ -695,6 +697,7 @@ _HARNESSES = [
 # lane runs whatever carries the tag, so the list is here, beside the harnesses, not in CI.
 _CI_HARNESSES = [
     "run-stress",
+    "verify-charts",
     "verify-cubes",
     "verify-features",
     "verify-page",

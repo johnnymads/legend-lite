@@ -2416,7 +2416,20 @@
 }
 
 .dc-tile-chip[hidden],
-.dc-tile-remove[hidden] { display: none; }
+.dc-tile-remove[hidden],
+.dc-tile-button[hidden],
+.dc-tile-badge[hidden] { display: none; }
+
+/* the live chart's mark: it follows the grid (plan B1: one live chart, Pin to keep a copy) */
+.dc-tile-badge {
+  font-size: var(--dc-text-sm-size);
+  line-height: 18px;
+  padding: 0 6px;
+  border-radius: var(--dc-radius-sm);
+  color: var(--dc-active);
+  background: var(--dc-selected-bg);
+  white-space: nowrap;
+}
 
 /* remove and resize are there on every tile, quiet until it is pointed at or focused */
 .dc-tile-remove { border-color: transparent; opacity: 0; }

@@ -88,6 +88,15 @@ export class ChartPanel {
     this.refresh(0);
   }
 
+  /** Draw `spec` instead (a pinned chart updated from the live one): its form follows. */
+  setSpec(spec: ChartSpec): void {
+    const wasFrozen = this.frozen;
+    this.#spec = spec;
+    this.#paintForm();
+    if (this.frozen !== wasFrozen) this.#options.onFrozen?.(this.frozen);
+    this.refresh(0);
+  }
+
   /** The cube changed (a new filter, a new pivot, a new calculated column): draw again, regrouped if live. */
   refresh(delay = this.#options.debounceMs ?? 150): void {
     if (this.#spec) {
