@@ -205,7 +205,8 @@ not a hand-written type:
        (as a new chart, or replacing it). No other tool has this round trip.
   2. **On shelves (the standard path).** A pinned chart is edited directly: drag fields onto channels, with
      a suggested chart type for the fields chosen. This is what Tableau and Power BI users expect.
-- **Built 2026-09-30:** one live chart, Pin, Open in grid and Update/Pin new (`app.ts` `openChart`; `chart_tiles_test`, `verify_charts`). The spec keeps its `frozen` field as the stored form of "pinned", so saved pages need no migration of the field. The shelf editor and the spec's new channels are next.
+- **Revised and built 2026-09-30 (user):** one live chart was strictly less than before, so any number of charts follow the grid again, each badged "Following the grid", with Freeze / Follow the grid on each. **Open in grid** opens a frozen chart's grouping in a grid of its own beside it (the cube's grid is not touched); **Update** writes it back. (`app.ts` `openChart`, `#openChartEditor`; `chart_tiles_test`, `verify_charts`.)
+- **Next (user, 2026-09-30): the grid is the source.** Grids and charts are equal tiles (create, remove, move, resize). A visual belongs to a grid: **Following** (its grouping, filter and calculations), **Frozen** (its own grouping, the grid's filter and calculations) or **Detached** (its own query, no grid). A grid can be hidden. v1: removing a grid removes its following charts and detaches its frozen ones.
 - **Naming:** "Pin", not "Freeze" or "Snap". **Snap** stays the word for a data snapshot (a tab table).
 - **Migration:** today's "Freeze" becomes Pin. Today's several chart tiles that follow the grid become one
   live chart plus pinned ones.

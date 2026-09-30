@@ -1,6 +1,6 @@
-// The board's charts in a real browser (plan B1, agreed 2026-09-30): ONE live chart that follows
-// the grid, Pin to keep a copy that never follows, Open in grid to take a pinned chart's grouping
-// back into the grid, and Update it from the live chart -- drawn by real ECharts on the demo page.
+// The board's charts in a real browser (plan B1, revised 2026-09-30): charts follow the grid until
+// frozen; Open in grid edits a frozen chart's grouping in a grid of its own beside it, leaving the
+// cube's grid alone, and Update writes it back -- drawn by real ECharts on the demo page.
 //
 //   bazel run //datacube:verify_charts            (SHOTS=<dir> also saves a screenshot)
 
@@ -80,58 +80,59 @@ try {
   await settle();
   const before = await rows();
 
-  await check('the first chart follows the grid, badged so', async () => {
+  const addChart = async () => {
     await page.locator('.dc-row').nth(1).locator('.dc-cell').nth(2).click({ button: 'right' });
     await page.locator('.dc-menu-item:has(> .dc-menu-label:text-is("Chart..."))').first().click();
     await settle();
     await drawn();
+  };
+  /** The cube's own row-group zone, not an editing grid's. */
+  const mainChip = (column) => page.locator(`.dc-zone-rows .dc-chip[data-column="${column}"] .dc-chip-remove`)
+    .filter({ hasNot: page.locator('xpath=ancestor::*[starts-with(@data-tile, "edit-")]') }).first();
+
+  await check('two charts both follow the grid, badged, and a pivot changes both', async () => {
+    await addChart();
+    await addChart();
     const list = await charts();
-    if (list.length !== 1 || list[0].pinned) throw new Error(JSON.stringify(list));
-    await page.locator(`[data-tile="${list[0].id}"] .dc-tile-badge:visible`, { hasText: 'Following the grid' }).waitFor();
-    return `${list[0].title}: ${list[0].x} by ${list[0].split}`;
+    if (list.length !== 2 || list.some((c) => c.pinned)) throw new Error(JSON.stringify(list));
+    for (const c of list) await page.locator(`[data-tile="${c.id}"] .dc-tile-badge:visible`, { hasText: 'Following the grid' }).waitFor();
+    return list.map((c) => `${c.title}: ${c.x} by ${c.split}`).join('; ');
   });
 
-  await check('Pin keeps a copy; pivoting the grid changes the live chart and not the copy', async () => {
-    const [live] = await charts();
-    await button(live.id, 'Pin').click();
+  await check('Freeze keeps one chart\'s grouping while the other follows a pivot', async () => {
+    const [a, b] = await charts();
+    await button(a.id, 'Freeze').click();
     await settle();
-    await drawn();
-    const pinned = (await charts()).find((c) => c.pinned);
-    if (!pinned) throw new Error('no pinned chart');
-    // take the second row group out: the live chart follows, the pinned one keeps its split
-    const second = before[1];
-    await page.locator(`.dc-zone-rows .dc-chip[data-column="${second}"] .dc-chip-remove`).first().click();
+    await mainChip(before[1]).click();
     await settle();
-    const after = await charts();
-    const nowPinned = after.find((c) => c.id === pinned.id);
-    const nowLive = after.find((c) => !c.pinned);
-    if (nowPinned.split !== pinned.split) throw new Error(`the pinned chart changed: ${pinned.split} -> ${nowPinned.split}`);
-    if (nowLive.split === pinned.split) throw new Error(`the live chart did not follow: still ${nowLive.split}`);
-    if (after.filter((c) => !c.pinned).length !== 1) throw new Error('not exactly one live chart');
-    return `pinned keeps split ${pinned.split}; live now ${nowLive.split}`;
+    const [na, nb] = await charts();
+    if (na.split !== a.split) throw new Error(`the frozen chart changed: ${a.split} -> ${na.split}`);
+    if (nb.split === b.split) throw new Error(`the following chart did not follow: still ${nb.split}`);
+    return `frozen keeps ${a.split}; following now ${nb.split}`;
   });
 
-  await check('Open in grid groups the grid as the pinned chart is; Update puts it back re-pivoted', async () => {
-    const pinned = (await charts()).find((c) => c.pinned);
-    const live = (await charts()).find((c) => !c.pinned);
-    await button(pinned.id, 'Open in grid').click();
+  await check('Open in grid edits the chart in a grid of its own; the cube\'s grid stays; Update writes it back', async () => {
+    const frozen = (await charts()).find((c) => c.pinned);
+    const rowsBefore = await rows();
+    await button(frozen.id, 'Open in grid').click();
+    const editing = page.locator(`[data-tile="edit-${frozen.id}"]`);
+    await editing.locator('.dc-row').first().waitFor({ timeout: 20_000 });
     await settle();
-    const r = await rows();
-    const want = [pinned.x, ...(pinned.split ? [pinned.split] : [])];
-    if (JSON.stringify(r) !== JSON.stringify(want)) throw new Error(`grid rows ${r}, want ${want}`);
-    const update = button(live.id, `Update ${pinned.title}`);
-    await update.waitFor({ timeout: 5_000 });
-    // re-pivot in the grid, then update the pinned chart from the live one
-    await page.locator(`.dc-zone-rows .dc-chip[data-column="${pinned.split}"] .dc-chip-remove`).first().click();
+    const chipsIn = () => editing.locator('.dc-zone-rows').first().locator('.dc-chip').evaluateAll((els) => els.map((e) => e.dataset.column));
+    const want = [frozen.x, ...(frozen.split ? [frozen.split] : [])];
+    if (JSON.stringify(await chipsIn()) !== JSON.stringify(want)) throw new Error(`editing grid grouped ${await chipsIn()}, want ${want}`);
+    if (JSON.stringify(await rows()) !== JSON.stringify(rowsBefore)) throw new Error('the cube\'s grid changed');
+    if (process.env.SHOTS) { await page.waitForTimeout(1500); await page.screenshot({ path: `${process.env.SHOTS}/charts-editing.png` }); }
+    // re-group in the editing grid, then update the chart
+    await editing.locator(`.dc-zone-rows .dc-chip[data-column="${frozen.split}"] .dc-chip-remove`).first().click();
+    await page.waitForTimeout(500);
+    await button(`edit-${frozen.id}`, `Update ${frozen.title}`).click();
     await settle();
-    await update.click();
-    await settle();
-    const after = (await charts()).find((c) => c.id === pinned.id);
-    if (!after.pinned || after.split !== null) throw new Error(`the pinned chart is ${JSON.stringify(after)}`);
-    if ((await charts()).length !== 2) throw new Error('Update added a chart');
-    // after the charts' own grow-in animation, so the bars are at their values
-    if (process.env.SHOTS) { await page.waitForTimeout(1500); await page.screenshot({ path: `${process.env.SHOTS}/charts.png` }); }
-    return `${pinned.title} updated to ${after.x}, no split`;
+    const after = (await charts()).find((c) => c.id === frozen.id);
+    if (!after.pinned || after.split !== null) throw new Error(`the chart is ${JSON.stringify(after)}`);
+    if (await editing.count()) throw new Error('the editing grid is still open');
+    if (JSON.stringify(await rows()) !== JSON.stringify(rowsBefore)) throw new Error('the cube\'s grid changed');
+    return `${frozen.title} updated to ${after.x}, no split; the cube's grid still ${rowsBefore.join(' > ')}`;
   });
 
   await check('no page errors', async () => {
