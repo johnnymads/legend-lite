@@ -5683,6 +5683,28 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild W0.6 push 11: `sum`, `plus` and `times` over an empty list give their unit
+
+**What changed and why.** Pure's `plus([])` and `sum([])` are 0 and `times([])` is 1 (`plus.pure:20-23`, the
+interpreter's `Plus.java` case 0); DuckDB's `list_sum([])` and `list_aggregate([], 'product')` are NULL, so the list
+forms returned null: `[1, 2, 3]->filter(x | $x > 5)->sum()` gave null, and a per-row empty sum inside `map` failed
+loudly because the NULL cells were dropped past the type's lower bound. The three list rules in `lowering/Scalars.java`
+(`plus`, `times`, `sum`) now coalesce the unit in, spelled in the Pure return kind (Integer, Float or Decimal), for
+numeric returns only (E8; the string form of `plus` has its own path and already gives `''`). The group and window forms
+are untouched: over an all-NULL group PCT and the engine expect NULL (homework 4 H). One helper, `emptyAs`.
+
+**Tests.** `EmptyListAggregateTest`: sum and plus of an empty Integer, Float and Decimal list (were null); times (was
+null); non-empty lists unchanged; an empty sum per row inside `map` (was a loud failure). **Seen, not this push's:** the
+product over an Integer list is spelled `6.0` (DuckDB's `list_aggregate(…, 'product')` degrades to DOUBLE; the Decimal
+literal case is already folded to a times chain for that reason); W5.2's literal typing.
+
+**Gate lanes.** Pre-chain "Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out
+of 129 tests: 129 tests pass"; `//tools/deps:all` 5 of 5. Not a front-end change. Rosters LOST 0, GAINED 0 (no corpus
+or PCT test reaches an empty list aggregate on the fixtures). No timing: one `COALESCE` per list aggregate.
+
+**Pins moved.** None. **Number:** open wrong-results defects 9 → 8. **Net product lines:** 18. **Cost:** under half
+a session.
+
 ## 2026-09-30 — Rebuild W0.6 push 8: service-test provisions keyed by value; the pin removed; three latent hash ids pinned
 
 **What changed and why.** `ServiceTestRunner` keyed a suite's provisioned CSV by `String.hashCode` of the data, and

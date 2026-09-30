@@ -14,8 +14,8 @@ principled fix, whether it is correct today, the blast radius, and the gate (the
 
 ## Push list (rev H3: the homework dry-run against the code by `../tractability-2026-09-29/1-…` and `2-…`)
 
-**Order (D22 and D23, ruled by the user 2026-09-29):** pushes 1, 2, 3, 7 and 8 are done (GATES "Rebuild W0.6 push 1" … "push 8").
-The remaining small pushes run next: 11, 13. Then the wrong-rows tool on the stress corpus (plan §4 Phase 1 step 2). Then the
+**Order (D22 and D23, ruled by the user 2026-09-29):** pushes 1, 2, 3, 7, 8 and 11 are done (GATES "Rebuild W0.6 push 1" … "push 11").
+The last small push runs next: 13. Then the wrong-rows tool on the stress corpus (plan §4 Phase 1 step 2). Then the
 rest: 9 and the four resolver pushes 4, 5, 5b, 10 judged by legend-engine's rows (fix in place or pin for the rebuilt
 resolver: decided when the tool has run), 6 and 6b by the reference lane, 12 by its repros. Push 12's repros over a mixed literal list
 (`[1, 2.5]`) meet a loud DuckDB failure first (`+(JSON, INTEGER)`, with any binder names); use a `cast(@Number)`

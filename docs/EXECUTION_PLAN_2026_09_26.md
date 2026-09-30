@@ -17,7 +17,7 @@ Keep it current: when an item lands, move it to §3 with its GATES.md heading, a
 
 ## 0. Start here (a fresh session with no context)
 
-**Now (update in every push):** W0.6 push 11 (empty `sum`/`times`), then 13. Pushes 1, 2, 3, 7 and 8 are done (§3). The scope, design choice,
+**Now (update in every push):** W0.6 push 13 (`ANY_VALUE` on H2), the last small push. Pushes 1, 2, 3, 7, 8 and 11 are done (§3). The scope, design choice,
 tests and gate of every W0.6 push are in `plan-audit-2026-09-26/w0.6-homework/README.md` §"Push list" (homework and a
 dry run against the code done); **the order is §4 Phase 1's (D22, D23): the six small pushes now (2, 3, 7, 8, 11, 13);
 then the wrong-rows tool over the stress corpus (W1.10, as rewritten under D23); then the remaining pushes, each judged by
@@ -370,6 +370,7 @@ over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its 
 | W1.0 | the documents executable: rev H2, the register, routing, banners; the cold read passed after fixes (its 15 contradictions and 12 gaps fixed) | `plan-audit-2026-09-26/cold-read/2026-09-29-rev-H2.md`; GATES "Rebuild W1.0" |
 | rev H3 | the tractability audit (five reviewers) folded in: every W0.6 push dry-run against the code and fully specified; W1 items given tools, spikes, sizes; W2.3a, W3.3, W4.3 decomposed; W3.7 made runnable; C4 given a rule; the consistency sweep's fixes; E1–E13 | `plan-audit-2026-09-26/tractability-2026-09-29/`; GATES "Rebuild rev H3" |
 | W0.6 push 1 | capture-avoiding substitution in the inliner, `SourceSubst` and `MatchFold`; the `InlinerMatchCaptureTest` pin removed; three further wrong answers reproduced and fixed; 14 latent captures in library code fixed; six bodies newly typed in the reference lane; a purpose-built stress (compile time by size against the previous commit, and a permanent correctness test) | GATES "Rebuild W0.6 push 1" |
+| W0.6 push 11 | `sum`, `plus`, `times` over an empty list give their unit in the list rules; group and window forms untouched | GATES "Rebuild W0.6 push 11" |
 | W0.6 push 8 | service-test provisions keyed by value records, runtimes named by ordinal; the pin removed; three latent content-hash ids pinned for W6.4 | GATES "Rebuild W0.6 push 8" |
 | W0.6 push 7 | the sourceless Pure mapping resolves (one line); register row S21 for the model-build refusal the engine does not make | GATES "Rebuild W0.6 push 7" |
 | W0.6 push 3 | `TypedFilter`'s defaulting constructor deleted; `rebuilt` keeps the stamp, 46 sites converted; the nested-exists pin removed; three rebuild sites shown live by the probe, no verdict changed on the fixtures | GATES "Rebuild W0.6 push 3" |
