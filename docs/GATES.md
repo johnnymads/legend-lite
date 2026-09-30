@@ -5683,6 +5683,193 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild W0.6 push 13: `first()` over a group runs on the product's H2
+
+**What changed and why.** Pure's `first()` over a group is any non-empty value of the group (empties vanish from a
+collection; the engine's own spelling is unordered too). Lite spells it `ANY_VALUE`, which the product's H2 (2.1.214)
+does not have, so `groupBy(…, y|$y->first())` failed on a plain H2 with `Function "ANY_VALUE" not found`: a loud
+failure, not a wrong result (homework 4 D). E5: `sql/dialect/H2.java`'s reducer spells it `MIN(x)` for a comparable
+scalar (a valid "any non-empty value"), and refuses a JSON carrier with a `DialectCapability` wall ("no order to take a
+minimum over"). `H2Modern` inherits the arm; rows are the same either way.
+
+**Tests.** `H2FirstInGroupTest`: `first()` over a group on a plain H2 session, string and integer columns, with a NULL
+in the group that must be skipped (was the H2 error).
+
+**Gate lanes.** Pre-chain "3 tests pass and 1 fails" on `MIN_MATCHED` (2608 → 2611: the test's model joined the own
+corpus), then green; `bazel test //...` 129 of 129; `//tools/deps:all` 5 of 5. Not a front-end change. Rosters LOST 0,
+GAINED 0. No timing: a spelling.
+
+**Pins moved.** `OwnCorpusParityTest.MIN_MATCHED` 2608 → 2611. **Number:** open wrong-results defects unchanged at 8
+(D was never counted: a loud failure). **Net product lines:** +17. **Cost:** under half a session.
+
+**W0.6's six small pushes are done (1, 2, 3, 7, 8, 11, 13). Next, per D23: the wrong-rows tool on the stress corpus.**
+
+## 2026-09-30 — Rebuild W0.6 push 11: `sum`, `plus` and `times` over an empty list give their unit
+
+**What changed and why.** Pure's `plus([])` and `sum([])` are 0 and `times([])` is 1 (`plus.pure:20-23`, the
+interpreter's `Plus.java` case 0); DuckDB's `list_sum([])` and `list_aggregate([], 'product')` are NULL, so the list
+forms returned null: `[1, 2, 3]->filter(x | $x > 5)->sum()` gave null, and a per-row empty sum inside `map` failed
+loudly because the NULL cells were dropped past the type's lower bound. The three list rules in `lowering/Scalars.java`
+(`plus`, `times`, `sum`) now coalesce the unit in, spelled in the Pure return kind (Integer, Float or Decimal), for
+numeric returns only (E8; the string form of `plus` has its own path and already gives `''`). The group and window forms
+are untouched: over an all-NULL group PCT and the engine expect NULL (homework 4 H). One helper, `emptyAs`.
+
+**Tests.** `EmptyListAggregateTest`: sum and plus of an empty Integer, Float and Decimal list (were null); times (was
+null); non-empty lists unchanged; an empty sum per row inside `map` (was a loud failure). **Seen, not this push's:** the
+product over an Integer list is spelled `6.0` (DuckDB's `list_aggregate(…, 'product')` degrades to DOUBLE; the Decimal
+literal case is already folded to a times chain for that reason); W5.2's literal typing.
+
+**Gate lanes.** Pre-chain "Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out
+of 129 tests: 129 tests pass"; `//tools/deps:all` 5 of 5. Not a front-end change. Rosters LOST 0, GAINED 0 (no corpus
+or PCT test reaches an empty list aggregate on the fixtures). No timing: one `COALESCE` per list aggregate.
+
+**Pins moved.** None. **Number:** open wrong-results defects 9 → 8. **Net product lines:** 18. **Cost:** under half
+a session.
+
+## 2026-09-30 — Rebuild W0.6 push 8: service-test provisions keyed by value; the pin removed; three latent hash ids pinned
+
+**What changed and why.** `ServiceTestRunner` keyed a suite's provisioned CSV by `String.hashCode` of the data, and
+named the test runtime by a hash of that key. Two suites whose CSVs differ but hash alike (`Aa`/`BB`, and every
+same-position substitution of them) shared one runtime: the second suite ran on the first's rows and failed; under the
+SHARED policy they also shared one session. Now (E7): value records `CsvTableKey(schema, table, values)`,
+`ProvisionKey(store, tables)` and `RuntimeKey(runtimeFqn, provisions)` key the runtime cache (no source positions, so the
+same data declared inline or through a `###Data` reference is one provisioning, as before); the runtime name is an
+ordinal within the runner. `core/test/ServiceTestRunner.java` only; no catch or JDBC call added (the registers that name
+the file are unchanged).
+
+**Tests.** `ServiceTestProvisionKeyTest`: the pin removed (B passes after A on one runner, and A again after B); under
+SHARED, B passes after A and there are two sessions (was one: the runtime NAME collided); two suites with identical data
+still share one runtime and one session. Two of three fail on `8b177b26d`. **Pinned, not fixed (E7):** the three
+content-hash ids the homework found beside this one (`FunctionBodyRows.scopeId`, `ConstructedInstances.rowId`,
+`PlanRows.scopeId`'s spanless fallback) are `@KnownDefect(owner = "W6.4")` in `ContentHashIdentityKnownDefectTest`
+(the lambda case reproduces the collision at unit level; the other two are named in its reason); none is reproduced
+from a user query.
+
+**Gate lanes.** Pre-chain "Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out
+of 129 tests: 129 tests pass"; `//tools/deps:all` 5 of 5. Not a front-end change: no reference lane. Rosters LOST 0,
+GAINED 0. No timing: a test runner's cache key.
+
+**Pins moved.** `@KnownDefect(owner = "W6.4")` on `collidingCsvHashesDoNotShareATestRuntime` removed (fixed, D14); one
+new `@KnownDefect(owner = "W6.4")` pin (above). **Number:** open wrong-results defects 10 → 9. **Net product lines:**
+21. **Cost:** under half a session.
+
+## 2026-09-30 — Rebuild W0.6 push 7: a Pure class mapping without `~src` resolves; the pin removed
+
+**What changed and why.** `Mapping my::M ( Person: Pure { name: 'x' } )` under `import my::*` threw
+`NullPointerException("resolver passthrough")` from the name resolver: `~src` is optional (engine grammar
+`(mappingSrc | mappingFilter)*`, M3 `srcClass: Type[0..1]`, lite's own record `@Nullable`), but the resolver's rebuild of
+the mapping wrapped the source class in `nn(...)` whenever anything in it resolved to a new spelling. One line:
+`sourceClass` passes through (`compiler/NameResolver.java`, the `ClassMapping.Pure` arm). **Found while pinning the
+gate's case (d):** lite refuses such a mapping at MODEL BUILD ("declares no ~src, so it has no source extent to map from",
+`MappingNormalizer.synthM2M`), while the engine compiles it and fails at execution. Not a wrong answer, a loud difference
+in where the refusal happens; recorded as register row **S21** (owner W4.1a; keep or match, to be ruled), and pinned as
+today's behaviour in the test.
+
+**Tests.** `SourcelessPureMappingKnownDefectTest` → `SourcelessPureMappingTest`: the bare class name resolves with no
+source class (was the NPE); a fully qualified class whose binding names a bare enum value (was the NPE); a bare `~src`
+still resolves; the model build refuses it naming `~src`, never an NPE. Three of four fail on `6947ceddc`.
+
+**Gate lanes.** Pre-chain "3 tests pass and 1 fails" on `MIN_MATCHED` (2602 → 2608: the test's models joined the own
+corpus), then "Executed 4 out of 4 tests: 4 tests pass"; `bazel test //...` 129 of 129; `//tools/deps:all` 5 of 5;
+`//spec:reference_lane` PASSED (46.2 s). Rosters LOST 0, GAINED 0. No timing: one line.
+
+**Pins moved.** `@KnownDefect(owner = "W2.3a")` removed (fixed, D14); `OwnCorpusParityTest.MIN_MATCHED` 2602 → 2608.
+**Number:** open wrong-results defects 11 → 10 (the homework counted this NPE among the pinned seven). **Net product
+lines:** +3 (a comment). **Cost:** under half a session.
+
+## 2026-09-30 — Rebuild W0.6 push 3: a rebuilt filter keeps its stamp; the nested-exists pin removed
+
+**What changed and why.** `m::Firm.all()->filter(f|$f.staff->exists(s|$s.cars->exists(c|$c.make=='VW')))` over a
+firm whose employee has a NULL id and a car with a NULL owner key returned `[BETA]`, not `[]`: the inner EXISTS relation
+is stamped CORRELATION by the resolver (its join key must lower as plain `=`), but the outer scope's re-pass rebuilt it
+with `TypedFilter`'s 3-argument constructor, whose stamp defaulted to NONE, and the lowerer then emitted
+`IS NOT DISTINCT FROM`, under which NULL matches NULL. The class fix, as the homework proposed: **the defaulting
+constructor is deleted**; `TypedFilter.rebuilt(source, predicate, info)` carries the stamp, and every NEW filter writes
+its stamp explicitly with the reason beside it. All 46 three-argument sites in 17 files converted (`compiler/spec` 2,
+`resolver` 44): 20 are rebuilds of an existing filter and now keep its stamp; 26 build new filters and write
+`Stamp.NONE` with a one-line reason. **One variable at a time:** the sites whose provenance is correlation-shaped but
+was NONE before (constructed EXISTS equalities in `Substitution` at :614/:682/:1127, the graph-fetch child
+correlations, `CorrelatedSubselects`' joined subs, `AssociationJoins`' XStore navigation, `TemporalFrame`'s window at
+:1167) keep NONE and say so: choosing their equality kind is push 10's (the equality-kind node, E4), not a
+constructor exchange.
+
+**The probe** (local only; receipt `receipts/rebuild-W0.6-p3-probe-69c1bc7de/`): `rebuilt` printed its call site
+whenever the stamp it kept was not NONE, over the corpus, PCT, stress and core lanes uncached. Three of the twenty
+rebuild sites are live: `Substitution.rewrite:2061` (95 times, the proven one), `Pipelines.rewriteRowReads:1235` (27)
+and `StackBuilder.demandForKeys:1898` (361, all in the stress suites). Every lane stayed green with rosters unchanged,
+so keeping those stamps changed no verdict on the fixtures we have: the fixtures hold no NULL join keys, which is the
+D23 point exactly. The other seventeen rebuild sites never met a stamped filter in these lanes.
+
+**Tests.** `NestedExistsCorrelationStampTest`: the pin removed (`[BETA]` → `[]`, both stamps CORRELATION, no
+`IS NOT DISTINCT FROM`); a real match still found (`[ACME]` for BMW); a user chain filter inside the nested exists keeps
+NONE while the exists relation keeps CORRELATION. **Seen, not this push's:** a nested `forAll` over an association
+(`$f.staff->forAll(s|$s.cars->forAll(…))`) is a loud wall ("association property used other than as a navigation
+head"), before and after; owner W1.10's defect list.
+
+**Gate lanes.** `bazel test //core:guardrails //core:census //parser-equivalence:parser_parity //spec:spec_tests`
+"Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out of 129 tests: 129 tests
+pass"; `bazel test //tools/deps:all` "Executed 0 out of 5 tests: 5 tests pass"; `bazel test //spec:reference_lane`
+PASSED (47.9 s). Corpus rosters LOST 0, GAINED 0. No timing: a constructor exchange with no new work per node.
+
+**Pins moved.** `@KnownDefect(owner = "W4.3")` on `nestedExistsDoesNotMatchNullKeys` removed (fixed, D14).
+**Deleted:** the 3-argument `TypedFilter` constructor. **Number:** open wrong-results defects 12 → 11.
+**Net product lines:** +4.
+
+**Cost.** One session, one commit; one chain run on the final tree, one seven-lane probe run.
+
+## 2026-09-30 — Rebuild W0.6 push 2: the query scope can no longer shadow a binder; both pins removed
+
+**What changed and why.** `|let x = 10; [1, 2, 3]->map(x | $x + 1)` returned `[11, 11, 11]`. The lowerer keeps query
+scope (plan parameters, the query-level lets it seeds, lets met in expression position) in one flat map keyed by name,
+read AHEAD of every row scope (`Lowerer.java` `letBindings`, the variable arm and the property arm); the store resolver
+has the same shape (`StoreResolver.letBindings`, read by `SubQueryLift` and the temporal frames' date resolution). So
+any lambda, match or nested-let binder spelled like a query-scope name was read from the map. The homework's first design
+(the lets as the outermost link of the resolver chain) was set aside by the dry run (T1: sixteen root resolvers ignore
+the variable name and would turn a loud miss into a silent column read); E1 was chosen instead and is what landed:
+**the Barendregt convention at both boundaries.** `Lowerer.lower(List)` and `StoreResolver.resolve` first rename every
+binder in the body spelled like a query-scope name (`TypedSubst.renameBinders`: a lambda or match parameter against
+the query-level lets, the plan parameters and every nested let; a nested let against the query-level lets and the plan
+parameters, since it would overwrite one), so the flat maps never meet a name they do not own. No resolver, arm or map
+changed. Sizes: `TypedSubst` +34 (the reserved sets), `FreeVars.lets` +16, `Lowerer` +19, `StoreResolver` +18.
+
+**Fixed, each with its old value in the test:** the map and filter pins; exists and forAll (`false` → `true`); a fold
+whose element or accumulator is spelled like the let (`30`, `103` → `6`); sortBy (`[3, 1, 2]` → `[1, 2, 3]`); a
+property read on a binder spelled like a struct-valued let (`0` → `5`); three levels spelled `x` (`[202, 202]` →
+`[32, 32]`); a multi-statement program whose second let and final expression both bind `x` (`[100, 100, 100]` →
+`[4, 9, 16]`); a plan parameter `x` with a lambda binder `x` (the placeholder reached the executable dialect, a loud
+failure; on the engine-text path it was a wrong `${x}` in the plan). All eight fail on `795611e2e` and pass here
+(`LowererLetScopeTest`, the same class compiled against the previous jars). **Seen, not this push's:** a lambda
+returning a list inside `map` (`[1, 2]->map(x | [10, 20]->map(x | $x + 1))`, Pure `[11, 21, 11, 21]`) fails loudly
+before and after ("unrolled quantified assert: element verdict not adjudicable for null"): a list-of-lists shape the
+executor does not flatten; a loud failure, owner W1.10's defect list.
+
+**The probe** (local only, never committed; receipt `receipts/rebuild-W0.6-p2-probe-795611e2e/`): the rename site
+printed every binder it renamed over `bazel test //... --nocache_test_results`. The first rule reserved every nested
+let's name for the nested lets themselves and renamed about 1,300 of them for colliding with themselves (`products`,
+`limits`, `whenClauses`, …: the inlined platform bodies keep their lets inside lambdas, so the lowerer's
+expression-position let arm is hit constantly, not "reachability unknown"); the rule was narrowed as above. With the
+narrowed rule: 69 renames per corpus run (138 per lane, both runs), all lambda parameters spelled like a query let or a
+plan parameter (`p`, `s`, `cm`, `f`, `x`, `c`, `dt`, and the service parameters `optionalPnl`,
+`optionalSettlementDateTime`); no other lane renames anything; every lane green, rosters unchanged, so none of these
+changed a verdict: they are α-renamings that appear only in SQL lambda text. Conservative by design: the resolver cannot
+know which lets the lowerer will seed, so it reserves them all; unique ids (the audit's finding 2) make the pass
+unnecessary.
+
+**Gate lanes.** `bazel test //core:guardrails //core:census //parser-equivalence:parser_parity //spec:spec_tests`
+"Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out of 129 tests: 129 tests
+pass"; `bazel test //tools/deps:all` "Executed 0 out of 5 tests: 5 tests pass"; `bazel test //spec:reference_lane`
+PASSED (47.5 s; `compiler/spec/typed` changed, so front-end). Corpus rosters LOST 0, GAINED 0.
+**Timing.** `//spec:corpus_duckdb` alone, `--nocache_test_results`: 78.4 s at a one-minute load of 2.98, but the five-minute
+load was 11 (another session had just been running): indicative only, inside push 1's 75.9–77.4 s band plus that noise.
+The pass costs two walks per statement; no quiet machine was available within twenty minutes.
+
+**Pins moved.** Both `@KnownDefect(owner = "W2.5")` pins in `LowererLetScopeTest` removed (fixed, D14). **Deleted:**
+nothing (the flat maps stay until unique ids). **Number:** open wrong-results defects 13 → 12. **Net product lines:** +87.
+
+**Cost.** One session; chain runs: two with the probe (the first rule, the narrowed rule), one on the final tree. The
+homework's remaining sites (`TemporalFrame.normalizeContextDate`, `SubQueryLift.walk`) are covered by the resolver-side
+rename rather than threaded scopes.
+
 ## 2026-09-29 — Rebuild D23: the wrong-rows tool is built on the stress corpus, with swappable data
 
 **What.** The user asked, in plain words, what the corpus and PCT lanes cannot see and why the stress corpus is not

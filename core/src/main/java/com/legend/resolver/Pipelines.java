@@ -706,7 +706,7 @@ public final class Pipelines {
                                     UnaryOperator.identity())).toList(),
                             pred.info());
                 }
-                yield new TypedFilter(src, pred, src.info());
+                yield new TypedFilter(src, pred, src.info(), TypedFilter.Stamp.NONE /* union arm predicate */);
             }
             // UNION pipelines: each concatenate branch materializes
             // INDEPENDENTLY (its projection's own slot reads are its demand)
@@ -1232,7 +1232,7 @@ public final class Pipelines {
                             fc.documentation()))
                             .toList(),
                     tp.info());
-            case TypedFilter tf -> new TypedFilter(tf.source(),
+            case TypedFilter tf -> tf.rebuilt(tf.source(),
                     (TypedLambda) rewriteRowReads(tf.predicate(), rowVar,
                             prefixes, stripped, varRewrite),
                     tf.info());
@@ -1541,7 +1541,7 @@ public final class Pipelines {
         while (top instanceof TypedFilter f) {
             TypedSpec inner = f.source();
             UnaryOperator<TypedSpec> prev = rewrap;
-            rewrap = d -> prev.apply(new TypedFilter(d, f.predicate(),
+            rewrap = d -> prev.apply(f.rebuilt(d, f.predicate(),
                     new ExprType(d.info().type(), Multiplicity.Bounded.ONE)));
             top = inner;
         }

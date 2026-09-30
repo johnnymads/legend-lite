@@ -1561,7 +1561,7 @@ final class GraphEmission {
                             new ExprType(predFn,
                                     com.legend.compiler.element.type
                                             .Multiplicity.Bounded.ONE)),
-                    childRel.info());
+                    childRel.info(), TypedFilter.Stamp.NONE /* child correlation; equality kind is push 10 */);
             extraParams.add(extraPred.parameters().get(0));
         }
         boolean toMany = !(d.multiplicity()
@@ -1684,7 +1684,7 @@ final class GraphEmission {
             midBase = new TypedFilter(midBase,
                     new TypedLambda(List.of(midName), List.of(userConj),
                             new ExprType(midFn, one)),
-                    midBase.info());
+                    midBase.info(), TypedFilter.Stamp.NONE /* user conjunct */);
         }
         TypedSpec midRel = new TypedFilter(midBase,
                 new TypedLambda(List.of(midName), List.of(andFold(midConj)),
@@ -2427,7 +2427,7 @@ final class GraphEmission {
                     new TypedLambda(List.of(target.rowVar()), List.of(pb),
                             new ExprType(boolFn,
                                     com.legend.compiler.element.type.Multiplicity.Bounded.ONE)),
-                    rel.info());
+                    rel.info(), TypedFilter.Stamp.NONE /* child correlation; equality kind is push 10 */);
         }
         return new HeadRel(target, targetRow, rel);
     }
@@ -2619,7 +2619,7 @@ final class GraphEmission {
                             List.of(pb), new ExprType(predFn,
                                     com.legend.compiler.element.type
                                             .Multiplicity.Bounded.ONE)),
-                    rel.info());
+                    rel.info(), TypedFilter.Stamp.NONE /* child correlation; equality kind is push 10 */);
         }
         return scalarLeafSubquery(rel, target.rowVar(), targetRow,
                 leaf.property(), leafBind);
@@ -3295,7 +3295,7 @@ final class GraphEmission {
                                     .toList(),
                             ma.sweep(), ma.info());
             case TypedNativeCall c -> c.withChildren(c.args().stream().map(a -> substVars(a, sub)).toList());
-            case TypedFilter f -> new TypedFilter(substVars(f.source(), sub),
+            case TypedFilter f -> f.rebuilt(substVars(f.source(), sub),
                     (TypedLambda) substVars(f.predicate(), sub), f.info());
             case TypedLambda l -> {
                 Map<String, TypedSpec> inner = new java.util.LinkedHashMap<>(sub);

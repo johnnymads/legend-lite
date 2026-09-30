@@ -287,8 +287,7 @@ final class Scalars {
                 if (chain != null) {
                     return chain;
                 }
-                return new SqlExpr.Call(SqlFn.LIST_SUM,
-                        List.of(Numerics.numList(args.get(0))));
+                return emptyAs(SqlFn.LIST_SUM, Numerics.numList(args.get(0)), n, 0);
             });
         }
         for (com.legend.model.FunctionId f : Pure.AT_MATH_TIMES) {
@@ -304,8 +303,7 @@ final class Scalars {
                 if (chain != null) {
                     return chain;
                 }
-                return new SqlExpr.Call(SqlFn.LIST_PRODUCT,
-                        List.of(Numerics.numList(args.get(0))));
+                return emptyAs(SqlFn.LIST_PRODUCT, Numerics.numList(args.get(0)), n, 1);
             });
         }
         for (com.legend.model.FunctionId f : Pure.AT_MATH_TIMES) {
@@ -1277,7 +1275,7 @@ final class Scalars {
         for (com.legend.model.FunctionId f : Pure.AT_MATH_SUM) {
             RULES.put(f, (n, args) -> isToOne(n.args().get(0))
                     ? args.get(0)
-                    : SqlExpr.Call.of(SqlFn.LIST_SUM, Numerics.numList(args.get(0))));
+                    : emptyAs(SqlFn.LIST_SUM, Numerics.numList(args.get(0)), n, 0));
         }
         // round(Number[1]) RETURNS Integer (real pure) — banker's round,
         // then the integral cast the signature promises; round(x, scale)
@@ -3388,6 +3386,26 @@ final class Scalars {
     /** The reduction rules' identity-arm guard — Stamps.toOne, the
      * historical upper==1 reading preserved verbatim (see Stamps for
      * the empty-identity fork this deliberately does NOT change). */
+    /** A list aggregate whose Pure value over the EMPTY list is the unit
+     * ({@code plus([]) = sum([]) = 0}, {@code times([]) = 1}; the interpreter's
+     * {@code Plus.java} case 0 and {@code plus.pure:20-23}): DuckDB's
+     * {@code list_sum([])} and {@code list_aggregate([], 'product')} are
+     * NULL, so the unit is coalesced in, spelled in the Pure return kind
+     * (rebuild W0.6 push 11, homework 4 H, E8). The group and window forms
+     * stay NULL over an all-NULL group: PCT and the engine agree there. */
+    private static SqlExpr emptyAs(SqlFn agg, SqlExpr list, TypedNativeCall n, long unit) {
+        if (!(n.info().type() instanceof Type.Primitive p) || !p.isNumeric()) {
+            // numeric returns only (E8); the string form of plus has its own path
+            return SqlExpr.Call.of(agg, list);
+        }
+        SqlExpr zero = n.info().type() == Type.Primitive.FLOAT
+                ? new SqlExpr.FloatLit(unit)
+                : n.info().type() == Type.Primitive.DECIMAL
+                        ? new SqlExpr.DecimalLit(java.math.BigDecimal.valueOf(unit))
+                        : new SqlExpr.IntLit(unit);
+        return SqlExpr.Call.of(SqlFn.COALESCE, SqlExpr.Call.of(agg, list), zero);
+    }
+
     static boolean isToOne(TypedSpec arg) {
         return Stamps.toOne(arg);
     }

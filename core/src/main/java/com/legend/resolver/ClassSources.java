@@ -969,7 +969,7 @@ public final class ClassSources {
                     new TypedLambda(List.of(inner.rowVar()), body,
                             new ExprType(fnType,
                                     Multiplicity.Bounded.ONE)),
-                    composedPipeline.info());
+                    composedPipeline.info(), TypedFilter.Stamp.NONE /* composed pipeline body */);
         }
         Map<String, TypedSpec> composed = new LinkedHashMap<>();
         Map<String, String> deferred = new LinkedHashMap<>();

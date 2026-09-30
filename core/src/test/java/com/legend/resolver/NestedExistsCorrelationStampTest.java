@@ -9,7 +9,6 @@ import com.legend.compiler.spec.SpecCompiler;
 import com.legend.compiler.spec.typed.TypedFilter;
 import com.legend.compiler.spec.typed.TypedNativeCall;
 import com.legend.compiler.spec.typed.TypedSpec;
-import com.legend.testing.KnownDefect;
 import com.legend.testing.Own;
 import org.junit.jupiter.api.Test;
 
@@ -26,8 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
  * A nested exists keeps the mapping-join semantics of its inner correlation: the join
  * condition is the mapping's own, lowered as plain '=', so a NULL key never matches a NULL
  * key. The resolver stamps the EXISTS relation CORRELATION (Substitution.correlateTarget);
- * the outer scope's re-pass rebuilds it without the stamp (Substitution rewrite, the
- * relation-material TypedFilter arm), and the lowerer then emits IS NOT DISTINCT FROM.
+ * the outer scope's re-pass used to rebuild it without the stamp (the relation-material
+ * TypedFilter arm of Substitution.rewrite), and the lowerer then emitted IS NOT DISTINCT
+ * FROM: {@code [BETA]} for the nested query below, whose NULL keys must not match. Rebuild
+ * W0.6 push 3: a rebuild keeps the stamp ({@code TypedFilter.rebuilt}); the constructor
+ * that defaulted it is gone.
  */
 class NestedExistsCorrelationStampTest {
 
@@ -119,14 +121,28 @@ class NestedExistsCorrelationStampTest {
     }
 
     @Test
-    @KnownDefect(owner = "W4.3", reason = "the outer exists' re-pass rebuilds the inner EXISTS"
-            + " relation without its CORRELATION stamp (Substitution.java:2061), so the mapping"
-            + " join lowers null-safe and NULL keys match")
     void nestedExistsDoesNotMatchNullKeys() throws Exception {
         assertEquals(List.of(TypedFilter.Stamp.CORRELATION, TypedFilter.Stamp.CORRELATION),
                 existsRelationStamps(NESTED));
         String sql = Compiler.compile(MODEL, NESTED, "m::RT");
         assertFalse(sql.contains("IS NOT DISTINCT FROM"), sql);
+        // was [BETA]
         assertEquals(List.of(), rows(NESTED));
+    }
+
+    @Test
+    void nestedExistsStillFindsARealMatch() throws Exception {
+        // Ann (id 10, firm 1) owns the BMW: ACME has a BMW-owning employee, BETA has none
+        assertEquals(List.of("ACME"), rows("m::Firm.all()->filter(f|$f.staff->exists(s|"
+                + "$s.cars->exists(c|$c.make == 'BMW')))->project(~[legal: f|$f.legal])"));
+    }
+
+    @Test
+    void aChainFilterInsideTheNestedExistsKeepsItsOwnStamp() throws Exception {
+        // the user's chain filter is NONE; the exists relation under it is CORRELATION
+        String q = "m::Firm.all()->filter(f|$f.staff->exists(s|"
+                + "$s.cars->filter(c|$c.make != 'BMW')->exists(c|$c.make == 'VW')))->project(~[legal: f|$f.legal])";
+        assertEquals(List.of(), rows(q));
+        assertFalse(Compiler.compile(MODEL, q, "m::RT").contains("IS NOT DISTINCT FROM"));
     }
 }

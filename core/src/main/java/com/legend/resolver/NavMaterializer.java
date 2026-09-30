@@ -770,7 +770,7 @@ final class NavMaterializer {
         if (pipe instanceof com.legend.compiler.spec.typed.TypedFilter f) {
             TypedSpec src = rewriteNavPredicate(f.source(), alias, cond);
             return src == f.source() ? pipe
-                    : new com.legend.compiler.spec.typed.TypedFilter(src,
+                    : f.rebuilt(src,
                             f.predicate(), f.info());
         }
         return pipe;

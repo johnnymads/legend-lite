@@ -186,8 +186,26 @@ public final class StoreResolver {
                         chainMappings)
                 : driverRuntimeFqn == null ? Context.NONE
                 : Context.ofRuntime(driverRuntimeFqn);
+        // The let env below is one flat map keyed by name and read ahead of
+        // every binder (SubQueryLift, the temporal frames' date reads): a
+        // binder spelled like a let would be read as the let. Every such
+        // binder is renamed first, as the lowerer does at its own boundary
+        // (rebuild W0.6 push 2 / E1).
+        java.util.Set<String> queryScope = new java.util.HashSet<>(letBindings.keySet());
+        java.util.Set<String> reserved = new java.util.HashSet<>(letBindings.keySet());
+        for (TypedSpec st : body) {
+            if (st instanceof com.legend.compiler.spec.typed.TypedLet let) {
+                queryScope.add(let.name());
+                reserved.add(let.name());
+            }
+            reserved.addAll(com.legend.compiler.spec.typed.FreeVars.lets(st));
+        }
         List<TypedSpec> out = new ArrayList<>(body.size());
-        for (TypedSpec stmt0 : body) {
+        for (TypedSpec stmt00 : body) {
+            TypedSpec stmt0 = stmt00 instanceof com.legend.compiler.spec.typed.TypedLet let
+                    ? let.withChildren(List.of(com.legend.compiler.spec.typed.TypedSubst
+                            .renameBinders(let.value(), reserved, queryScope)))
+                    : com.legend.compiler.spec.typed.TypedSubst.renameBinders(stmt00, reserved, queryScope);
             TypedSpec stmt = ChainNormalizer.normalize(chainDispatch.runtimeIfsAsUnions(stmt0, this::storeRooted), ctx,
                     pr -> java.util.Optional.ofNullable(trackedElementClass(pr)));
             // milestoning-date let env (engine inScopeVars, M:648):
@@ -681,7 +699,7 @@ public final class StoreResolver {
                     navHeadByAlias, demandedNavs, composed, parentAssocs,
                     navMats);
             return src == f.source() ? pipe
-                    : new TypedFilter(src, f.predicate(), f.info());
+                    : f.rebuilt(src, f.predicate(), f.info());
         }
         if (pipe instanceof com.legend.compiler.spec.typed.TypedJoinSlot js) {
             TypedSpec src = augmentNavPredicates(js.source(), cs,
@@ -1291,7 +1309,7 @@ public final class StoreResolver {
         TypedSpec pred = Pipelines.substituteParam(specs, f.predicate(), rowRead);
         TypedLambda fn = new TypedLambda(List.of("r"), List.of(pred),
                 f.predicate().info());
-        return new TypedFilter(rel, fn, rel.info());
+        return new TypedFilter(rel, fn, rel.info(), TypedFilter.Stamp.NONE /* store-rooted predicate */);
     }
 
 
@@ -3064,7 +3082,7 @@ public final class StoreResolver {
         final Context closedCtx = context;   // a self-contained from() in a predicate resolves first (72b)
         for (int i = ops.size() - 1; i >= 0; i--) {
             pipeline = switch (ops.get(i)) {
-                case TypedFilter f -> new TypedFilter(pipeline,
+                case TypedFilter f -> f.rebuilt(pipeline,
                         substitution(cs, m, assocs, assocEnds, existsSubs, aggReads, inQueryReads, true, fresh, f.predicate(), context)
                                 .rewriteLambda((TypedLambda) SubQueryLift.resolveClosed(
                                         f.predicate(), new java.util.LinkedHashSet<>(),
@@ -3253,7 +3271,7 @@ public final class StoreResolver {
             for (TypedSpec b : lam.body()) {
                 FlattenOps.consumedPaths(b, lam.parameters().get(0), innerFullPaths);
             }
-            innerOps.add(new TypedFilter(targetPipe, lam, targetPipe.info()));
+            innerOps.add(new TypedFilter(targetPipe, lam, targetPipe.info(), TypedFilter.Stamp.NONE /* target predicate */));
         }
         if (innerPaths.isEmpty()) {
             return new NestedScope(none, targetPipe, row);

@@ -183,7 +183,7 @@ final class SyntheticHeads {
         TypedLambda pred = new TypedLambda(List.of(r), List.of(cond),
                 new ExprType(new Type.FunctionType(List.of(new Type.Param(row, one)),
                         new Type.Param(Type.Primitive.BOOLEAN, one)), one));
-        return new com.legend.compiler.spec.typed.TypedFilter(pipe, pred, pipe.info());
+        return new com.legend.compiler.spec.typed.TypedFilter(pipe, pred, pipe.info(), com.legend.compiler.spec.typed.TypedFilter.Stamp.NONE /* head predicate */);
     }
 
     /** The CORRELATED predicate parked on {@code head}, or null. */
@@ -782,7 +782,7 @@ final class SyntheticHeads {
                             + " conjunct(s) never attached to a boolean"
                             + " consumption");
                 }
-                yield new TypedFilter(
+                yield f.rebuilt(
                         liftFilteredHeads(f.source(), enabled),
                         p2, f.info());
             }
@@ -1700,7 +1700,7 @@ final class SyntheticHeads {
                                 ? inner.stamp() : f.stamp());
             }
             return src == f.source() ? s
-                    : new TypedFilter(src, f.predicate(), f.info());
+                    : f.rebuilt(src, f.predicate(), f.info());
         }
         return s;
     }
@@ -1806,7 +1806,7 @@ final class SyntheticHeads {
                                             c.name(), (TypedLambda) f.apply(c.fn())))
                                     .toList(),
                             p.info());
-            case TypedFilter fl -> new TypedFilter(f.apply(fl.source()),
+            case TypedFilter fl -> fl.rebuilt(f.apply(fl.source()),
                     (TypedLambda) f.apply(fl.predicate()), fl.info());
             case TypedGroupBy gb -> new TypedGroupBy(f.apply(gb.source()),
                     gb.keys().stream().map(k -> new TypedGroupBy.GroupKey(

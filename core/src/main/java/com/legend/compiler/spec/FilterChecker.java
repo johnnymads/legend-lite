@@ -16,6 +16,6 @@ final class FilterChecker {
 
     static TypedSpec check(Typer t, AppliedFunction af, Env env) {
         Application a = t.checkGeneric(af, env);
-        return new TypedFilter(a.args().get(0), Args.lambda(a, 1), a.out());
+        return new TypedFilter(a.args().get(0), Args.lambda(a, 1), a.out(), TypedFilter.Stamp.NONE /* user-written */);
     }
 }

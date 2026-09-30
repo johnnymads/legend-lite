@@ -1144,8 +1144,11 @@ public final class NameResolver {
                         && bindings == p.propertyBindings()) {
                     yield p;
                 }
+                // ~src is optional (M3 srcClass: Type[0..1]; the engine's
+                // ClassMappingFirstPassBuilder keeps null): passed through as
+                // it is, never required (rebuild W0.6 push 7)
                 yield new ClassMapping.Pure(className, p.setId(), p.extendsSetId(),
-                        p.root(), nn(sourceClass), filter, bindings);
+                        p.root(), sourceClass, filter, bindings);
             }
         };
     }
