@@ -63,6 +63,11 @@ export interface QueryStore {
   delete(id: string): Promise<void>;
 }
 
+/** legend-engine refuses an ExecuteInput without its execution context (measured, 4.145.0: a 500). */
+function withContext(input: ExecuteInput): ExecuteInput {
+  return { clientVersion: 'vX_X_X', context: { _type: 'BaseExecutionContext' }, ...input };
+}
+
 /** An engine at a base URL (`http://host:port/api`): legend-lite's server or legend-engine. */
 export class HttpEngine implements Engine, QueryStore {
   readonly #base: string;
@@ -126,16 +131,17 @@ export class HttpEngine implements Engine, QueryStore {
   }
 
   execute(input: ExecuteInput, signal?: AbortSignal): Promise<ExecutionResult> {
-    return this.#json('POST', '/pure/v1/execution/execute', input, signal);
+    return this.#json('POST', '/pure/v1/execution/execute', withContext(input), signal);
   }
 
   generatePlan(input: ExecuteInput): Promise<unknown> {
-    return this.#json('POST', '/pure/v1/execution/generatePlan', input);
+    return this.#json('POST', '/pure/v1/execution/generatePlan', withContext(input));
   }
 
   modelCoverage(model: PureModelContext, mapping: string): Promise<MappingModelCoverageAnalysisResult> {
-    return this.#json('POST', '/pure/v1/analytics/mapping/modelCoverage', {
-      clientVersion: 'vX_X_X', mapping, model, returnMappedEntityInfo: true,
+    // the flags are query parameters (a body field is refused by the engine)
+    return this.#json('POST', '/pure/v1/analytics/mapping/modelCoverage?returnMappedEntityInfo=true', {
+      clientVersion: 'vX_X_X', mapping, model,
     });
   }
 

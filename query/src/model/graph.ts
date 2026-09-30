@@ -300,6 +300,27 @@ export class ModelGraph {
     };
   }
 
+  /**
+   * The mappings whose class mappings name a class (or one of its subclasses) -- what the
+   * elements declare, for the class-first setup; which properties are mapped is the engine's
+   * answer (`modelCoverage`), never worked out here.
+   */
+  mappingsFor(classPath: string): string[] {
+    const wanted = new Set([classPath, ...this.subclasses(classPath)]);
+    return [...this.mappings.entries()]
+      .filter(([, m]) => (m.classMappings ?? []).some((cm) => wanted.has(cm.class)))
+      .map(([p]) => p)
+      .sort();
+  }
+
+  /** The runtimes that declare a mapping. */
+  runtimesFor(mappingPath: string): string[] {
+    return [...this.runtimes.entries()]
+      .filter(([, r]) => (r.runtimeValue.mappings ?? []).some((m) => m.path === mappingPath))
+      .map(([p]) => p)
+      .sort();
+  }
+
   /** Every element a person can document-search: classes, enumerations, associations. */
   documentedElements(): { path: string; kind: 'class' | 'enumeration' | 'association'; doc: string | undefined }[] {
     const out: { path: string; kind: 'class' | 'enumeration' | 'association'; doc: string | undefined }[] = [];
