@@ -86,7 +86,7 @@ public sealed interface ValueSpecification permits
     default java.util.List<ValueSpecification> children() {
         return switch (this) {
             case PathLiteral pl -> java.util.List.of(pl.desugared());
-            case GraphFetchLiteral gf -> java.util.List.of(gf.desugared());
+            case GraphFetchLiteral gf -> gf.arguments();
             case QuotedTreeCall q ->
                     java.util.List.of(q.original(), q.tree());
             case QuotedGrammarCall q -> {
@@ -148,8 +148,7 @@ public sealed interface ValueSpecification permits
             case PathLiteral pl -> new PathLiteral(pl.startType(), pl.segments(),
                     (LambdaFunction) cs.get(0), pl.alias(), pl.hasDatedSegment(),
                     pl.pos(), pl.literalLength());
-            case GraphFetchLiteral gf -> new GraphFetchLiteral(gf.className(),
-                    gf.subTrees(), cs.get(0), gf.unsupported(), gf.pos());
+            case GraphFetchLiteral gf -> gf.withArguments(cs);
             case QuotedTreeCall q -> new QuotedTreeCall(
                     (AppliedFunction) cs.get(0), cs.get(1), q.pos());
             case QuotedGrammarCall q -> new QuotedGrammarCall(

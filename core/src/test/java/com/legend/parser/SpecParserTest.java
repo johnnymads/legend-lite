@@ -2702,108 +2702,97 @@ final class SpecParserTest {
 
     @Test
     void graphFetchTreeSimpleFlatProperties() {
-        // '#{Person {name, age}}#' \u2014 a flat graph-fetch tree.
-        // Desugars to ColSpecArray with one ColSpec per property,
-        // each carrying a lambda 'x | $x.prop' as function1.
-        // Root class name 'Person' is NOT retained (engine-lite
-        // gets it from arg[0] of the enclosing graphFetch() call).
-        ColSpecArray expected = new ColSpecArray(List.of(
-                new ColSpec("name",
-                        new LambdaFunction(
-                                List.of(new Variable("_gf0")),
-                                List.of(new AppliedProperty(
-                                        new Variable("_gf0"), "name"))),
-                        null),
-                new ColSpec("age",
-                        new LambdaFunction(
-                                List.of(new Variable("_gf0")),
-                                List.of(new AppliedProperty(
-                                        new Variable("_gf0"), "age"))),
-                        null)));
-        assertEquals(expected, desugar(com.legend.testing.Platform.spec("#{Person {name, age}}#")));
+        // '#{Person {name, age}}#' — a flat graph-fetch tree: the root
+        // class and one node per property, in order.
+        assertEquals(tree("Person", gfNode("name"), gfNode("age")),
+                com.legend.testing.Platform.spec("#{Person {name, age}}#"));
     }
 
     @Test
     void graphFetchTreeNested() {
-        // '#{Person {name, firm {legalName}}}#' \u2014 nested tree.
-        // The 'firm' property gets both function1 ('_gf0 | $_gf0.firm')
-        // and function2 (zero-param lambda wrapping the nested
-        // ColSpecArray with depth-1 ('_gf1') parameter names).
-        LambdaFunction firmFn1 = new LambdaFunction(
-                List.of(new Variable("_gf0")),
-                List.of(new AppliedProperty(
-                        new Variable("_gf0"), "firm")));
-        ColSpecArray nested = new ColSpecArray(List.of(
-                new ColSpec("legalName",
-                        new LambdaFunction(
-                                List.of(new Variable("_gf1")),
-                                List.of(new AppliedProperty(
-                                        new Variable("_gf1"), "legalName"))),
-                        null)));
-        LambdaFunction firmFn2 = new LambdaFunction(
-                List.of(), List.of(nested));
-        ColSpecArray expected = new ColSpecArray(List.of(
-                new ColSpec("name",
-                        new LambdaFunction(
-                                List.of(new Variable("_gf0")),
-                                List.of(new AppliedProperty(
-                                        new Variable("_gf0"), "name"))),
-                        null),
-                new ColSpec("firm", firmFn1, firmFn2)));
-        assertEquals(expected, desugar(
-                com.legend.testing.Platform.spec("#{Person {name, firm {legalName}}}#")));
+        // '#{Person {name, firm {legalName}}}#' — nested tree: 'firm'
+        // carries its own nodes.
+        assertEquals(tree("Person", gfNode("name"), gfNode("firm", gfNode("legalName"))),
+                com.legend.testing.Platform.spec("#{Person {name, firm {legalName}}}#"));
     }
 
-    /** Graph-fetch parses to the wire-facing literal; these pins assert its desugared tree. */
-    private static ValueSpecification desugar(ValueSpecification v) {
-        return v instanceof com.legend.protocol.spec.GraphFetchLiteral gf ? gf.desugared() : v;
+    /** A tree of property nodes (equality ignores source positions). */
+    private static com.legend.protocol.spec.GraphFetchLiteral tree(String cls,
+            com.legend.protocol.spec.GraphFetchLiteral.Node... nodes) {
+        return new com.legend.protocol.spec.GraphFetchLiteral(cls, List.of(nodes), List.of(), null);
+    }
+
+    private static com.legend.protocol.spec.GraphFetchLiteral.Node gfNode(String property,
+            com.legend.protocol.spec.GraphFetchLiteral.Node... children) {
+        return new com.legend.protocol.spec.GraphFetchLiteral.Node(property, null, List.of(), false,
+                null, null, List.of(children));
     }
 
     @Test
     void graphFetchTreeWithAlias() {
         // '#{Person {\'alias\': name}}# — the leading quoted-string +
         // colon is a graph alias; the engine serializes the node under
-        // it, so the ColSpec CARRIES it (task #78; the parse-and-discard
-        // was engine-lite behaviour our envelope emission outgrew).
-        ColSpecArray expected = new ColSpecArray(List.of(
-                new ColSpec("name",
-                        new LambdaFunction(
-                                List.of(new Variable("_gf0")),
-                                List.of(new AppliedProperty(
-                                        new Variable("_gf0"), "name"))),
-                        null, "alias")));
-        assertEquals(expected, desugar(
-                com.legend.testing.Platform.spec("#{Person {'alias': name}}#")));
+        // it, so the node CARRIES it (task #78).
+        assertEquals(tree("Person", new com.legend.protocol.spec.GraphFetchLiteral.Node(
+                        "name", null, List.of(), false, "alias", null, List.of())),
+                com.legend.testing.Platform.spec("#{Person {'alias': name}}#"));
     }
 
     @Test
     void graphFetchTreeWithPropertyParameters() {
         // '#{Person {name(%2024-01-01)}}# — property call args parse as
-        // REAL expressions and ride the ColSpec (qualifier args inline
+        // REAL expressions and ride the node (qualifier args inline
         // derived bodies, task #78); the CHECKER still drops them for
         // non-derived properties (milestoning threading is its own
-        // feature).
-        ColSpecArray expected = new ColSpecArray(List.of(
-                new ColSpec("name",
-                        new LambdaFunction(
-                                List.of(new Variable("_gf0")),
-                                List.of(new AppliedProperty(
-                                        new Variable("_gf0"), "name"))),
-                        null, null,
-                        List.of(new CDate(new PureDateLiteral.StrictDate(2024, 1, 1))))));
-        assertEquals(expected, desugar(
-                com.legend.testing.Platform.spec("#{Person {name(%2024-01-01)}}#")));
+        // feature). The node records its parentheses.
+        var gf = assertInstanceOf(com.legend.protocol.spec.GraphFetchLiteral.class,
+                com.legend.testing.Platform.spec("#{Person {name(%2024-01-01)}}#"));
+        var n = gf.subTrees().get(0);
+        assertEquals("name", n.property());
+        assertTrue(n.qualified());
+        assertEquals(new PureDateLiteral.StrictDate(2024, 1, 1),
+                assertInstanceOf(CDate.class, n.parameters().get(0)).value());
     }
 
     @Test
     void graphFetchTreeTrailingCommaTolerated() {
-        // '#{Person {name, age,}}#' \u2014 trailing comma in a
+        // '#{Person {name, age,}}#' — trailing comma in a
         // graph-fetch definition is tolerated per engine-lite.
         // Pins the lenient-termination behaviour so a future
         // tightening doesn't silently break compatibility.
-        ColSpecArray result = (ColSpecArray) desugar(
+        var gf = assertInstanceOf(com.legend.protocol.spec.GraphFetchLiteral.class,
                 com.legend.testing.Platform.spec("#{Person {name, age,}}#"));
-        assertEquals(2, result.colSpecs().size());
+        assertEquals(2, gf.subTrees().size());
+    }
+
+    @Test
+    void graphFetchTreeSubtypes() {
+        // root ->subType(@X) {…} entries and a property's prop->subType(@X) {…} view;
+        // a subType entry below the root refuses, as the engine's grammar does
+        var gf = assertInstanceOf(com.legend.protocol.spec.GraphFetchLiteral.class,
+                com.legend.testing.Platform.spec(
+                        "#{Firm {legalName, owner->subType(@Person) {name}, ->subType(@Bank) {swift}}}#"));
+        assertEquals("Person", gf.subTrees().get(1).subType());
+        assertEquals(List.of(gfNode("name")), gf.subTrees().get(1).subTrees());
+        assertEquals("Bank", gf.subTypeTrees().get(0).subTypeClass());
+        assertEquals(List.of(gfNode("swift")), gf.subTypeTrees().get(0).subTrees());
+        ParseException below = assertThrows(ParseException.class,
+                () -> com.legend.testing.Platform.spec("#{Firm {owner {->subType(@Person) {name}}}}#"));
+        assertTrue(String.valueOf(below.getMessage()).contains("supported only at root level"),
+                () -> "got: " + below.getMessage());
+    }
+
+    @Test
+    void graphFetchTreeSpansAreAbsolute() {
+        // graph-fetch spans are the document's, not the island's: the tree re-lexes
+        // its slice laid at its real line and column (the wire's sourceInformation)
+        var gf = assertInstanceOf(com.legend.protocol.spec.GraphFetchLiteral.class,
+                com.legend.testing.Platform.spec("\n  #{Person {\n    name($x)}}#"));
+        assertEquals(new com.legend.protocol.SourceInfo("", 2, 5, 2, 10), gf.pos());
+        var n = gf.subTrees().get(0);
+        assertEquals(new com.legend.protocol.SourceInfo("", 3, 5, 3, 8), n.pos());
+        assertEquals(new com.legend.protocol.SourceInfo("", 3, 10, 3, 11),
+                assertInstanceOf(Variable.class, n.parameters().get(0)).pos());
     }
 
     @Test
@@ -2847,7 +2836,7 @@ final class SpecParserTest {
                         && af.parameters().size() == 1
                         && af.parameters().get(0)
                                 instanceof com.legend.protocol.spec.GraphFetchLiteral gf
-                        && gf.desugared() instanceof ColSpecArray,
+                        && gf.subTrees().size() == 1,
                 () -> "want serialize(graphFetchTree), got: " + result);
     }
 

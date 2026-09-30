@@ -2863,9 +2863,6 @@ public final class ProtocolEmitter {
      *  keeps the class-name span (probe "gft as let value"). */
     private static void graphFetch(StringBuilder b, com.legend.protocol.spec.GraphFetchLiteral gf,
             @com.legend.base.Nullable SourceInfo outerSpan) {
-        require(!gf.unsupported(),
-                "graph-fetch with aliases/parameters/subType (wire shape unprobed)",
-                gf.className());
         SourceInfo pos = requirePos(gf.pos(), "graph fetch " + gf.className());
         b.append("{\"_type\":\"classInstance\",\"sourceInformation\":");
         srcInfo(b, outerSpan != null ? outerSpan : pos);
@@ -2932,18 +2929,20 @@ public final class ProtocolEmitter {
                 b.append(",\"subType\":");
                 str(b, n.subType());
             }
-            b.append(",\"subTypeTrees\":[");
-            graphSubTypes(b, n.subTypeTrees());
-            b.append("]}");
+            // subtype entries live at the root only (the engine's grammar)
+            b.append(",\"subTypeTrees\":[]}");
         }
     }
 
     /**
-     * A graph-fetch property argument. String/integer/var reuse the ordinary literal
-     * shapes; dates diverge from expression position — ALWAYS {@code dateTime} and the
-     * value keeps the leading {@code %} (probe "gft pct date param") — and a dotted enum
-     * is a REAL {@code enumValue} node spanning the whole dotted path (probe "gft enum
-     * param"), unlike the property-on-ptr spelling expression position uses.
+     * A graph-fetch property argument -- the tree holds it as the grammar parsed it, in
+     * expression position; the graph-position WIRE spelling is written here (and read back
+     * by {@code ProtocolReader.graphArg}). String/integer/boolean reuse the ordinary
+     * literal shapes; dates diverge — ALWAYS {@code dateTime} and the value keeps the
+     * leading {@code %} (probe "gft pct date param"); a dotted enum is a REAL
+     * {@code enumValue} node spanning the whole dotted path (probe "gft enum param"),
+     * unlike the property-on-ptr spelling expression position uses; a variable spans its
+     * name without the dollar. Any other argument has no probed wire shape and refuses.
      */
     private static void gftParam(StringBuilder b, com.legend.protocol.spec.ValueSpecification p) {
         switch (p) {
@@ -2951,7 +2950,7 @@ public final class ProtocolEmitter {
                 b.append("{\"_type\":\"dateTime\",\"sourceInformation\":");
                 srcInfo(b, requirePos(d.pos(), "graph-fetch date argument"));
                 b.append(",\"value\":");
-                str(b, java.util.Objects.requireNonNull(d.written(),
+                str(b, "%" + java.util.Objects.requireNonNull(d.written(),
                         "graph-fetch date argument written form"));
                 b.append('}');
             }
@@ -2959,7 +2958,11 @@ public final class ProtocolEmitter {
                 b.append("{\"_type\":\"enumValue\",\"fullPath\":");
                 str(b, e.fullPath());
                 b.append(",\"sourceInformation\":");
-                srcInfo(b, requirePos(e.pos(), "graph-fetch enum argument"));
+                // the whole dotted path: the enumeration's start to the value's end
+                SourceInfo value = requirePos(e.pos(), "graph-fetch enum argument");
+                SourceInfo enumeration = e.enumerationPos() != null ? e.enumerationPos() : value;
+                srcInfo(b, new SourceInfo(value.sourceId(), enumeration.startLine(),
+                        enumeration.startColumn(), value.endLine(), value.endColumn()));
                 b.append(",\"value\":");
                 str(b, e.value());
                 b.append('}');
@@ -2981,7 +2984,13 @@ public final class ProtocolEmitter {
             case com.legend.protocol.spec.CString s -> valueSpec(b, s);
             case com.legend.protocol.spec.CInteger c -> valueSpec(b, c);
             case com.legend.protocol.spec.CBoolean bo -> valueSpec(b, bo);
-            case com.legend.protocol.spec.Variable v -> valueSpec(b, v);
+            // a variable spans its NAME only here -- no dollar (probe "gft var param")
+            case com.legend.protocol.spec.Variable v -> {
+                SourceInfo at = requirePos(v.pos(), "graph-fetch variable argument");
+                valueSpec(b, new com.legend.protocol.spec.Variable(v.name(), v.type(), v.multiplicity(),
+                        new SourceInfo(at.sourceId(), at.startLine(), at.startColumn() + 1,
+                                at.endLine(), at.endColumn())));
+            }
             default -> throw new UnsupportedOperationException(
                     "ProtocolEmitter has no rule for graph-fetch argument "
                             + p.getClass().getSimpleName() + " — probe, do not guess.");

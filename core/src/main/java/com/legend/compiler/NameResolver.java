@@ -1688,8 +1688,10 @@ public final class NameResolver {
             // a TDS literal dissolves into its desugared tds(...) call
             case com.legend.protocol.spec.TdsLiteral tl ->
                     resolveVs(tl.desugared(), scope);
-            case com.legend.protocol.spec.GraphFetchLiteral gf ->
-                    resolveVs(gf.desugared(), scope);
+            // a graph-fetch tree KEEPS its node (GraphFetchChecker reads the tree):
+            // its class names resolve in place, its call arguments as the
+            // expressions they are
+            case com.legend.protocol.spec.GraphFetchLiteral gf -> resolveGraphFetch(gf, scope);
             case com.legend.protocol.spec.QuotedTreeCall q ->
                     new com.legend.protocol.spec.QuotedTreeCall(
                             (com.legend.protocol.spec.AppliedFunction)
@@ -1912,6 +1914,14 @@ public final class NameResolver {
         return inner == c.type() ? c
                 : new TypeAnnotation.RelationShape.Column(c.name(), inner, c.multiplicity(),
                         c.pos());
+    }
+
+    private static com.legend.protocol.spec.GraphFetchLiteral resolveGraphFetch(
+            com.legend.protocol.spec.GraphFetchLiteral gf, Scope scope) {
+        // qualifier CALL args (synonymByType(ProductSynonymType.CUSIP)) carry names too
+        return gf.withArguments(resolveList(gf.arguments(),
+                (x, sc) -> Objects.requireNonNull(resolveVs(x, sc), "resolveVs(x, sc)"), scope))
+                .withClassNames(name -> resolveName(name, scope));
     }
 
     private static ColSpec resolveColSpec(ColSpec cs, Scope scope) {

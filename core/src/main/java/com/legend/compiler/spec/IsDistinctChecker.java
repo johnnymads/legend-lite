@@ -3,8 +3,7 @@ package com.legend.compiler.spec;
 import com.legend.compiler.spec.typed.TypedSpec;
 import com.legend.protocol.spec.AppliedFunction;
 import com.legend.protocol.spec.AppliedProperty;
-import com.legend.protocol.spec.ColSpec;
-import com.legend.protocol.spec.ColSpecArray;
+import com.legend.protocol.spec.GraphFetchLiteral;
 import com.legend.protocol.spec.LambdaFunction;
 import com.legend.protocol.spec.ValueSpecification;
 import com.legend.protocol.spec.Variable;
@@ -37,18 +36,22 @@ final class IsDistinctChecker {
         }
         ValueSpecification bound = env.resolveAlias(af.parameters().get(1));
         ValueSpecification tree = GraphFetchChecker.unwrapCompiledTree(bound);
-        if (!(tree instanceof ColSpecArray leaves)) {
+        if (!(tree instanceof GraphFetchLiteral leaves)) {
             return t.applyGeneric(af, env);
+        }
+        if (!leaves.subTypeTrees().isEmpty()) {
+            throw new com.legend.error.NotImplementedException(
+                    "isDistinct by a tree with a ->subType view — leaves only");
         }
         Variable e = new Variable("e");
         List<ValueSpecification> reads = new ArrayList<>();
-        for (ColSpec cs : leaves.colSpecs()) {
-            if (GraphFetchChecker.nestedTree(cs) != null) {
+        for (GraphFetchLiteral.Node n : leaves.subTrees()) {
+            if (!n.subTrees().isEmpty() || n.subType() != null) {
                 throw new com.legend.error.NotImplementedException(
-                        "isDistinct by a tree with a nested sub-tree (" + cs.name()
+                        "isDistinct by a tree with a nested sub-tree (" + n.property()
                                 + " {…}) — leaves only");
             }
-            reads.add(new AppliedProperty(e, cs.name()));
+            reads.add(new AppliedProperty(e, n.property()));
         }
         if (reads.size() < 2 || reads.size() > 6) {
             throw new com.legend.error.NotImplementedException(

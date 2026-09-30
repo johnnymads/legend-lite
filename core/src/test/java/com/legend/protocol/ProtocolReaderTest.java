@@ -68,6 +68,9 @@ class ProtocolReaderTest {
         "|my::Firm.all()->graphFetch(#{my::Firm {employeesOn(%2024-01-01) {name}, ranked('a', 2)}}#)",
         "|my::Firm.all()->graphFetch(#{my::Firm {legalName, owner->subType(@my::Person) {name}}}#)",
         "|my::Firm.all()->graphFetch(#{my::Firm {legalName, ->subType(@my::Bank) {swift}}}#)",
+        // graph-position argument spellings: enum spans its whole path, a variable its name only
+        "{d: Date[1]|my::Firm.all()->graphFetch(#{my::Firm {employeesOn($d) {name}, bySide(my::Side.BUY)}}#)}",
+        "|my::Firm.all()->graphFetch(#{my::Firm {\n  ranked(['a', 'b'], true) {name},\n  'n': legalName}}#)",
     })
     void readsGraphFetchTrees_asTheGrammarDoes(String text) {
         roundTrips(text);

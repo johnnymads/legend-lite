@@ -1,133 +1,164 @@
 package com.legend.protocol.spec;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
 /**
- * A graph-fetch literal {@code #{Root {a, k {b}}}#} — like {@link PathLiteral}, the parse
- * product keeps BOTH representations: the wire tree (class name + property nodes with their
- * REAL token spans — graph-fetch spans are absolute, not island-shifted) for
- * {@code ProtocolEmitter}, and the desugared {@link ColSpecArray} legend-lite's compiler
- * consumes. {@code NameResolver} dissolves the node into {@link #desugared()} on first
- * touch.
+ * A graph-fetch tree {@code #{Root {a, k(%2024-01-01) {b}, ->subType(@S) {c}}}#}: the root
+ * class, its property nodes, and its subtype entries -- the ONE representation text, protocol
+ * JSON and the compiler share. The parser builds it from text, {@code ProtocolReader} from the
+ * wire; {@code GraphFetchChecker} validates it against the model into the typed tree.
  *
- * <p>Wire shape (ProbeWireShapes "typed new and gft", "alias dated tref2 gft2" d):
- * {@code classInstance} of type {@code rootGraphFetchTree}; the OUTER span and the value's
- * span are both the CLASS-NAME token span; each property node spans its name token.
- * Aliases, parameters, and subtype trees are carried as an unsupported flag and wall.
+ * <p>A node's call arguments are ordinary expressions (as the grammar parses them); they are the
+ * literal's {@link ValueSpecification#children() children}, in tree order, so every generic walk
+ * (name resolution, substitution, renaming, folding) reaches them. The graph-position wire
+ * spellings of those arguments (ProbeWireShapes "gft pct date param", "gft enum param") are
+ * the emitter's and the reader's business, not the tree's.
+ *
+ * <p>Equality ignores source positions of the root, nodes and subtype entries (as the
+ * desugared form it replaced did); arguments compare as themselves.
  */
 public record GraphFetchLiteral(
         String className,
         List<Node> subTrees,
         List<SubTypeNode> subTypeTrees,
-        ValueSpecification desugared,
-        boolean unsupported,
         @com.legend.base.Nullable com.legend.protocol.SourceInfo pos) implements ValueSpecification {
 
     public GraphFetchLiteral {
         Objects.requireNonNull(className, "className");
-        Objects.requireNonNull(subTrees, "subTrees");
-        Objects.requireNonNull(subTypeTrees, "subTypeTrees");
-        Objects.requireNonNull(desugared, "desugared");
         subTrees = List.copyOf(subTrees);
         subTypeTrees = List.copyOf(subTypeTrees);
     }
 
-    /** No-subtype convenience constructor. */
-    public GraphFetchLiteral(String className, List<Node> subTrees,
-            ValueSpecification desugared, boolean unsupported,
-            @com.legend.base.Nullable com.legend.protocol.SourceInfo pos) {
-        this(className, subTrees, List.of(), desugared, unsupported, pos);
-    }
-
-    /** A {@code ->subType(@X) { ... }} ENTRY — the level's subTypeTrees on the wire;
+    /** A {@code ->subType(@X) { ... }} ENTRY -- the level's subTypeTrees on the wire;
      *  {@code pos} is the class-name span WITHOUT the {@code @}. */
     public record SubTypeNode(String subTypeClass,
                               @com.legend.base.Nullable com.legend.protocol.SourceInfo pos,
                               List<Node> subTrees) {
         public SubTypeNode {
+            Objects.requireNonNull(subTypeClass, "subTypeClass");
             subTrees = List.copyOf(subTrees);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof SubTypeNode other
+                    && subTypeClass.equals(other.subTypeClass()) && subTrees.equals(other.subTrees());
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(subTypeClass, subTrees);
         }
     }
 
     /**
-     * One property node: name, its token span, call arguments, optional alias
-     * ({@code 'nick' : prop}), optional subtype view ({@code prop->subType(@X)}), nested
-     * subtrees. Arguments are protocol value specs whose spans the island scan bakes in
-     * (var = name only, no {@code $}; string/date/enum = full literal).
+     * One property node: name, its token span, call arguments, whether it is spelled with
+     * parentheses ({@code prop()} serializes a milestoned child under its resolved date; the wire
+     * cannot tell it from {@code prop}), optional alias ({@code 'nick' : prop}), optional subtype
+     * view ({@code prop->subType(@X)}, whose children read X's properties), nested nodes.
+     * Subtype ENTRIES ({@code ->subType(@X) {...}}) exist only at the root, as the engine's
+     * grammar has it.
      */
     public record Node(String property,
                        @com.legend.base.Nullable com.legend.protocol.SourceInfo pos,
                        List<ValueSpecification> parameters,
+                       boolean qualified,
                        @com.legend.base.Nullable String alias,
                        @com.legend.base.Nullable String subType,
-                       List<Node> subTrees,
-                       List<SubTypeNode> subTypeTrees) {
+                       List<Node> subTrees) {
         public Node {
+            Objects.requireNonNull(property, "property");
             parameters = List.copyOf(parameters);
             subTrees = List.copyOf(subTrees);
-            subTypeTrees = List.copyOf(subTypeTrees);
         }
 
-        /** No-subtype-entries convenience constructor. */
-        public Node(String property, @com.legend.base.Nullable com.legend.protocol.SourceInfo pos,
-                    List<ValueSpecification> parameters, @com.legend.base.Nullable String alias,
-                    @com.legend.base.Nullable String subType, List<Node> subTrees) {
-            this(property, pos, parameters, alias, subType, subTrees, List.of());
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof Node other
+                    && property.equals(other.property()) && parameters.equals(other.parameters())
+                    && qualified == other.qualified() && Objects.equals(alias, other.alias())
+                    && Objects.equals(subType, other.subType()) && subTrees.equals(other.subTrees());
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(property, parameters, qualified, alias, subType, subTrees);
         }
     }
 
-    /**
-     * A tree of property nodes (the wire's shape) as the {@link ColSpecArray} the compiler
-     * consumes -- the desugaring {@code SpecParser.parseGraphDefinition} performs on text, built
-     * from the tree, so a graph-fetch tree read from protocol JSON ({@code ProtocolReader}) is the
-     * same literal the grammar gives. Each property is {@code ~prop: _gfN|$_gfN.prop} (N the
-     * depth), its subtree a zero-parameter lambda of the nested array; a subtype view is the
-     * {@code ->subType} entry carrying its class as a type annotation. A level's subtype entries
-     * follow its properties (the wire keeps them in two lists).
-     */
-    public static ColSpecArray desugar(List<Node> subTrees, List<SubTypeNode> subTypeTrees) {
-        return desugar(subTrees, subTypeTrees, 0);
-    }
-
-    private static ColSpecArray desugar(List<Node> subTrees, List<SubTypeNode> subTypeTrees, int depth) {
-        List<ColSpec> specs = new java.util.ArrayList<>();
-        for (Node n : subTrees) {
-            Variable param = new Variable("_gf" + depth);
-            LambdaFunction fn1 = new LambdaFunction(List.of(param), List.of(new AppliedProperty(param, n.property())));
-            boolean qualified = !n.parameters().isEmpty();
-            ColSpecArray body = desugar(n.subTrees(), n.subTypeTrees(), depth + 1);
-            LambdaFunction fn2;
-            if (n.subType() != null) {
-                // prop->subType(@Sub) { ... }: sugar for prop { ->subType(@Sub) { ... } }
-                fn2 = new LambdaFunction(List.of(), List.of(new ColSpecArray(List.of(subTypeEntry(n.subType(), body)))));
-            } else {
-                fn2 = n.subTrees().isEmpty() && n.subTypeTrees().isEmpty() ? null : new LambdaFunction(List.of(), List.of(body));
-            }
-            specs.add(new ColSpec(n.property(), fn1, fn2, n.alias(), n.parameters(), qualified));
-        }
+    /** Every node's call arguments, in tree order (depth first; the root's properties before its subtype entries). */
+    public List<ValueSpecification> arguments() {
+        List<ValueSpecification> out = new ArrayList<>();
+        collect(subTrees, out);
         for (SubTypeNode st : subTypeTrees) {
-            specs.add(subTypeEntry(st.subTypeClass(), desugar(st.subTrees(), List.of(), depth + 1)));
+            collect(st.subTrees(), out);
         }
-        return new ColSpecArray(specs);
+        return out;
     }
 
-    /** {@code ->subType(@X) { body }}: the entry named {@code ->subType}, its class as a type annotation. */
-    private static ColSpec subTypeEntry(String subTypeClass, ColSpecArray body) {
-        return new ColSpec("->subType", null, new LambdaFunction(List.of(), List.of(body)), null,
-                List.of(new TypeAnnotation.Named(new com.legend.protocol.TypeExpression.NameRef(subTypeClass))));
+    /** This tree with its {@link #arguments()} replaced, same count and order. */
+    public GraphFetchLiteral withArguments(List<ValueSpecification> args) {
+        int[] next = {0};
+        List<Node> nodes = replace(subTrees, args, next);
+        List<SubTypeNode> subTypes = new ArrayList<>(subTypeTrees.size());
+        for (SubTypeNode st : subTypeTrees) {
+            subTypes.add(new SubTypeNode(st.subTypeClass(), st.pos(), replace(st.subTrees(), args, next)));
+        }
+        if (next[0] != args.size()) {
+            throw new IllegalArgumentException("a graph-fetch tree has " + next[0]
+                    + " argument(s), given " + args.size());
+        }
+        return new GraphFetchLiteral(className, nodes, subTypes, pos);
+    }
+
+    /** This tree with every class name -- the root's, each subtype entry's and view's -- through {@code rename}. */
+    public GraphFetchLiteral withClassNames(java.util.function.UnaryOperator<String> rename) {
+        List<SubTypeNode> subTypes = new ArrayList<>(subTypeTrees.size());
+        for (SubTypeNode st : subTypeTrees) {
+            subTypes.add(new SubTypeNode(rename.apply(st.subTypeClass()), st.pos(), renamed(st.subTrees(), rename)));
+        }
+        return new GraphFetchLiteral(rename.apply(className), renamed(subTrees, rename), subTypes, pos);
+    }
+
+    private static List<Node> renamed(List<Node> nodes, java.util.function.UnaryOperator<String> rename) {
+        List<Node> out = new ArrayList<>(nodes.size());
+        for (Node n : nodes) {
+            out.add(new Node(n.property(), n.pos(), n.parameters(), n.qualified(), n.alias(),
+                    n.subType() == null ? null : rename.apply(n.subType()), renamed(n.subTrees(), rename)));
+        }
+        return out;
+    }
+
+    private static void collect(List<Node> nodes, List<ValueSpecification> out) {
+        for (Node n : nodes) {
+            out.addAll(n.parameters());
+            collect(n.subTrees(), out);
+        }
+    }
+
+    private static List<Node> replace(List<Node> nodes, List<ValueSpecification> args, int[] next) {
+        List<Node> out = new ArrayList<>(nodes.size());
+        for (Node n : nodes) {
+            List<ValueSpecification> params = args.subList(next[0], next[0] + n.parameters().size());
+            next[0] += n.parameters().size();
+            out.add(new Node(n.property(), n.pos(), params, n.qualified(), n.alias(), n.subType(),
+                    replace(n.subTrees(), args, next)));
+        }
+        return out;
     }
 
     @Override
     public boolean equals(Object o) {
         return o instanceof GraphFetchLiteral other
                 && className.equals(other.className())
-                && desugared.equals(other.desugared())
-                && unsupported == other.unsupported();
+                && subTrees.equals(other.subTrees())
+                && subTypeTrees.equals(other.subTypeTrees());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(className, desugared, unsupported);
+        return Objects.hash(className, subTrees, subTypeTrees);
     }
 }

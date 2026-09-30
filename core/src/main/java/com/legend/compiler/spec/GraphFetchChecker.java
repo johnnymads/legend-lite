@@ -10,8 +10,9 @@ import com.legend.compiler.spec.typed.TypedGraphTree;
 import com.legend.compiler.spec.typed.TypedSerialize;
 import com.legend.compiler.spec.typed.TypedSpec;
 import com.legend.protocol.spec.AppliedFunction;
-import com.legend.protocol.spec.ColSpec;
-import com.legend.protocol.spec.ColSpecArray;
+import com.legend.protocol.spec.GraphFetchLiteral;
+import com.legend.protocol.spec.GraphFetchLiteral.Node;
+import com.legend.protocol.spec.GraphFetchLiteral.SubTypeNode;
 import com.legend.protocol.spec.ValueSpecification;
 
 import java.util.ArrayList;
@@ -20,11 +21,10 @@ import java.util.Optional;
 
 /**
  * {@code graphFetch(#{Class{…}}#)} and {@code serialize(#{…}#)} (engine
- * {@code GraphFetchChecker} / {@code SerializeChecker}). The parser encodes the
- * tree as a {@link ColSpecArray} (each node: {@code function1} = the generated
- * accessor lambda, {@code function2} wraps the nested sub-tree); this checker
+ * {@code GraphFetchChecker} / {@code SerializeChecker}). The tree is the
+ * {@link GraphFetchLiteral} text and protocol JSON both read into; this checker
  * validates every property against its owner class <em>recursively</em>
- * (nesting requires a class-typed property) and reifies the tree.
+ * (nesting requires a class-typed property) and reifies the typed tree.
  * {@code graphFetch} is a projection &mdash; the result is the SOURCE type
  * unchanged; {@code serialize} returns {@code String[1]} from its signature.
  */
@@ -77,9 +77,9 @@ final class GraphFetchChecker {
 
     /**
      * The shared half: a class-collection source + a property tree validated
-     * against it. (The tree's colspecs carry generated lambdas the generic
-     * deferred path can't route &mdash; the signature's tree parameter is not a
-     * {@code FuncColSpec} &mdash; so validation walks the class model directly.)
+     * against it. (The signature's tree parameter is a RootGraphFetchTree, not
+     * a column spec the generic deferred path routes, so validation walks the
+     * class model directly.)
      */
     private static Checked checkTree(Typer t, AppliedFunction af, Env env, String fn) {
         // bind-once (family A): a let-bound tree parked by the statement
@@ -100,7 +100,7 @@ final class GraphFetchChecker {
                 && second != null) {
             second = SourceSubst.substitute(second, env.aliases());
         }
-        if (!(second instanceof ColSpecArray tree)) {
+        if (!(second instanceof GraphFetchLiteral tree)) {
             throw new TypeInferenceException(fn + " expects (classCollection, #{Class{…}}#)");
         }
         TypedSpec source = t.synth(af.parameters().get(0), env);
@@ -112,153 +112,150 @@ final class GraphFetchChecker {
             throw new TypeInferenceException(fn + " requires a class-typed source, got "
                     + srcType.typeName());
         }
-        return new Checked(source, validate(t, ct.fqn(), tree, fn, env));
+        return new Checked(source, validate(t, ct.fqn(), tree.subTrees(), tree.subTypeTrees(), fn, env));
     }
 
-    /** Validate one tree level against its owner class; recurse into class-typed sub-trees. */
-    private static List<TypedGraphTree> validate(Typer t, String classFqn,
-            ColSpecArray tree, String fn, Env env) {
-        List<TypedGraphTree> out = new ArrayList<>(tree.colSpecs().size());
-        for (ColSpec cs : tree.colSpecs()) {
-            // ->subType(@Sub) { ... }: the SUBTYPE VIEW — children validate
-            // against the subtype class, which must extend the owner
-            if (cs.name().equals("->subType")) {
-                String subFqn = cs.args().size() == 1
-                        && cs.args().get(0)
-                                instanceof com.legend.protocol.spec.TypeAnnotation.Named tn
-                        && tn.type() instanceof com.legend.protocol.TypeExpression.NameRef nr
-                        ? nr.name() : null;
-                if (subFqn == null || t.model().findClass(subFqn).isEmpty()) {
-                    throw new TypeInferenceException(fn + " tree: ->subType"
-                            + " requires a known class, got '" + subFqn + "'");
-                }
-                if (!t.model().isSubtype(subFqn, classFqn)) {
-                    throw new TypeInferenceException(fn + " tree: ->subType class '"
-                            + subFqn + "' does not extend '" + classFqn + "'");
-                }
-                ColSpecArray subNested = nestedTree(cs);
-                if (subNested == null) {
-                    throw new TypeInferenceException(fn + " tree: ->subType"
-                            + " requires a sub-tree of the subtype's properties");
-                }
-                out.add(new TypedGraphTree("->subType",
-                        validate(t, subFqn, subNested, fn, env),
-                        null, List.of(), false, subFqn));
-                continue;
-            }
-            Property prop = t.model().findProperty(classFqn, cs.name()).orElse(null);
-            String propName = cs.name();
-            boolean sweep = false;
-            // the SYNTHETIC milestoned sweep spelling: <base>AllVersions on
-            // an end targeting a temporal class (real pure GENERATES it) —
-            // the node resolves by the BASE property; the spelled name
-            // becomes the envelope alias; the sweep serves the RAW extent
-            if (prop == null && cs.name().endsWith("AllVersions")) {
-                String base = cs.name().substring(0,
-                        cs.name().length() - "AllVersions".length());
-                Property bp = t.model().findProperty(classFqn, base).orElse(null);
-                if (bp != null && bp.type() instanceof Type.ClassType btc
-                        && com.legend.compiler.element.Temporal
-                                .strategyOf(t.model(), btc.fqn()) != null) {
-                    prop = bp;
-                    propName = base;
-                    sweep = true;
-                }
-            }
-            if (prop == null) {
-                // GENERATED milestoning members (businessDate/
-                // processingDate/milestoning struct) serve graph trees
-                // from the SAME registry as query-position typing
-                com.legend.compiler.element.type.ExprType gen =
-                        com.legend.compiler.element.Temporal
-                                .generatedMember(t.model(), classFqn,
-                                        cs.name());
-                if (gen != null) {
-                    ColSpecArray genNested = nestedTree(cs);
-                    if (genNested == null) {
-                        out.add(new TypedGraphTree(cs.name(), List.of(),
-                                cs.alias(), List.of(), false));
-                        continue;
-                    }
-                    if (!(gen.type() instanceof Type.ClassType gc)) {
-                        throw new TypeInferenceException(fn
-                                + " tree: generated member '" + cs.name()
-                                + "' is not class-typed and cannot carry"
-                                + " a sub-tree");
-                    }
-                    out.add(new TypedGraphTree(cs.name(),
-                            validate(t, gc.fqn(), genNested, fn, env),
-                            cs.alias(), List.of(), false));
-                    continue;
-                }
-                throw new TypeInferenceException(fn + " tree: class " + classFqn
-                        + " has no property '" + cs.name() + "'");
-            }
-            // qualifier CALL args type here and ride the tree (the
-            // resolver inlines the derived body with them); non-derived
-            // parenthesized args (milestoning dates) keep the historical
-            // checker-drop — their feature owns its own threading
-            List<TypedSpec> targs = List.of();
-            if (!cs.args().isEmpty()) {
-                // typed for the ENVELOPE KEY (the engine serializes the
-                // source call spelling — firm(2022-10-20T23:59:59+0000))
-                // and for derived-body binding; milestoning CONTEXT still
-                // flows through the temporal frame, not these args
-                List<TypedSpec> ta = new ArrayList<>(cs.args().size());
-                for (var a : cs.args()) {
-                    TypedSpec syn = t.synth(a, env);
-                    // a VARIABLE arg keeps its SOURCE spelling even when
-                    // let-inlining resolved its value — the engine key is
-                    // "customer($processingDate, $businessDate)" verbatim
-                    ta.add(a instanceof com.legend.protocol.spec.Variable v
-                            && !(syn instanceof com.legend.compiler.spec
-                                    .typed.TypedVariable)
-                            ? new com.legend.compiler.spec.typed
-                                    .TypedVariable(v.name(), syn.info())
-                            : syn);
-                }
-                targs = ta;
-            }
-            String alias = cs.alias() != null ? cs.alias()
-                    : (sweep ? cs.name() : null);
-            ColSpecArray nested = nestedTree(cs);
-            if (nested == null) {
-                out.add(new TypedGraphTree(propName, List.of(), alias,
-                        targs, sweep, null, cs.qualified()));
-                continue;
-            }
-            if (!(prop.type() instanceof Type.ClassType nestedClass)) {
-                throw new TypeInferenceException(fn + " tree: property '" + cs.name()
-                        + "' is not class-typed and cannot carry a sub-tree");
-            }
-            out.add(new TypedGraphTree(propName,
-                    validate(t, nestedClass.fqn(), nested, fn, env),
-                    alias, targs, sweep, null, cs.qualified()));
+    /** Validate one tree level against its owner class: its property nodes, then its subtype views. */
+    private static List<TypedGraphTree> validate(Typer t, String classFqn, List<Node> nodes,
+            List<SubTypeNode> subTypes, String fn, Env env) {
+        List<TypedGraphTree> out = new ArrayList<>(nodes.size() + subTypes.size());
+        for (Node n : nodes) {
+            out.add(property(t, classFqn, n, fn, env));
+        }
+        for (SubTypeNode st : subTypes) {
+            out.add(subTypeView(t, classFqn, st.subTypeClass(), st.subTrees(), fn, env));
         }
         return out;
     }
 
     /**
-     * A tree built at runtime from SOURCE TEXT —
+     * {@code ->subType(@Sub) { ... }}: the SUBTYPE VIEW — children validate
+     * against the subtype class, which must extend the owner.
+     */
+    private static TypedGraphTree subTypeView(Typer t, String ownerFqn, String subFqn, List<Node> nodes,
+            String fn, Env env) {
+        if (t.model().findClass(subFqn).isEmpty()) {
+            throw new TypeInferenceException(fn + " tree: ->subType"
+                    + " requires a known class, got '" + subFqn + "'");
+        }
+        if (!t.model().isSubtype(subFqn, ownerFqn)) {
+            throw new TypeInferenceException(fn + " tree: ->subType class '"
+                    + subFqn + "' does not extend '" + ownerFqn + "'");
+        }
+        return new TypedGraphTree("->subType", validate(t, subFqn, nodes, List.of(), fn, env),
+                null, List.of(), false, subFqn);
+    }
+
+    /** Whether a node carries a sub-tree: children, or a subtype view. */
+    private static boolean hasSubTree(Node n) {
+        return !n.subTrees().isEmpty() || n.subType() != null;
+    }
+
+    /** A node's sub-tree against {@code classFqn}; {@code prop->subType(@Sub) {...}} is the one subtype view. */
+    private static List<TypedGraphTree> subTree(Typer t, String classFqn, Node n, String fn, Env env) {
+        return n.subType() == null
+                ? validate(t, classFqn, n.subTrees(), List.of(), fn, env)
+                : List.of(subTypeView(t, classFqn, n.subType(), n.subTrees(), fn, env));
+    }
+
+    private static TypedGraphTree property(Typer t, String classFqn, Node n, String fn, Env env) {
+        Property prop = t.model().findProperty(classFqn, n.property()).orElse(null);
+        String propName = n.property();
+        boolean sweep = false;
+        // the SYNTHETIC milestoned sweep spelling: <base>AllVersions on
+        // an end targeting a temporal class (real pure GENERATES it) —
+        // the node resolves by the BASE property; the spelled name
+        // becomes the envelope alias; the sweep serves the RAW extent
+        if (prop == null && n.property().endsWith("AllVersions")) {
+            String base = n.property().substring(0,
+                    n.property().length() - "AllVersions".length());
+            Property bp = t.model().findProperty(classFqn, base).orElse(null);
+            if (bp != null && bp.type() instanceof Type.ClassType btc
+                    && com.legend.compiler.element.Temporal
+                            .strategyOf(t.model(), btc.fqn()) != null) {
+                prop = bp;
+                propName = base;
+                sweep = true;
+            }
+        }
+        if (prop == null) {
+            // GENERATED milestoning members (businessDate/
+            // processingDate/milestoning struct) serve graph trees
+            // from the SAME registry as query-position typing
+            com.legend.compiler.element.type.ExprType gen =
+                    com.legend.compiler.element.Temporal
+                            .generatedMember(t.model(), classFqn,
+                                    n.property());
+            if (gen != null) {
+                if (!hasSubTree(n)) {
+                    return new TypedGraphTree(n.property(), List.of(),
+                            n.alias(), List.of(), false);
+                }
+                if (!(gen.type() instanceof Type.ClassType gc)) {
+                    throw new TypeInferenceException(fn
+                            + " tree: generated member '" + n.property()
+                            + "' is not class-typed and cannot carry"
+                            + " a sub-tree");
+                }
+                return new TypedGraphTree(n.property(), subTree(t, gc.fqn(), n, fn, env),
+                        n.alias(), List.of(), false);
+            }
+            throw new TypeInferenceException(fn + " tree: class " + classFqn
+                    + " has no property '" + n.property() + "'");
+        }
+        // qualifier CALL args type here and ride the tree (the
+        // resolver inlines the derived body with them); non-derived
+        // parenthesized args (milestoning dates) keep the historical
+        // checker-drop — their feature owns its own threading
+        List<TypedSpec> targs = List.of();
+        if (!n.parameters().isEmpty()) {
+            // typed for the ENVELOPE KEY (the engine serializes the
+            // source call spelling — firm(2022-10-20T23:59:59+0000))
+            // and for derived-body binding; milestoning CONTEXT still
+            // flows through the temporal frame, not these args
+            List<TypedSpec> ta = new ArrayList<>(n.parameters().size());
+            for (var a : n.parameters()) {
+                TypedSpec syn = t.synth(a, env);
+                // a VARIABLE arg keeps its SOURCE spelling even when
+                // let-inlining resolved its value — the engine key is
+                // "customer($processingDate, $businessDate)" verbatim
+                ta.add(a instanceof com.legend.protocol.spec.Variable v
+                        && !(syn instanceof com.legend.compiler.spec
+                                .typed.TypedVariable)
+                        ? new com.legend.compiler.spec.typed
+                                .TypedVariable(v.name(), syn.info())
+                        : syn);
+            }
+            targs = ta;
+        }
+        String alias = n.alias() != null ? n.alias()
+                : (sweep ? n.property() : null);
+        if (!hasSubTree(n)) {
+            return new TypedGraphTree(propName, List.of(), alias,
+                    targs, sweep, null, n.qualified());
+        }
+        if (!(prop.type() instanceof Type.ClassType nestedClass)) {
+            throw new TypeInferenceException(fn + " tree: property '" + n.property()
+                    + "' is not class-typed and cannot carry a sub-tree");
+        }
+        return new TypedGraphTree(propName, subTree(t, nestedClass.fqn(), n, fn, env),
+                alias, targs, sweep, null, n.qualified());
+    }
+
+    /**
+     * The tree an argument denotes: the literal itself, or one built at runtime
+     * from SOURCE TEXT —
      * {@code compileLegendValueSpecification('#{...}#')->cast(@RootGraphFetchTree<T>)}
-     * (the subType-family spelling) — unwraps to the PARSED tree literal:
-     * the cast strips, the string-concat chain folds, and the platform
-     * parser (the same island grammar) produces the ColSpecArray. Any
-     * other shape (or a parse failure — e.g. the ->subType() paths the
-     * grammar does not carry yet) returns the ORIGINAL node so the loud
-     * arity message stands.
+     * (the subType-family spelling) — unwrapped to the tree the parser folded
+     * ({@code QuotedTreeCall}): the cast strips. Any other shape returns the
+     * ORIGINAL node so the loud arity message stands.
      */
     static ValueSpecification unwrapCompiledTree(ValueSpecification v) {
-        // the wire-facing literal carrier dissolves to its desugared tree on
-        // first checker touch (same rule as PathLiteral in the resolver)
-        if (v instanceof com.legend.protocol.spec.GraphFetchLiteral gf) {
-            return gf.desugared();
-        }
         if (v instanceof AppliedFunction c
                 && CoreFn.of(c.function()).orElse(null) == CoreFn.CAST
                 && !c.parameters().isEmpty()) {
             ValueSpecification inner = unwrapCompiledTree(c.parameters().get(0));
-            return inner instanceof ColSpecArray ? inner : v;
+            return inner instanceof GraphFetchLiteral ? inner : v;
         }
         if (v instanceof com.legend.protocol.spec.QuotedTreeCall q) {
             // the parse-time quote/eval fold (SpecParser via QuotedSpecParser):
@@ -266,15 +263,5 @@ final class GraphFetchChecker {
             return q.tree();
         }
         return v;
-    }
-
-
-    /** The nested sub-tree a colspec's {@code function2} wraps, or {@code null} for a leaf. */
-    static @com.legend.base.Nullable ColSpecArray nestedTree(ColSpec cs) {
-        if (cs.function2() == null || cs.function2().body().isEmpty()) {
-            return null;
-        }
-        ValueSpecification body = cs.function2().body().get(0);
-        return body instanceof ColSpecArray arr ? arr : null;
     }
 }

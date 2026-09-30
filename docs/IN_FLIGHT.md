@@ -84,11 +84,19 @@ In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new
 - NOT on this line (2026-09-30, the user's call): `analytics/mapping/modelCoverage` and `analytics/dataSpace/render`
   are engine ANALYSES lite does not have -- new platform features, proposed for core (design doc §1, G6/G9), not
   added here. The Query app shows every property and lists a mapping's classes as the mapping declares them.
-- `core/src/main/java/com/legend/protocol/ProtocolReader.java` + `spec/GraphFetchLiteral.java` (+ `ProtocolReaderTest`):
-  the reader gains its missing `rootGraphFetchTree` rule (2026-09-30). `GraphFetchLiteral.desugar` builds the
-  compiler's ColSpecArray from the wire tree as the parser does from text, so a graph-fetch lambda read from JSON is
-  the literal the grammar gives (tested equal, 6 tree shapes). The classInstance kinds became a table, so the
-  bare-name arm count shrank. This replaces two print-and-parse workarounds (server and WASM).
+- Graph-fetch trees: ONE representation (2026-09-30, crosses parser/protocol/compiler -- announced here).
+  `GraphFetchLiteral` is the tree only (class, property nodes, root subtype entries); the column-list desugaring
+  it carried is gone. The parser reads a tree with its grammar only (the `IslandScan` character scanner's graph
+  half is deleted; the tree re-lexes its slice at its real line/column for wire spans). `ProtocolReader` gains
+  `rootGraphFetchTree` (the two print-and-parse workarounds in PureV1Api and Wasm are gone). `NameResolver` keeps
+  the tree (class names resolve in place; call arguments are its children). `GraphFetchChecker`, `IsDistinctChecker`
+  and lineage `ScanRelations` walk the tree; everything after the checker (`TypedGraphTree`) is unchanged.
+  Graph-position argument spellings live only in `ProtocolEmitter.gftParam` and `ProtocolReader.graphArg`.
+  Evidence: `//spec:corpus_duckdb` + `:corpus_h2` per-test pass/fail lists and judge ledgers identical to the
+  pre-change baseline (trace ids masked); `//parser-equivalence:diagnostics`, `//core:core_tests` (4295),
+  `//core:guardrails` (no pin raised), `//query:verify` green. Fixes W1.2's `graphFetchKeepsSubTypeTrees` known
+  defect. Unchanged gaps, noted: a tree typed on its own still refuses (the engine's type is
+  `RootGraphFetchTree<T>`); lineage does not trace inside subtype views; `prop()` vs `prop` is not on the wire.
 - `wasm/src/main/java/planner/Wasm.java`: `modelJsonOrError` (E2's twin, byte-identical to the server's).
 - `datacube/BUILD.bazel`: ONE line, `visibility = ["//query:__pkg__"]` on `:src` (2026-09-30), so the Query app runs
   its planned SQL on DataCube's engines (`engine.ts`, `duckdb.ts`, `warehouse.ts`). No other DataCube change.

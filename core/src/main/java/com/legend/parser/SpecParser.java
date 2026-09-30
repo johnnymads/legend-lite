@@ -232,7 +232,7 @@ public final class SpecParser implements TokenStreamCursor {
         this.tokens = Objects.requireNonNull(tokens, "tokens");
         this.spanSourceId = spanSourceId;
         this.dialect = dialect;
-        this.islandScan = new IslandScan(tokens, spanSourceId, this);
+        this.islandScan = new IslandScan(this);
         constStrings.push(new java.util.HashMap<>());
     }
 
@@ -3113,8 +3113,9 @@ public final class SpecParser implements TokenStreamCursor {
         String contentText = content.toString().trim();
 
         ValueSpecification result = switch (dslType) {
-            case "" -> wrapGraphFetch(
-                    parseGraphFetchTree(contentText, islandStart), islandStart, pos - 1);
+            // the tree is the source between the opener '#{' and the closer '}#'
+            case "" -> parseGraphFetchTree(tokens.end(islandStart), tokens.start(pos - 1),
+                    islandStart);
             // Engine convention (ProbeWireShapes "burn zoo 2" tref): the classInstance
             // spans the whole #>{...}# literal.
             case ">" -> parseTableReference(contentText, spanOf(islandStart, pos - 1));
@@ -3146,9 +3147,11 @@ public final class SpecParser implements TokenStreamCursor {
                 // drop-in/lite surfaces keep the engine's refusal.
                 if (!dialect().refusesPlatformDialect()
                         && isTypeNameShaped(dslType)) {
-                    yield wrapGraphFetch(parseGraphFetchTree(
-                            dslType + "{" + contentText + "}", islandStart),
-                            islandStart, pos - 1);
+                    // the opener '#Class{' holds the root and its brace; the closer
+                    // '}#' the root's closing brace -- the tree is the source between
+                    // the '#'s, where it stands
+                    yield parseGraphFetchTree(tokens.start(islandStart) + 1,
+                            tokens.start(pos - 1) + 1, islandStart);
                 }
                 throw error(
                         "unknown DSL island type: '#" + dslType + "{'");
@@ -3212,74 +3215,25 @@ public final class SpecParser implements TokenStreamCursor {
     }
 
     /**
-     * Parse a graph-fetch tree content string like
-     * {@code "ClassName {prop1, prop2 { subprop } }"}. Returns a
-     * {@link ColSpecArray} of nested {@link ColSpec}s describing
-     * the tree.
+     * A graph-fetch tree -- {@code #{Class {path, ...}}#}, or PLATFORM's legacy
+     * {@code #Class{path, ...}#} -- read by the grammar straight into the
+     * {@link com.legend.protocol.spec.GraphFetchLiteral}, the one tree text, protocol JSON and
+     * the compiler share. The island lexer hands this parser coarse chunks, so the tree re-lexes
+     * its own source slice LAID AT ITS REAL line and column (graph-fetch spans are absolute, not
+     * island-shifted): every token -- names, arguments -- carries the span the wire wants, and
+     * an error points into the document.
      *
-     * <p>Engine-lite's desugaring: each property becomes a
-     * {@link ColSpec} whose {@code function1} is a single-param
-     * lambda {@code x | $x.prop} (producing the property value),
-     * and whose {@code function2} (when present) is a nested
-     * {@link ColSpecArray} wrapped in a lambda for the sub-tree.
-     * This lets graph-fetch reuse the same ColSpec machinery the
-     * tilde-column DSL uses (C.6).
-     *
-     * <p>The root class name is NOT retained in the AST &mdash;
-     * engine-lite gets it from arg[0] of the enclosing
-     * {@code graphFetch($classCollection, #{ ... }#)} call and
-     * discards the inline root name. We follow suit.
+     * @param from char offset of the tree's first character (the root class name)
+     * @param to   char offset just past its last (the root's closing brace)
      */
-    /**
-     * Wrap a parsed graph-fetch desugar with the wire-facing span tree. The island lexer
-     * emits coarse {@code ISLAND_CONTENT} chunks (names live INSIDE chunk strings), so the
-     * scan runs CHARWISE over the raw source between {@code #"{"} and the island closer,
-     * with positions derived from character offsets — absolute, because graph-fetch spans
-     * are NOT island-shifted (unlike navigation paths). Any form beyond plain property
-     * names and nesting — aliases, parameters, subtype trees — marks the literal
-     * unsupported and the emitter walls.
-     */
-    private ValueSpecification wrapGraphFetch(ValueSpecification desugared,
-            int islandStart, int islandEnd) {
-        String src = tokens.source();
-        int a = tokens.end(islandStart);           // char offset just past '#{'
-        int z = tokens.start(islandEnd);           // char offset of the island closer
-        int brace = src.indexOf('{', a);
-        int ns = a;
-        while (ns < z && Character.isWhitespace(src.charAt(ns))) {
-            ns++;
-        }
-        if (brace < 0 || brace >= z || ns >= brace) {
-            return new com.legend.protocol.spec.GraphFetchLiteral(
-                    "", List.of(), desugared, true, spanOf(islandStart, islandStart));
-        }
-        int ne = brace - 1;
-        while (ne > ns && Character.isWhitespace(src.charAt(ne))) {
-            ne--;
-        }
-        com.legend.protocol.SourceInfo namePos = charSpan(ns, ne);
-        boolean[] unsupported = {false};
-        int[] cursor = {brace};
-        List<com.legend.protocol.spec.GraphFetchLiteral.SubTypeNode> subTypes =
-                new ArrayList<>();
-        List<com.legend.protocol.spec.GraphFetchLiteral.Node> nodes =
-                islandScan.scanGraphNodes(src, cursor, z, unsupported, subTypes);
-        return new com.legend.protocol.spec.GraphFetchLiteral(
-                src.substring(ns, ne + 1), nodes, subTypes, desugared,
-                unsupported[0], namePos);
-    }
-
-    /** Inclusive character range → engine 1-based/inclusive-end {@link com.legend.protocol.SourceInfo}. */
-    private com.legend.protocol.SourceInfo charSpan(int from, int to) {
-        return new com.legend.protocol.SourceInfo(spanSourceId(),
-                tokens.lineOf(from), tokens.columnOf(from),
-                tokens.lineOf(to), tokens.columnOf(to));
-    }
-
-
-    private ValueSpecification parseGraphFetchTree(String content,
+    private com.legend.protocol.spec.GraphFetchLiteral parseGraphFetchTree(int from, int to,
             int islandStart) {
-        TokenStream innerTokens = Lexer.tokenize(content);
+        String src = tokens.source();
+        int line = tokens.lineOf(from);
+        int column = tokens.columnOf(from);
+        StringBuilder laid = new StringBuilder(line + column + (to - from));
+        laid.append("\n".repeat(line - 1)).append(" ".repeat(column - 1)).append(src, from, to);
+        TokenStream innerTokens = Lexer.tokenize(laid.toString());
         if (innerTokens.count() == 0) {
             // ENGINE-VERBATIM (reprobe TestMappingGrammarParser#12):
             // #{}# refuses at the island opener
@@ -3288,53 +3242,34 @@ public final class SpecParser implements TokenStreamCursor {
                     tokens.startLine(islandStart),
                     tokens.startColumn(islandStart));
         }
-        SpecParser inner = new SpecParser(innerTokens, "", dialect);
-        try {
-            inner.parseQualifiedName();          // skip root class name
-            ValueSpecification tree = inner.parseGraphDefinition(0);
-            if (!inner.atEnd()) {
-                // LOUD: #{Person {name} GARBAGE}# previously dropped
-                // GARBAGE silently (audit M8c).
-                throw inner.error("trailing content after graph-fetch tree: '"
-                        + inner.safeText() + "'");
-            }
-            return tree;
-        } catch (com.legend.parser.ParseException e) {
-            // the content is RE-LEXED from a reconstructed string, so
-            // inner positions start at 1:1 — compose the island's base
-            // position back in (reprobe: a tree error surfaced at 1:17
-            // inside a line-14 document)
-            int baseTok = Math.min(islandStart + 1, tokens.count() - 1);
-            int baseLine = tokens.startLine(baseTok);
-            int baseCol = tokens.startColumn(baseTok);
-            String raw = String.valueOf(e.getMessage());
-            String prefix = "[" + e.line() + ":" + e.column() + "] ";
-            if (raw.startsWith(prefix)) {
-                raw = raw.substring(prefix.length());
-            }
-            if (e.line() <= 0) {
-                // a positionless inner error (EOF): anchor at the opener
-                throw new com.legend.parser.ParseException(raw,
-                        tokens.startLine(islandStart),
-                        tokens.startColumn(islandStart));
-            }
-            throw new com.legend.parser.ParseException(raw,
-                    baseLine + e.line() - 1,
-                    e.line() == 1 ? baseCol + e.column() - 1 : e.column());
+        SpecParser inner = new SpecParser(innerTokens, spanSourceId, dialect);
+        int nameStart = inner.pos;
+        String className = inner.parseQualifiedName();
+        com.legend.protocol.SourceInfo namePos = inner.spanOf(nameStart, inner.pos - 1);
+        List<com.legend.protocol.spec.GraphFetchLiteral.SubTypeNode> subTypes = new ArrayList<>();
+        List<com.legend.protocol.spec.GraphFetchLiteral.Node> nodes = inner.parseGraphDefinition(subTypes);
+        if (!inner.atEnd()) {
+            // LOUD: #{Person {name} GARBAGE}# previously dropped
+            // GARBAGE silently (audit M8c).
+            throw inner.error("trailing content after graph-fetch tree: '"
+                    + inner.safeText() + "'");
         }
+        return new com.legend.protocol.spec.GraphFetchLiteral(className, nodes, subTypes, namePos);
     }
 
     /**
-     * Parse {@code { path (, path)* }} into a {@link ColSpecArray}.
-     * Trailing comma is tolerated (engine-lite: "if
-     * check(BRACE_CLOSE) after comma, stop"). We match so
-     * {@code { a, b, }} works the same as {@code { a, b }}.
+     * {@code { entry (, entry)* }}: the level's property nodes, returned; its
+     * {@code ->subType(@X) { ... }} entries go to {@code subTypes} -- null below the root, where
+     * the engine refuses them. Trailing comma: PLATFORM only.
      */
-    private ColSpecArray parseGraphDefinition(int depth) {
+    private List<com.legend.protocol.spec.GraphFetchLiteral.Node> parseGraphDefinition(
+            @com.legend.base.Nullable List<com.legend.protocol.spec.GraphFetchLiteral.SubTypeNode> subTypes) {
         expect(TokenType.BRACE_OPEN, "expected '{' to open graph-fetch body");
-        List<ColSpec> specs = new ArrayList<>();
+        List<com.legend.protocol.spec.GraphFetchLiteral.Node> nodes = new ArrayList<>();
+        boolean any = false;
         if (!atEnd() && peek() != TokenType.BRACE_CLOSE) {
-            specs.add(parseGraphPath(depth));
+            parseGraphEntry(nodes, subTypes);
+            any = true;
             while (!atEnd() && peek() == TokenType.COMMA) {
                 pos++;
                 if (!atEnd() && peek() == TokenType.BRACE_CLOSE) {
@@ -3345,129 +3280,103 @@ public final class SpecParser implements TokenStreamCursor {
                     break; // trailing comma tolerated (PLATFORM dialect —
                            // gated refusesPlatformDialect on drop-in/lite)
                 }
-                specs.add(parseGraphPath(depth));
+                parseGraphEntry(nodes, subTypes);
             }
         }
-        if (specs.isEmpty() && dialect.refusesPlatformDialect()) {
+        if (!any && dialect.refusesPlatformDialect()) {
             // the engine's graphDefinition requires at least ONE path —
             // an EMPTY #{Class{}}# body is a parse error (negative
             // fixture engine-fixture#0a4ae2ea42a3, refusal at the '}')
             throw error("Unexpected token '}'");
         }
         expect(TokenType.BRACE_CLOSE, "expected '}' to close graph-fetch body");
-        return new ColSpecArray(specs);
+        return nodes;
     }
 
     /**
-     * Parse one path inside a graph-fetch definition. Grammar:
+     * One entry of a graph definition. Grammar:
      * <pre>
-     *   graphPath    = (STRING ':')? identifier propertyParams? graphDefinition?
-     *   propertyParams = '(' ... ')'   (milestoning args -- skipped)
+     *   entry     = '->subType(@' qualifiedName ')' '{' entries '}'              (root level only)
+     *             | (STRING ':')? identifier ('(' args ')')? ('->subType(@' qualifiedName ')')?
+     *               ('{' entries '}')?
      * </pre>
-     *
-     * <p>The optional {@code STRING ':'} prefix is a graph alias
-     * used for deduplicating renamed paths in downstream tooling.
-     * Engine-lite skips it (consumes without storing); we match.
-     *
-     * <p>Property parameters inside {@code (...)} are also skipped
-     * \u2014 they're milestoning args that engine-lite parses but
-     * discards pending a schema update. Keeping the same behaviour
-     * preserves AST compatibility.
+     * The alias ({@code 'nick': prop}) keeps its raw body -- the engine's graph-fetch alias
+     * quote-strip is naked. Call arguments are REAL expressions (qualifier arguments inline the
+     * derived body; milestoning dates set the child's context).
      */
-    private ColSpec parseGraphPath(int depth) {
-        // ->subType(@FQN) { ... } — the SUBTYPE VIEW of the enclosing node
-        // (engine graph grammar): children read the subtype's own
-        // properties; rows not of that type omit them. Encoded as a
-        // ColSpec named '->subType' carrying the @Type annotation arg.
-        if (!atEnd() && peek() == TokenType.ARROW
-                && pos + 1 < tokens.count()
-                && isFqnSegmentToken(tokens.type(pos + 1))
-                && "subType".equals(tokens.text(pos + 1))) {
-            pos += 2;
-            expect(TokenType.PAREN_OPEN, "expected '(' after ->subType");
-            expect(TokenType.AT, "expected '@' in ->subType(@Type)");
-            String subFqn = parseQualifiedName();
-            expect(TokenType.PAREN_CLOSE, "expected ')' after ->subType type");
-            // a LEAF subType view (no braces) fetches the subtype with no extra props
-            ColSpecArray nested = !atEnd() && peek() == TokenType.BRACE_OPEN
-                    ? parseGraphDefinition(depth + 1)
-                    : new ColSpecArray(List.of());
-            LambdaFunction fn2 = new LambdaFunction(List.of(), List.of(nested));
-            return new ColSpec("->subType", null, fn2, null,
-                    List.of(new TypeAnnotation.Named(
-                            new TypeExpression.NameRef(subFqn))));
+    private void parseGraphEntry(List<com.legend.protocol.spec.GraphFetchLiteral.Node> nodes,
+            @com.legend.base.Nullable List<com.legend.protocol.spec.GraphFetchLiteral.SubTypeNode> subTypes) {
+        if (atSubTypeArrow()) {
+            if (subTypes == null) {
+                // ENGINE-VERBATIM (harvest TestDomainGrammarParser
+                // testGraphFetchTreeWithSubtypeTreeAtPropertyLevel)
+                throw new com.legend.parser.ParseException(
+                        "->subType() is supported only at root level");
+            }
+            SubTypeView view = parseSubTypeView();
+            List<com.legend.protocol.spec.GraphFetchLiteral.Node> body =
+                    !atEnd() && peek() == TokenType.BRACE_OPEN ? parseGraphDefinition(null) : List.of();
+            if (body.isEmpty()) {
+                // the ENGINE's grammar requires a non-empty subType
+                // body (harvest fixture #18: at the closing '}' it
+                // wants properties or another ->subType)
+                throw new com.legend.parser.ParseException(
+                        "a ->subType() body must not be empty");
+            }
+            subTypes.add(new com.legend.protocol.spec.GraphFetchLiteral.SubTypeNode(
+                    view.className(), view.pos(), body));
+            return;
         }
-        // Optional alias: 'aliasName': property — the engine serializes
-        // the node under the ALIAS (task #78; the discard was engine-lite
-        // behaviour our envelope emission has outgrown)
         String alias = null;
         if (pos + 1 < tokens.count()
                 && peek() == TokenType.STRING
                 && tokens.type(pos + 1) == TokenType.COLON) {
             String raw = text();
-            alias = raw.length() >= 2 ? raw.substring(1, raw.length() - 1)
-                    : raw;
+            alias = raw.length() >= 2 ? raw.substring(1, raw.length() - 1) : raw;
             pos += 2;
         }
         if (!isFqnSegmentToken(peek())) {
             throw error("expected property name in graph-fetch path");
         }
-        String propName = text();
+        String property = text();
+        com.legend.protocol.SourceInfo namePos = spanOf(pos, pos);
         pos++;
-
-        // function1: x | $x.prop  (produces the property value)
-        String paramName = "_gf" + depth;
-        Variable param = new Variable(paramName);
-        AppliedProperty propAccess = new AppliedProperty(param, propName);
-        LambdaFunction fn1 = new LambdaFunction(
-                List.of(param), List.of(propAccess));
-
-        // Optional propertyParameters: parsed as REAL expressions —
-        // qualifier call args ('Mr') inline the derived body (task #78);
-        // milestoning args stay checker-dropped for non-derived props.
         List<ValueSpecification> args = List.of();
         boolean qualified = false;
         if (!atEnd() && peek() == TokenType.PAREN_OPEN) {
             qualified = true;
             args = parseArgList();
         }
-
         // prop->subType(@Sub) { ... } — the PROPERTY-LEVEL subtype view
-        // (simpleObject corpus family): sugar for prop { ->subType(@Sub)
-        // { ... } } — desugared to the head-form child the checker
-        // already validates (children against the subtype class).
-        if (!atEnd() && peek() == TokenType.ARROW
+        // (simpleObject corpus family): the node's children read Sub's properties
+        String subType = atSubTypeArrow() ? parseSubTypeView().className() : null;
+        List<com.legend.protocol.spec.GraphFetchLiteral.Node> children =
+                !atEnd() && peek() == TokenType.BRACE_OPEN ? parseGraphDefinition(null) : List.of();
+        nodes.add(new com.legend.protocol.spec.GraphFetchLiteral.Node(property, namePos, args, qualified,
+                alias, subType, children));
+    }
+
+    private boolean atSubTypeArrow() {
+        return !atEnd() && peek() == TokenType.ARROW
                 && pos + 1 < tokens.count()
                 && isFqnSegmentToken(tokens.type(pos + 1))
-                && "subType".equals(tokens.text(pos + 1))) {
-            pos += 2;
-            expect(TokenType.PAREN_OPEN, "expected '(' after ->subType");
-            expect(TokenType.AT, "expected '@' in ->subType(@Type)");
-            String subFqn = parseQualifiedName();
-            expect(TokenType.PAREN_CLOSE, "expected ')' after ->subType type");
-            ColSpecArray subBody = !atEnd() && peek() == TokenType.BRACE_OPEN
-                    ? parseGraphDefinition(depth + 1)
-                    : new ColSpecArray(List.of());
-            ColSpec subChild = new ColSpec("->subType", null,
-                    new LambdaFunction(List.of(), List.of(subBody)), null,
-                    List.of(new TypeAnnotation.Named(
-                            new TypeExpression.NameRef(subFqn))));
-            LambdaFunction fn2 = new LambdaFunction(List.of(),
-                    List.of(new ColSpecArray(List.of(subChild))));
-            return new ColSpec(propName, fn1, fn2, alias, args, qualified);
-        }
+                && "subType".equals(tokens.text(pos + 1));
+    }
 
-        // Optional nested graph definition: { subpaths }
-        if (!atEnd() && peek() == TokenType.BRACE_OPEN) {
-            ColSpecArray nested = parseGraphDefinition(depth + 1);
-            // function2 wraps the nested array in a zero-param lambda
-            // so the two ColSpec slots are uniformly typed (LambdaFunction).
-            LambdaFunction fn2 = new LambdaFunction(
-                    List.of(), List.of(nested));
-            return new ColSpec(propName, fn1, fn2, alias, args, qualified);
-        }
+    /** {@code ->subType(@X)}: the class name as written, spanning the name WITHOUT the {@code @}
+     *  (probe "gft root subtype"). */
+    private record SubTypeView(String className, com.legend.protocol.SourceInfo pos) {
+    }
 
-        return new ColSpec(propName, fn1, null, alias, args, qualified);
+    private SubTypeView parseSubTypeView() {
+        pos += 2;
+        expect(TokenType.PAREN_OPEN, "expected '(' after ->subType");
+        expect(TokenType.AT, "expected '@' in ->subType(@Type)");
+        int classStart = pos;
+        String subClass = parseQualifiedName();
+        com.legend.protocol.SourceInfo classPos = spanOf(classStart, pos - 1);
+        expect(TokenType.PAREN_CLOSE, "expected ')' after ->subType type");
+        return new SubTypeView(subClass, classPos);
     }
 
     // -----------------------------------------------------------------

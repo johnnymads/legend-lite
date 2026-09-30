@@ -209,16 +209,13 @@ public final class ProtocolReader {
 
     /**
      * {@code #{Class{a, b{c}}}#} on the wire: the tree of {@code propertyGraphFetchTree} and
-     * {@code subTypeGraphFetchTree} nodes, read into the same literal the grammar gives -- its
-     * nodes, and their desugaring ({@link GraphFetchLiteral#desugar}) for the compiler. A subtype
-     * inside a subtype is carried as unsupported, as the parse carries it.
+     * {@code subTypeGraphFetchTree} nodes, read into the same {@link GraphFetchLiteral} the
+     * grammar gives. The wire cannot tell {@code prop()} from {@code prop} (both carry no
+     * parameters), so a node is parenthesized exactly when it has arguments.
      */
     private static ValueSpecification graphFetchTree(Json.Obj root, @com.legend.base.Nullable SourceInfo pos) {
-        List<GraphFetchLiteral.Node> nodes = graphNodes(arrOrEmpty(root, "subTrees"));
-        List<GraphFetchLiteral.SubTypeNode> subTypes = new ArrayList<>();
-        boolean nestedSubTypes = graphSubTypes(arrOrEmpty(root, "subTypeTrees"), subTypes);
-        return new GraphFetchLiteral(root.getString("class"), nodes, subTypes,
-                GraphFetchLiteral.desugar(nodes, subTypes), nestedSubTypes || anyNestedSubType(nodes), pos);
+        return new GraphFetchLiteral(root.getString("class"), graphNodes(arrOrEmpty(root, "subTrees")),
+                graphSubTypes(arrOrEmpty(root, "subTypeTrees")), pos);
     }
 
     private static List<GraphFetchLiteral.Node> graphNodes(List<Json.Node> trees) {
@@ -229,63 +226,62 @@ public final class ProtocolReader {
             if (!"propertyGraphFetchTree".equals(type)) {
                 throw refused("no reader rule for a graph fetch subtree of _type '" + type + "' -- add the rule, do not drop it");
             }
-            List<GraphFetchLiteral.SubTypeNode> subTypes = new ArrayList<>();
-            graphSubTypes(arrOrEmpty(n, "subTypeTrees"), subTypes);
-            out.add(new GraphFetchLiteral.Node(n.getString("property"), pos(n), graphArgs(n),
+            if (!arrOrEmpty(n, "subTypeTrees").isEmpty()) {
+                // the engine's grammar refuses ->subType below the root; so does lite's
+                throw refused("a ->subType() below the root -- supported only at root level");
+            }
+            List<ValueSpecification> args = new ArrayList<>();
+            for (Json.Node a : arrOrEmpty(n, "parameters")) {
+                args.add(graphArg(valueSpec(a)));
+            }
+            out.add(new GraphFetchLiteral.Node(n.getString("property"), pos(n), args, !args.isEmpty(),
                     n.getStringOr("alias", null), n.getStringOr("subType", null),
-                    graphNodes(arrOrEmpty(n, "subTrees")), subTypes));
+                    graphNodes(arrOrEmpty(n, "subTrees"))));
         }
         return out;
     }
 
     /**
-     * A graph node's call arguments. They read as expression values do, except a date: in graph
-     * position the wire's {@code dateTime} value is the island's spelling verbatim, {@code %}
-     * included (the emitter's gftParam), and the node keeps it so.
+     * A graph node's call argument, back to the expression the grammar parses: read as any
+     * value, then the graph-position spans undone -- the mirror of the emitter's
+     * {@code gftParam} (an enum spans its whole dotted path, a variable its name without the
+     * dollar; a date's {@code %} the date reader already strips).
      */
-    private static List<ValueSpecification> graphArgs(Json.Obj n) {
-        List<ValueSpecification> out = new ArrayList<>();
-        for (Json.Node a : arrOrEmpty(n, "parameters")) {
-            Json.Obj arg = asObj(a, "graph fetch argument");
-            if ("dateTime".equals(arg.getStringOr("_type", ""))) {
-                String written = arg.getString("value");
-                out.add(new CDate(PureDateLiteral.parse(written.startsWith("%") ? written.substring(1) : written),
-                        written, pos(arg)));
-            } else {
-                out.add(valueSpec(a));
+    private static ValueSpecification graphArg(ValueSpecification v) {
+        return switch (v) {
+            case EnumValue e when e.pos() != null && e.enumerationPos() == null -> {
+                SourceInfo at = e.pos();
+                yield new EnumValue(e.fullPath(), e.value(),
+                        new SourceInfo(at.sourceId(), at.startLine(), at.startColumn(),
+                                at.startLine(), at.startColumn() + e.fullPath().length() - 1),
+                        new SourceInfo(at.sourceId(), at.endLine(),
+                                at.endColumn() - e.value().length() + 1, at.endLine(), at.endColumn()));
             }
-        }
-        return out;
+            case Variable var when var.pos() != null -> new Variable(var.name(), var.type(), var.multiplicity(),
+                    new SourceInfo(var.pos().sourceId(), var.pos().startLine(), var.pos().startColumn() - 1,
+                            var.pos().endLine(), var.pos().endColumn()));
+            case PureCollection c -> new PureCollection(
+                    c.values().stream().map(ProtocolReader::graphArg).toList(), c.pos());
+            default -> v;
+        };
     }
 
-    /** A level's {@code ->subType(@X){...}} entries into {@code out}; true when one holds a subtype of its own. */
-    private static boolean graphSubTypes(List<Json.Node> trees, List<GraphFetchLiteral.SubTypeNode> out) {
-        boolean nested = false;
+    /** A level's {@code ->subType(@X){...}} entries. */
+    private static List<GraphFetchLiteral.SubTypeNode> graphSubTypes(List<Json.Node> trees) {
+        List<GraphFetchLiteral.SubTypeNode> out = new ArrayList<>();
         for (Json.Node t : trees) {
             Json.Obj n = asObj(t, "graph fetch subtype tree");
             String type = n.getStringOr("_type", "");
             if (!"subTypeGraphFetchTree".equals(type)) {
                 throw refused("no reader rule for a graph fetch subtype tree of _type '" + type + "' -- add the rule, do not drop it");
             }
-            nested |= !arrOrEmpty(n, "subTypeTrees").isEmpty();
+            if (!arrOrEmpty(n, "subTypeTrees").isEmpty()) {
+                throw refused("a ->subType() below the root -- supported only at root level");
+            }
             out.add(new GraphFetchLiteral.SubTypeNode(n.getString("subTypeClass"), pos(n),
                     graphNodes(arrOrEmpty(n, "subTrees"))));
         }
-        return nested;
-    }
-
-    private static boolean anyNestedSubType(List<GraphFetchLiteral.Node> nodes) {
-        for (GraphFetchLiteral.Node n : nodes) {
-            for (GraphFetchLiteral.SubTypeNode st : n.subTypeTrees()) {
-                if (st.subTrees().stream().anyMatch(c -> !c.subTypeTrees().isEmpty())) {
-                    return true;
-                }
-            }
-            if (anyNestedSubType(n.subTrees())) {
-                return true;
-            }
-        }
-        return false;
+        return out;
     }
 
     private static ColSpec colSpec(Json.Obj v) {

@@ -2560,16 +2560,31 @@ public final class ScanRelations {
                     .forEach(b -> collectChains(b, out));
             case PureCollection pc -> pc.values()
                     .forEach(v -> collectChains(v, out));
-            // graphFetch trees desugar to ColSpecs (function1 = x|$x.prop,
-            // function2 = the lambda-wrapped nested sub-tree): chains
-            // compose parent-first — product{name} contributes [product]
-            // and [product, name]
+            // a graphFetch tree's chains compose parent-first; column specs
+            // (function1 = x|$x.col, function2 = a nested array) likewise
+            case com.legend.protocol.spec.GraphFetchLiteral gf ->
+                    collectGraphChains(gf.subTrees(), List.of(), out);
             case com.legend.protocol.spec.ColSpecArray ca ->
                     collectTreeChains(ca, List.of(), out);
             case com.legend.protocol.spec.ColSpec cs -> collectTreeChains(
                     new com.legend.protocol.spec.ColSpecArray(List.of(cs)),
                     List.of(), out);
             default -> n.children().forEach(x -> collectChains(x, out));
+        }
+    }
+
+    /** A graph-fetch tree's chains, parent-first: {@code product{name}} contributes
+     *  [product] and [product, name]. Subtype views ({@code ->subType(@X){...}}, and a
+     *  property's {@code prop->subType(@X){...}} children) are not traced. */
+    private static void collectGraphChains(List<com.legend.protocol.spec.GraphFetchLiteral.Node> nodes,
+            List<Seg> parent, List<List<Seg>> out) {
+        for (com.legend.protocol.spec.GraphFetchLiteral.Node n : nodes) {
+            List<Seg> full = new ArrayList<>(parent);
+            full.add(new Seg.Prop(n.property()));
+            out.add(full);
+            if (n.subType() == null) {
+                collectGraphChains(n.subTrees(), full, out);
+            }
         }
     }
 

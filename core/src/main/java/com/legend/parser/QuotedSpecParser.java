@@ -1,6 +1,5 @@
 package com.legend.parser;
 
-import com.legend.protocol.spec.ColSpecArray;
 import com.legend.protocol.spec.ValueSpecification;
 
 /**
@@ -157,21 +156,14 @@ public final class QuotedSpecParser {
     }
 
     /** Parse tree-literal SOURCE ({@code #{Class{...}}#}) to its
-     * {@link ColSpecArray}, or {@code null} when the text is not a tree
-     * literal the grammar carries (callers keep their own loud walls). */
+     * {@link com.legend.protocol.spec.GraphFetchLiteral}, or {@code null} when the
+     * text is not a tree literal the grammar carries (callers keep their own loud
+     * walls). */
     public static @com.legend.base.Nullable ValueSpecification parseTree(String source,
             Dialect dialect) {
         try {
             ValueSpecification v = SpecParser.parse(source.trim(), dialect);
-            // the parse product became the wire-facing CARRIER when GraphFetchLiteral
-            // landed — dissolve to the desugared tree, restoring this method's
-            // ColSpecArray contract (regression: every string-built
-            // compileLegendValueSpecification tree returned null and its test died
-            // with the checker's arity message)
-            if (v instanceof com.legend.protocol.spec.GraphFetchLiteral gf) {
-                v = gf.desugared();
-            }
-            return v instanceof ColSpecArray ? v : null;
+            return v instanceof com.legend.protocol.spec.GraphFetchLiteral ? v : null;
         } catch (ParseException notATree) {
             // ONLY a parse refusal means "not a tree literal" — any other
             // RuntimeException here is a parser defect and must surface, not

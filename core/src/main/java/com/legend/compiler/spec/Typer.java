@@ -157,7 +157,13 @@ final class Typer {
                     throw new com.legend.error.NotImplementedException(
                             "byte-array literals type only in service-test"
                                     + " parameters");
-            case com.legend.protocol.spec.GraphFetchLiteral gf -> synth(gf.desugared(), env);
+            // a tree types where it is READ -- the tree argument of graphFetch,
+            // graphFetchChecked, serialize, isDistinct (let-bound ones through the
+            // alias channel); on its own it has no type here yet (the engine's is
+            // RootGraphFetchTree<T>)
+            case com.legend.protocol.spec.GraphFetchLiteral gf -> throw new TypeInferenceException(
+                    "graph-fetch tree #{" + gf.className() + "{...}}# types only as the tree"
+                            + " argument of graphFetch, graphFetchChecked, serialize or isDistinct");
             // the quote/eval carrier TYPES as the call it wraps (the
             // engine's native is Any[1]; the ->cast supplies the type) —
             // the TREE face is consumed by GraphFetchChecker only
