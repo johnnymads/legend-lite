@@ -123,7 +123,10 @@ function condition(graph: ModelGraph, root: string, c: Condition, varName: strin
 
 function filterNode(graph: ModelGraph, root: string, n: FilterNode, varName: string): ValueSpecification {
   if (n.kind === 'condition') return condition(graph, root, n, varName, 0);
-  const terms = n.children.map((c) => filterNode(graph, root, c, varName));
+  // an empty group (being filled in) says nothing: it is left out
+  const terms = n.children
+    .filter((c) => c.kind === 'condition' || hasConditions(c))
+    .map((c) => filterNode(graph, root, c, varName));
   if (terms.length === 0) throw new BuildError('an empty filter group');
   return n.op === 'and' ? and(...terms) : or(...terms);
 }

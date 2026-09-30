@@ -344,7 +344,7 @@ public final class PureV1Api {
         for (var c : cols) {
             Map<String, Object> col = new LinkedHashMap<>();
             col.put("name", c.name());
-            col.put("type", UpstreamRelationType.typePath(c.type()));
+            col.put("type", UpstreamRelationType.tdsTypePath(c.type()));
             col.put("relationalType", UpstreamRelationType.relationalSpelling(c.type()));
             builderCols.add(col);
             names.add(c.name());
@@ -388,7 +388,7 @@ public final class PureV1Api {
             col.put("enumMapping", Map.of());
             col.put("name", c.name());
             col.put("relationalType", UpstreamRelationType.relationalSpelling(c.type()));
-            col.put("type", UpstreamRelationType.typePath(c.type()));
+            col.put("type", UpstreamRelationType.tdsTypePath(c.type()));
             tdsColumns.add(col);
             Map<String, Object> rc = new LinkedHashMap<>();
             // the engine spells a PASS-THROUGH column's physical type here, a computed

@@ -225,6 +225,21 @@ class PureV1ApiTest {
         }
     }
 
+    /** An enumeration column executes as the engine answers it: typed String in the TDS builder (measured, 4.145.0). */
+    @Test
+    void e8_execute_anEnumerationColumn_isAStringInTheBuilder() throws IOException {
+        String trading = resource("upstream-api/query-app/trading.pure");
+        String lam = PureV1Api.grammarToJsonLambda("|demo::trading::Firm.all()->project(~[r:x|$x.region, n:x|$x.legalName])"
+                + "->from(demo::trading::TradingMapping, demo::trading::H2Runtime)", false).json();
+        PureV1Api.Answer a = PureV1Api.execute("{\"function\":" + lam + ",\"model\":"
+                + Json.toCompact(Map.of("_type", "text", "code", trading)) + "}");
+        assertEquals(200, a.status(), a.json());
+        Json.Obj col = (Json.Obj) Json.parseObject(a.json()).getObj("builder").getArr("columns").items().get(0);
+        assertEquals("String", col.getString("type"));
+        assertEquals("AMER", ((Json.Str) ((Json.Obj) Json.parseObject(a.json()).getObj("result").getArr("rows").items().get(0))
+                .getArr("values").items().get(0)).value());
+    }
+
     /** C1: a model compiles whole -- elements and every body -- or answers its first failure, 400. */
     @Test
     void c1_compile_okOrTheFirstFailure_asTheEngineAnswers() {

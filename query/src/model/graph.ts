@@ -81,7 +81,8 @@ export function multiplicityText(m: Multiplicity): string {
 
 /** The last segment of a path: `my::pkg::Thing` is `Thing`; a function's signature suffix is dropped. */
 export function simpleName(path: string): string {
-  const name = path.slice(path.lastIndexOf('::') + 2);
+  const i = path.lastIndexOf('::');
+  const name = i < 0 ? path : path.slice(i + 2);
   const sig = name.indexOf('__');
   return sig > 0 ? name.slice(0, sig) : name;
 }

@@ -43,8 +43,9 @@ function append(el: Node, children: readonly Child[]): void {
   }
 }
 
-/** Replace a container's content. */
+/** Replace a container's content (a tooltip over what is replaced goes with it). */
 export function mount(container: Element, ...children: Child[]): void {
+  if (tip && tipTarget && container.contains(tipTarget)) hideTip();
   container.replaceChildren();
   append(container, children);
 }
@@ -146,13 +147,22 @@ export function toast(message: string, ms = 2600): void {
 }
 
 let tip: HTMLElement | undefined;
+let tipTarget: HTMLElement | undefined;
+
+function hideTip(): void {
+  tip?.remove();
+  tip = undefined;
+  tipTarget = undefined;
+}
 
 /** Show `content` near an element while the pointer rests on it. */
 export function tooltip(target: HTMLElement, content: () => Child): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   target.addEventListener('mouseenter', () => {
     timer = setTimeout(() => {
-      tip?.remove();
+      hideTip();
+      if (!target.isConnected) return;
+      tipTarget = target;
       tip = h('div', { class: 'q-tooltip' }, content());
       document.body.appendChild(tip);
       const r = target.getBoundingClientRect();
@@ -161,11 +171,12 @@ export function tooltip(target: HTMLElement, content: () => Child): void {
       tip.style.top = `${Math.min(r.top, window.innerHeight - t.height - 8)}px`;
     }, 450);
   });
-  target.addEventListener('mouseleave', () => {
+  const leave = (): void => {
     if (timer) clearTimeout(timer);
-    tip?.remove();
-    tip = undefined;
-  });
+    if (tipTarget === target) hideTip();
+  };
+  target.addEventListener('mouseleave', leave);
+  target.addEventListener('mousedown', leave);
 }
 
 /** A labelled field row. */

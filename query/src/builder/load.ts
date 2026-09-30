@@ -204,6 +204,14 @@ function intOf(n: Node | undefined): number {
   return v?.kind === 'integer' ? Number(v.value) : fail('a count that is not an integer');
 }
 
+/** A lambda's parameters, when they have simple types (a text-only query still takes them). */
+export function parametersOf(lambda: Lambda): Parameter[] {
+  return lambda.parameters.flatMap((p) => {
+    const raw = p.genericType?.rawType;
+    return raw && raw._type === 'packageableType' && p.multiplicity ? [{ name: p.name, type: raw.fullPath, multiplicity: p.multiplicity }] : [];
+  });
+}
+
 /**
  * The lambda as form state. `context` supplies mapping and runtime when the lambda carries no
  * `->from()` (a saved query keeps them in its execution context).

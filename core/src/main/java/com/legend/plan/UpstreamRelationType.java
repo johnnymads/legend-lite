@@ -58,6 +58,15 @@ public final class UpstreamRelationType {
                 : List.of(new Type.Column("value", root.type(), root.multiplicity()));
     }
 
+    /**
+     * A TDS column's type as execute's builder and a plan's tdsColumns write it: an enumeration
+     * column is {@code String} there (measured, 4.145.0, 2026-09-30), though lambdaRelationType
+     * names the enumeration.
+     */
+    public static String tdsTypePath(Type t) {
+        return t instanceof Type.EnumType ? "String" : typePath(t);
+    }
+
     /** A column type's name as a client reads it: its path, a decimal as {@code Decimal}. */
     public static String typePath(Type t) {
         return t instanceof Type.PrecisionDecimal ? "Decimal" : t.typeName();
@@ -72,6 +81,12 @@ public final class UpstreamRelationType {
      * is refused, never guessed.
      */
     public static String relationalSpelling(Type t) {
+        if (t instanceof Type.EnumType) {
+            // an enumeration column is its store column's string (measured, 4.145.0, 2026-09-30:
+            // VARCHAR(n) of the physical column); lite has no physical provenance, so it spells
+            // the plain String's VARCHAR(1024), as it does every computed string (recorded)
+            return "VARCHAR(1024)";
+        }
         return switch (typePath(t)) {
             case "Integer" -> "INTEGER";
             case "Float", "Decimal", "Number" -> "FLOAT";
