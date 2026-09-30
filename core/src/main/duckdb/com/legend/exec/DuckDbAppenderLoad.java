@@ -32,24 +32,42 @@ public final class DuckDbAppenderLoad implements BulkLoad {
     public void load(Connection connection, RowLoad load, Staging staging) throws SQLException {
         try (Statement st = connection.createStatement()) {
             st.execute(staging.create());
-            try {
-                try (DuckDBAppender appender = connection.unwrap(DuckDBConnection.class)
-                        .createAppender(TEMP_CATALOG, TEMP_SCHEMA, staging.table())) {
-                    for (List<String> row : load.rows()) {
-                        appender.beginRow();
-                        for (String cell : row) {
-                            if (cell == null) {
-                                appender.appendNull();
-                            } else {
-                                appender.append(cell);
-                            }
+        }
+        SQLException failure = null;
+        try {
+            try (DuckDBAppender appender = connection.unwrap(DuckDBConnection.class)
+                    .createAppender(TEMP_CATALOG, TEMP_SCHEMA, staging.table())) {
+                for (List<String> row : load.rows()) {
+                    appender.beginRow();
+                    for (String cell : row) {
+                        if (cell == null) {
+                            appender.appendNull();
+                        } else {
+                            appender.append(cell);
                         }
-                        appender.endRow();
                     }
+                    appender.endRow();
                 }
+            }
+            try (Statement st = connection.createStatement()) {
                 st.execute(staging.copy());
-            } finally {
-                st.execute(staging.drop());
+            }
+        } catch (SQLException e) {
+            failure = e;
+            throw e;
+        } finally {
+            // the drop runs on its OWN statement: DuckDB closes a statement
+            // that raised, and a drop through it threw "Statement was closed"
+            // in place of the real error, leaving the staging table behind
+            // for every later load (rebuild D23, found by the damaged data)
+            try (Statement drop = connection.createStatement()) {
+                drop.execute(staging.drop());
+            } catch (SQLException e) {
+                if (failure != null) {
+                    failure.addSuppressed(e);
+                } else {
+                    throw e;
+                }
             }
         }
     }
