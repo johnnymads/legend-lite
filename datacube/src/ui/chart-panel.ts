@@ -18,7 +18,7 @@ import {
   type ChartSpec,
 } from '../chart-spec.ts';
 import { chartOption, type LabelOf, type MarkKey } from '../chart-option.ts';
-import { mountChart, themeOf, type MountedChart } from '../chart-render.ts';
+import { mountChart, themeOf, type ChartPicture, type MountedChart } from '../chart-render.ts';
 import type { ResultTable } from '../result.ts';
 import type { AggregateFn, CubeSnapshot } from '../snapshot.ts';
 import type { Lambda } from '../../../pure-protocol/src/index.ts';
@@ -261,7 +261,12 @@ export class ChartPanel {
 
   // -- drawing ----------------------------------------------------------------
 
-  async #draw(): Promise<void> {
+  /** The chart as drawn now, as a picture, for an export of the page; null before it has drawn. */
+  picture(): ChartPicture | null {
+    return this.#chart?.picture() ?? null;
+  }
+
+    async #draw(): Promise<void> {
     if (this.#disposed) return;
     const spec = this.#spec;
     const cube = this.#options.snapshot();

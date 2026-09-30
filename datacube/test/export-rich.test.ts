@@ -152,3 +152,33 @@ describe('the rich formats draw each cell\'s look', () => {
     assert.equal(argb('red'), null);
   });
 });
+
+describe('the whole page: charts where the board puts them, and the whole grid', () => {
+  const picture = { width: 400, height: 200, pixelWidth: 800, pixelHeight: 400,
+    png: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]), jpeg: Uint8Array.from([0xff, 0xd8, 0xff, 4, 5, 6]) };
+  const page = { cols: 12, tiles: [
+    { id: 'grid', kind: 'grid' as const, title: 'Grid', x: 0, y: 0, w: 12, h: 14 },
+    { id: 'chart-1', kind: 'chart' as const, title: 'By region', x: 0, y: 14, w: 6, h: 10, picture },
+    { id: 'chart-2', kind: 'chart' as const, title: 'Not drawn', x: 6, y: 14, w: 6, h: 10 },
+  ] };
+  it('HTML lays the page out as the board: each tile at its place, a chart as its picture, the grid whole in its tile', () => {
+    const html = toHtml(table(), { page });
+    assert.match(html, /<section class="tile" style="grid-column:1 \/ span 6;grid-row:15 \/ span 10">\n<h2>By region<\/h2>\n<img alt="By region" width="400" height="200" src="data:image\/png;base64,iVBORwECAw=="/);
+    assert.match(html, /<h2>Grid<\/h2>\n<table>/, 'the table inside the grid\'s tile');
+    assert.match(html, /\(this chart had not drawn\)/);
+  });
+  it('the workbook: a Dashboard sheet first, the chart as a picture, the table on its own sheet', () => {
+    const files = unzipSync(toXlsx(table('Trades'), { page }));
+    assert.match(strFromU8(files['xl/workbook.xml']!), /<sheet name="Dashboard" sheetId="1" r:id="rId4"\/><sheet name="Trades"/);
+    assert.deepEqual([...files['xl/media/image1.png']!], [...picture.png]);
+    const drawing = strFromU8(files['xl/drawings/drawing1.xml']!);
+    xml(drawing);
+    assert.match(drawing, /<xdr:from><xdr:col>0<\/xdr:col><xdr:colOff>0<\/xdr:colOff><xdr:row>29<\/xdr:row>/, 'below its title, at the board\'s place');
+    assert.match(strFromU8(files['xl/worksheets/sheet3.xml']!), /The whole table is on the sheet &quot;Trades&quot;/);
+    for (const part of ['xl/worksheets/sheet3.xml', 'xl/drawings/_rels/drawing1.xml.rels', '[Content_Types].xml']) xml(strFromU8(files[part]!));
+  });
+  it('no charts, no dashboard: the workbook is the grid and its About sheet', () => {
+    const files = unzipSync(toXlsx(table('Trades')));
+    assert.equal(files['xl/drawings/drawing1.xml'], undefined);
+  });
+});

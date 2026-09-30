@@ -66,7 +66,7 @@ import {
 import { pivotLabel, type PivotColumn } from './query.ts';
 import { toHtml } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
-import { exportTable } from './export-model.ts';
+import { exportTable, type ExportPage, type ExportTile } from './export-model.ts';
 import { toXlsx, XLSX_MIME } from './export-xlsx.ts';
 import { toBarChart, toTreemap } from './chart.ts';
 import type { MarkKey } from './chart-option.ts';
@@ -2635,14 +2635,17 @@ export class CubeApp {
       columnAppearance: toColumnAppearance(this.#config),
       cellBackground: (leaf, row, value) => this.#heatFor(leaf, row, value),
     });
-    const doc = { formatters: this.#formatters, formats: this.#formats };
+    // THE WHOLE PAGE: with charts on the board, each format carries them where the board puts
+    // them, and the whole grid (the user: "it just always exports whole page by default")
+    const page = this.#exportPage();
+    const doc = { formatters: this.#formatters, formats: this.#formats, ...(page ? { page } : {}) };
     switch (kind) {
       case 'csv':
         // raw values: CSV is the one that is computed on again
         return { name: `${base}.csv`, mime: 'text/csv', content: exportCsv(table) };
       case 'excel':
         // a real workbook: numbers as numbers in the column's own format, the tree as outlines
-        return { name: `${base}.xlsx`, mime: XLSX_MIME, content: toXlsx(table, { formats: this.#formats, at }) };
+        return { name: `${base}.xlsx`, mime: XLSX_MIME, content: toXlsx(table, { formats: this.#formats, at, ...(page ? { page } : {}) }) };
       case 'html':
         // Formatted: a page exists to be read, so it says what the screen says.
         return { name: `${base}.html`, mime: 'text/html', content: toHtml(table, doc) };
@@ -2717,6 +2720,24 @@ export class CubeApp {
     } catch (e) {
       this.#status(e instanceof Error ? e.message : String(e), 'error');
     }
+  }
+
+  /** The board as an export carries it: each tile where it is, each chart as its picture; none without charts. */
+  #exportPage(): ExportPage | undefined {
+    const b = this.#board;
+    if (!b || this.#charts.size === 0) return undefined;
+    const tiles = b.board.layout.map((t): ExportTile => {
+      const chart = this.#charts.get(t.id);
+      const picture = chart?.picture() ?? null;
+      return {
+        id: t.id,
+        kind: chart ? 'chart' : 'grid',
+        title: b.board.title(t.id) ?? (chart ? t.id : GRID_TILE_TITLE),
+        x: t.x, y: t.y, w: t.w, h: t.h,
+        ...(picture ? { picture } : {}),
+      };
+    });
+    return { cols: BOARD_COLUMNS, tiles };
   }
 
   /** A cell's heatmap colour, for the grid and for an export alike; null when it has none. */

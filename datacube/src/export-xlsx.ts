@@ -18,7 +18,7 @@
 import { strToU8, zipSync } from 'fflate';
 
 import type { ColumnFormat } from './format.ts';
-import { cased, type ExportColumn, type ExportTable } from './export-model.ts';
+import { cased, type ExportColumn, type ExportPage, type ExportTable } from './export-model.ts';
 import type { Scalar } from './result.ts';
 import { fontStack } from './style.ts';
 import { isNumeric, isTemporal, isTimeOfDay } from './types.ts';
@@ -27,6 +27,8 @@ export interface XlsxOptions {
   readonly formats?: Readonly<Record<string, ColumnFormat>>;
   /** When the file was made, for the About sheet. */
   readonly at?: Date;
+  /** The board, when it holds charts: a Dashboard sheet of its charts, first. */
+  readonly page?: ExportPage;
 }
 
 const esc = (s: string): string => s
@@ -332,36 +334,120 @@ export function toXlsx(table: ExportTable, options: XlsxOptions = {}): Uint8Arra
     + '</sheetData></worksheet>';
 
   const name = sheetName(table.title);
+  const aboutName = name === 'About' ? 'About this export' : 'About';
+  const board = options.page && options.page.tiles.some((t) => t.kind === 'chart')
+    ? dashboardSheet(options.page, name, headerStyle) : null;
+  const dashName = [name, aboutName].includes('Dashboard') ? 'Page' : 'Dashboard';
+
+  const ns = 'http://schemas.openxmlformats.org';
+  const rel = (id: string, type: string, target: string): string =>
+    `<Relationship Id="${id}" Type="${ns}/officeDocument/2006/relationships/${type}" Target="${target}"/>`;
+  const sheetType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml';
+  // the dashboard, when there is one, is the first sheet a reader sees
+  const sheets = [
+    ...(board ? [{ name: dashName, file: 'sheet3.xml', rid: 'rId4' }] : []),
+    { name, file: 'sheet1.xml', rid: 'rId1' },
+    { name: aboutName, file: 'sheet2.xml', rid: 'rId2' },
+  ];
   const files: Record<string, Uint8Array> = {
     '[Content_Types].xml': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-      + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-      + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      + `<Types xmlns="${ns}/package/2006/content-types">`
+      + `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>`
       + '<Default Extension="xml" ContentType="application/xml"/>'
+      + (board ? '<Default Extension="png" ContentType="image/png"/>' : '')
       + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-      + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-      + '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+      + sheets.map((sh) => `<Override PartName="/xl/worksheets/${sh.file}" ContentType="${sheetType}"/>`).join('')
+      + (board ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' : '')
       + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
       + '</Types>'),
     '_rels/.rels': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
-      + '</Relationships>'),
+      + `<Relationships xmlns="${ns}/package/2006/relationships">${rel('rId1', 'officeDocument', 'xl/workbook.xml')}</Relationships>`),
     'xl/workbook.xml': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-      + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-      + `<sheets><sheet name="${esc(name)}" sheetId="1" r:id="rId1"/><sheet name="${name === 'About' ? 'About this export' : 'About'}" sheetId="2" r:id="rId2"/></sheets>`
-      + '</workbook>'),
+      + `<workbook xmlns="${ns}/spreadsheetml/2006/main" xmlns:r="${ns}/officeDocument/2006/relationships"><sheets>`
+      + sheets.map((sh, i) => `<sheet name="${esc(sh.name)}" sheetId="${i + 1}" r:id="${sh.rid}"/>`).join('')
+      + '</sheets></workbook>'),
     'xl/_rels/workbook.xml.rels': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-      + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>'
-      + '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+      + `<Relationships xmlns="${ns}/package/2006/relationships">`
+      + rel('rId1', 'worksheet', 'worksheets/sheet1.xml') + rel('rId2', 'worksheet', 'worksheets/sheet2.xml')
+      + rel('rId3', 'styles', 'styles.xml') + (board ? rel('rId4', 'worksheet', 'worksheets/sheet3.xml') : '')
       + '</Relationships>'),
     'xl/worksheets/sheet1.xml': strToU8(sheet),
     'xl/worksheets/sheet2.xml': strToU8(aboutSheet),
+    ...(board ? {
+      'xl/worksheets/sheet3.xml': strToU8(board.sheet),
+      'xl/worksheets/_rels/sheet3.xml.rels': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + `<Relationships xmlns="${ns}/package/2006/relationships">${rel('rId1', 'drawing', '../drawings/drawing1.xml')}</Relationships>`),
+      'xl/drawings/drawing1.xml': strToU8(board.drawing),
+      'xl/drawings/_rels/drawing1.xml.rels': strToU8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + `<Relationships xmlns="${ns}/package/2006/relationships">`
+        + board.images.map((_, i) => rel(`rId${i + 1}`, 'image', `../media/image${i + 1}.png`)).join('')
+        + '</Relationships>'),
+      ...Object.fromEntries(board.images.map((png, i) => [`xl/media/image${i + 1}.png`, png])),
+    } : {}),
     // written last: cells registered their styles while the sheets were built
     'xl/styles.xml': strToU8(styles.xml()),
   };
   return zipSync(files, { level: 6, mtime: at });
+}
+
+/** Board units in sheet cells: each board column two cells of 64px, each board row two cells of 20px. */
+const CELLS_PER_COL = 2;
+const CELLS_PER_ROW = 2;
+const CELL_W = 64;
+const CELL_H = 20;
+const EMU = 9525;
+
+/**
+ * THE DASHBOARD SHEET: each tile where the board puts it -- its title in the cell above it, a
+ * chart as its picture (fitted to its tile, not distorted), the grid's tile naming the sheet the
+ * whole table is on.
+ */
+function dashboardSheet(page: ExportPage, tableSheet: string, titleStyle: number):
+  { readonly sheet: string; readonly drawing: string; readonly images: readonly Uint8Array[] } {
+  const images: Uint8Array[] = [];
+  const anchors: string[] = [];
+  const cells = new Map<number, string[]>();
+  const put = (row: number, col: number, text: string, style = titleStyle): void => {
+    const list = cells.get(row) ?? [];
+    list.push(`<c r="${columnLetters(col)}${row + 1}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${esc(text)}</t></is></c>`);
+    cells.set(row, list);
+  };
+  for (const t of page.tiles) {
+    const col = t.x * CELLS_PER_COL;
+    const row = t.y * CELLS_PER_ROW;
+    put(row, col, t.title);
+    if (t.kind === 'grid') {
+      put(row + 1, col, `The whole table is on the sheet "${tableSheet}".`, 0);
+      continue;
+    }
+    if (!t.picture) continue;
+    const boxW = t.w * CELLS_PER_COL * CELL_W - 8;
+    const boxH = (t.h * CELLS_PER_ROW - 1) * CELL_H - 8;
+    const aspect = t.picture.width / t.picture.height;
+    const w = Math.round(Math.min(boxW, boxH * aspect));
+    const h = Math.round(w / aspect);
+    images.push(t.picture.png);
+    const id = images.length;
+    anchors.push(`<xdr:oneCellAnchor><xdr:from><xdr:col>${col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${row + 1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>`
+      + `<xdr:ext cx="${w * EMU}" cy="${h * EMU}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id + 1}" name="${esc(t.title)}" descr="${esc(t.title)}"/>`
+      + '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
+      + `<xdr:blipFill><a:blip r:embed="rId${id}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>`
+      + `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w * EMU}" cy="${h * EMU}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>`
+      + '</xdr:pic><xdr:clientData/></xdr:oneCellAnchor>');
+  }
+  const cols = page.cols * CELLS_PER_COL;
+  const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + `<sheetFormatPr defaultRowHeight="${CELL_H * 0.75}" customHeight="1"/>`
+    + `<cols><col min="1" max="${cols}" width="${(CELL_W / 7).toFixed(2)}" customWidth="1"/></cols>`
+    + `<sheetData>${[...cells].sort((a, b) => a[0] - b[0]).map(([r, list]) => `<row r="${r + 1}">${list.join('')}</row>`).join('')}</sheetData>`
+    + '<drawing r:id="rId1"/></worksheet>';
+  const drawing = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    + '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"'
+    + ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + anchors.join('') + '</xdr:wsDr>';
+  return { sheet, drawing, images };
 }
 
 /** The .xlsx MIME type. */

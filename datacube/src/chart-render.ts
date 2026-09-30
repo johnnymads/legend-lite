@@ -32,11 +32,37 @@ echarts.use([
   CanvasRenderer,
 ]);
 
+/**
+ * A chart as a picture, for an export of the page: the live chart's own pixels at `ratio`
+ * times its size, on white (a PNG for a page or a workbook, a JPEG a PDF embeds as it is).
+ */
+export interface ChartPicture {
+  /** The chart's size on screen, in CSS pixels. */
+  readonly width: number;
+  readonly height: number;
+  /** The image's size in pixels: `width` and `height` times the ratio. */
+  readonly pixelWidth: number;
+  readonly pixelHeight: number;
+  readonly png: Uint8Array;
+  readonly jpeg: Uint8Array;
+}
+
 /** A chart mounted in an element. */
 export interface MountedChart {
   /** Draw (or redraw) a drawing. */
   show(drawing: ChartDrawing): void;
+  /** The chart as drawn now, as a picture; null before it has drawn or where there is no canvas. */
+  picture(ratio?: number): ChartPicture | null;
   dispose(): void;
+}
+
+/** A data: URL's bytes. */
+function bytesOf(dataUrl: string): Uint8Array {
+  const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 /**
@@ -85,6 +111,21 @@ export function mountChart(el: HTMLElement, onPick?: (key: MarkKey) => void): Mo
   const observer = Observer ? new Observer(() => chart.resize()) : undefined;
   observer?.observe(el);
   return {
+    picture(ratio = 2) {
+      if (!drawing) return null;
+      const width = chart.getWidth();
+      const height = chart.getHeight();
+      if (!(width > 0 && height > 0)) return null;
+      try {
+        const png = bytesOf(chart.getDataURL({ type: 'png', pixelRatio: ratio, backgroundColor: '#ffffff' }));
+        const jpeg = bytesOf(chart.getDataURL({ type: 'jpeg', pixelRatio: ratio, backgroundColor: '#ffffff' }));
+        if (png.length === 0 || jpeg.length === 0) return null;
+        return { width, height, pixelWidth: Math.round(width * ratio), pixelHeight: Math.round(height * ratio), png, jpeg };
+      } catch {
+        // no canvas to read (a DOM without one): the export goes on without the picture
+        return null;
+      }
+    },
     show(d) {
       drawing = d;
       el.setAttribute('aria-label', d.description);

@@ -19,7 +19,7 @@
 // head the first.
 
 import type { ColumnFormat, FormatterCache } from './format.ts';
-import { cased, flatHeader, type ExportStyle, type ExportTable } from './export-model.ts';
+import { cased, flatHeader, type ExportPage, type ExportStyle, type ExportTable } from './export-model.ts';
 import type { Scalar } from './result.ts';
 import { fontStack } from './style.ts';
 import { isNumeric } from './types.ts';
@@ -29,6 +29,8 @@ export interface DocExportOptions {
   readonly formats?: Readonly<Record<string, ColumnFormat>>;
   /** Cap on a rendered cell before it is truncated. */
   readonly maxCellWidth?: number;
+  /** The board, when it holds charts: a first page laid out as it is, then the whole grid. */
+  readonly page?: ExportPage;
 }
 
 interface Cell {
@@ -235,7 +237,7 @@ export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8
 
   const lineHeight = size * 1.6;
   const missing = new Set<string>();
-  const pages: number[][] = [];
+  const pages: PdfPage[] = [];
   const notes = [...table.notes];
   const textColour = rgb(look.color) ?? '0 0 0';
   const lineColour = rgb(look.lineColor) ?? '0.83 0.83 0.83';
@@ -342,7 +344,7 @@ export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8
           s.text(`${lineColour} RG 0.5 w ${xs[col]!.toFixed(2)} ${y.toFixed(2)} m ${xs[col]!.toFixed(2)} ${bodyTop.toFixed(2)} l S\n`);
         }
       }
-      pages.push(s.bytes);
+      pages.push({ bytes: s.bytes, width: pageWidth, height: pageHeight });
       start += take;
       firstOfGroup = false;
     } while (start < rows.length);
@@ -354,15 +356,93 @@ export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8
     s.string(`Some characters cannot be drawn in this PDF's font and show as "?": ${[...missing].join(' ')}`
       .replace(/[^\x20-\x7e]/g, (ch) => `U+${(ch.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')}`), new Set());
     s.text(' Tj ET\n');
-    pages.push(s.bytes);
+    pages.push({ bytes: s.bytes, width: pageWidth, height: pageHeight });
   }
-  return assemble(pages, pageWidth, pageHeight);
+  return assemble([...dashboard(table, options.page), ...pages]);
 }
 
-/** Wrap content streams into a PDF file, measuring bytes as it goes: the xref is byte offsets. */
-function assemble(pages: readonly number[][], width: number, height: number): Uint8Array {
-  const streams = pages.length > 0 ? pages : [[]];
-  const kids = streams.map((_, i) => `${15 + i * 2} 0 R`).join(' ');
+/**
+ * THE DASHBOARD PAGE, when the board holds charts: landscape, the title across the top, each
+ * tile where the board puts it (its columns across the page, its rows down it), each chart as its
+ * picture fitted into its tile without distortion. The grid's tile says where the grid is: the
+ * pages after this one, whole.
+ */
+function dashboard(table: ExportTable, page: ExportPage | undefined): PdfPage[] {
+  if (!page || !page.tiles.some((t) => t.kind === 'chart')) return [];
+  const width = A4_LONG;
+  const height = A4_SHORT;
+  const s = new Stream();
+  const missing = new Set<string>();
+  let top = height - MARGIN;
+  if (table.title) {
+    s.text(`0 0 0 rg BT /F2 ${TITLE_SIZE} Tf 1 0 0 1 ${MARGIN} ${(top - TITLE_SIZE).toFixed(2)} Tm `);
+    s.string(table.title, missing);
+    s.text(' Tj ET\n');
+    top -= TITLE_SIZE * 1.8;
+  }
+  const rows = Math.max(1, ...page.tiles.map((t) => t.y + t.h));
+  const unitW = (width - MARGIN * 2) / page.cols;
+  const unitH = (top - MARGIN) / rows;
+  const GUTTER = 6;
+  const images: { name: string; jpeg: Uint8Array; width: number; height: number }[] = [];
+  for (const t of page.tiles) {
+    const x = MARGIN + t.x * unitW + GUTTER / 2;
+    const w = t.w * unitW - GUTTER;
+    const yTop = top - t.y * unitH - GUTTER / 2;
+    const h = t.h * unitH - GUTTER;
+    s.text(`0.9 0.9 0.9 RG 0.75 w ${x.toFixed(2)} ${(yTop - h).toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re S\n`);
+    s.text(`0 0 0 rg BT /F2 10 Tf 1 0 0 1 ${(x + 6).toFixed(2)} ${(yTop - 14).toFixed(2)} Tm `);
+    s.string(t.title, missing);
+    s.text(' Tj ET\n');
+    const innerTop = yTop - 20;
+    const innerH = h - 26;
+    const innerW = w - 12;
+    if (t.kind === 'chart' && t.picture) {
+      const aspect = t.picture.width / t.picture.height;
+      const drawW = Math.min(innerW, innerH * aspect);
+      const drawH = drawW / aspect;
+      const dx = x + 6 + (innerW - drawW) / 2;
+      const dy = innerTop - drawH - (innerH - drawH) / 2;
+      const name = `Im${images.length + 1}`;
+      images.push({ name, jpeg: t.picture.jpeg, width: t.picture.pixelWidth, height: t.picture.pixelHeight });
+      s.text(`q ${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${dx.toFixed(2)} ${dy.toFixed(2)} cm /${name} Do Q\n`);
+    } else {
+      const lines = t.kind === 'grid'
+        ? [`The table, whole: ${table.rows.length.toLocaleString()} rows, on the pages that follow.`]
+        : ['(this chart had not drawn)'];
+      lines.forEach((line, i) => {
+        s.text(`0.33 0.33 0.33 rg BT /F1 9 Tf 1 0 0 1 ${(x + 6).toFixed(2)} ${(innerTop - 12 - i * 13).toFixed(2)} Tm `);
+        s.string(line, missing);
+        s.text(' Tj ET\n');
+      });
+    }
+  }
+  return [{ bytes: s.bytes, width, height, images }];
+}
+
+/** One page of a PDF: its drawing, its size, and the images it draws (a chart's JPEG). */
+interface PdfPage {
+  readonly bytes: number[];
+  readonly width: number;
+  readonly height: number;
+  readonly images?: readonly { readonly name: string; readonly jpeg: Uint8Array; readonly width: number; readonly height: number }[];
+}
+
+/**
+ * Wrap pages into a PDF file, measuring bytes as it goes: the xref is byte offsets. Objects are
+ * numbered in the order they are written -- the catalogue, the page tree, twelve fonts, then each
+ * page, its content and its images -- so the xref lists them in order.
+ */
+function assemble(given: readonly PdfPage[]): Uint8Array {
+  const pages = given.length > 0 ? given : [{ bytes: [], width: A4_SHORT, height: A4_LONG }];
+  // object ids: 1 catalogue, 2 page tree, 3-14 fonts, then per page: page, content, its images
+  const ids: { page: number; content: number; images: number[] }[] = [];
+  let next = 15;
+  for (const p of pages) {
+    const page = next++;
+    const content = next++;
+    ids.push({ page, content, images: (p.images ?? []).map(() => next++) });
+  }
   const out: number[] = [];
   const ascii = (s: string): void => { for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i) & 0xff); };
   const offsets: number[] = [];
@@ -372,26 +452,34 @@ function assemble(pages: readonly number[][], width: number, height: number): Ui
     body();
     ascii('\nendobj\n');
   };
+  const stream = (dict: string, bytes: ArrayLike<number>): void => {
+    ascii(`<< ${dict}/Length ${bytes.length} >>\nstream\n`);
+    for (let i = 0; i < bytes.length; i++) out.push(bytes[i]!);
+    ascii('\nendstream');
+  };
   // a binary comment line: tells transfer tools this file is not 7-bit text
   ascii('%PDF-1.4\n%');
   out.push(0xe2, 0xe3, 0xcf, 0xd3);
   ascii('\n');
   object(() => ascii('<< /Type /Catalog /Pages 2 0 R >>'));
-  object(() => ascii(`<< /Type /Pages /Count ${streams.length} /Kids [${kids}] >>`));
+  object(() => ascii(`<< /Type /Pages /Count ${pages.length} /Kids [${ids.map((i) => `${i.page} 0 R`).join(' ')}] >>`));
   // twelve base-14 faces, objects 3-14: /F1../F12 (fontRef's order)
   const faces = FAMILIES.flatMap((f) => FACES[f]);
   for (const face of faces) {
     object(() => ascii(`<< /Type /Font /Subtype /Type1 /BaseFont /${face} /Encoding /WinAnsiEncoding >>`));
   }
   const fonts = faces.map((_, i) => `/F${i + 1} ${i + 3} 0 R`).join(' ');
-  streams.forEach((content, i) => {
-    object(() => ascii(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}]`
-      + ` /Resources << /Font << ${fonts} >> >> /Contents ${16 + i * 2} 0 R >>`));
-    object(() => {
-      ascii(`<< /Length ${content.length} >>\nstream\n`);
-      for (const b of content) out.push(b);
-      ascii('\nendstream');
-    });
+  pages.forEach((p, i) => {
+    const own = ids[i]!;
+    const xobjects = (p.images ?? []).map((img, k) => `/${img.name} ${own.images[k]} 0 R`).join(' ');
+    object(() => ascii(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${p.width} ${p.height}]`
+      + ` /Resources << /Font << ${fonts} >>${xobjects ? ` /XObject << ${xobjects} >>` : ''} >> /Contents ${own.content} 0 R >>`));
+    object(() => stream('', p.bytes));
+    for (const img of p.images ?? []) {
+      // a JPEG is what DCTDecode reads: embedded as it is, no pixel ever decoded here
+      object(() => stream(`/Type /XObject /Subtype /Image /Width ${img.width} /Height ${img.height}`
+        + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode ', img.jpeg));
+    }
   });
   const xref = out.length;
   ascii(`xref\n0 ${offsets.length + 1}\n0000000000 65535 f \n`);

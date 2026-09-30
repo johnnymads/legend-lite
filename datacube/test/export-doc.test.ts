@@ -133,3 +133,24 @@ describe('the PDF draws each cell\'s look', () => {
     assert.match(pdf, /\/BaseFont \/Times-Roman/, 'every base-14 face is on offer');
   });
 });
+
+describe('the whole page in a PDF: a dashboard page first, then the whole grid', () => {
+  it('draws each chart as an embedded JPEG where the board puts it, and says where the table is', () => {
+    const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
+    const page = { cols: 12, tiles: [
+      { id: 'grid', kind: 'grid' as const, title: 'Grid', x: 0, y: 0, w: 12, h: 14 },
+      { id: 'c', kind: 'chart' as const, title: 'By region', x: 0, y: 14, w: 6, h: 10,
+        picture: { width: 400, height: 200, pixelWidth: 800, pixelHeight: 400, png: new Uint8Array([1]), jpeg } },
+    ] };
+    const pdf = latin1(toPdf(shown(result(3), 'Trades'), { page }));
+    assert.match(pdf, /\/Subtype \/Image \/Width 800 \/Height 400 \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/Filter \/DCTDecode \/Length 9 >>/);
+    assert.match(pdf, /\/XObject << \/Im1 \d+ 0 R >>/);
+    assert.match(pdf, /cm \/Im1 Do Q/);
+    assert.match(pdf, /\/MediaBox \[0 0 842 595\][^]*\/MediaBox \[0 0 595 842\]/, 'a landscape dashboard, then the table\'s own pages');
+    assert.ok(pdf.includes('The table, whole: 3 rows, on the pages that follow.'));
+    // and the file is still consistent in bytes
+    const xref = pdf.slice(pdf.lastIndexOf('\nxref\n'));
+    const offsets = [...xref.matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
+    offsets.forEach((off, i) => assert.ok(pdf.startsWith(`${i + 1} 0 obj`, off), `object ${i + 1}`));
+  });
+});

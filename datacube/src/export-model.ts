@@ -242,3 +242,34 @@ export function cased(text: string, fontCase: FontCase | undefined): string {
   if (fontCase === 'capitalize') return text.replace(/(^|\s)(\S)/g, (_m, sp: string, ch: string) => sp + ch.toUpperCase());
   return text;
 }
+
+/**
+ * THE PAGE, when the board holds charts: every tile where the board puts it (in its column and
+ * row units), each chart as the picture it shows. An export of a page with charts carries them
+ * all, arranged as the board arranges them, and the WHOLE grid -- never the part of it a tile
+ * happened to show. Absent when the board is the grid alone.
+ */
+export interface ExportPage {
+  /** The board's columns (12). */
+  readonly cols: number;
+  readonly tiles: readonly ExportTile[];
+}
+
+export interface ExportTile {
+  readonly id: string;
+  readonly kind: 'grid' | 'chart';
+  readonly title: string;
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+  /** A chart's picture (absent when it has not drawn, or could not be read). */
+  readonly picture?: {
+    readonly width: number;
+    readonly height: number;
+    readonly pixelWidth: number;
+    readonly pixelHeight: number;
+    readonly png: Uint8Array;
+    readonly jpeg: Uint8Array;
+  };
+}

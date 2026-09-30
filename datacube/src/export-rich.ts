@@ -11,13 +11,22 @@
 // will not open -- 2026-09-29 audit.)
 
 import type { ColumnFormat, FormatterCache } from './format.ts';
-import { cased, type ExportStyle, type ExportTable } from './export-model.ts';
+import { cased, type ExportPage, type ExportStyle, type ExportTable } from './export-model.ts';
 import type { Scalar } from './result.ts';
 import { fontStack } from './style.ts';
 
 export interface RichExportOptions {
   readonly formatters?: FormatterCache;
   readonly formats?: Readonly<Record<string, ColumnFormat>>;
+  /** The board, when it holds charts: the page is laid out as it is, the grid in its tile, whole. */
+  readonly page?: ExportPage;
+}
+
+/** Bytes as base64, for a data: URL. */
+function base64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
 }
 
 /** Escape text for an XML or HTML text node or attribute. */
@@ -91,6 +100,17 @@ export function toHtml(table: ExportTable, options: RichExportOptions = {}): str
   const looks = [...classes].map(([css, name]) => `  td.${name} { ${css.replace(/</g, '')}; }`).join('\n');
 
   const notes = table.notes.map((n) => `<p class="note">${escapeXml(n)}</p>`).join('\n');
+  // THE PAGE AS THE BOARD LAYS IT OUT: a CSS grid of the board's columns, each tile at its place;
+  // a chart as its picture, the grid in its tile, whole (its rows grow the tile, never clip it)
+  const page = options.page;
+  const layout = (grid: string): string => (page ? `<div class="page" style="grid-template-columns:repeat(${page.cols},minmax(0,1fr))">
+${page.tiles.map((t) => `<section class="tile" style="grid-column:${t.x + 1} / span ${t.w};grid-row:${t.y + 1} / span ${t.h}">
+<h2>${escapeXml(t.title)}</h2>
+${t.kind === 'grid' ? grid : t.picture
+    ? `<img alt="${escapeXml(t.title)}" width="${t.picture.width}" height="${t.picture.height}" src="data:image/png;base64,${base64(t.picture.png)}">`
+    : '<p class="note">(this chart had not drawn)</p>'}
+</section>`).join('\n')}
+</div>` : grid);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -104,20 +124,24 @@ export function toHtml(table: ExportTable, options: RichExportOptions = {}): str
     padding: 2px 6px; border: 1px solid #e5e5e5; }
   td { padding: 1px 6px; white-space: nowrap;${look.verticalLines ? ` border-right: ${line};` : ''}${look.horizontalLines ? ` border-bottom: ${line};` : ''} }
   p.note { color: #555; margin: 4px 0; }
+  .page { display: grid; gap: 12px; grid-auto-rows: minmax(4px, auto); align-items: start; }
+  .tile { border: 1px solid #e5e5e5; padding: 6px; overflow: visible; min-width: 0; }
+  .tile h2 { font-size: 13px; font-weight: 600; margin: 0 0 6px; }
+  .tile img { width: 100%; height: auto; display: block; }
 ${looks}
 </style>
 </head>
 <body>
 <h1>${escapeXml(table.title)}</h1>
 ${notes}
-<table>
+${layout(`<table>
 <thead>
 ${head}
 </thead>
 <tbody>
 ${body.join('\n')}
 </tbody>
-</table>
+</table>`)}
 </body>
 </html>
 `;
