@@ -77,6 +77,47 @@ public record GraphFetchLiteral(
         }
     }
 
+    /**
+     * A tree of property nodes (the wire's shape) as the {@link ColSpecArray} the compiler
+     * consumes -- the desugaring {@code SpecParser.parseGraphDefinition} performs on text, built
+     * from the tree, so a graph-fetch tree read from protocol JSON ({@code ProtocolReader}) is the
+     * same literal the grammar gives. Each property is {@code ~prop: _gfN|$_gfN.prop} (N the
+     * depth), its subtree a zero-parameter lambda of the nested array; a subtype view is the
+     * {@code ->subType} entry carrying its class as a type annotation. A level's subtype entries
+     * follow its properties (the wire keeps them in two lists).
+     */
+    public static ColSpecArray desugar(List<Node> subTrees, List<SubTypeNode> subTypeTrees) {
+        return desugar(subTrees, subTypeTrees, 0);
+    }
+
+    private static ColSpecArray desugar(List<Node> subTrees, List<SubTypeNode> subTypeTrees, int depth) {
+        List<ColSpec> specs = new java.util.ArrayList<>();
+        for (Node n : subTrees) {
+            Variable param = new Variable("_gf" + depth);
+            LambdaFunction fn1 = new LambdaFunction(List.of(param), List.of(new AppliedProperty(param, n.property())));
+            boolean qualified = !n.parameters().isEmpty();
+            ColSpecArray body = desugar(n.subTrees(), n.subTypeTrees(), depth + 1);
+            LambdaFunction fn2;
+            if (n.subType() != null) {
+                // prop->subType(@Sub) { ... }: sugar for prop { ->subType(@Sub) { ... } }
+                fn2 = new LambdaFunction(List.of(), List.of(new ColSpecArray(List.of(subTypeEntry(n.subType(), body)))));
+            } else {
+                fn2 = n.subTrees().isEmpty() && n.subTypeTrees().isEmpty() ? null : new LambdaFunction(List.of(), List.of(body));
+            }
+            specs.add(new ColSpec(n.property(), fn1, fn2, n.alias(), n.parameters(), qualified));
+        }
+        for (SubTypeNode st : subTypeTrees) {
+            specs.add(subTypeEntry(st.subTypeClass(), desugar(st.subTrees(), List.of(), depth + 1)));
+        }
+        return new ColSpecArray(specs);
+    }
+
+    /** {@code ->subType(@X) { body }}: the entry named {@code ->subType}, its class as a type annotation. */
+    private static ColSpec subTypeEntry(String subTypeClass, ColSpecArray body) {
+        return new ColSpec("->subType", null, new LambdaFunction(List.of(), List.of(body)), null,
+                List.of(new TypeAnnotation.Named(new com.legend.protocol.TypeExpression.NameRef(subTypeClass))));
+    }
+
     @Override
     public boolean equals(Object o) {
         return o instanceof GraphFetchLiteral other

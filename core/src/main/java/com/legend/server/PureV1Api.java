@@ -160,7 +160,7 @@ public final class PureV1Api {
         return answer(400, "COMPILATION", () -> {
             Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
-            LambdaFunction lambda = readLambda(request.getObj("lambda"));
+            LambdaFunction lambda = ProtocolReader.lambda(request.getObj("lambda"));
             com.legend.compiler.element.type.Type t = com.legend.Compiler.resultType(model, lambda).type();
             String path = com.legend.compiler.element.type.Type.schemaView(t) != null
                     ? "meta::pure::metamodel::relation::Relation"
@@ -189,7 +189,7 @@ public final class PureV1Api {
         return answer(400, "COMPILATION", () -> {
             Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
-            LambdaFunction lambda = readLambda(request.getObj("lambda"));
+            LambdaFunction lambda = ProtocolReader.lambda(request.getObj("lambda"));
             return Json.toCompact(UpstreamRelationType.of(
                     com.legend.Compiler.resultType(model, lambda)));
         });
@@ -205,7 +205,7 @@ public final class PureV1Api {
         return answer(500, "COMPILATION", () -> {
             Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
-            LambdaFunction lambda = readLambda(request.getObj("function"));
+            LambdaFunction lambda = ProtocolReader.lambda(request.getObj("function"));
             com.legend.Compiler.Target target = com.legend.Compiler.target(model, lambda);
             String runtime = runtimeOf(request, target);
             QueryPlan plan = com.legend.Compiler.plan(model, lambda, runtime);
@@ -227,7 +227,7 @@ public final class PureV1Api {
         return answer(500, "COMPILATION", () -> {
             Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
-            LambdaFunction lambda = readLambda(
+            LambdaFunction lambda = ProtocolReader.lambda(
                     boundParameters(request.getObj("function"), request.getArrOr("parameterValues", null)));
             String runtime = runtimeOf(request, com.legend.Compiler.target(model, lambda));
             java.io.StringWriter rows = new java.io.StringWriter();
@@ -245,20 +245,6 @@ public final class PureV1Api {
             }
             return tdsResult(plan, rows.toString());
         });
-    }
-
-    /**
-     * A lambda's JSON read into lite's spec. A graph-fetch tree ({@code rootGraphFetchTree}) is
-     * desugared by the grammar itself -- the parser re-reads a tree's text to build it -- so a
-     * lambda carrying one is printed (PureComposer) and parsed (SpecParser), the one grammar's
-     * reading of the same query; every other lambda goes through ProtocolReader.
-     */
-    static LambdaFunction readLambda(Json.Obj lambda) {
-        String json = Json.toCompact(lambda);
-        if (!json.contains("\"rootGraphFetchTree\"")) {
-            return ProtocolReader.lambda(lambda);
-        }
-        return SpecParser.parseLambda(PureComposer.lambda(lambda, PureComposer.Style.STANDARD));
     }
 
     /**

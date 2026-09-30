@@ -154,12 +154,6 @@ public final class Wasm {
         if (!(n instanceof com.legend.json.Json.Obj o)) {
             throw new IllegalArgumentException("lambda JSON: not a JSON object");
         }
-        // a graph-fetch tree is desugared by the grammar (the parser builds a tree from its
-        // text), so such a lambda is printed and parsed -- as the server's PureV1Api.readLambda
-        if (lambdaJson.contains("\"rootGraphFetchTree\"")) {
-            return com.legend.parser.SpecParser.parseLambda(com.legend.protocol.PureComposer.lambda(
-                    o, com.legend.protocol.PureComposer.Style.STANDARD));
-        }
         return com.legend.protocol.ProtocolReader.lambda(o);
     }
 

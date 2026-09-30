@@ -17,6 +17,7 @@ import com.legend.protocol.spec.CTime;
 import com.legend.protocol.spec.ColSpec;
 import com.legend.protocol.spec.ColSpecArray;
 import com.legend.protocol.spec.EnumValue;
+import com.legend.protocol.spec.GraphFetchLiteral;
 import com.legend.protocol.spec.LambdaFunction;
 import com.legend.protocol.spec.PackageableElementPtr;
 import com.legend.protocol.spec.PureCollection;
@@ -29,6 +30,8 @@ import com.legend.values.PureTimeLiteral;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.BiFunction;
 
 /**
  * Engine lambda protocol JSON &rarr; the protocol records the parser produces &mdash;
@@ -166,32 +169,123 @@ public final class ProtocolReader {
         return new AppliedProperty(params.get(0), name, pos);
     }
 
+    /** The reader rule for each classInstance {@code type} on the wire. */
+    private static final Map<String, BiFunction<Json.Obj, SourceInfo, ValueSpecification>> CLASS_INSTANCES = Map.of(
+            ">", ProtocolReader::tableReference,
+            "rootGraphFetchTree", ProtocolReader::graphFetchTree,
+            "colSpec", (value, pos) -> colSpec(value),
+            "colSpecArray", ProtocolReader::colSpecArray);
+
     private static ValueSpecification classInstance(Json.Obj o, @com.legend.base.Nullable SourceInfo pos) {
         String type = o.getString("type");
-        Json.Obj value = o.getObj("value");
-        return switch (type) {
-            case ">" -> {
-                // #>{db.schema.T}#: the database, then the rest of the path as the
-                // pos-less table-name string the island parse synthesises (the
-                // emitter's discriminator)
-                List<String> path = value.getStringArray("path");
-                if (path.isEmpty()) {
-                    throw refused("a table reference with an empty path");
-                }
-                yield AppliedFunction.tableReference(path.get(0), path.size() == 1 ? null
-                        : String.join(".", path.subList(1, path.size())), pos);
-            }
-            case "colSpec" -> colSpec(value);
-            case "colSpecArray" -> {
-                List<ColSpec> specs = new ArrayList<>();
-                for (Json.Node n : arrOrEmpty(value, "colSpecs")) {
-                    specs.add(colSpec(asObj(n, "colSpec")));
-                }
-                yield new ColSpecArray(specs, pos);
-            }
-            default -> throw refused("no reader rule for classInstance type '" + type
+        BiFunction<Json.Obj, SourceInfo, ValueSpecification> rule = CLASS_INSTANCES.get(type);
+        if (rule == null) {
+            throw refused("no reader rule for classInstance type '" + type
                     + "' -- add the rule, do not drop it");
-        };
+        }
+        return rule.apply(o.getObj("value"), pos);
+    }
+
+    /**
+     * {@code #>{db.schema.T}#}: the database, then the rest of the path as the pos-less
+     * table-name string the island parse synthesises (the emitter's discriminator).
+     */
+    private static ValueSpecification tableReference(Json.Obj value, @com.legend.base.Nullable SourceInfo pos) {
+        List<String> path = value.getStringArray("path");
+        if (path.isEmpty()) {
+            throw refused("a table reference with an empty path");
+        }
+        return AppliedFunction.tableReference(path.get(0), path.size() == 1 ? null
+                : String.join(".", path.subList(1, path.size())), pos);
+    }
+
+    private static ValueSpecification colSpecArray(Json.Obj value, @com.legend.base.Nullable SourceInfo pos) {
+        List<ColSpec> specs = new ArrayList<>();
+        for (Json.Node n : arrOrEmpty(value, "colSpecs")) {
+            specs.add(colSpec(asObj(n, "colSpec")));
+        }
+        return new ColSpecArray(specs, pos);
+    }
+
+    /**
+     * {@code #{Class{a, b{c}}}#} on the wire: the tree of {@code propertyGraphFetchTree} and
+     * {@code subTypeGraphFetchTree} nodes, read into the same literal the grammar gives -- its
+     * nodes, and their desugaring ({@link GraphFetchLiteral#desugar}) for the compiler. A subtype
+     * inside a subtype is carried as unsupported, as the parse carries it.
+     */
+    private static ValueSpecification graphFetchTree(Json.Obj root, @com.legend.base.Nullable SourceInfo pos) {
+        List<GraphFetchLiteral.Node> nodes = graphNodes(arrOrEmpty(root, "subTrees"));
+        List<GraphFetchLiteral.SubTypeNode> subTypes = new ArrayList<>();
+        boolean nestedSubTypes = graphSubTypes(arrOrEmpty(root, "subTypeTrees"), subTypes);
+        return new GraphFetchLiteral(root.getString("class"), nodes, subTypes,
+                GraphFetchLiteral.desugar(nodes, subTypes), nestedSubTypes || anyNestedSubType(nodes), pos);
+    }
+
+    private static List<GraphFetchLiteral.Node> graphNodes(List<Json.Node> trees) {
+        List<GraphFetchLiteral.Node> out = new ArrayList<>();
+        for (Json.Node t : trees) {
+            Json.Obj n = asObj(t, "graph fetch tree");
+            String type = n.getStringOr("_type", "");
+            if (!"propertyGraphFetchTree".equals(type)) {
+                throw refused("no reader rule for a graph fetch subtree of _type '" + type + "' -- add the rule, do not drop it");
+            }
+            List<GraphFetchLiteral.SubTypeNode> subTypes = new ArrayList<>();
+            graphSubTypes(arrOrEmpty(n, "subTypeTrees"), subTypes);
+            out.add(new GraphFetchLiteral.Node(n.getString("property"), pos(n), graphArgs(n),
+                    n.getStringOr("alias", null), n.getStringOr("subType", null),
+                    graphNodes(arrOrEmpty(n, "subTrees")), subTypes));
+        }
+        return out;
+    }
+
+    /**
+     * A graph node's call arguments. They read as expression values do, except a date: in graph
+     * position the wire's {@code dateTime} value is the island's spelling verbatim, {@code %}
+     * included (the emitter's gftParam), and the node keeps it so.
+     */
+    private static List<ValueSpecification> graphArgs(Json.Obj n) {
+        List<ValueSpecification> out = new ArrayList<>();
+        for (Json.Node a : arrOrEmpty(n, "parameters")) {
+            Json.Obj arg = asObj(a, "graph fetch argument");
+            if ("dateTime".equals(arg.getStringOr("_type", ""))) {
+                String written = arg.getString("value");
+                out.add(new CDate(PureDateLiteral.parse(written.startsWith("%") ? written.substring(1) : written),
+                        written, pos(arg)));
+            } else {
+                out.add(valueSpec(a));
+            }
+        }
+        return out;
+    }
+
+    /** A level's {@code ->subType(@X){...}} entries into {@code out}; true when one holds a subtype of its own. */
+    private static boolean graphSubTypes(List<Json.Node> trees, List<GraphFetchLiteral.SubTypeNode> out) {
+        boolean nested = false;
+        for (Json.Node t : trees) {
+            Json.Obj n = asObj(t, "graph fetch subtype tree");
+            String type = n.getStringOr("_type", "");
+            if (!"subTypeGraphFetchTree".equals(type)) {
+                throw refused("no reader rule for a graph fetch subtype tree of _type '" + type + "' -- add the rule, do not drop it");
+            }
+            nested |= !arrOrEmpty(n, "subTypeTrees").isEmpty();
+            out.add(new GraphFetchLiteral.SubTypeNode(n.getString("subTypeClass"), pos(n),
+                    graphNodes(arrOrEmpty(n, "subTrees"))));
+        }
+        return nested;
+    }
+
+    private static boolean anyNestedSubType(List<GraphFetchLiteral.Node> nodes) {
+        for (GraphFetchLiteral.Node n : nodes) {
+            for (GraphFetchLiteral.SubTypeNode st : n.subTypeTrees()) {
+                if (st.subTrees().stream().anyMatch(c -> !c.subTypeTrees().isEmpty())) {
+                    return true;
+                }
+            }
+            if (anyNestedSubType(n.subTrees())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static ColSpec colSpec(Json.Obj v) {

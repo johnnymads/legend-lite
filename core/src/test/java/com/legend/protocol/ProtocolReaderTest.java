@@ -59,6 +59,37 @@ class ProtocolReaderTest {
         roundTrips(text);
     }
 
+    /** A graph-fetch tree read from the wire is the literal the grammar gives: same wire, same desugaring. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "|my::Firm.all()->graphFetch(#{my::Firm {legalName}}#)->serialize(#{my::Firm {legalName}}#)",
+        "|my::Firm.all()->graphFetch(#{my::Firm {legalName, employees {name, age}, address {city}}}#)",
+        "|my::Firm.all()->graphFetch(#{my::Firm {'nick': legalName, employees {name}}}#)",
+        "|my::Firm.all()->graphFetch(#{my::Firm {employeesOn(%2024-01-01) {name}, ranked('a', 2)}}#)",
+        "|my::Firm.all()->graphFetch(#{my::Firm {legalName, owner->subType(@my::Person) {name}}}#)",
+        "|my::Firm.all()->graphFetch(#{my::Firm {legalName, ->subType(@my::Bank) {swift}}}#)",
+    })
+    void readsGraphFetchTrees_asTheGrammarDoes(String text) {
+        roundTrips(text);
+        LambdaFunction parsed = parse(text);
+        LambdaFunction read = ProtocolReader.lambda(ProtocolEmitter.emitLambda(parsed));
+        var expected = graphFetch(parsed.body().get(0));
+        assertTrue(expected != null, text);
+        assertEquals(expected, graphFetch(read.body().get(0)), text);
+    }
+
+    private static com.legend.protocol.spec.GraphFetchLiteral graphFetch(
+            com.legend.protocol.spec.ValueSpecification v) {
+        if (v instanceof com.legend.protocol.spec.GraphFetchLiteral g) return g;
+        if (v instanceof com.legend.protocol.spec.AppliedFunction f) {
+            for (var p : f.parameters()) {
+                var g = graphFetch(p);
+                if (g != null) return g;
+            }
+        }
+        return null;
+    }
+
     @Test
     void readsWhatTheRealEngineWrites() throws IOException {
         // legend-engine 4.145.0's own grammarToJson/lambda answer, committed: reading
