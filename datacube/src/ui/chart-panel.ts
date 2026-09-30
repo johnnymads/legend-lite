@@ -17,8 +17,9 @@ import {
   type ChartMark,
   type ChartSpec,
 } from '../chart-spec.ts';
-import { chartOption, type LabelOf, type MarkKey } from '../chart-option.ts';
-import { mountChart, themeOf, type ChartPicture, type MountedChart } from '../chart-render.ts';
+import { chartOption, themeOf, type LabelOf, type MarkKey } from '../chart-option.ts';
+// ECharts (about 218 KB gzipped) is loaded the first time a chart draws, never by a grid alone (plan F7)
+import type { ChartPicture, MountedChart } from '../chart-render.ts';
 import type { ResultTable } from '../result.ts';
 import type { AggregateFn, CubeSnapshot } from '../snapshot.ts';
 import type { Lambda } from '../../../pure-protocol/src/index.ts';
@@ -285,7 +286,11 @@ export class ChartPanel {
       const { query, snapshot } = chartQuery(cube, spec);
       const rows = await this.#options.run(query, snapshot, abort.signal);
       if (abort.signal.aborted || this.#disposed) return;
-      this.#chart ??= mountChart(this.#canvas, (key) => this.#options.onPick(key));
+      if (!this.#chart) {
+        const { mountChart } = await import('../chart-render.ts');
+        if (abort.signal.aborted || this.#disposed) return;
+        this.#chart ??= mountChart(this.#canvas, (key) => this.#options.onPick(key));
+      }
       const drawing = chartOption(spec, rows, themeOf(this.#canvas), this.#options.label);
       this.#chart.show(drawing);
       const capped = rows.rowCount >= (spec.mark === 'scatter' ? Infinity : spec.options.limit);

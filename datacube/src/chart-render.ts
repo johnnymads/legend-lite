@@ -23,7 +23,7 @@ import {
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { EChartsOption } from 'echarts';
-import { LIGHT_THEME, type ChartDrawing, type ChartTheme, type MarkKey } from './chart-option.ts';
+import type { ChartDrawing, MarkKey } from './chart-option.ts';
 
 echarts.use([
   BarChart, LineChart, ScatterChart, PieChart, HeatmapChart,
@@ -63,32 +63,6 @@ function bytesOf(dataUrl: string): Uint8Array {
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
-}
-
-/**
- * The theme, from the element's CSS tokens: `--dc-chart-*`, falling back
- * to the reference palette. Canvas cannot read CSS variables itself, so
- * they are read here, once per draw.
- */
-export function themeOf(el: Element): ChartTheme {
-  const view = el.ownerDocument.defaultView;
-  const css = view ? view.getComputedStyle(el) : undefined;
-  const read = (name: string, fallback: string): string =>
-    css?.getPropertyValue(name).trim() || fallback;
-  const list = (name: string, fallback: readonly string[]): string[] => {
-    const v = read(name, '');
-    return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [...fallback];
-  };
-  return {
-    surface: read('--dc-chart-surface', LIGHT_THEME.surface),
-    ink: read('--dc-chart-ink', LIGHT_THEME.ink),
-    inkSecondary: read('--dc-chart-ink-secondary', LIGHT_THEME.inkSecondary),
-    muted: read('--dc-chart-muted', LIGHT_THEME.muted),
-    grid: read('--dc-chart-grid', LIGHT_THEME.grid),
-    axis: read('--dc-chart-axis', LIGHT_THEME.axis),
-    series: list('--dc-chart-series', LIGHT_THEME.series),
-    sequential: list('--dc-chart-sequential', LIGHT_THEME.sequential),
-  };
 }
 
 /**

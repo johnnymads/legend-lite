@@ -29,6 +29,8 @@ await mkdir(join(DIST, 'vendor'), { recursive: true });
 for (const f of ['bundle.js', 'planner-worker.js', 'trades.pure']) {
   await cp(join(ROOT, 'demo', f), join(DIST, f));
 }
+// what the bundle loads when it needs it (ECharts, the first time a chart draws)
+await cp(join(ROOT, 'demo', 'chunks-bundle'), join(DIST, 'chunks-bundle'), { recursive: true });
 for (const f of ['classes.wasm', 'wasm-gc-module-runtime.js',
   'duckdb-eh.wasm', 'duckdb-mvp.wasm',
   'duckdb-browser-eh.worker.js', 'duckdb-browser-mvp.worker.js']) {
