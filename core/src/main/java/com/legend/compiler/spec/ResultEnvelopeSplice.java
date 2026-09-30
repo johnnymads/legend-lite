@@ -414,7 +414,7 @@ public final class ResultEnvelopeSplice {
         if (n instanceof TypedFilter tf) {
             TypedSpec src = activitiesRowsRead(tf.source(), frames);
             return src == null ? null : src == tf.source() ? n
-                    : new TypedFilter(src, tf.predicate(), tf.info());
+                    : tf.rebuilt(src, tf.predicate(), tf.info());
         }
         if (!(n instanceof TypedPropertyAccess ap)
                 || !ap.property().equals("activities")) {

@@ -136,7 +136,7 @@ final class FlattenOps {
             TypedSpec op = belowOps.get(i);
             p = switch (op) {
                 case TypedFilter f ->
-                        new TypedFilter(p, sub.apply(f.predicate()), p.info());
+                        f.rebuilt(p, sub.apply(f.predicate()), p.info());
                 // the limit family over an ORDERED metamodel collection
                 // counts rows in DECLARATION order (byDeclarationOrder)
                 case TypedLimit l -> new TypedLimit(byDeclarationOrder(p), l.count(), p.info());
@@ -171,7 +171,7 @@ final class FlattenOps {
                         + " kind " + op.getClass().getSimpleName()
                         + " is not supported yet");
             }
-            p = new TypedFilter(p, sub.apply(f.predicate()), p.info());
+            p = f.rebuilt(p, sub.apply(f.predicate()), p.info());
         }
         return p;
     }
@@ -276,7 +276,7 @@ final class FlattenOps {
         if (pipe instanceof TypedFilter f) {
             TypedSpec src = innerizeOrNull(f.source(), prefix, acc);
             return src == null ? null
-                    : new TypedFilter(src, f.predicate(), f.info());
+                    : f.rebuilt(src, f.predicate(), f.info());
         }
         // SOURCE-preserving wrappers a materialized nav target may sit
         // under (the projection subselect a nested slot materializes as,

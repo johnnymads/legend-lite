@@ -699,7 +699,7 @@ public final class StoreResolver {
                     navHeadByAlias, demandedNavs, composed, parentAssocs,
                     navMats);
             return src == f.source() ? pipe
-                    : new TypedFilter(src, f.predicate(), f.info());
+                    : f.rebuilt(src, f.predicate(), f.info());
         }
         if (pipe instanceof com.legend.compiler.spec.typed.TypedJoinSlot js) {
             TypedSpec src = augmentNavPredicates(js.source(), cs,
@@ -1309,7 +1309,7 @@ public final class StoreResolver {
         TypedSpec pred = Pipelines.substituteParam(specs, f.predicate(), rowRead);
         TypedLambda fn = new TypedLambda(List.of("r"), List.of(pred),
                 f.predicate().info());
-        return new TypedFilter(rel, fn, rel.info());
+        return new TypedFilter(rel, fn, rel.info(), TypedFilter.Stamp.NONE /* store-rooted predicate */);
     }
 
 
@@ -3082,7 +3082,7 @@ public final class StoreResolver {
         final Context closedCtx = context;   // a self-contained from() in a predicate resolves first (72b)
         for (int i = ops.size() - 1; i >= 0; i--) {
             pipeline = switch (ops.get(i)) {
-                case TypedFilter f -> new TypedFilter(pipeline,
+                case TypedFilter f -> f.rebuilt(pipeline,
                         substitution(cs, m, assocs, assocEnds, existsSubs, aggReads, inQueryReads, true, fresh, f.predicate(), context)
                                 .rewriteLambda((TypedLambda) SubQueryLift.resolveClosed(
                                         f.predicate(), new java.util.LinkedHashSet<>(),
@@ -3271,7 +3271,7 @@ public final class StoreResolver {
             for (TypedSpec b : lam.body()) {
                 FlattenOps.consumedPaths(b, lam.parameters().get(0), innerFullPaths);
             }
-            innerOps.add(new TypedFilter(targetPipe, lam, targetPipe.info()));
+            innerOps.add(new TypedFilter(targetPipe, lam, targetPipe.info(), TypedFilter.Stamp.NONE /* target predicate */));
         }
         if (innerPaths.isEmpty()) {
             return new NestedScope(none, targetPipe, row);

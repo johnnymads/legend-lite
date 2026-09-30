@@ -5683,6 +5683,46 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild W0.6 push 3: a rebuilt filter keeps its stamp; the nested-exists pin removed
+
+**What changed and why.** `m::Firm.all()->filter(f|$f.staff->exists(s|$s.cars->exists(c|$c.make=='VW')))` over a
+firm whose employee has a NULL id and a car with a NULL owner key returned `[BETA]`, not `[]`: the inner EXISTS relation
+is stamped CORRELATION by the resolver (its join key must lower as plain `=`), but the outer scope's re-pass rebuilt it
+with `TypedFilter`'s 3-argument constructor, whose stamp defaulted to NONE, and the lowerer then emitted
+`IS NOT DISTINCT FROM`, under which NULL matches NULL. The class fix, as the homework proposed: **the defaulting
+constructor is deleted**; `TypedFilter.rebuilt(source, predicate, info)` carries the stamp, and every NEW filter writes
+its stamp explicitly with the reason beside it. All 46 three-argument sites in 17 files converted (`compiler/spec` 2,
+`resolver` 44): 20 are rebuilds of an existing filter and now keep its stamp; 26 build new filters and write
+`Stamp.NONE` with a one-line reason. **One variable at a time:** the sites whose provenance is correlation-shaped but
+was NONE before (constructed EXISTS equalities in `Substitution` at :614/:682/:1127, the graph-fetch child
+correlations, `CorrelatedSubselects`' joined subs, `AssociationJoins`' XStore navigation, `TemporalFrame`'s window at
+:1167) keep NONE and say so: choosing their equality kind is push 10's (the equality-kind node, E4), not a
+constructor exchange.
+
+**The probe** (local only; receipt `receipts/rebuild-W0.6-p3-probe-69c1bc7de/`): `rebuilt` printed its call site
+whenever the stamp it kept was not NONE, over the corpus, PCT, stress and core lanes uncached. Three of the twenty
+rebuild sites are live: `Substitution.rewrite:2061` (95 times, the proven one), `Pipelines.rewriteRowReads:1235` (27)
+and `StackBuilder.demandForKeys:1898` (361, all in the stress suites). Every lane stayed green with rosters unchanged,
+so keeping those stamps changed no verdict on the fixtures we have: the fixtures hold no NULL join keys, which is the
+D23 point exactly. The other seventeen rebuild sites never met a stamped filter in these lanes.
+
+**Tests.** `NestedExistsCorrelationStampTest`: the pin removed (`[BETA]` → `[]`, both stamps CORRELATION, no
+`IS NOT DISTINCT FROM`); a real match still found (`[ACME]` for BMW); a user chain filter inside the nested exists keeps
+NONE while the exists relation keeps CORRELATION. **Seen, not this push's:** a nested `forAll` over an association
+(`$f.staff->forAll(s|$s.cars->forAll(…))`) is a loud wall ("association property used other than as a navigation
+head"), before and after; owner W1.10's defect list.
+
+**Gate lanes.** `bazel test //core:guardrails //core:census //parser-equivalence:parser_parity //spec:spec_tests`
+"Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out of 129 tests: 129 tests
+pass"; `bazel test //tools/deps:all` "Executed 0 out of 5 tests: 5 tests pass"; `bazel test //spec:reference_lane`
+PASSED (47.9 s). Corpus rosters LOST 0, GAINED 0. No timing: a constructor exchange with no new work per node.
+
+**Pins moved.** `@KnownDefect(owner = "W4.3")` on `nestedExistsDoesNotMatchNullKeys` removed (fixed, D14).
+**Deleted:** the 3-argument `TypedFilter` constructor. **Number:** open wrong-results defects 12 → 11.
+**Net product lines:** +4.
+
+**Cost.** One session, one commit; one chain run on the final tree, one seven-lane probe run.
+
 ## 2026-09-30 — Rebuild W0.6 push 2: the query scope can no longer shadow a binder; both pins removed
 
 **What changed and why.** `|let x = 10; [1, 2, 3]->map(x | $x + 1)` returned `[11, 11, 11]`. The lowerer keeps query

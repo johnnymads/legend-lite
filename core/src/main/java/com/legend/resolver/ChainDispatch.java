@@ -109,7 +109,7 @@ final class ChainDispatch {
                             List.of(new Type.Param(rowClass, Multiplicity.Bounded.ONE)),
                             new Type.Param(Type.Primitive.BOOLEAN, Multiplicity.Bounded.ONE)),
                             Multiplicity.Bounded.ONE));
-            TypedSpec filtered = new TypedFilter(mr.input(), pred, mr.input().info());
+            TypedSpec filtered = new TypedFilter(mr.input(), pred, mr.input().info(), TypedFilter.Stamp.NONE /* runtime-if branch */);
             TypedSpec cast = new com.legend.compiler.spec.typed.TypedCast(filtered, armType,
                     new ExprType(armType, mr.input().info().multiplicity()),
                     /*wire*/ false);
@@ -216,7 +216,7 @@ final class ChainDispatch {
                         new Type.Param(Type.Primitive.BOOLEAN,
                                 Multiplicity.Bounded.ONE)),
                         Multiplicity.Bounded.ONE));
-        return new TypedFilter(source, pred, source.info());
+        return new TypedFilter(source, pred, source.info(), TypedFilter.Stamp.NONE /* runtime-if branch */);
     }
 
     private TypedFunction instanceOfCallee() {
@@ -293,7 +293,7 @@ final class ChainDispatch {
                         List.of(new Type.Param(row, Multiplicity.Bounded.ONE)),
                         new Type.Param(Type.Primitive.BOOLEAN, Multiplicity.Bounded.ONE)),
                         Multiplicity.Bounded.ONE));
-        return new TypedFilter(branch, pred, new ExprType(row, Multiplicity.Bounded.ZERO_MANY));
+        return new TypedFilter(branch, pred, new ExprType(row, Multiplicity.Bounded.ZERO_MANY), TypedFilter.Stamp.NONE /* runtime-if branch */);
     }
 
     private static final String TO_ONE_FQN = "meta::pure::functions::multiplicity::toOne";

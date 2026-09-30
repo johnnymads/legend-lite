@@ -1165,7 +1165,7 @@ final class TemporalFrame {
                                     Multiplicity.Bounded.ONE)),
                             Multiplicity.Bounded.ONE));
             out = new com.legend.compiler.spec.typed.TypedFilter(out, pred,
-                    out.info());
+                    out.info(), com.legend.compiler.spec.typed.TypedFilter.Stamp.NONE /* temporal window; TEMPORAL would move the conjunct, not this push */);
         }
         return out;
     }

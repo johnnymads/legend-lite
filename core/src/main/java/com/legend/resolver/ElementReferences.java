@@ -117,7 +117,7 @@ final class ElementReferences {
         var fn = new Type.FunctionType(List.of(new Type.Param(ct, one)),
                 new Type.Param(Type.Primitive.BOOLEAN, one));
         return new TypedFilter(all, new TypedLambda(List.of(v), List.of(pred),
-                new ExprType(fn, one)), all.info());
+                new ExprType(fn, one)), all.info(), TypedFilter.Stamp.NONE /* element identity predicate */);
     }
 
     /** A navigation ROUTED to one member set lands on that set's class:
