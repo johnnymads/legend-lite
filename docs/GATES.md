@@ -5683,6 +5683,25 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-29 — Rebuild D23: the wrong-rows tool is built on the stress corpus, with swappable data
+
+**What.** The user asked, in plain words, what the corpus and PCT lanes cannot see and why the stress corpus is not
+already the row oracle. Checked against the files and one live run: the stress corpus (202 files, 4,745 service tests,
+engine grammar, expectations from an independent Python oracle, run through legend-engine once on the `test-corpus`
+branch; lite passes 4,700 on DuckDB) IS the right base, and `bazel run //tools/engine-runner:testable` runs a service
+through legend-engine today (`stress::F38_FirstDayTypes`: parse 0.3 s, compile 2.1 s, run 2.8 s) and prints the
+engine's actual rows on a failing assert. What it lacks is data: about 5,000 CSV rows across all files, every row with
+its match, no nulls, no second history version; the known wrong answers need exactly that data, and neither engine has
+run on it. **Ruled (D23):** the seeds are never edited; damaged data is a separate generated set; the runner takes the
+data set as an argument (every suite reaches its data by name); both engines run on seeds and on damaged data, the
+engine judging the latter with every disagreement recorded, not copied (on F38 the engine prints a timestamp where the
+test and lite print a date). Order: the six small W0.6 pushes, the tool, then the remaining pushes judged by it; fix
+versus pin for the four resolver pushes decided when the tool has run. Plan §0, §2 (D23), §4 Phase 1 and W1.10's
+catalogue entry, and the homework README's order, say so. Size of the tool: three to four sessions, down from the six to
+eight the earlier design (a new `RowsMain`, a new mutator over the engine's Pure corpus) implied.
+
+**Gate.** Documents only; `bazel test //...` and `//tools/deps:all` green (summary lines in the commit's chain run).
+
 ## 2026-09-29 — Rebuild W0.6 push 1: capture-avoiding substitution in all three engines; the pin removed; six library bodies type
 
 **What changed and why.** A term substituted under a binder that spells one of the term's free variables was captured:

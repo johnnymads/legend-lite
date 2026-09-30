@@ -14,9 +14,10 @@ principled fix, whether it is correct today, the blast radius, and the gate (the
 
 ## Push list (rev H3: the homework dry-run against the code by `../tractability-2026-09-29/1-…` and `2-…`)
 
-**Order (D22, ruled by the user 2026-09-29):** push 1 is done (GATES "Rebuild W0.6 push 1"). Pushes 2, 3, 6, 6b, 7, 8,
-9, 11, 12, 13 run next, in that order. Pushes 4, 5, 5b and 10 run after the engine row oracle (plan W1.10c) and take
-legend-engine's rows on their fixtures as the expected values. Push 12's repros over a mixed literal list
+**Order (D22 and D23, ruled by the user 2026-09-29):** push 1 is done (GATES "Rebuild W0.6 push 1"). The six small
+pushes run next: 2, 3, 7, 8, 11, 13. Then the wrong-rows tool on the stress corpus (plan §4 Phase 1 step 2). Then the
+rest: 9 and the four resolver pushes 4, 5, 5b, 10 judged by legend-engine's rows (fix in place or pin for the rebuilt
+resolver: decided when the tool has run), 6 and 6b by the reference lane, 12 by its repros. Push 12's repros over a mixed literal list
 (`[1, 2.5]`) meet a loud DuckDB failure first (`+(JSON, INTEGER)`, with any binder names); use a `cast(@Number)`
 input as `InlinerMatchCaptureTest.loweringSideMatchFoldIsNotCaptured` does, or fix that failure first.
 

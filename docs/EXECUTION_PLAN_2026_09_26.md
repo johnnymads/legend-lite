@@ -19,10 +19,10 @@ Keep it current: when an item lands, move it to §3 with its GATES.md heading, a
 
 **Now (update in every push):** W0.6 push 2 (the lowerer's let scope). Push 1 is done (§3). The scope, design choice,
 tests and gate of every W0.6 push are in `plan-audit-2026-09-26/w0.6-homework/README.md` §"Push list" (homework and a
-dry run against the code done); **the order is §4 Phase 1's (D22): pushes 2, 3, 6, 6b, 7, 8, 9, 11, 12, 13 now; pushes
-4, 5, 5b and 10 after the engine row oracle (W1.10c).** Open decisions that block only single fixes: D20, D21. Then the
-rest of **Phase 1** (§4): W1.0b, the mapping-heavy set, W1.10c, the four resolver pushes, W1.10a (lite versus the
-engine), W3.7, W0.7, and **C1**.
+dry run against the code done); **the order is §4 Phase 1's (D22, D23): the six small pushes now (2, 3, 7, 8, 11, 13);
+then the wrong-rows tool over the stress corpus (W1.10, as rewritten under D23); then the remaining pushes, each judged by
+the engine's rows where rows are the question.** Open decisions that block only single fixes: D20, D21. Then the rest
+of **Phase 1** (§4): W1.0b, W3.7, W0.7, and **C1**.
 
 **What this program is, in one paragraph.** legend-lite (`core/`, ~229k lines of product Java) is a clean-room
 replacement for legend-pure's compiler and legend-engine's query execution: Pure text → parse → resolve names → type →
@@ -346,6 +346,7 @@ over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its 
 | D18 | Where the rebuild lands | **RULED 2026-09-29 (the user): on `main`**, every gated slice; `compiler/rebuild` kept only as the working branch name, always equal to `main` after a push |
 | D19 | D8's fence and helper functions | **OPEN; to be ruled at C1 (before W4.2's schema evaluator).** The motivating branching sits in an unmarked private helper (`extendMatchColumns`, `tdsExtension.pure:68-94`) called by the marked `rowValueDifference` (declared :22/:29, calls at :39 and :56); name arguments sit inside row lambdas (`$r.isNull($col.name + '_1')` at :73; `$r.getInteger($col.name + '_1')` at :114 inside `columnValueDifference`) [L2 F6, T5]. Recommendation: the fence is "schema positions reachable from a marked call site after inlining its callees", with TDSRow accessor name arguments listed as schema positions; the Relation API constructors among the marked functions (`over`, `rows`, `range`, `ascending`, `descending`, `lead`, `lag`) are already lite natives and fall under WORLD_MAP §8, not D8 |
 | D20 | `splitPart` with a multi-character separator | **OPEN; blocks only its W0.6 fix.** Pure's `split` doc says the separator is "matched literally" (`split.pure:17-21`) but the interpreter tokenizes on a character set (`Split.java:54-60`, `StringTokenizer`, adjacent separators collapse); the multi-character PCT is commented out as "incorrect behaviour … TODO" (`splitPart.pure:46-54`); engine-H2 uses a character set, engine-DuckDB the whole string. Lite: DuckDB whole string with collapse, H2 character set (report 4 F). Recommendation: the documented literal semantics on every dialect (the reference marks the other behaviour as incorrect), the empty-token rule taken from `split`'s documented contract; a register row for the engine-H2 difference |
+| D23 | The wrong-rows tool is built on the stress corpus, with swappable data | **RULED 2026-09-29 (the user):** the stress corpus (`core/src/test/resources/stress`, 4,745 service tests, engine grammar, expectations from an independent Python oracle, run through legend-engine once on the `test-corpus` branch; lite passes 4,700 on DuckDB) is the base of the wrong-rows work and of the mapping-heavy set; no new corpus. **The good data is kept:** the seed `###Data` elements are never edited; damaged data is a separate, generated set (deterministic, regenerable), and the runner takes WHICH data set to use as an argument, since every suite reaches its data by name (`Reference #{ … }#`). Every test runs on both: the original seed, where the expected rows are known, and the damaged set, where legend-engine's rows are the judge and every disagreement is recorded, not copied (the engine is not perfect: on `stress::F38_FirstDayTypes` it prints a week's first day as a timestamp where the test and lite say a date). Order: the six small W0.6 pushes first (2, 3, 7, 8, 11, 13; about three sessions), then the tool, then the remaining pushes judged by the tool; whether the four resolver pushes are fixed in place or left pinned as acceptance tests of the rebuilt store resolver is decided WHEN the tool has run over the damaged data and shows how many rows each gets wrong |
 | D22 | W0.6's resolver pushes and the engine row oracle | **RULED 2026-09-29 (the user):** pushes 4 (prefix keys), 5 and 5b (the killed head match, both channels) and 10 (the equality-kind node) change temporal joins and equality in the store resolver, and their expected rows were derived by reading. They run after W1.10c and take legend-engine's rows on their fixtures as the expected values (an engine defect is registered, not copied, rule 0b.13). Every other W0.6 push runs first, in the homework README's order |
 | D21 | Float literals: the magnitude cliff | **OPEN; blocks only its W0.6 fix.** Under NUMERIC_CHARTER Rule 1 literals render bare and the database types them; `AnsiSqlRenderer.plainFloat` (`:1370-1378`) switches to exponent form outside 1e-6..1e15, which DuckDB types DOUBLE, so `i * 0.00000013 == 0.00000039` is false on DuckDB and true on H2 and in the interpreter (report 4 G, ran). Whether the engine's `%s` formatting has the same cliff is not verified. Recommendation: no cliff (a value's kind must not depend on its magnitude, charter C2.2): spell plainly with per-value DECIMAL precision; register the engine difference if the engine has the cliff |
 
@@ -385,19 +386,17 @@ then build by risk and value, with the front end rebuilt where and when it pays.
 identifiers in the §5 catalogue, not an order; this section is the order.
 
 **Phase 1 — Correctness and knowledge** (≈14–20 sessions). Ends at **C1**.
-1. W0.6, every push but the four resolver ones: 1 (done), 2, 3, 6, 6b, 7, 8, 9, 11, 12, 13 (the homework README's
-   push list; D22).
-2. W1.0b baselines, including **net product lines** (rule 0b.17's number).
-3. The mapping-heavy set (the definition part of W1.5 only), drawn first from the stress corpus, which is engine
-   grammar already; corpus-derived cases join once `RowsMain` runs.
-4. W1.10c, legend-engine as a row oracle (`RowsMain`).
-4b. W0.6 pushes 4, 5, 5b and 10, each judged by the engine's rows on its fixture (D22).
-5. W1.10a, the fixture mutator (spike, then build). **Phase 1 runs it as lite versus the engine** on the mutated fixtures of
-   the mapping-heavy set (the old-vs-new use waits for W1.7): every disagreement attributed to a stage (H, I, J) with the
-   files a fix would touch — the defect list that orders Phase 3. A disagreement that is a small, reproduced wrong answer
-   gets a W0.6-style fix push here; the rest go to the list.
-6. W3.7, the D11 experiment (on the mapping-heavy set, judged by the engine rows from step 4).
-7. W0.7, request-reachable static state.
+1. W0.6, the six small pushes: 1 (done), 2, 3, 7, 8, 11, 13 (D23; about three sessions).
+2. **The wrong-rows tool on the stress corpus** (W1.10 as rewritten under D23; about three to four sessions): (c) the
+   runner prints the engine's rows on demand and takes the data set as an argument; (a) the damaged data set, generated
+   from the seeds and kept apart from them; the mapping-heavy set = the stress services that cover the mapping kinds of
+   §1d, named by FQN. Both engines run on seeds and on damaged data; every disagreement is attributed to a stage (H, I,
+   J) with the files a fix would touch — the defect list that orders Phase 3.
+3. The remaining W0.6 pushes: 9, 4, 5, 5b and 10 judged by the tool's rows (fix in place or pin for the rebuilt
+   resolver: decided here, D23); 6 and 6b judged by the reference lane; 12 by its repros.
+4. W1.0b baselines, including **net product lines** (rule 0b.17's number).
+5. W3.7, the D11 experiment (on the mapping-heavy set, judged by the engine rows from step 2).
+6. W0.7, request-reachable static state.
 **C1 — decide** (the user): D11 on W3.7's report; D9 and D19; D20 and D21 if still open; the cut list and the minimum expert
 compiler (§1a); budgets from W1.0b; C3's thresholds from the defect list; the scope boundaries in §1d; every size re-fitted
 from logged cost; the next cold read.
@@ -614,7 +613,12 @@ and its number; every rewrite ends by carving its stage as a target (rule 0b.12)
   or test* (deleted, the holder named), *ceremony* (deleted). `JavaEvalLedgerTest` and anything `AGENTS.md` names as an
   enforcement changes only with an `AGENTS.md` edit in the same push. Gate: the classification table in GATES; the chain
   green; the pre-chain lanes' time down. Number: guardrail lines and per-push red-chain rate. Size 1–2.
-- **W1.10 The wrong-rows harness** (before W4.0) [L3 #4, L2 F3, L1 #6c, T3]:
+- **W1.10 The wrong-rows harness** (before W4.0) [L3 #4, L2 F3, L1 #6c, T3]. **Rewritten under D23:** the base is the
+  stress corpus, not the engine's Pure-source corpus; (c) is a mode of the existing runner (`bazel run
+  //tools/engine-runner:testable` runs a service test through legend-engine today and already prints the engine's actual
+  rows on a failing assert — a flag prints them always, and an argument names the data set), not a new `RowsMain`; (a)'s
+  mutator writes a separate generated `###Data` set from the seeds and never edits them; the seeds stay the known-answer
+  run. The text below is the earlier design and stands where it does not conflict.
   - (a) **adversarial-data old-vs-new, spike first**: `testdatagen` extracts minimal supporting rows
     (`testdatagen/TestDataGenerator.java:26-48`); it does not mutate. Build a mutator over `DatabaseDefinition` (joins as
     foreign keys, nullability, milestoning columns; reuse `ScanRelations`' relation walk, `necessaryColumns` :100,
