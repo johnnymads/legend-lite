@@ -189,165 +189,205 @@ class Stream {
   }
 }
 
-/**
- * The grid as a PDF file, as bytes, that LOOKS like the grid: each cell's background (bands,
- * totals, value colours, heatmaps), its text colour, weight, slant, alignment and decoration as
- * the grid resolves them (export-model.ts), the grid's lines, and a plain gray header.
- *
- * Columns that fit the page at the font floor share a page; past it they continue on the next
- * page set, the first column repeated so every page is readable on its own.
- */
-export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8Array {
+/** The table, prepared once for drawing: its cells as text, its column widths, its header levels. */
+interface Prepared {
+  readonly rows: Cell[][];
+  readonly widths: number[];
+  readonly levels: readonly (readonly { readonly label: string; readonly colStart: number; readonly colSpan: number; readonly rowSpan: number }[])[];
+  readonly family: Family;
+  /** The grid's font size, in points: the ceiling a table is drawn at. */
+  readonly nominal: number;
+}
+
+const PAD = 3;
+
+function prepare(table: ExportTable, options: DocExportOptions): Prepared {
   const { rows } = grid(table, options);
   const levels = table.headerRows.length > 0 ? table.headerRows : [table.columns.map((c, i) => ({
     label: flatHeader(c), colStart: i, colSpan: 1, rowSpan: 1,
   }))];
   // a column is as wide as its cells and its OWN header labels (a spanning label is shared)
-  const w = widths(table.columns.map((c) => ({ text: c.path[c.path.length - 1] ?? '', numeric: false, bold: false })), rows);
-  const look = table.look;
-  const baseFamily = familyOf(look.fontFamily);
-  const PAD = 3;
-  const need = (cols: number[], size: number): number =>
-    cols.reduce((sum, i) => sum + textWidth(w[i] ?? 0, size, baseFamily) + PAD * 2, 0);
-  const all = w.map((_, i) => i);
+  const widths_ = widths(table.columns.map((c) => ({ text: c.path[c.path.length - 1] ?? '', numeric: false, bold: false })), rows);
+  const nominal = Math.max(FONT_MIN, Math.min(FONT_MAX + 3, table.look.fontSize * 0.75));
+  return { rows, widths: widths_, levels, family: familyOf(table.look.fontFamily), nominal };
+}
 
-  // The grid's font size, in points, is the ceiling; portrait if it fits, else landscape, scaled down to a floor.
-  const nominal = Math.max(FONT_MIN, Math.min(FONT_MAX + 3, look.fontSize * 0.75));
+/** The width `cols` take at `size`. */
+function needWidth(p: Prepared, cols: readonly number[], size: number): number {
+  return cols.reduce((sum, i) => sum + textWidth(p.widths[i] ?? 0, size, p.family) + PAD * 2, 0);
+}
+
+/**
+ * Draw the table -- its header levels, `count` rows from `start`, the grid's lines and a frame --
+ * with its left edge at `left` and its top at `top`, at `size`. Returns the bottom it reached.
+ * The one drawing of a table: the table's own pages and the grid's tile on the dashboard both
+ * call it, so the two can never look different.
+ */
+function drawTable(s: Stream, missing: Set<string>, table: ExportTable, p: Prepared, block: {
+  readonly cols: readonly number[]; readonly left: number; readonly top: number; readonly size: number;
+  readonly start: number; readonly count: number;
+}): number {
+  const { cols, size } = block;
+  const look = table.look;
+  const scale = size / p.nominal;
+  const lineHeight = size * 1.6;
+  const textColour = rgb(look.color) ?? '0 0 0';
+  const lineColour = rgb(look.lineColor) ?? '0.83 0.83 0.83';
+  const xs: number[] = [];
+  const cw: number[] = [];
+  let x = block.left;
+  for (const i of cols) {
+    xs.push(x);
+    const width = textWidth(p.widths[i] ?? 0, size, p.family) + PAD * 2;
+    cw.push(width);
+    x += width;
+  }
+  const right = x;
+  /** One cell: its background box, its text where its alignment puts it, its decoration. */
+  const put = (cell: Cell, style: ExportStyle | undefined, col: number, top: number): void => {
+    const left = xs[col]!;
+    const width = cw[col]!;
+    const bg = rgb(style?.background);
+    if (bg) s.text(`${bg} rg ${left.toFixed(2)} ${(top - lineHeight).toFixed(2)} ${width.toFixed(2)} ${lineHeight.toFixed(2)} re f\n`);
+    const family = style?.fontFamily ? familyOf(style.fontFamily) : p.family;
+    const bold = cell.bold || style?.bold === true;
+    const italic = style?.italic === true;
+    const px = style?.fontSize !== undefined ? Math.max(FONT_MIN, style.fontSize * 0.75 * scale) : size;
+    const text = cased(cell.text, style?.fontCase);
+    const tw = textWidth([...text].length, px, family, bold);
+    const align = style?.align ?? 'left';
+    const tx = align === 'right' ? left + width - PAD - tw : align === 'center' ? left + (width - tw) / 2 : left + PAD;
+    const ty = top - lineHeight + (lineHeight - px) / 2 + px * 0.22;
+    const colour = rgb(style?.color) ?? textColour;
+    s.text(`${colour} rg BT /${fontRef(family, bold, italic)} ${px.toFixed(2)} Tf 1 0 0 1 ${Math.max(left + 1, tx).toFixed(2)} ${ty.toFixed(2)} Tm `);
+    s.string(text, missing);
+    s.text(' Tj ET\n');
+    if (style?.underline || style?.strike) {
+      const ly = style.strike ? ty + px * 0.3 : ty - px * 0.12;
+      s.text(`${colour} RG 0.5 w ${tx.toFixed(2)} ${ly.toFixed(2)} m ${(tx + tw).toFixed(2)} ${ly.toFixed(2)} l S\n`);
+    }
+  };
+  const headerTop = block.top;
+  // THE GRID'S HEADER LEVELS, each cell over the columns it spans that are drawn here
+  p.levels.forEach((level, depth) => {
+    for (const cell of level) {
+      const on = cols.map((leaf, pos) => [leaf, pos] as const)
+        .filter(([leaf]) => leaf >= cell.colStart && leaf < cell.colStart + cell.colSpan).map(([, pos]) => pos);
+      if (on.length === 0) continue;
+      const first = on[0]!;
+      const last = on[on.length - 1]!;
+      const left = xs[first]!;
+      const width = xs[last]! + cw[last]! - left;
+      const top = headerTop - depth * lineHeight;
+      const height = cell.rowSpan * lineHeight;
+      s.text(`${rgb(look.headerBackground) ?? '0.96 0.96 0.96'} rg ${left.toFixed(2)} ${(top - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f\n`);
+      s.text(`0.9 0.9 0.9 RG 0.5 w ${left.toFixed(2)} ${(top - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re S\n`);
+      const tw = textWidth([...cell.label].length, size, p.family);
+      const tx = left + Math.max(1, (width - tw) / 2);
+      const ty = top - height + (height - size) / 2 + size * 0.22;
+      s.text(`${rgb(look.headerColor) ?? '0 0 0'} rg BT /${fontRef(p.family, false, false)} ${size.toFixed(2)} Tf 1 0 0 1 ${tx.toFixed(2)} ${ty.toFixed(2)} Tm `);
+      s.string(cell.label, missing);
+      s.text(' Tj ET\n');
+    }
+  });
+  let y = headerTop - p.levels.length * lineHeight;
+  const bodyTop = y;
+  p.rows.slice(block.start, block.start + block.count).forEach((row, k) => {
+    const styles = table.rows[block.start + k]?.styles;
+    cols.forEach((i, col) => put(row[i]!, styles?.[i], col, y));
+    if (look.horizontalLines) {
+      s.text(`${lineColour} RG 0.5 w ${block.left.toFixed(2)} ${(y - lineHeight).toFixed(2)} m ${right.toFixed(2)} ${(y - lineHeight).toFixed(2)} l S\n`);
+    }
+    y -= lineHeight;
+  });
+  // the frame and the header rule; the grid's vertical lines when it shows them
+  s.text(`0.9 0.9 0.9 RG 0.5 w ${block.left.toFixed(2)} ${y.toFixed(2)} ${(right - block.left).toFixed(2)} ${(headerTop - y).toFixed(2)} re S\n`);
+  s.text(`0.9 0.9 0.9 RG 0.5 w ${block.left.toFixed(2)} ${bodyTop.toFixed(2)} m ${right.toFixed(2)} ${bodyTop.toFixed(2)} l S\n`);
+  if (look.verticalLines) {
+    for (let col = 1; col < cols.length; col++) {
+      s.text(`${lineColour} RG 0.5 w ${xs[col]!.toFixed(2)} ${y.toFixed(2)} m ${xs[col]!.toFixed(2)} ${bodyTop.toFixed(2)} l S\n`);
+    }
+  }
+  return y;
+}
+
+/**
+ * The grid as a PDF file, as bytes, that LOOKS like the grid: each cell's background (bands,
+ * totals, value colours, heatmaps), its text colour, weight, slant, alignment and decoration as
+ * the grid resolves them (export-model.ts), the grid's lines, and a plain gray header.
+ *
+ * With charts on the board, the first page is the board as laid out, the table drawn in the grid's
+ * tile; when the whole table fits there that page is the whole file, else the whole table follows.
+ * Columns that fit the page at the font floor share a page; past it they continue on the next
+ * page set, the first column repeated so every page is readable on its own.
+ */
+export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8Array {
+  const p = prepare(table, options);
+  const missing = new Set<string>();
+  const board = dashboard(table, options.page, p, missing);
+  const all = p.widths.map((_, i) => i);
+
+  // The grid's font size is the ceiling; portrait if it fits, else landscape, scaled down to a floor.
   const portraitRoom = A4_SHORT - MARGIN * 2;
-  const landscape = need(all, nominal) > portraitRoom;
+  const landscape = needWidth(p, all, p.nominal) > portraitRoom;
   const pageWidth = landscape ? A4_LONG : A4_SHORT;
   const pageHeight = landscape ? A4_SHORT : A4_LONG;
   const room = pageWidth - MARGIN * 2;
-  const natural = need(all, nominal);
-  const size = Math.max(FONT_MIN, natural > room ? nominal * room / natural : nominal);
-  const scale = size / nominal;
+  const natural = needWidth(p, all, p.nominal);
+  const size = Math.max(FONT_MIN, natural > room ? p.nominal * room / natural : p.nominal);
 
-  const groups: number[][] = [];
-  let current: number[] = [];
-  for (const i of all) {
-    const trial = [...current, i];
-    if (current.length > 0 && need(trial, size) > room) {
-      groups.push(current);
-      current = all.length > 1 ? [0, i] : [i];
-    } else {
-      current = trial;
-    }
-  }
-  if (current.length > 0) groups.push(current);
-
-  const lineHeight = size * 1.6;
-  const missing = new Set<string>();
   const pages: PdfPage[] = [];
-  const notes = [...table.notes];
-  const textColour = rgb(look.color) ?? '0 0 0';
-  const lineColour = rgb(look.lineColor) ?? '0.83 0.83 0.83';
-  for (let g = 0; g < groups.length; g++) {
-    const cols = groups[g]!;
-    const xs: number[] = [];
-    const cw: number[] = [];
-    let x = MARGIN;
-    for (const i of cols) {
-      xs.push(x);
-      const width = textWidth(w[i] ?? 0, size, baseFamily) + PAD * 2;
-      cw.push(width);
-      x += width;
+  if (!board.complete) {
+    const groups: number[][] = [];
+    let current: number[] = [];
+    for (const i of all) {
+      const trial = [...current, i];
+      if (current.length > 0 && needWidth(p, trial, size) > room) {
+        groups.push(current);
+        current = all.length > 1 ? [0, i] : [i];
+      } else {
+        current = trial;
+      }
     }
-    const right = x;
-    const firstPageTop = pageHeight - MARGIN - (g === 0 && table.title ? TITLE_SIZE * 1.6 : 0)
-      - (g === 0 ? notes.length * lineHeight : 0);
-    const headerRows = levels.length;
-    const perFirst = Math.max(1, Math.floor((firstPageTop - MARGIN - lineHeight * (headerRows + 1)) / lineHeight));
-    const perPage = Math.max(1, Math.floor((pageHeight - MARGIN * 2 - lineHeight * (headerRows + 1)) / lineHeight));
-    let start = 0;
-    let firstOfGroup = true;
-    do {
-      const take = g === 0 && firstOfGroup ? perFirst : perPage;
-      const s = new Stream();
-      let y = pageHeight - MARGIN;
-      if (g === 0 && firstOfGroup) {
-        if (table.title) {
-          s.text(`${textColour} rg BT /${fontRef(baseFamily, true, false)} ${TITLE_SIZE} Tf 1 0 0 1 ${MARGIN} ${(y - TITLE_SIZE).toFixed(2)} Tm `);
-          s.string(table.title, missing);
-          s.text(' Tj ET\n');
-          y -= TITLE_SIZE * 1.6;
+    if (current.length > 0) groups.push(current);
+
+    const lineHeight = size * 1.6;
+    const notes = board.pages.length > 0 ? [] : [...table.notes];
+    const textColour = rgb(table.look.color) ?? '0 0 0';
+    for (let g = 0; g < groups.length; g++) {
+      const cols = groups[g]!;
+      const titled = g === 0 && board.pages.length === 0;
+      const firstPageTop = pageHeight - MARGIN - (titled && table.title ? TITLE_SIZE * 1.6 : 0)
+        - (titled ? notes.length * lineHeight : 0);
+      const headerRows = p.levels.length;
+      const perFirst = Math.max(1, Math.floor((firstPageTop - MARGIN - lineHeight * (headerRows + 1)) / lineHeight));
+      const perPage = Math.max(1, Math.floor((pageHeight - MARGIN * 2 - lineHeight * (headerRows + 1)) / lineHeight));
+      let start = 0;
+      let firstOfGroup = true;
+      do {
+        const take = titled && firstOfGroup ? perFirst : perPage;
+        const s = new Stream();
+        let y = pageHeight - MARGIN;
+        if (titled && firstOfGroup) {
+          if (table.title) {
+            s.text(`${textColour} rg BT /${fontRef(p.family, true, false)} ${TITLE_SIZE} Tf 1 0 0 1 ${MARGIN} ${(y - TITLE_SIZE).toFixed(2)} Tm `);
+            s.string(table.title, missing);
+            s.text(' Tj ET\n');
+            y -= TITLE_SIZE * 1.6;
+          }
+          for (const note of notes) {
+            s.text(`0.33 0.33 0.33 rg BT /${fontRef(p.family, false, false)} ${size.toFixed(2)} Tf 1 0 0 1 ${MARGIN} ${(y - size).toFixed(2)} Tm `);
+            s.string(note, missing);
+            s.text(' Tj ET\n');
+            y -= lineHeight;
+          }
         }
-        for (const note of notes) {
-          s.text(`0.33 0.33 0.33 rg BT /${fontRef(baseFamily, false, false)} ${size.toFixed(2)} Tf 1 0 0 1 ${MARGIN} ${(y - size).toFixed(2)} Tm `);
-          s.string(note, missing);
-          s.text(' Tj ET\n');
-          y -= lineHeight;
-        }
-      }
-      /** One cell: its background box, its text where its alignment puts it, its decoration. */
-      const put = (cell: Cell, style: ExportStyle | undefined, col: number, top: number, headerCell: boolean): void => {
-        const left = xs[col]!;
-        const width = cw[col]!;
-        const bg = headerCell ? rgb(look.headerBackground) : rgb(style?.background);
-        if (bg) s.text(`${bg} rg ${left.toFixed(2)} ${(top - lineHeight).toFixed(2)} ${width.toFixed(2)} ${lineHeight.toFixed(2)} re f\n`);
-        const family = style?.fontFamily ? familyOf(style.fontFamily) : baseFamily;
-        const bold = cell.bold || style?.bold === true;
-        const italic = style?.italic === true;
-        const px = headerCell ? size : (style?.fontSize !== undefined ? Math.max(FONT_MIN, style.fontSize * 0.75 * scale) : size);
-        const text = headerCell ? cell.text : cased(cell.text, style?.fontCase);
-        const tw = textWidth([...text].length, px, family, bold);
-        const align = headerCell ? 'center' : style?.align ?? 'left';
-        const tx = align === 'right' ? left + width - PAD - tw : align === 'center' ? left + (width - tw) / 2 : left + PAD;
-        const ty = top - lineHeight + (lineHeight - px) / 2 + px * 0.22;
-        const colour = headerCell ? (rgb(look.headerColor) ?? '0 0 0') : (rgb(style?.color) ?? textColour);
-        s.text(`${colour} rg BT /${fontRef(family, bold, italic)} ${px.toFixed(2)} Tf 1 0 0 1 ${Math.max(left + 1, tx).toFixed(2)} ${ty.toFixed(2)} Tm `);
-        s.string(text, missing);
-        s.text(' Tj ET\n');
-        if (!headerCell && (style?.underline || style?.strike)) {
-          const ly = style.strike ? ty + px * 0.3 : ty - px * 0.12;
-          s.text(`${colour} RG 0.5 w ${tx.toFixed(2)} ${ly.toFixed(2)} m ${(tx + tw).toFixed(2)} ${ly.toFixed(2)} l S\n`);
-        }
-      };
-      const headerTop = y;
-      // THE GRID'S HEADER LEVELS, each cell over the columns it spans that are on this page
-      levels.forEach((level, depth) => {
-        for (const cell of level) {
-          const on = cols.map((leaf, pos) => [leaf, pos] as const)
-            .filter(([leaf]) => leaf >= cell.colStart && leaf < cell.colStart + cell.colSpan).map(([, pos]) => pos);
-          if (on.length === 0) continue;
-          const first = on[0]!;
-          const last = on[on.length - 1]!;
-          const left = xs[first]!;
-          const width = xs[last]! + cw[last]! - left;
-          const top = headerTop - depth * lineHeight;
-          const height = cell.rowSpan * lineHeight;
-          s.text(`${rgb(look.headerBackground) ?? '0.96 0.96 0.96'} rg ${left.toFixed(2)} ${(top - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re f\n`);
-          s.text(`0.9 0.9 0.9 RG 0.5 w ${left.toFixed(2)} ${(top - height).toFixed(2)} ${width.toFixed(2)} ${height.toFixed(2)} re S\n`);
-          const tw = textWidth([...cell.label].length, size, baseFamily);
-          const tx = left + Math.max(1, (width - tw) / 2);
-          const ty = top - height + (height - size) / 2 + size * 0.22;
-          s.text(`${rgb(look.headerColor) ?? '0 0 0'} rg BT /${fontRef(baseFamily, false, false)} ${size.toFixed(2)} Tf 1 0 0 1 ${tx.toFixed(2)} ${ty.toFixed(2)} Tm `);
-          s.string(cell.label, missing);
-          s.text(' Tj ET\n');
-        }
-      });
-      y -= levels.length * lineHeight;
-      const bodyTop = y;
-      const slice = rows.slice(start, start + take);
-      slice.forEach((row, k) => {
-        const styles = table.rows[start + k]?.styles;
-        cols.forEach((i, col) => put(row[i]!, styles?.[i], col, y, false));
-        if (look.horizontalLines) {
-          s.text(`${lineColour} RG 0.5 w ${MARGIN} ${(y - lineHeight).toFixed(2)} m ${right.toFixed(2)} ${(y - lineHeight).toFixed(2)} l S\n`);
-        }
-        y -= lineHeight;
-      });
-      // the frame and the header rule; the grid's vertical lines when it shows them
-      s.text(`0.9 0.9 0.9 RG 0.5 w ${MARGIN} ${y.toFixed(2)} ${(right - MARGIN).toFixed(2)} ${(headerTop - y).toFixed(2)} re S\n`);
-      s.text(`0.9 0.9 0.9 RG 0.5 w ${MARGIN} ${bodyTop.toFixed(2)} m ${right.toFixed(2)} ${bodyTop.toFixed(2)} l S\n`);
-      if (look.verticalLines) {
-        for (let col = 1; col < cols.length; col++) {
-          s.text(`${lineColour} RG 0.5 w ${xs[col]!.toFixed(2)} ${y.toFixed(2)} m ${xs[col]!.toFixed(2)} ${bodyTop.toFixed(2)} l S\n`);
-        }
-      }
-      pages.push({ bytes: s.bytes, width: pageWidth, height: pageHeight });
-      start += take;
-      firstOfGroup = false;
-    } while (start < rows.length);
+        drawTable(s, missing, table, p, { cols, left: MARGIN, top: y, size, start, count: take });
+        pages.push({ bytes: s.bytes, width: pageWidth, height: pageHeight });
+        start += take;
+        firstOfGroup = false;
+      } while (start < p.rows.length);
+    }
   }
   if (missing.size > 0) {
     // said on the page, not swallowed: which characters this font could not draw
@@ -358,21 +398,22 @@ export function toPdf(table: ExportTable, options: DocExportOptions = {}): Uint8
     s.text(' Tj ET\n');
     pages.push({ bytes: s.bytes, width: pageWidth, height: pageHeight });
   }
-  return assemble([...dashboard(table, options.page), ...pages]);
+  return assemble([...board.pages, ...pages]);
 }
 
 /**
  * THE DASHBOARD PAGE, when the board holds charts: landscape, the title across the top, each
- * tile where the board puts it (its columns across the page, its rows down it), each chart as its
- * picture fitted into its tile without distortion. The grid's tile says where the grid is: the
- * pages after this one, whole.
+ * tile where the board puts it (its columns across the page, its rows down it) -- each chart as
+ * its picture fitted into its tile without distortion, the TABLE drawn in the grid's tile, fitted
+ * to its width (down to the font floor). `complete` when the whole table fitted: that page is
+ * then the whole file; else the tile says so, and the whole table follows.
  */
-function dashboard(table: ExportTable, page: ExportPage | undefined): PdfPage[] {
-  if (!page || !page.tiles.some((t) => t.kind === 'chart')) return [];
+function dashboard(table: ExportTable, page: ExportPage | undefined, p: Prepared, missing: Set<string>):
+  { readonly pages: PdfPage[]; readonly complete: boolean } {
+  if (!page || !page.tiles.some((t) => t.kind === 'chart')) return { pages: [], complete: false };
   const width = A4_LONG;
   const height = A4_SHORT;
   const s = new Stream();
-  const missing = new Set<string>();
   let top = height - MARGIN;
   if (table.title) {
     s.text(`0 0 0 rg BT /F2 ${TITLE_SIZE} Tf 1 0 0 1 ${MARGIN} ${(top - TITLE_SIZE).toFixed(2)} Tm `);
@@ -385,6 +426,7 @@ function dashboard(table: ExportTable, page: ExportPage | undefined): PdfPage[] 
   const unitH = (top - MARGIN) / rows;
   const GUTTER = 6;
   const images: { name: string; jpeg: Uint8Array; width: number; height: number }[] = [];
+  let complete = false;
   for (const t of page.tiles) {
     const x = MARGIN + t.x * unitW + GUTTER / 2;
     const w = t.w * unitW - GUTTER;
@@ -406,18 +448,38 @@ function dashboard(table: ExportTable, page: ExportPage | undefined): PdfPage[] 
       const name = `Im${images.length + 1}`;
       images.push({ name, jpeg: t.picture.jpeg, width: t.picture.pixelWidth, height: t.picture.pixelHeight });
       s.text(`q ${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${dx.toFixed(2)} ${dy.toFixed(2)} cm /${name} Do Q\n`);
-    } else {
-      const lines = t.kind === 'grid'
-        ? [`The table, whole: ${table.rows.length.toLocaleString()} rows, on the pages that follow.`]
-        : ['(this chart had not drawn)'];
-      lines.forEach((line, i) => {
-        s.text(`0.33 0.33 0.33 rg BT /F1 9 Tf 1 0 0 1 ${(x + 6).toFixed(2)} ${(innerTop - 12 - i * 13).toFixed(2)} Tm `);
-        s.string(line, missing);
+    } else if (t.kind === 'grid') {
+      // THE TABLE IN ITS TILE: fitted to the tile's width, as many rows as its height holds
+      const all = p.widths.map((_, i) => i);
+      const natural = needWidth(p, all, p.nominal);
+      const size = Math.max(FONT_MIN, natural > innerW ? p.nominal * innerW / natural : p.nominal);
+      const cols: number[] = [];
+      for (const i of all) {
+        if (cols.length > 0 && needWidth(p, [...cols, i], size) > innerW) break;
+        cols.push(i);
+      }
+      const lineHeight = size * 1.6;
+      const room = innerH - p.levels.length * lineHeight;
+      const everything = cols.length === all.length && p.rows.length * lineHeight <= room;
+      const fit = Math.max(0, Math.floor((room - (everything ? 0 : lineHeight)) / lineHeight));
+      const count = everything ? p.rows.length : Math.min(p.rows.length, fit);
+      const bottom = drawTable(s, missing, table, p, { cols, left: x + 6, top: innerTop, size, start: 0, count });
+      if (everything) {
+        complete = true;
+      } else {
+        const shown = `${count.toLocaleString()} of ${p.rows.length.toLocaleString()} rows`
+          + (cols.length < all.length ? `, ${cols.length} of ${all.length} columns` : '');
+        s.text(`0.33 0.33 0.33 rg BT /F1 ${Math.max(FONT_MIN, size).toFixed(2)} Tf 1 0 0 1 ${(x + 6).toFixed(2)} ${(bottom - size - 3).toFixed(2)} Tm `);
+        s.string(`Showing ${shown} here; the whole table follows on the next pages.`, missing);
         s.text(' Tj ET\n');
-      });
+      }
+    } else {
+      s.text(`0.33 0.33 0.33 rg BT /F1 9 Tf 1 0 0 1 ${(x + 6).toFixed(2)} ${(innerTop - 12).toFixed(2)} Tm `);
+      s.string('(this chart had not drawn)', missing);
+      s.text(' Tj ET\n');
     }
   }
-  return [{ bytes: s.bytes, width, height, images }];
+  return { pages: [{ bytes: s.bytes, width, height, images }], complete };
 }
 
 /** One page of a PDF: its drawing, its size, and the images it draws (a chart's JPEG). */

@@ -134,23 +134,34 @@ describe('the PDF draws each cell\'s look', () => {
   });
 });
 
-describe('the whole page in a PDF: a dashboard page first, then the whole grid', () => {
-  it('draws each chart as an embedded JPEG where the board puts it, and says where the table is', () => {
-    const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
-    const page = { cols: 12, tiles: [
-      { id: 'grid', kind: 'grid' as const, title: 'Grid', x: 0, y: 0, w: 12, h: 14 },
-      { id: 'c', kind: 'chart' as const, title: 'By region', x: 0, y: 14, w: 6, h: 10,
-        picture: { width: 400, height: 200, pixelWidth: 800, pixelHeight: 400, png: new Uint8Array([1]), jpeg } },
-    ] };
-    const pdf = latin1(toPdf(shown(result(3), 'Trades'), { page }));
-    assert.match(pdf, /\/Subtype \/Image \/Width 800 \/Height 400 \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/Filter \/DCTDecode \/Length 9 >>/);
-    assert.match(pdf, /\/XObject << \/Im1 \d+ 0 R >>/);
-    assert.match(pdf, /cm \/Im1 Do Q/);
-    assert.match(pdf, /\/MediaBox \[0 0 842 595\][^]*\/MediaBox \[0 0 595 842\]/, 'a landscape dashboard, then the table\'s own pages');
-    assert.ok(pdf.includes('The table, whole: 3 rows, on the pages that follow.'));
-    // and the file is still consistent in bytes
+describe('the whole page in a PDF: the board as laid out, the table in its tile', () => {
+  const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 0xff, 0xd9]);
+  const board = (gridH: number) => ({ cols: 12, tiles: [
+    { id: 'grid', kind: 'grid' as const, title: 'Grid', x: 0, y: 0, w: 12, h: gridH },
+    { id: 'c', kind: 'chart' as const, title: 'By region', x: 0, y: gridH, w: 6, h: 10,
+      picture: { width: 400, height: 200, pixelWidth: 800, pixelHeight: 400, png: new Uint8Array([1]), jpeg } },
+  ] });
+  const consistent = (pdf: string): void => {
     const xref = pdf.slice(pdf.lastIndexOf('\nxref\n'));
     const offsets = [...xref.matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
     offsets.forEach((off, i) => assert.ok(pdf.startsWith(`${i + 1} 0 obj`, off), `object ${i + 1}`));
+  };
+
+  it('draws each chart as an embedded JPEG, and the TABLE in the grid\'s tile: one page when it all fits', () => {
+    const pdf = latin1(toPdf(shown(result(3), 'Trades'), { page: board(14) }));
+    assert.match(pdf, /\/Subtype \/Image \/Width 800 \/Height 400 \/ColorSpace \/DeviceRGB \/BitsPerComponent 8 \/Filter \/DCTDecode \/Length 9 >>/);
+    assert.match(pdf, /\/XObject << \/Im1 \d+ 0 R >>/);
+    assert.match(pdf, /cm \/Im1 Do Q/);
+    assert.match(pdf, /\/Count 1 /, 'the whole table fitted its tile: the dashboard is the whole file');
+    assert.match(pdf, /\/MediaBox \[0 0 842 595\]/);
+    assert.ok(pdf.includes('(Region 1) Tj'), 'the table\'s cells are on the dashboard');
+    consistent(pdf);
+  });
+
+  it('a table too long for its tile: the rows that fit, a note, then the whole table on its own pages', () => {
+    const pdf = latin1(toPdf(shown(result(200), 'Trades'), { page: board(8) }));
+    assert.match(pdf, /Showing \d+ of 200 rows here; the whole table follows/);
+    assert.match(pdf, /\/MediaBox \[0 0 842 595\][^]*\/MediaBox \[0 0 595 842\]/, 'a landscape dashboard, then the table\'s own pages');
+    consistent(pdf);
   });
 });

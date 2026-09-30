@@ -174,8 +174,30 @@ describe('the whole page: charts where the board puts them, and the whole grid',
     const drawing = strFromU8(files['xl/drawings/drawing1.xml']!);
     xml(drawing);
     assert.match(drawing, /<xdr:from><xdr:col>0<\/xdr:col><xdr:colOff>0<\/xdr:colOff><xdr:row>29<\/xdr:row>/, 'below its title, at the board\'s place');
-    assert.match(strFromU8(files['xl/worksheets/sheet3.xml']!), /The whole table is on the sheet &quot;Trades&quot;/);
+    const dash = strFromU8(files['xl/worksheets/sheet3.xml']!);
+    const sheet1 = strFromU8(files['xl/worksheets/sheet1.xml']!);
+    // THE TABLE ITSELF in the grid's tile, one row down (under its title), styled as on its own sheet
+    assert.match(dash, /<c r="A2" s="(\d+)" t="inlineStr"><is><t xml:space="preserve">region<\/t>/);
+    const cell = (sheet: string, ref: string): string | undefined => new RegExp(`<c r="${ref}"[^>]*>(?:<v>[^<]*</v>|<is>.*?</is>)?`).exec(sheet)?.[0];
+    assert.equal(cell(dash, 'H3')?.replace('H3', 'X'), cell(sheet1, 'H2')?.replace('H2', 'X'), 'the same cell, the same style');
     for (const part of ['xl/worksheets/sheet3.xml', 'xl/drawings/_rels/drawing1.xml.rels', '[Content_Types].xml']) xml(strFromU8(files[part]!));
+  });
+  it('the workbook: a table longer than its tile moves what is below it down; one wider moves what is beside it right', () => {
+    const long = table('Trades');
+    const rows = Array.from({ length: 60 }, () => long.rows[0]!);
+    const tall = { ...long, rows };
+    const beside = { cols: 12, tiles: [
+      { id: 'grid', kind: 'grid' as const, title: 'Grid', x: 0, y: 0, w: 2, h: 14 },
+      { id: 'side', kind: 'chart' as const, title: 'Beside', x: 2, y: 0, w: 6, h: 10, picture },
+      { id: 'under', kind: 'chart' as const, title: 'Under', x: 0, y: 14, w: 6, h: 10, picture },
+    ] };
+    const files = unzipSync(toXlsx(tall, { page: beside }));
+    const drawing = strFromU8(files['xl/drawings/drawing1.xml']!);
+    const froms = [...drawing.matchAll(/<xdr:col>(\d+)<\/xdr:col><xdr:colOff>\d+<\/xdr:colOff><xdr:row>(\d+)<\/xdr:row>/g)].map((m) => [Number(m[1]), Number(m[2])] as const);
+    assert.ok(froms[0]![0] >= 8, `beside the table, past its ${long.columns.length} columns (at column ${froms[0]![0]})`);
+    assert.equal(froms[0]![1], 1, 'beside it: on the board\'s row');
+    assert.equal(froms[1]![0], 0, "under it: on the board's column");
+    assert.ok(froms[1]![1] > 1 + 1 + 60, `under it: past the table's last row (at row ${froms[1]![1]})`);
   });
   it('no charts, no dashboard: the workbook is the grid and its About sheet', () => {
     const files = unzipSync(toXlsx(table('Trades')));

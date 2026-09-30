@@ -255,61 +255,70 @@ export function toXlsx(table: ExportTable, options: XlsxOptions = {}): Uint8Arra
   });
   const codes = table.columns.map((c) => (c.redacted || c.tree ? null : formatCode(options.formats?.[c.name], c.type)));
 
-  const rows: string[] = [];
-  const merges: string[] = [];
   const headerRows = table.headerRows.length > 0 ? table.headerRows : [table.columns.map((c, i) => ({
     label: c.path.join(' '), colStart: i, colSpan: 1, rowSpan: 1,
   }))];
-  headerRows.forEach((row, r) => {
-    const cells = row.map((cell) => {
-      const ref = `${columnLetters(cell.colStart)}${r + 1}`;
-      if (cell.colSpan > 1 || cell.rowSpan > 1) {
-        merges.push(`${ref}:${columnLetters(cell.colStart + cell.colSpan - 1)}${r + cell.rowSpan}`);
-      }
-      return `<c r="${ref}" s="${headerStyle}" t="inlineStr"><is><t xml:space="preserve">${esc(cell.label)}</t></is></c>`;
-    });
-    rows.push(`<row r="${r + 1}">${cells.join('')}</row>`);
-  });
   const top = headerRows.length;
-  table.rows.forEach((row, r) => {
-    const at = top + r + 1;
-    const cells = table.columns.map((c, i) => {
-      const st = row.styles[i] ?? { align: 'left' as const };
-      const v = row.cells[i] ?? null;
-      const value = v === null ? null : valueOf(v, c, codes[i] ?? null);
-      const indent = c.tree ? Math.max(0, row.depth - 1) : 0;
-      const align = `<alignment horizontal="${st.align}"${indent > 0 ? ` indent="${indent}"` : ''}/>`;
-      const id = styles.xf({
-        numFmt: styles.fmt(value?.fmt ?? null),
-        font: fontXml({
-          face: st.fontFamily ? faceOf(st.fontFamily) : face,
-          px: st.fontSize ?? look.fontSize,
-          bold: st.bold === true,
-          italic: st.italic === true,
-          underline: st.underline !== undefined,
-          strike: st.strike === true,
-          color: argb(st.color) ?? argb(look.color),
-        }),
-        fill: fillXml(argb(st.background)),
-        border: cellBorder,
-        align,
-      });
-      const ref = `${columnLetters(i)}${at}`;
-      if (!value) return `<c r="${ref}" s="${id}"/>`;
-      if (value.kind === 's') {
-        return `<c r="${ref}" s="${id}" t="inlineStr"><is><t xml:space="preserve">${esc(cased(value.content, st.fontCase))}</t></is></c>`;
+  /**
+   * THE TABLE'S CELLS with its top-left at (row0, col0), zero-based: its header levels (spans as
+   * merges), then each row styled as the grid styles it. The table sheet and the dashboard's grid
+   * tile both place it with this, so the two can never look different.
+   */
+  const tableAt = (row0: number, col0: number): Placed => {
+    const cells: PlacedCell[] = [];
+    const merges: string[] = [];
+    const outline = new Map<number, number>();
+    headerRows.forEach((row, r) => {
+      for (const cell of row) {
+        const ref = `${columnLetters(col0 + cell.colStart)}${row0 + r + 1}`;
+        if (cell.colSpan > 1 || cell.rowSpan > 1) {
+          merges.push(`${ref}:${columnLetters(col0 + cell.colStart + cell.colSpan - 1)}${row0 + r + cell.rowSpan}`);
+        }
+        cells.push({ row: row0 + r, col: col0 + cell.colStart,
+          xml: `<c r="${ref}" s="${headerStyle}" t="inlineStr"><is><t xml:space="preserve">${esc(cell.label)}</t></is></c>` });
       }
-      return `<c r="${ref}" s="${id}"${value.kind === 'b' ? ' t="b"' : ''}><v>${value.content}</v></c>`;
-    }).join('');
-    const outline = row.depth > 1 ? ` outlineLevel="${Math.min(7, row.depth - 1)}"` : '';
-    rows.push(`<row r="${at}"${outline}>${cells}</row>`);
-  });
+    });
+    table.rows.forEach((row, r) => {
+      const at = row0 + top + r;
+      if (row.depth > 1) outline.set(at, Math.min(7, row.depth - 1));
+      table.columns.forEach((c, i) => {
+        const st = row.styles[i] ?? { align: 'left' as const };
+        const v = row.cells[i] ?? null;
+        const value = v === null ? null : valueOf(v, c, codes[i] ?? null);
+        const indent = c.tree ? Math.max(0, row.depth - 1) : 0;
+        const align = `<alignment horizontal="${st.align}"${indent > 0 ? ` indent="${indent}"` : ''}/>`;
+        const id = styles.xf({
+          numFmt: styles.fmt(value?.fmt ?? null),
+          font: fontXml({
+            face: st.fontFamily ? faceOf(st.fontFamily) : face,
+            px: st.fontSize ?? look.fontSize,
+            bold: st.bold === true,
+            italic: st.italic === true,
+            underline: st.underline !== undefined,
+            strike: st.strike === true,
+            color: argb(st.color) ?? argb(look.color),
+          }),
+          fill: fillXml(argb(st.background)),
+          border: cellBorder,
+          align,
+        });
+        const ref = `${columnLetters(col0 + i)}${at + 1}`;
+        const xml = !value ? `<c r="${ref}" s="${id}"/>`
+          : value.kind === 's'
+            ? `<c r="${ref}" s="${id}" t="inlineStr"><is><t xml:space="preserve">${esc(cased(value.content, st.fontCase))}</t></is></c>`
+            : `<c r="${ref}" s="${id}"${value.kind === 'b' ? ' t="b"' : ''}><v>${value.content}</v></c>`;
+        cells.push({ row: at, col: col0 + i, xml });
+      });
+    });
+    return { cells, merges, outline };
+  };
 
   const widths = table.columns.map((c, i) => {
     let w = c.path.join(' ').length;
     for (const row of table.rows.slice(0, 200)) w = Math.max(w, String(row.cells[i] ?? '').length + (c.tree ? row.depth * 2 : 0));
     return Math.min(60, Math.max(8, w + 2));
   });
+  const placed = tableAt(0, 0);
   const last = `${columnLetters(Math.max(0, table.columns.length - 1))}${top + table.rows.length}`;
   const freeze = table.grouped ? `xSplit="1" ySplit="${top}" topLeftCell="B${top + 1}"` : `ySplit="${top}" topLeftCell="A${top + 1}"`;
   const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -319,8 +328,8 @@ export function toXlsx(table: ExportTable, options: XlsxOptions = {}): Uint8Arra
     + `<sheetViews><sheetView workbookViewId="0"><pane ${freeze} activePane="bottomRight" state="frozen"/></sheetView></sheetViews>`
     + '<sheetFormatPr defaultRowHeight="15"/>'
     + `<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols>`
-    + `<sheetData>${rows.join('')}</sheetData>`
-    + (merges.length > 0 ? `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '')
+    + `<sheetData>${sheetRows(placed.cells, placed.outline)}</sheetData>`
+    + mergeXml(placed.merges)
     + '</worksheet>';
 
   const at = options.at ?? new Date();
@@ -336,7 +345,7 @@ export function toXlsx(table: ExportTable, options: XlsxOptions = {}): Uint8Arra
   const name = sheetName(table.title);
   const aboutName = name === 'About' ? 'About this export' : 'About';
   const board = options.page && options.page.tiles.some((t) => t.kind === 'chart')
-    ? dashboardSheet(options.page, name, headerStyle) : null;
+    ? dashboardSheet(options.page, headerStyle, { tableAt, widths, height: top + table.rows.length }) : null;
   const dashName = [name, aboutName].includes('Dashboard') ? 'Page' : 'Dashboard';
 
   const ns = 'http://schemas.openxmlformats.org';
@@ -390,37 +399,107 @@ export function toXlsx(table: ExportTable, options: XlsxOptions = {}): Uint8Arra
   return zipSync(files, { level: 6, mtime: at });
 }
 
-/** Board units in sheet cells: each board column two cells of 64px, each board row two cells of 20px. */
+/** A cell placed on a sheet, zero-based, as its XML. */
+interface PlacedCell { readonly row: number; readonly col: number; readonly xml: string }
+interface Placed {
+  readonly cells: readonly PlacedCell[];
+  readonly merges: readonly string[];
+  /** Each tree row's outline level, by its (zero-based) sheet row. */
+  readonly outline: ReadonlyMap<number, number>;
+}
+
+/** Cells as a sheet's rows: sorted by row, each row's cells by column, as Excel requires. */
+function sheetRows(cells: readonly PlacedCell[], outline: ReadonlyMap<number, number> = new Map()): string {
+  const byRow = new Map<number, PlacedCell[]>();
+  for (const c of cells) {
+    const list = byRow.get(c.row) ?? [];
+    list.push(c);
+    byRow.set(c.row, list);
+  }
+  return [...byRow].sort((x, y) => x[0] - y[0]).map(([r, list]) => {
+    const level = outline.get(r);
+    return `<row r="${r + 1}"${level ? ` outlineLevel="${level}"` : ''}>${list.sort((x, y) => x.col - y.col).map((c) => c.xml).join('')}</row>`;
+  }).join('');
+}
+
+const mergeXml = (merges: readonly string[]): string => (merges.length > 0
+  ? `<mergeCells count="${merges.length}">${merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '');
+
+/** Board units on the sheet: each board column two cells of 64px, each board row two cells of 20px. */
 const CELLS_PER_COL = 2;
 const CELLS_PER_ROW = 2;
 const CELL_W = 64;
 const CELL_H = 20;
 const EMU = 9525;
+/** A column `width` (in characters) in pixels, as Excel draws it at its default font. */
+const pxOf = (width: number): number => Math.round(width * 7 + 5);
 
 /**
- * THE DASHBOARD SHEET: each tile where the board puts it -- its title in the cell above it, a
- * chart as its picture (fitted to its tile, not distorted), the grid's tile naming the sheet the
- * whole table is on.
+ * THE DASHBOARD SHEET: the board as the HTML page lays it out. Each tile's title in the cell at its
+ * top-left, a chart as its picture (fitted to its tile, not distorted), and the TABLE ITSELF in the
+ * grid's tile -- every row, styled as on the table sheet, its columns as wide as there. Like the
+ * page, the table grows its tile: what is below it moves down past its last row, and what is
+ * beside it moves right when it is wider than its tile.
  */
-function dashboardSheet(page: ExportPage, tableSheet: string, titleStyle: number):
-  { readonly sheet: string; readonly drawing: string; readonly images: readonly Uint8Array[] } {
+function dashboardSheet(page: ExportPage, titleStyle: number, grid: {
+  readonly tableAt: (row0: number, col0: number) => Placed;
+  readonly widths: readonly number[];
+  /** The table's height in rows, header levels included. */
+  readonly height: number;
+}): { readonly sheet: string; readonly drawing: string; readonly images: readonly Uint8Array[] } {
   const images: Uint8Array[] = [];
   const anchors: string[] = [];
-  const cells = new Map<number, string[]>();
+  const cells: PlacedCell[] = [];
   const put = (row: number, col: number, text: string, style = titleStyle): void => {
-    const list = cells.get(row) ?? [];
-    list.push(`<c r="${columnLetters(col)}${row + 1}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${esc(text)}</t></is></c>`);
-    cells.set(row, list);
+    cells.push({ row, col, xml: `<c r="${columnLetters(col)}${row + 1}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${esc(text)}</t></is></c>` });
   };
+  const g = page.tiles.find((t) => t.kind === 'grid');
+  // where the table goes, and how far past its tile it reaches
+  const gridCol = g ? g.x * CELLS_PER_COL : 0;
+  const gridRow = g ? g.y * CELLS_PER_ROW : 0;
+  const extraRows = g ? Math.max(0, 1 + grid.height - g.h * CELLS_PER_ROW) : 0;
+  const tableW = grid.widths.reduce((sum, w) => sum + pxOf(w), 0);
+  const extraW = g ? Math.max(0, tableW - g.w * CELLS_PER_COL * CELL_W) : 0;
+  // the sheet's columns: the board's 64px cells, the table's own widths where the table is
+  const colsPx: number[] = [];
+  const colsWidth: number[] = [];
+  const total = page.cols * CELLS_PER_COL + (g ? grid.widths.length : 0) + Math.ceil(extraW / CELL_W) + 2;
+  for (let c = 0; c < total; c++) {
+    const w = g && c >= gridCol && c < gridCol + grid.widths.length ? grid.widths[c - gridCol]! : (CELL_W - 5) / 7;
+    colsWidth.push(w);
+    colsPx.push(pxOf(w));
+  }
+  /** A pixel across the sheet as (column, offset in it). */
+  const colAt = (px: number): { col: number; off: number } => {
+    let col = 0;
+    let left = 0;
+    while (col < colsPx.length - 1 && left + colsPx[col]! <= px) left += colsPx[col++]!;
+    return { col, off: px - left };
+  };
+  let merges: readonly string[] = [];
+  if (g) {
+    put(gridRow, gridCol, g.title);
+    const placed = grid.tableAt(gridRow + 1, gridCol);
+    cells.push(...placed.cells);
+    merges = placed.merges;
+  }
   for (const t of page.tiles) {
-    const col = t.x * CELLS_PER_COL;
-    const row = t.y * CELLS_PER_ROW;
+    if (t.kind !== 'chart') continue;
+    const below = g !== undefined && t.y >= g.y + g.h;
+    const beside = g !== undefined && !below && t.y + t.h > g.y && t.x >= g.x + g.w;
+    // the board's pixel for this tile: left of the table as on the board; right of it past the
+    // table (as wide as its tile or wider); below it, past its last row
+    const gridLeft = gridCol * CELL_W;
+    const px = !g || t.x <= g.x ? t.x * CELLS_PER_COL * CELL_W
+      : beside ? gridLeft + Math.max(tableW, g.w * CELLS_PER_COL * CELL_W) + (t.x - g.x - g.w) * CELLS_PER_COL * CELL_W
+        : gridLeft + (t.x - g.x) * CELLS_PER_COL * CELL_W;
+    const { col, off } = colAt(px);
+    const row = t.y * CELLS_PER_ROW + (below ? extraRows : 0);
     put(row, col, t.title);
-    if (t.kind === 'grid') {
-      put(row + 1, col, `The whole table is on the sheet "${tableSheet}".`, 0);
+    if (!t.picture) {
+      put(row + 1, col, '(this chart had not drawn)', 0);
       continue;
     }
-    if (!t.picture) continue;
     const boxW = t.w * CELLS_PER_COL * CELL_W - 8;
     const boxH = (t.h * CELLS_PER_ROW - 1) * CELL_H - 8;
     const aspect = t.picture.width / t.picture.height;
@@ -428,19 +507,20 @@ function dashboardSheet(page: ExportPage, tableSheet: string, titleStyle: number
     const h = Math.round(w / aspect);
     images.push(t.picture.png);
     const id = images.length;
-    anchors.push(`<xdr:oneCellAnchor><xdr:from><xdr:col>${col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${row + 1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>`
+    anchors.push(`<xdr:oneCellAnchor><xdr:from><xdr:col>${col}</xdr:col><xdr:colOff>${off * EMU}</xdr:colOff><xdr:row>${row + 1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>`
       + `<xdr:ext cx="${w * EMU}" cy="${h * EMU}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id + 1}" name="${esc(t.title)}" descr="${esc(t.title)}"/>`
       + '<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
       + `<xdr:blipFill><a:blip r:embed="rId${id}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>`
       + `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${w * EMU}" cy="${h * EMU}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>`
       + '</xdr:pic><xdr:clientData/></xdr:oneCellAnchor>');
   }
-  const cols = page.cols * CELLS_PER_COL;
   const sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+    + '<sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews>'
     + `<sheetFormatPr defaultRowHeight="${CELL_H * 0.75}" customHeight="1"/>`
-    + `<cols><col min="1" max="${cols}" width="${(CELL_W / 7).toFixed(2)}" customWidth="1"/></cols>`
-    + `<sheetData>${[...cells].sort((a, b) => a[0] - b[0]).map(([r, list]) => `<row r="${r + 1}">${list.join('')}</row>`).join('')}</sheetData>`
+    + `<cols>${colsWidth.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w.toFixed(2)}" customWidth="1"/>`).join('')}</cols>`
+    + `<sheetData>${sheetRows(cells)}</sheetData>`
+    + mergeXml(merges)
     + '<drawing r:id="rId1"/></worksheet>';
   const drawing = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     + '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"'
