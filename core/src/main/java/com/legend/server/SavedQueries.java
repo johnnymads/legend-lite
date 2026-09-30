@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
  * is its history, a delete keeps the history. Read from the engine's source (4.145.0 line,
  * 2026-09-30); its Mongo cannot be run here, so these rules are ported, not measured.
  *
- * <p>Storage is a directory ({@code LEGEND_QUERY_STORE}), one JSON file per query holding every
+ * <p>Storage is a directory (the server's {@code --query-store DIR}), one JSON file per query holding every
  * version -- the interim home until the warehouse keeps queries (docs/SERVER_PROGRAM_2026_09_26.md
  * leg E2). Without the directory the store refuses every call, as the engine does without its
  * database ("has not been configured properly"); it never picks a place of its own.
@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
  * <p>Recorded differences: a current version's {@code validUntil} is {@code null} (the engine
  * writes its far-future sentinel); {@code query/events} and {@code query/stats} are not served.
  */
-public final class QueryStore {
+public final class SavedQueries {
 
     /** An {@code ApplicationQueryException}: its status and the engine's {@code {"message"}} body. */
     public static final class Refusal extends RuntimeException {
@@ -64,18 +64,26 @@ public final class QueryStore {
             "versionId", "originalVersionId", "executionContext", "content", "taggedValues", "stereotypes",
             "defaultParameterValues", "gridConfig");
 
+    /** The execution contexts served, each with its required fields and the engine's message for one missing. */
+    private static final Map<String, Map<String, String>> CONTEXT_FIELDS = orderedContexts();
+
+    private static Map<String, Map<String, String>> orderedContexts() {
+        Map<String, String> explicit = new LinkedHashMap<>();
+        explicit.put("mapping", "Query mapping is missing or empty");
+        explicit.put("runtime", "Query runtime is missing or empty");
+        Map<String, Map<String, String>> out = new LinkedHashMap<>();
+        out.put("explicitExecutionContext", java.util.Collections.unmodifiableMap(explicit));
+        out.put("dataSpaceExecutionContext",
+                Map.of("dataSpacePath", "Query data Space execution context dataSpace path is missing or empty"));
+        return java.util.Collections.unmodifiableMap(out);
+    }
+
     private final Path directory;
     private final LongSupplier clock;
 
-    public QueryStore(Path directory, LongSupplier clock) {
+    public SavedQueries(Path directory, LongSupplier clock) {
         this.directory = directory;
         this.clock = clock;
-    }
-
-    /** The store {@code LEGEND_QUERY_STORE} names, or null when it names none. */
-    public static @com.legend.base.Nullable QueryStore fromEnv() {
-        String dir = System.getenv("LEGEND_QUERY_STORE");
-        return dir == null || dir.isBlank() ? null : new QueryStore(Path.of(dir), System::currentTimeMillis);
     }
 
     // ------------------------------------------------------------------ HTTP
@@ -89,11 +97,11 @@ public final class QueryStore {
      * {@code /api/pure/v1/query}. The engine's answers: 200 with JSON, 204 for a delete, and a
      * refusal as {@code {"message"}} with its status.
      */
-    public static PureV1Api.Answer answer(@com.legend.base.Nullable QueryStore store, String method, String rest,
+    public static PureV1Api.Answer answer(@com.legend.base.Nullable SavedQueries store, String method, String rest,
             @com.legend.base.Nullable String rawQuery, String body, String user) {
         if (store == null) {
             return new PureV1Api.Answer(500, "{\"code\":-1,\"message\":\"Query store has not been configured properly"
-                    + " (legend-lite: set LEGEND_QUERY_STORE to a directory)\",\"status\":\"error\"}");
+                    + " (legend-lite: start the server with --query-store DIR)\",\"status\":\"error\"}");
         }
         try {
             String[] parts = rest.isEmpty() ? new String[0] : rest.substring(1).split("/", -1);
@@ -120,7 +128,9 @@ public final class QueryStore {
             };
         } catch (Refusal r) {
             return new PureV1Api.Answer(r.status, Json.toCompact(Map.of("message", String.valueOf(r.getMessage()))));
-        } catch (RuntimeException e) {
+        } catch (java.io.UncheckedIOException | IllegalArgumentException | ClassCastException e) {
+            // the store's disk failing, or a body that is not the JSON the engine takes (a bad
+            // integer, a field of the wrong kind): the engine's 500, naming the exception
             return new PureV1Api.Answer(500, Json.toCompact(Map.of("code", -1,
                     "message", e.getClass().getSimpleName() + ": " + e.getMessage(), "status", "error")));
         }
@@ -343,16 +353,12 @@ public final class QueryStore {
         Json.Node ctx = q.has("executionContext") ? q.get("executionContext") : Json.nil();
         if (ctx instanceof Json.Obj c) {
             String ctxType = String.valueOf(stringOr(c, "_type"));
-            switch (ctxType) {
-                case "explicitExecutionContext" -> {
-                    nonEmpty(c, "mapping", "Query mapping is missing or empty");
-                    nonEmpty(c, "runtime", "Query runtime is missing or empty");
-                }
-                case "dataSpaceExecutionContext" ->
-                        nonEmpty(c, "dataSpacePath", "Query data Space execution context dataSpace path is missing or empty");
-                default -> throw new Refusal("Query execution context of _type '" + ctxType
-                        + "' is not served by legend-lite (explicitExecutionContext, dataSpaceExecutionContext)", 400);
+            Map<String, String> required = CONTEXT_FIELDS.get(ctxType);
+            if (required == null) {
+                throw new Refusal("Query execution context of _type '" + ctxType
+                        + "' is not served by legend-lite (" + String.join(", ", CONTEXT_FIELDS.keySet()) + ")", 400);
             }
+            required.forEach((field, message) -> nonEmpty(c, field, message));
         }
         nonEmpty(q, "content", "Query content is missing or empty");
         if (!JAVA_NAME.matcher(q.getString("groupId")).matches()) {

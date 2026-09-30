@@ -1,9 +1,9 @@
 // What every screen of the app shares: the engine and query store, the loaded project and its
-// model graph, the current user, recently viewed things, and mapping coverage per mapping.
+// model graph, the current user, recently viewed things.
 
 import type { Engine, QueryStore } from '../backend/engine.ts';
 import type { WasmGrammar } from '../backend/wasm-grammar.ts';
-import type { MappedEntity, MappingModelCoverageAnalysisResult, PureModelContextText } from '../backend/wire.ts';
+import type { PureModelContextText } from '../backend/wire.ts';
 import type { ModelGraph } from '../model/graph.ts';
 
 export interface ProjectConfig {
@@ -33,36 +33,6 @@ export interface LoadedProject {
 
 export function gavOf(p: ProjectConfig): string {
   return `${p.groupId}:${p.artifactId}:${p.versionId}`;
-}
-
-/** Which classes and properties a mapping maps: the engine's `modelCoverage` answer, indexed. */
-export class Coverage {
-  readonly result: MappingModelCoverageAnalysisResult;
-  readonly #entities = new Map<string, MappedEntity>();
-
-  constructor(result: MappingModelCoverageAnalysisResult) {
-    this.result = result;
-    for (const e of result.mappedEntities) this.#entities.set(e.path, e);
-  }
-
-  /** The root classes a query can start from. */
-  rootClasses(): string[] {
-    return this.result.mappedEntities
-      .filter((e) => e.info === undefined || e.info.isRootEntity !== false)
-      .map((e) => e.info?.classPath ?? e.path)
-      .sort();
-  }
-
-  isClassMapped(classPath: string): boolean {
-    return this.result.mappedEntities.some((e) => (e.info?.classPath ?? e.path) === classPath);
-  }
-
-  /** Is `property` mapped when navigated from an entity of `classPath`? */
-  isMapped(classPath: string, property: string): boolean {
-    const entity = this.#entities.get(classPath)
-      ?? this.result.mappedEntities.find((e) => e.info?.classPath === classPath);
-    return entity !== undefined && entity.properties.some((p) => p.name === property);
-  }
 }
 
 export interface Recent {
@@ -112,7 +82,6 @@ export class AppContext {
   readonly planner: WasmGrammar | undefined;
   readonly projects: readonly LoadedProject[];
   readonly user: string;
-  readonly #coverage = new Map<string, Promise<Coverage>>();
 
   constructor(config: AppConfig, engine: Engine, store: QueryStore, planner: WasmGrammar | undefined,
     projects: readonly LoadedProject[], user: string) {
@@ -133,17 +102,5 @@ export class AppContext {
   /** The project that holds an element, by path. */
   projectOf(path: string): LoadedProject | undefined {
     return this.projects.find((p) => p.graph.elements.has(path));
-  }
-
-  /** A mapping's coverage, asked of the engine once per mapping. */
-  coverage(project: LoadedProject, mapping: string): Promise<Coverage> {
-    const key = `${project.gav}|${mapping}`;
-    let c = this.#coverage.get(key);
-    if (!c) {
-      c = this.engine.modelCoverage(project.context, mapping).then((r) => new Coverage(r));
-      c.catch(() => this.#coverage.delete(key));
-      this.#coverage.set(key, c);
-    }
-    return c;
   }
 }

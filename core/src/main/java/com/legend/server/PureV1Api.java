@@ -169,17 +169,6 @@ public final class PureV1Api {
         });
     }
 
-    /**
-     * {@code analytics/mapping/modelCoverage}: what a mapping maps (ModelCoverage, a port of the
-     * engine's analysis). Its flags are query parameters, and the engine answers its model and
-     * mapping errors 500 (measured, 4.145.0, 2026-09-30).
-     */
-    public static Answer modelCoverage(String body, @com.legend.base.Nullable String returnMappedEntityInfo,
-            @com.legend.base.Nullable String returnMappedPropertyInfo, @com.legend.base.Nullable String returnLightGraph) {
-        return answer(500, "COMPILATION", () -> ModelCoverage.analyze(body, returnMappedEntityInfo,
-                returnMappedPropertyInfo, returnLightGraph));
-    }
-
     private static PureComposer.Style style(@com.legend.base.Nullable String renderStyle) {
         if (renderStyle == null || renderStyle.isEmpty() || "PRETTY".equals(renderStyle)) {
             return PureComposer.Style.PRETTY;

@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * The query store's rules, as legend-engine's {@code QueryStoreManager} and versioned DAO keep
  * them (ported from the engine's source; its Mongo is not runnable here).
  */
-class QueryStoreTest {
+class SavedQueriesTest {
 
     @TempDir
     Path dir;
@@ -24,7 +24,7 @@ class QueryStoreTest {
 
     private PureV1Api.Answer call(String method, String rest, String query, String body, String user) {
         clock.addAndGet(10);
-        return QueryStore.answer(new QueryStore(dir, clock::get), method, rest, query, body, user);
+        return SavedQueries.answer(new SavedQueries(dir, clock::get), method, rest, query, body, user);
     }
 
     private static String query(String id, String name) {
@@ -154,9 +154,9 @@ class QueryStoreTest {
 
     @Test
     void withoutAStoreEveryCallIsRefused_andTheCubeStoreIsNotServed() {
-        PureV1Api.Answer a = QueryStore.answer(null, "GET", "/q1", null, "", "a");
+        PureV1Api.Answer a = SavedQueries.answer(null, "GET", "/q1", null, "", "a");
         assertEquals(500, a.status());
-        assertTrue(obj(a).getString("message").contains("LEGEND_QUERY_STORE"));
+        assertTrue(obj(a).getString("message").contains("--query-store"));
         assertEquals(404, call("GET", "/dataCube/x", null, "", "a").status());
     }
 }

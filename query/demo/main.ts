@@ -41,5 +41,5 @@ boot().catch((e: unknown) => {
   mount(root, h('div', { style: 'padding:40px' },
     h('h2', null, 'Legend Query could not start'),
     h('div', { class: 'q-error-box' }, e instanceof Error ? e.message : String(e)),
-    h('p', { class: 'q-muted' }, 'Is the engine in demo/config.json running? (legend-lite: bazel run //core:server, with LEGEND_QUERY_STORE set)')));
+    h('p', { class: 'q-muted' }, 'Is the engine in demo/config.json running? (legend-lite: bazel run //core:server -- 8090 --query-store DIR)')));
 });

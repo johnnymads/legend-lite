@@ -75,11 +75,15 @@ and `$x.n * 1.1` compiles over it without `->toOne()`:
 In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new). **Touches, one line each:**
 - `core/src/main/java/com/legend/server/PureV1Api.java` + `LegendHttpServer.java` routes (+ `PureV1ApiTest`):
   the upstream `pure/v1` endpoints the Query app needs and lite lacks, each in legend-engine's shape, measured
-  against 4.145.0 -- `execute` with `parameterValues` (landed on the branch), `compilation/compile`,
-  `compilation/lambdaReturnType`, `analytics/mapping/modelCoverage`, `analytics/dataSpace/render`, the query store.
+  against 4.145.0 -- `execute` with `parameterValues`, `compilation/compile`, `compilation/lambdaReturnType`,
+  graphFetch results, the query store. Each routes to existing lite functions; no new compiler logic.
 - `core/src/main/java/com/legend/Compiler.java`: `executeWire(model, ValueSpecification, ...)` gains the graph-fetch
   branch its text twin already has (one `if`, no compiler logic) -- `execute` answers graphFetch as the engine does.
-- `core/src/main/java/com/legend/server/QueryStore.java` (new): the engine's query store, `LEGEND_QUERY_STORE`.
+- `core/src/main/java/com/legend/server/SavedQueries.java` (new): the engine's query store, in a directory the
+  server is started with (`--query-store DIR`).
+- NOT on this line (2026-09-30, the user's call): `analytics/mapping/modelCoverage` and `analytics/dataSpace/render`
+  are engine ANALYSES lite does not have -- new platform features, proposed for core (design doc §1, G6/G9), not
+  added here. The Query app shows every property and lists a mapping's classes as the mapping declares them.
 - `wasm/src/main/java/planner/Wasm.java`: `modelJsonOrError` (E2's twin, byte-identical to the server's).
 - `MODULE.bazel`: a second `npm_translate_lock` (`npm_query`, `//query:pnpm-lock.yaml`), so `datacube/`'s lock
   is not touched.

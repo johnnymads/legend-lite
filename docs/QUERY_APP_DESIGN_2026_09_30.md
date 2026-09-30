@@ -40,19 +40,22 @@ properties (`fullName()`, `notional()`), enum filters, `exists` over to-many, re
 
 **Gaps, each an upstream endpoint or shape, to close in `core/server` (G-series):**
 
-| # | Gap | Upstream | Client meanwhile |
-|---|---|---|---|
-| G1 | `execute` with `parameterValues` | ExecuteInput.parameterValues | `let` binding (D8) |
-| G2 | graphFetch through the JSON path: the lambda reader has no `rootGraphFetchTree` rule; the execute result has no JSON-result shape | `execute` → `{builder:{_type:'json'}, values}` | graphFetch mode ships when G2 lands |
-| G3 | `compilation/lambdaReturnType` | `{model, lambda}` → `{returnType}` | derivation types via `lambdaRelationType` on a one-column project |
-| G4 | `compilation/compile` | PMCD → ok / error with source | parse errors from `grammarToJson/model` |
-| G5 | query store `/pure/v1/query` (+ `search`, `batch`, `history`, `patchQuery`) | engine query store | IndexedDB store, same `Query` records (D2) |
-| G6 | `analytics/mapping/modelCoverage` | mapped entities and properties | computed in the client from the mapping's PMCD (same result shape) |
-| G7 | `server/v1/currentUser` | user id | configured local user |
-| G8 | `executionManager/cancelUserExecution` | cancel | abort the fetch |
-| G9 | `analytics/dataSpace/render` | data space analytics | computed in the client from PMCD (same result shape) |
-| G10 | `execute?serializationFormat=csv_transformed` | CSV export | CSV written from the result in the client |
-| G11 | WASM twin of `grammarToJson/model` | -- (client plane) | server call |
+Status 2026-09-30. "Thin" rows route an upstream address to what lite already does; "platform" rows
+are engine analyses lite does not have -- new core features, NOT added on this line (the user's call).
+
+| # | Gap | Upstream | Kind | Status |
+|---|---|---|---|---|
+| G1 | `execute` with `parameterValues` | ExecuteInput.parameterValues | thin | done (bound as `let`, engine-measured) |
+| G2 | graphFetch results through `execute` | `{builder:{_type:'json'}, values}` | thin | done (engine-equal) |
+| G3 | `compilation/lambdaReturnType` | `{model, lambda}` → `{returnType}` | thin | done |
+| G4 | `compilation/compile` | model → ok / first error | thin | done |
+| G5 | query store `/pure/v1/query` (+ `search`, `batch`, `history`, `patchQuery`) | engine query store | thin (storage) | done: `SavedQueries`, `--query-store DIR` |
+| G6 | `analytics/mapping/modelCoverage` | mapped entities and properties | **platform** | proposed for core. A port of the engine's analysis was written and measured, then taken out; it is in git history (commit 28a57980e) with its engine fixtures. A core version could read the compiled mapping's property functions instead of porting the engine's Pure. Meanwhile the app shows every property. |
+| G7 | `server/v1/currentUser` | user id | thin | done (`anonymous`, as the engine without sign-in) |
+| G8 | `executionManager/cancelUserExecution` | cancel | -- | client aborts the request |
+| G9 | `analytics/dataSpace/render` | data space analytics | **platform** | proposed for core; not added. The app's data space page reads the model itself (display only). |
+| G10 | `execute?serializationFormat=csv_transformed` | CSV export | -- | client writes CSV from the result |
+| G11 | WASM twin of `grammarToJson/model` | -- (client plane) | thin | done (byte-identical) |
 
 ## 2. Architecture
 

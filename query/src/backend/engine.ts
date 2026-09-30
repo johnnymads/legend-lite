@@ -6,7 +6,7 @@ import type { Lambda } from '../../../pure-protocol/src/index.ts';
 import { toJson } from '../../../pure-protocol/src/index.ts';
 import type { PureModelContextData } from '../model/pmcd.ts';
 import type {
-  CompileResult, ExecuteInput, ExecutionResult, MappingModelCoverageAnalysisResult, PureModelContext, Query,
+  CompileResult, ExecuteInput, ExecutionResult, PureModelContext, Query,
   QuerySearchSpecification, RelationTypeAnswer,
 } from './wire.ts';
 
@@ -45,8 +45,6 @@ export interface Engine extends Grammar {
   execute(input: ExecuteInput, signal?: AbortSignal): Promise<ExecutionResult>;
   /** `execution/generatePlan`. */
   generatePlan(input: ExecuteInput): Promise<unknown>;
-  /** `analytics/mapping/modelCoverage`, with each entity's info (upstream Query asks for it). */
-  modelCoverage(model: PureModelContext, mapping: string): Promise<MappingModelCoverageAnalysisResult>;
   /** `server/v1/currentUser`. */
   currentUser(): Promise<string>;
 }
@@ -138,13 +136,6 @@ export class HttpEngine implements Engine, QueryStore {
     return this.#json('POST', '/pure/v1/execution/generatePlan', withContext(input));
   }
 
-  modelCoverage(model: PureModelContext, mapping: string): Promise<MappingModelCoverageAnalysisResult> {
-    // the flags are query parameters (a body field is refused by the engine)
-    return this.#json('POST', '/pure/v1/analytics/mapping/modelCoverage?returnMappedEntityInfo=true', {
-      clientVersion: 'vX_X_X', mapping, model,
-    });
-  }
-
   currentUser(): Promise<string> {
     return this.#json('GET', '/server/v1/currentUser');
   }
@@ -207,6 +198,5 @@ export class RoutedEngine implements Engine {
   returnType(model: PureModelContext, lambda: Lambda): Promise<string> { return this.#server.returnType(model, lambda); }
   execute(input: ExecuteInput, signal?: AbortSignal): Promise<ExecutionResult> { return this.#server.execute(input, signal); }
   generatePlan(input: ExecuteInput): Promise<unknown> { return this.#server.generatePlan(input); }
-  modelCoverage(model: PureModelContext, mapping: string): Promise<MappingModelCoverageAnalysisResult> { return this.#server.modelCoverage(model, mapping); }
   currentUser(): Promise<string> { return this.#server.currentUser(); }
 }

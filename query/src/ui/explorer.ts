@@ -1,10 +1,10 @@
 // The property explorer (census §5.2): the source class's properties as a tree -- lazily opened,
-// derived properties and subclass nodes included, unmapped ones hidden (the engine's coverage),
-// to-many and derived marked, documentation on hover. Drag a property to the columns or the
+// derived properties and subclass nodes included, to-many and derived marked, documentation on
+// hover. (Hiding unmapped properties needs the engine's mapping analysis, which legend-lite does
+// not serve yet: every property is shown.) Drag a property to the columns or the
 // filter, double-click to add it as a column, right-click for more.
 
 import { addColumn, addCondition, PROPERTY_DRAG, usedPaths } from '../app/actions.ts';
-import type { Coverage } from '../app/context.ts';
 import type { Session } from '../app/session.ts';
 import type { PropertyPath } from '../builder/state.ts';
 import {
@@ -18,7 +18,6 @@ import { cellText } from './format.ts';
 
 export interface ExplorerOptions {
   humanized: boolean;
-  showUnmapped: boolean;
 }
 
 const ICONS: Readonly<Record<string, string>> = {
@@ -37,7 +36,6 @@ export class Explorer {
   readonly #graph: ModelGraph;
   readonly options: ExplorerOptions;
   readonly #open = new Set<string>();
-  #coverage: Coverage | Error | undefined;
   #search = '';
 
   readonly #onPreview: (path: PropertyPath) => void;
@@ -47,11 +45,6 @@ export class Explorer {
     this.#session = session;
     this.#graph = session.project.graph;
     this.options = options;
-  }
-
-  setCoverage(c: Coverage | Error | undefined): void {
-    this.#coverage = c;
-    this.render();
   }
 
   setSearch(term: string): void {
@@ -68,10 +61,6 @@ export class Explorer {
     const root = this.#session.query.source.class;
     const used = usedPaths(this.#session.query);
     const rows: Child[] = [];
-    if (this.#coverage instanceof Error) {
-      rows.push(h('div', { class: 'q-error', style: 'padding:6px 10px; font-size:12px' },
-        `Mapping coverage is unavailable (${this.#coverage.message}); every property is shown.`));
-    }
     if (this.#search) {
       rows.push(...this.#searchResults(root, used));
     } else {
@@ -82,11 +71,6 @@ export class Explorer {
     mount(this.element, rows);
   }
 
-  #mapped(owner: string, p: PropertyInfo): boolean {
-    if (!this.#coverage || this.#coverage instanceof Error) return true;
-    return this.#coverage.isMapped(owner, p.name);
-  }
-
   #children(owner: string, prefix: PropertyPath, depth: number, used: ReadonlySet<string>): Child[] {
     const props = [...this.#graph.properties(owner)].sort((a, b) => {
       const rank = (p: PropertyInfo): number => (p.kind === 'class' ? 2 : p.derived ? 1 : 0);
@@ -94,11 +78,8 @@ export class Explorer {
     });
     const out: Child[] = [];
     for (const p of props) {
-      const mapped = this.#mapped(owner, p);
-      if (!mapped && !this.options.showUnmapped) continue;
-      // an association end back to where we came from is a loop: skip it (upstream prunes the same)
       const path: PropertyPath = [...prefix, stepOf(p)];
-      out.push(this.#node(owner, p, path, depth, mapped, used));
+      out.push(this.#node(owner, p, path, depth, used));
       if (p.kind === 'class' && this.#open.has(key(path))) {
         out.push(...this.#children(p.type, path, depth + 1, used));
       }
@@ -110,13 +91,13 @@ export class Explorer {
     return out;
   }
 
-  #node(owner: string, p: PropertyInfo, path: PropertyPath, depth: number, mapped: boolean, used: ReadonlySet<string>): HTMLElement {
+  #node(owner: string, p: PropertyInfo, path: PropertyPath, depth: number, used: ReadonlySet<string>): HTMLElement {
     const k = key(path);
     const isClass = p.kind === 'class';
     const open = this.#open.has(k);
     const label = this.options.humanized ? humanize(p.name) : p.name;
     const node = h('div', {
-      class: `q-node${mapped ? '' : ' unmapped'}${used.has(path.map((s) => s.property).join('.')) ? ' used' : ''}`,
+      class: `q-node${used.has(path.map((s) => s.property).join('.')) ? ' used' : ''}`,
       style: `padding-left:${depth * 14}px`,
       role: 'treeitem',
       'aria-expanded': isClass ? String(open) : undefined,
@@ -133,7 +114,7 @@ export class Explorer {
             ? [{ label: 'Add all properties as columns', action: () => this.#addAll(p.type, path) }]
             : [{ label: 'Add as column', action: () => this.#addColumn(path) }]),
           ...(isClass ? [] : [{ label: 'Add as filter condition', action: () => this.#addFilter(path) }]),
-          ...(isClass ? [] : ['separator' as const, { label: 'Preview data', action: () => this.#onPreview(path), disabled: !mapped || !probeable(this.#session, path) }]),
+          ...(isClass ? [] : ['separator' as const, { label: 'Preview data', action: () => this.#onPreview(path), disabled: !probeable(this.#session, path) }]),
         ]);
       },
     },
@@ -147,7 +128,6 @@ export class Explorer {
       h('dt', null, 'Type'), h('dd', { class: 'mono' }, `${p.type}${multiplicityText(p.multiplicity)}`),
       h('dt', null, 'Path'), h('dd', { class: 'mono' }, `$x.${path.map((s) => s.property).join('.')}`),
       p.derived ? [h('dt', null, 'Derived'), h('dd', null, 'yes')] : null,
-      h('dt', null, 'Mapped'), h('dd', null, mapped ? 'yes' : 'no'),
       p.doc ? [h('dt', null, 'Documentation'), h('dd', null, p.doc)] : null,
       p.taggedValues.map((t) => [h('dt', null, `${simpleName(t.tag.profile)}.${t.tag.value}`), h('dd', null, t.value)]),
       h('dt', null, 'Declared on'), h('dd', { class: 'mono' }, `${simpleName(owner)}${p.association ? ` (via ${simpleName(p.association)})` : ''}`)));
@@ -161,12 +141,10 @@ export class Explorer {
     while (queue.length > 0 && out.length < 100) {
       const { owner, prefix, depth } = queue.shift()!;
       for (const p of this.#graph.properties(owner)) {
-        const mapped = this.#mapped(owner, p);
-        if (!mapped && !this.options.showUnmapped) continue;
         const path: PropertyPath = [...prefix, stepOf(p)];
         const text = `${p.name} ${humanize(p.name)} ${p.doc ?? ''}`.toLowerCase();
         if (text.includes(this.#search)) {
-          const n = this.#node(owner, p, path, 0, mapped, used);
+          const n = this.#node(owner, p, path, 0, used);
           n.querySelector('.label')!.textContent = path.map((s) => (this.options.humanized ? humanize(s.property) : s.property)).join(' / ');
           out.push(n);
         }
@@ -197,7 +175,7 @@ export class Explorer {
     this.#session.update((q) => {
       let next = q;
       for (const p of this.#graph.properties(cls)) {
-        if (p.kind === 'class' || p.derived || !this.#mapped(cls, p)) continue;
+        if (p.kind === 'class' || p.derived) continue;
         const path = [...prefix, { property: p.name }];
         next = next.graph
           ? { ...next, graph: { ...next.graph, tree: addToTree(next.graph.tree, path) } }

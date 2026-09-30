@@ -2,7 +2,8 @@
 //
 // Display only: what a class's properties are, their docs, subclasses. Anything that needs the
 // compiler -- which properties a mapping maps, what a data space offers -- is asked of the engine
-// (`analytics/mapping/modelCoverage`, `analytics/dataSpace/render`), never worked out here.
+// (`analytics/mapping/modelCoverage`, `analytics/dataSpace/render`) and is not worked out here;
+// legend-lite does not serve those yet, so the app shows what the model declares.
 
 import type { GenericType, Multiplicity } from '../../../pure-protocol/src/index.ts';
 import {
@@ -302,10 +303,24 @@ export class ModelGraph {
   }
 
   /**
-   * The mappings whose class mappings name a class (or one of its subclasses) -- what the
-   * elements declare, for the class-first setup; which properties are mapped is the engine's
-   * answer (`modelCoverage`), never worked out here.
+   * The classes a mapping's class mappings name, as the mapping element declares them (its
+   * includes' too) -- what a source offers to query. Which PROPERTIES are mapped is not worked
+   * out here: that is the engine's mapping analysis, which legend-lite does not serve yet.
    */
+  mappedClasses(mappingPath: string): string[] {
+    const out = new Set<string>();
+    const visit = (path: string, seen: Set<string>): void => {
+      if (seen.has(path)) return;
+      seen.add(path);
+      const m = this.mappings.get(path);
+      for (const cm of m?.classMappings ?? []) out.add(cm.class);
+      for (const inc of m?.includedMappings ?? []) if (inc.includedMapping) visit(inc.includedMapping, seen);
+    };
+    visit(mappingPath, new Set());
+    return [...out].sort((a, b) => simpleName(a).localeCompare(simpleName(b)));
+  }
+
+  /** The mappings whose class mappings name a class (or one of its subclasses), as the elements declare. */
   mappingsFor(classPath: string): string[] {
     const wanted = new Set([classPath, ...this.subclasses(classPath)]);
     return [...this.mappings.entries()]

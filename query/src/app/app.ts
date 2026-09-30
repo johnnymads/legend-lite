@@ -100,8 +100,7 @@ export class App {
         const ec = ds.executionContexts.find((c) => c.name === ctxName);
         if (!ec?.mapping || !ec.defaultRuntime) throw new Error(`the data space has no execution context '${ctxName}' with a mapping and runtime`);
         recent.dataSpace(p.gav, r.path, ctxName);
-        const coverage = await app.coverage(p, ec.mapping.path);
-        const cls = r.class ?? coverage.rootClasses()[0];
+        const cls = r.class ?? p.graph.mappedClasses(ec.mapping.path)[0];
         if (!cls) throw new Error(`the mapping ${ec.mapping.path} maps no class`);
         const source: ClassSource = {
           kind: 'class', class: cls, mapping: ec.mapping.path, runtime: r.runtime ?? ec.defaultRuntime.path,
@@ -123,7 +122,7 @@ export class App {
       }
       case 'manual': {
         const p = app.project(r.gav);
-        const cls = r.class ?? (await app.coverage(p, r.mapping)).rootClasses()[0];
+        const cls = r.class ?? p.graph.mappedClasses(r.mapping)[0];
         if (!cls) throw new Error(`the mapping ${r.mapping} maps no class`);
         this.#edit(new Session(p, emptyQuery({ kind: 'class', class: cls, mapping: r.mapping, runtime: r.runtime })));
         return;

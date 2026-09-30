@@ -1,12 +1,13 @@
 // The query editor: setup and explorer on the left (with parameters), columns and filter above,
 // results below; the header carries undo/redo, the Pure text, save / save as / open.
 
-import type { AppContext, Coverage } from '../app/context.ts';
+import type { AppContext } from '../app/context.ts';
 import { formatRoute } from '../app/routes.ts';
 import type { Session } from '../app/session.ts';
 import { emptyQuery, type ClassSource } from '../builder/state.ts';
 import { simpleName } from '../model/graph.ts';
-import { confirmDialog, h, mount, select, type Child } from './dom.ts';
+import { confirmDialog, h, menuButton, mount, select, toast, type Child } from './dom.ts';
+import { historyDialog, infoDialog } from './history.ts';
 import { renderColumns } from './columns.ts';
 import { Explorer, showPreview } from './explorer.ts';
 import { renderFilter } from './filter.ts';
@@ -21,13 +22,13 @@ export interface EditorHandle {
   dispose(): void;
 }
 
-/** The classes a source offers: a data space's (its mapping's roots, narrowed by `elements`), or every mapped class. */
-function offeredClasses(app: AppContext, session: Session, coverage: Coverage | undefined): string[] {
+/** The classes a source offers: a data space's (its mapping's classes, narrowed by `elements`), or every mapped class. */
+function offeredClasses(session: Session): string[] {
   const src = session.query.source;
   const graph = session.project.graph;
   if (src.dataSpace) {
     const ds = graph.dataSpaces.get(src.dataSpace.path);
-    const roots = coverage?.rootClasses() ?? [];
+    const roots = graph.mappedClasses(src.mapping);
     const rules = ds?.elements ?? [];
     if (rules.length === 0) return roots;
     return roots.filter((cls) => {
@@ -40,27 +41,18 @@ function offeredClasses(app: AppContext, session: Session, coverage: Coverage | 
       return best !== undefined && !best.exclude;
     });
   }
-  void app;
   return [...graph.classes.keys()].filter((c) => graph.mappingsFor(c).length > 0).sort();
 }
 
 export function renderEditor(root: HTMLElement, app: AppContext, session: Session): EditorHandle {
   const graph = session.project.graph;
-  const explorer = new Explorer(session, { humanized: true, showUnmapped: false }, (path) => void showPreview(app, session, path));
+  const explorer = new Explorer(session, { humanized: true }, (path) => void showPreview(app, session, path));
   const results = new Results(app, session);
   const setup = h('div', { class: 'q-setup' });
   const params = h('div');
   const columns = h('div');
   const filter = h('div');
   const header = h('div', { style: 'display:flex; gap:6px; align-items:center' });
-  let coverage: Coverage | undefined;
-
-  const loadCoverage = (): void => {
-    explorer.setCoverage(undefined);
-    app.coverage(session.project, session.query.source.mapping).then(
-      (c) => { coverage = c; explorer.setCoverage(c); drawSetup(); },
-      (e: Error) => { coverage = undefined; explorer.setCoverage(e); });
-  };
 
   const changeSource = async (next: ClassSource): Promise<void> => {
     const q = session.query;
@@ -73,7 +65,6 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
     } else {
       session.update((s) => ({ ...s, source: next }));
     }
-    if (next.mapping !== q.source.mapping) loadCoverage();
   };
 
   const drawSetup = (): void => {
@@ -91,7 +82,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
           })));
       }
     }
-    const classes = offeredClasses(app, session, coverage);
+    const classes = offeredClasses(session);
     rows.push(h('div', { class: 'q-field' }, h('label', null, 'Class'),
       select(src.class, (classes.includes(src.class) ? classes : [src.class, ...classes]).map((c) => ({ value: c, label: simpleName(c) })), (cls) => {
         if (src.dataSpace) { void changeSource({ ...src, class: cls }); return; }
@@ -115,15 +106,6 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   const explorerHead = h('div', { class: 'q-panel-title', style: 'gap:6px; text-transform:none; letter-spacing:0' },
     search,
     h('button', {
-      class: 'q-icon-btn', title: 'Show unmapped properties', 'aria-pressed': 'false',
-      onclick: (e: Event) => {
-        explorer.options.showUnmapped = !explorer.options.showUnmapped;
-        (e.currentTarget as HTMLElement).setAttribute('aria-pressed', String(explorer.options.showUnmapped));
-        (e.currentTarget as HTMLElement).style.color = explorer.options.showUnmapped ? 'var(--accent)' : '';
-        explorer.render();
-      },
-    }, '◌'),
-    h('button', {
       class: 'q-icon-btn', title: 'Humanize names',
       onclick: () => { explorer.options.humanized = !explorer.options.humanized; explorer.render(); },
     }, 'Aa'),
@@ -146,6 +128,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
 
   const drawHeader = (): void => {
     const saved = session.saved;
+    const src = session.query.source;
     mount(header,
       h('span', { class: 'q-crumbs' },
         h('b', { title: saved?.id ?? '' }, saved?.name ?? 'New query'),
@@ -154,6 +137,13 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
       h('button', { class: 'q-icon-btn', title: 'Undo (Ctrl+Z)', disabled: !session.canUndo, onclick: () => session.undo() }, '↶'),
       h('button', { class: 'q-icon-btn', title: 'Redo (Ctrl+Shift+Z)', disabled: !session.canRedo, onclick: () => session.redo() }, '↷'),
       h('button', { class: 'q-btn', onclick: () => void textDialog(app, session) }, 'Pure'),
+      menuButton('More ▾', () => [
+        { label: 'About this query', action: () => infoDialog(app, session) },
+        { label: 'History and versions', action: () => void historyDialog(app, session), disabled: !session.saved },
+        { label: 'Copy link', action: () => void navigator.clipboard?.writeText(location.href).then(() => toast('Link copied')) },
+        'separator',
+        { label: 'New query on this source', action: () => { location.hash = formatRoute(src.dataSpace ? { kind: 'dataSpace', gav: session.project.gav, path: src.dataSpace.path, context: src.dataSpace.context, class: src.class } : { kind: 'manual', gav: session.project.gav, mapping: src.mapping, runtime: src.runtime, class: src.class }); } },
+      ]),
       h('button', { class: 'q-btn', onclick: () => openQueryDialog(app) }, 'Open'),
       h('button', { class: 'q-btn', onclick: () => saveAs(app, session) }, 'Save as'),
       h('button', { class: 'q-btn primary', title: 'Save (Ctrl+S)', onclick: () => void save(app, session) }, 'Save'));
@@ -171,7 +161,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   drawHeader();
   renderParameters(params, session);
   results.render();
-  loadCoverage();
+  explorer.render();
 
   const unsubscribe = session.subscribe((c) => {
     if (c === 'query') {

@@ -1,6 +1,6 @@
 // legend-engine's wire shapes the Query app reads and writes, beyond the model (model/pmcd.ts)
 // and the lambda (pure-protocol): execution input and results, relation types, the query
-// store's records, mapping coverage. Types only; each named after the engine's own class.
+// store's records. Types only; each named after the engine's own class.
 
 import type { GenericType, Lambda, Multiplicity, ValueSpecification } from '../../../pure-protocol/src/index.ts';
 
@@ -125,21 +125,3 @@ export interface QuerySearchSpecification {
 
 /** The profile upstream Query tags a saved query with (its data space, its class). */
 export const QUERY_PROFILE = 'meta::pure::profiles::query';
-
-// ---------------------------------------------------------------- mapping coverage
-
-export type MappedProperty =
-  | { readonly _type: 'MappedProperty'; readonly name: string; readonly info?: unknown }
-  | { readonly _type: 'entity'; readonly name: string; readonly entityPath: string; readonly subType?: string; readonly info?: unknown }
-  | { readonly _type: 'enum'; readonly name: string; readonly enumPath: string; readonly info?: unknown };
-
-export interface MappedEntity {
-  readonly path: string;
-  readonly properties: readonly MappedProperty[];
-  readonly info?: { readonly isRootEntity?: boolean; readonly classPath: string; readonly subClasses?: readonly string[] };
-}
-
-/** `analytics/mapping/modelCoverage`'s answer. */
-export interface MappingModelCoverageAnalysisResult {
-  readonly mappedEntities: readonly MappedEntity[];
-}

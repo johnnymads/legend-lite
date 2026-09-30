@@ -68,6 +68,18 @@ js_binary(
     entry_point = "demo/serve.mjs",
 )
 
+# `bazel run //query:verify`: the app end to end in Chromium against a legend-lite server it
+# starts (needs java on the PATH and Playwright's Chromium, installed once).
+js_binary(
+    name = "verify",
+    data = [
+        ":site",
+        ":node_modules/playwright",
+        "//core:server_deploy.jar",
+    ],
+    entry_point = "demo/verify.mjs",
+)
+
 _TESTS = glob(["test/*.test.ts"])
 
 _WASM_TESTS = [

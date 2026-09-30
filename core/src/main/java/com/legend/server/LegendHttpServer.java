@@ -36,18 +36,20 @@ public class LegendHttpServer {
     private final HttpServer server;
     private final PureLspServer lspServer;
     private final Origins origins;
-    /** The query store {@code LEGEND_QUERY_STORE} names, or null (its calls are then refused). */
-    private final @com.legend.base.Nullable QueryStore queryStore = QueryStore.fromEnv();
+    /** The saved-query store {@code --query-store DIR} names, or null (its calls are then refused). */
+    private final @com.legend.base.Nullable SavedQueries queryStore;
 
     /** On the loopback interface, loopback origins only: the development server. */
     public LegendHttpServer(int port) throws IOException {
-        this(port, java.net.InetAddress.getLoopbackAddress(), Origins.LOOPBACK);
+        this(port, java.net.InetAddress.getLoopbackAddress(), Origins.LOOPBACK, null);
     }
 
-    public LegendHttpServer(int port, java.net.InetAddress bind, Origins origins) throws IOException {
+    public LegendHttpServer(int port, java.net.InetAddress bind, Origins origins,
+            @com.legend.base.Nullable SavedQueries queryStore) throws IOException {
         this.server = HttpServer.create(new InetSocketAddress(bind, port), 0);
         this.lspServer = new PureLspServer();
         this.origins = origins;
+        this.queryStore = queryStore;
         setupRoutes();
     }
 
@@ -108,7 +110,7 @@ public class LegendHttpServer {
         // legend-engine's own pure/v1 API, exactly (PureV1Api; the user's ruling of
         // 2026-09-27: lite serves upstream's APIs and nothing of its own)
         route("/api/pure/v1/", new PureV1Handler());
-        // legend-engine's query store and current user (QueryStore; the Query app's G5/G7)
+        // legend-engine's query store and current user (SavedQueries; the Query app's G5/G7)
         route("/api/pure/v1/query", exchange -> {
             addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
@@ -118,8 +120,8 @@ public class LegendHttpServer {
             }
             String body = readBody(exchange);
             String rest = exchange.getRequestURI().getRawPath().substring("/api/pure/v1/query".length());
-            PureV1Api.Answer a = QueryStore.answer(queryStore, exchange.getRequestMethod(), rest,
-                    exchange.getRequestURI().getRawQuery(), body, QueryStore.ANONYMOUS);
+            PureV1Api.Answer a = SavedQueries.answer(queryStore, exchange.getRequestMethod(), rest,
+                    exchange.getRequestURI().getRawQuery(), body, SavedQueries.ANONYMOUS);
             if (a.status() == 204) {
                 exchange.sendResponseHeaders(204, -1);
                 exchange.close();
@@ -129,7 +131,7 @@ public class LegendHttpServer {
         });
         route("/api/server/v1/currentUser", exchange -> {
             addCorsHeaders(exchange);
-            sendResponse(exchange, 200, "\"" + QueryStore.ANONYMOUS + "\"");
+            sendResponse(exchange, 200, "\"" + SavedQueries.ANONYMOUS + "\"");
         });
         route("/engine/diagram", new DiagramHandler());
 
@@ -227,9 +229,6 @@ public class LegendHttpServer {
                         PureV1Api.compile(body);
                 case "/api/pure/v1/compilation/lambdaReturnType" ->
                         PureV1Api.lambdaReturnType(body);
-                case "/api/pure/v1/analytics/mapping/modelCoverage" ->
-                        PureV1Api.modelCoverage(body, queryParam(query, "returnMappedEntityInfo"),
-                                queryParam(query, "returnMappedPropertyInfo"), queryParam(query, "returnLightGraph"));
                 case "/api/pure/v1/execution/generatePlan" ->
                         PureV1Api.generatePlan(body);
                 case "/api/pure/v1/execution/execute" ->
@@ -366,11 +365,17 @@ public class LegendHttpServer {
                 System.err.println("Invalid PORT env var: " + envPort);
             }
         }
-        if (args.length > 0) {
-            try {
-                port = Integer.parseInt(args[0]);
-            } catch (NumberFormatException e) {
-                System.err.println("Invalid port: " + args[0]);
+        // arguments: [port] [--query-store DIR] (the saved-query store's directory)
+        SavedQueries queryStore = null;
+        for (int i = 0; i < args.length; i++) {
+            if ("--query-store".equals(args[i]) && i + 1 < args.length) {
+                queryStore = new SavedQueries(java.nio.file.Path.of(args[++i]), System::currentTimeMillis);
+            } else {
+                try {
+                    port = Integer.parseInt(args[i]);
+                } catch (NumberFormatException e) {
+                    System.err.println("Invalid port: " + args[i]);
+                }
             }
         }
 
@@ -383,7 +388,7 @@ public class LegendHttpServer {
                     + " a caller's model runs its connections' setup SQL on this host.");
         }
         LegendHttpServer server = new LegendHttpServer(port, address,
-                Origins.fromEnv(System.getenv("LEGEND_LITE_ALLOWED_ORIGINS")));
+                Origins.fromEnv(System.getenv("LEGEND_LITE_ALLOWED_ORIGINS")), queryStore);
         server.start();
 
         System.out.println();
