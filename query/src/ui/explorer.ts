@@ -12,6 +12,7 @@ import {
 } from '../model/graph.ts';
 import { dialog, h, mount, showMenu, tooltip, type Child } from './dom.ts';
 import { preview, probeable } from '../app/probe.ts';
+import { addToTree } from './advanced.ts';
 import type { AppContext } from '../app/context.ts';
 import { cellText } from './format.ts';
 
@@ -182,7 +183,10 @@ export class Explorer {
   }
 
   #addColumn(path: PropertyPath): void {
-    this.#session.update((q) => addColumn(q, path, this.options.humanized));
+    // in Objects mode (a graph fetch) a property joins the fetch tree
+    this.#session.update((q) => (q.graph
+      ? { ...q, graph: { ...q.graph, tree: addToTree(q.graph.tree, path.map((s) => ({ property: s.property }))) } }
+      : addColumn(q, path, this.options.humanized)));
   }
 
   #addFilter(path: PropertyPath): void {
@@ -194,7 +198,10 @@ export class Explorer {
       let next = q;
       for (const p of this.#graph.properties(cls)) {
         if (p.kind === 'class' || p.derived || !this.#mapped(cls, p)) continue;
-        next = addColumn(next, [...prefix, { property: p.name }], this.options.humanized);
+        const path = [...prefix, { property: p.name }];
+        next = next.graph
+          ? { ...next, graph: { ...next.graph, tree: addToTree(next.graph.tree, path) } }
+          : addColumn(next, path, this.options.humanized);
       }
       return next;
     });

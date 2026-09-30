@@ -6,12 +6,14 @@ import { addCondition, mapGroup, mapNode, newCondition, propertyAt, prune } from
 import type { Session } from '../app/session.ts';
 import { freshId, type Condition, type FilterNode, type Group, type Operator, type PropertyPath, type QueryState } from '../builder/state.ts';
 import { probeable } from '../app/probe.ts';
+import type { AppContext } from '../app/context.ts';
+import { renderPostFilter } from './advanced.ts';
 import { humanize, isNumericFamily, isOptional, isToMany, primitiveFamily, type ModelGraph } from '../model/graph.ts';
 import { h, mount, showMenu, type Child } from './dom.ts';
 import { propertyDropZone } from './columns.ts';
 import { defaultValue, valueEditor } from './values.ts';
 
-const LABELS: Readonly<Record<Operator, string>> = {
+export const OPERATOR_LABELS: Readonly<Record<Operator, string>> = {
   equal: 'is', notEqual: 'is not', lessThan: '<', lessThanEqual: '≤', greaterThan: '>', greaterThanEqual: '≥',
   startsWith: 'starts with', notStartsWith: "doesn't start with", contains: 'contains', notContains: "doesn't contain",
   endsWith: 'ends with', notEndsWith: "doesn't end with", in: 'is in list of', notIn: 'is not in list of',
@@ -36,7 +38,20 @@ export function operatorsFor(graph: ModelGraph, type: string, optional: boolean)
 /** Typeahead for a condition's path, when the editor offers it. */
 export type Suggestions = (path: PropertyPath, prefix: string) => Promise<string[]>;
 
-export function renderFilter(container: HTMLElement, session: Session, suggestions?: Suggestions): void {
+let showResults = false;
+
+export function renderFilter(container: HTMLElement, session: Session, suggestions?: Suggestions, app?: AppContext): void {
+  const tableMode = session.query.graph === undefined;
+  const tabs = tableMode && app ? h('span', { style: 'display:inline-flex; gap:2px; text-transform:none; letter-spacing:0' },
+    h('button', { class: `q-tab${showResults ? '' : ' on'}`, style: 'padding:0 6px', onclick: () => { showResults = false; renderFilter(container, session, suggestions, app); } }, 'Rows'),
+    h('button', { class: `q-tab${showResults ? ' on' : ''}`, style: 'padding:0 6px', title: 'Filter the result, after grouping and windows', onclick: () => { showResults = true; renderFilter(container, session, suggestions, app); } },
+      'Results', session.query.postFilter ? ` (${session.query.postFilter.children.length})` : '')) : null;
+  if (tableMode && app && showResults) {
+    const body = h('div', { class: 'q-drop' });
+    mount(container, h('div', { class: 'q-panel-title' }, 'Filter', tabs), body);
+    renderPostFilter(body, app, session);
+    return;
+  }
   const q = session.query;
   const graph = session.project.graph;
   const update = (f: (q: QueryState) => QueryState): void => session.update(f);
@@ -78,7 +93,7 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
           return value === undefined ? { ...rest, operator: op } : { ...rest, operator: op, value };
         }));
       },
-    }, ops.map((o) => h('option', { value: o, selected: o === c.operator }, LABELS[o])));
+    }, ops.map((o) => h('option', { value: o, selected: o === c.operator }, OPERATOR_LABELS[o])));
     const needsValue = c.operator !== 'isEmpty' && c.operator !== 'isNotEmpty';
     return h('div', { class: 'q-cond' },
       h('span', { class: 'prop', title: `$x.${c.path.map((s) => s.property).join('.')}` },
@@ -131,7 +146,7 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
     : addCondition(graph, s, path))));
 
   mount(container,
-    h('div', { class: 'q-panel-title' }, 'Filter', h('span', { class: 'q-chip' }, String(countConditions(root))),
+    h('div', { class: 'q-panel-title' }, 'Filter', tabs, h('span', { class: 'q-chip' }, String(countConditions(root))),
       h('span', { class: 'q-spacer' }),
       root.children.length > 0
         ? h('button', { class: 'q-icon-btn', title: 'Add a group', onclick: () => setRoot((r) => ({ ...r, children: [...r.children, { kind: 'group', id: freshId('g'), op: r.op === 'and' ? 'or' : 'and', children: [] }] }), false) }, '+ Group')

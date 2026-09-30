@@ -138,8 +138,8 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
       buildArea.replaceChildren(textOnly);
     } else {
       buildArea.replaceChildren(columns, filter);
-      renderColumns(columns, session, () => explorer.options.humanized);
-      renderFilter(filter, session, (path, prefix) => suggest(app, session, path, prefix));
+      renderColumns(columns, app, session, () => explorer.options.humanized);
+      renderFilter(filter, session, (path, prefix) => suggest(app, session, path, prefix), app);
     }
   };
   const buildArea = h('div', { class: 'q-build' });

@@ -4,9 +4,11 @@
 
 import { addColumn, PROPERTY_DRAG, propertyAt } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
-import type { AggregateOp, ProjectionColumn, PropertyPath, QueryState, SortSpec } from '../builder/state.ts';
+import type { AggregateOp, GraphNode, ProjectionColumn, PropertyPath, QueryState, SortSpec } from '../builder/state.ts';
 import { isNumericFamily, primitiveFamily, simpleName } from '../model/graph.ts';
 import { dialog, h, mount, showMenu, type Child } from './dom.ts';
+import type { AppContext } from '../app/context.ts';
+import { addToTree, calculatedDialog, renderGraph, renderWindows, windowDialog } from './advanced.ts';
 
 const AGGREGATES: readonly { op: AggregateOp; label: string; fits: (family: string, isEnum: boolean) => boolean }[] = [
   { op: 'count', label: 'count', fits: () => true },
@@ -42,8 +44,14 @@ export function propertyDropZone(el: HTMLElement, onPath: (path: PropertyPath) =
   });
 }
 
-export function renderColumns(container: HTMLElement, session: Session, humanized: () => boolean): void {
+export function renderColumns(container: HTMLElement, app: AppContext, session: Session, humanized: () => boolean): void {
   const q = session.query;
+  if (q.graph) {
+    mount(container,
+      h('div', { class: 'q-panel-title' }, modeToggle(session, humanized), h('span', { class: 'q-spacer' })),
+      renderGraph(session, propertyDropZone));
+    return;
+  }
   const graph = session.project.graph;
   const update = (f: (q: QueryState) => QueryState): void => session.update(f);
   let dragging: string | undefined;
@@ -52,13 +60,23 @@ export function renderColumns(container: HTMLElement, session: Session, humanize
     let family = 'other';
     let isEnum = false;
     let typeText = '';
-    try {
-      const { prop } = propertyAt(graph, q.source.class, c.path);
-      family = primitiveFamily(prop.type);
-      isEnum = graph.enumerations.has(prop.type);
-      typeText = simpleName(prop.type);
-    } catch (e) {
-      typeText = (e as Error).message;
+    if (c.derivation) {
+      typeText = 'calculated';
+    } else {
+      try {
+        const { prop } = propertyAt(graph, q.source.class, c.path);
+        family = primitiveFamily(prop.type);
+        isEnum = graph.enumerations.has(prop.type);
+        typeText = simpleName(prop.type);
+      } catch (e) {
+        typeText = (e as Error).message;
+      }
+    }
+    const pathText = h('div', { class: 'path', title: typeText }, c.derivation ? '…' : `$x.${c.path.map((s) => s.property).join('.')} · ${typeText}`);
+    if (c.derivation) {
+      void app.engine.lambdaText(c.derivation, 'STANDARD').then((t) => { pathText.textContent = t; pathText.title = t; }, () => undefined);
+      // a calculated column's type is the compiler's: aggregate choices follow it
+      family = 'number';
     }
     const name = h('input', {
       class: 'q-input', value: c.name, 'aria-label': 'Column name',
@@ -109,9 +127,9 @@ export function renderColumns(container: HTMLElement, session: Session, humanize
       },
     },
     h('span', { class: 'grip', title: 'Drag to reorder' }, '⋮⋮'),
-    h('div', { style: 'min-width:0' }, name,
-      h('div', { class: 'path', title: typeText }, `$x.${c.path.map((s) => s.property).join('.')} · ${typeText}`)),
-    aggButton,
+    h('div', { style: 'min-width:0' }, name, pathText),
+    c.derivation ? h('span', { style: 'display:inline-flex; gap:2px' },
+      h('button', { class: 'q-icon-btn', title: 'Edit the calculation', onclick: () => void calculatedDialog(app, session, c) }, 'ƒx'), aggButton) : aggButton,
     h('button', {
       class: 'q-icon-btn', title: 'Remove column',
       onclick: () => update((s) => ({
@@ -126,12 +144,16 @@ export function renderColumns(container: HTMLElement, session: Session, humanize
   const body = h('div', { class: 'q-drop' },
     q.columns.length === 0
       ? h('div', { class: 'q-hint' }, 'Drag properties here, or double-click them in the explorer.')
-      : q.columns.map(row));
+      : q.columns.map(row),
+    renderWindows(app, session));
   propertyDropZone(body, (path) => update((s) => addColumn(s, path, humanized())));
 
   mount(container,
-    h('div', { class: 'q-panel-title' }, 'Columns', h('span', { class: 'q-chip' }, String(q.columns.length)),
-      h('span', { class: 'q-spacer' }), optionChips(session),
+    h('div', { class: 'q-panel-title' }, modeToggle(session, humanized), h('span', { class: 'q-chip' }, String(q.columns.length)),
+      h('span', { class: 'q-spacer' }),
+      h('button', { class: 'q-icon-btn', title: 'Add a calculated column', onclick: () => void calculatedDialog(app, session) }, '+ ƒx'),
+      h('button', { class: 'q-icon-btn', title: 'Add a window column (rank, running total…)', onclick: () => void windowDialog(app, session) }, '+ Window'),
+      optionChips(session),
       q.columns.length > 0 ? h('button', { class: 'q-icon-btn', title: 'Remove every column', onclick: () => update((s) => ({ ...s, columns: [], options: { ...s.options, sort: [] } })) }, 'Clear') : null),
     body);
 }
@@ -200,4 +222,31 @@ export function optionsDialog(session: Session): void {
       }, 'Apply'),
     ],
   }));
+}
+
+/** Table (columns) or Objects (graph fetch): switching carries the property paths across. */
+function modeToggle(session: Session, humanized: () => boolean): HTMLElement {
+  const graphMode = session.query.graph !== undefined;
+  const toTable = (): void => session.update((q) => {
+    const paths: PropertyPath[] = [];
+    const walk = (nodes: readonly GraphNode[], prefix: PropertyPath): void => {
+      for (const n of nodes) {
+        const path = [...prefix, { property: n.property }];
+        if (n.children.length === 0) paths.push(path); else walk(n.children, path);
+      }
+    };
+    walk(q.graph?.tree ?? [], []);
+    const { graph: _g, ...rest } = q;
+    void _g;
+    return paths.reduce((acc, p) => addColumn(acc, p, humanized()), { ...rest, columns: [] } as QueryState);
+  });
+  const toGraph = (): void => session.update((q) => {
+    const tree = q.columns.filter((c) => !c.derivation && c.path.length > 0).reduce<GraphNode[]>((t, c) => addToTree(t, c.path), []);
+    const { windows: _w, postFilter: _p, ...rest } = q;
+    void _w; void _p;
+    return { ...rest, columns: [], graph: { tree, checked: false }, options: { sort: [], distinct: false } };
+  });
+  return h('span', { style: 'display:inline-flex; gap:2px; text-transform:none; letter-spacing:0' },
+    h('button', { class: `q-tab${graphMode ? '' : ' on'}`, style: 'padding:0 6px', onclick: () => graphMode && toTable(), title: 'Rows of columns' }, 'Table'),
+    h('button', { class: `q-tab${graphMode ? ' on' : ''}`, style: 'padding:0 6px', onclick: () => !graphMode && toGraph(), title: 'Objects as JSON (graph fetch)' }, 'Objects'));
 }
