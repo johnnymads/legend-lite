@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
@@ -15,7 +15,7 @@ const CHUNKS = join(DEMO, 'chunks-bundle');
 /** What `file` imports statically: `import ... from "./x.js"` and bare `import "./x.js"`, resolved. */
 function staticImports(file: string): string[] {
   const text = readFileSync(file, 'utf8');
-  const dir = file.slice(0, file.lastIndexOf('/'));
+  const dir = dirname(file);
   // statement-level only: a dynamic `import("./x.js")` is what makes a chunk lazy
   return [...text.matchAll(/^\s*(?:import|export)\s[^;]*?from\s*"(\.[^"]+)"|^\s*import\s*"(\.[^"]+)"/gm)]
     .map((m) => join(dir, m[1] ?? m[2]!));
