@@ -44,15 +44,28 @@ export interface ChartSource {
   label(column: string): string;
   /** Take `old` off the grid's filter and put `add` on, as one change named `label`. */
   refilter(old: readonly FilterNode[], add: readonly FilterNode[], label: string): void;
-  /** A grid of its own over the same source, in `host` (a chart's editing grid). */
-  spawn(host: HTMLElement, snapshot: CubeSnapshot): SpawnedGrid;
+  /**
+   * A grid of its own over the same source, in `host`: a chart's editing grid, or another grid on
+   * the page. `onChart` is where its own "+ Chart" goes (the page), rather than a board of its own.
+   */
+  spawn(host: HTMLElement, snapshot: CubeSnapshot, options?: SpawnOptions): SpawnedGrid;
 }
 
-/** A grid made for a moment's work (a chart's editing grid). */
+/** Where a grid on the page sends its own "+ Chart" and "New grid": to the page. */
+export interface SpawnOptions {
+  readonly onChart?: () => void;
+  readonly onNewGrid?: () => void;
+}
+
+/** Another grid, over the same source (a CubeApp). */
 export interface SpawnedGrid {
   readonly snapshot: CubeSnapshot;
   open(): Promise<void>;
   dispose(): void;
+  /** What its charts need from it. */
+  chartSource(): ChartSource;
+  /** Told each time a view lands. */
+  on(event: 'view', fn: () => void): () => void;
 }
 
 export interface CubePageOptions {
@@ -65,8 +78,27 @@ export interface CubePageOptions {
   readonly onEmpty: () => void;
 }
 
+/** A grid on the page: the cube's own, or another one added to it. */
+interface GridTile {
+  readonly source: ChartSource;
+  /** An added grid: its cube, and how to stop listening to it. */
+  readonly added?: { readonly cube: SpawnedGrid; readonly stop: () => void };
+}
+
+/**
+ * Where a chart's rows come from: the grid it belongs to, or -- DETACHED, its grid removed while
+ * it was frozen -- its own copy of that grid's query (source, filter, calculated columns).
+ */
+interface ChartLink {
+  grid: string | null;
+  detached?: CubeSnapshot;
+}
+
 interface ChartTile {
   readonly panel: ChartPanel;
+  readonly link: ChartLink;
+  /** Its buttons, as it now is (following, frozen, detached). */
+  readonly paint: () => void;
   readonly chip: HTMLButtonElement;
   /** The conditions this chart's last click put on its grid's filter. */
   conditions: FilterNode[];
@@ -80,7 +112,9 @@ export class CubePage {
   readonly #options: CubePageOptions;
   readonly #board: Board;
   readonly #charts = new Map<string, ChartTile>();
+  readonly #grids = new Map<string, GridTile>();
   #chartCount = 0;
+  #gridCount = 0;
   /** Until arranged by hand, the page lays itself out. */
   #auto = true;
 
@@ -99,14 +133,17 @@ export class CubePage {
       },
       onRename: () => options.onChange(),
     });
-    const add = this.#button('+ Chart', 'Add a chart of this cube');
+    this.#grids.set(GRID, { source: options.grid.source });
+    const add = this.#button('+ Chart', 'Add a chart of this grid');
     add.addEventListener('click', () => this.openChart());
+    const addGrid = this.#button('+ Grid', 'Add another grid to the page, starting as this one is');
+    addGrid.addEventListener('click', () => this.addGrid());
     this.#board.add({
       id: GRID,
       // the cube's own name is the page's title already, above the board
       title: GRID_TILE_TITLE,
       element: options.grid.element,
-      actions: [add],
+      actions: [addGrid, add],
       removable: false,
       anchor: true,
       minW: 3,
@@ -114,14 +151,51 @@ export class CubePage {
     }, { x: 0, y: 0, w: BOARD_COLUMNS, h: BOARD_ROWS });
   }
 
-  /** How many charts are on the page. */
+  /** How many tiles are on the page besides the cube's own grid: charts and added grids. */
   get charts(): number {
-    return this.#charts.size;
+    return this.#charts.size + this.#grids.size - 1;
   }
 
-  /** A chart of the grid on the board, below it: live, or as a saved page had it. */
-  openChart(restore?: ChartView): void {
-    const source = this.#options.grid.source;
+  /**
+   * ANOTHER GRID on the page: a cube of its own over the same source, starting as `from` is now,
+   * in a tile like any chart's -- moved, resized, renamed and removed the same way -- with charts
+   * of its own. Removing it removes the charts that follow it; its frozen charts stay, DETACHED:
+   * each keeps its own copy of the grid's query.
+   */
+  addGrid(from: string = GRID): string {
+    const source = this.#grids.get(from)?.source ?? this.#options.grid.source;
+    this.#gridCount += 1;
+    let n = this.#gridCount;
+    while (this.#grids.has(`grid-${n}`) || this.#board.title(`grid-${n}`) !== undefined) n += 1;
+    this.#gridCount = n;
+    const id = `grid-${n}`;
+    const host = this.#doc.createElement('div');
+    host.className = 'dc-grid-tile';
+    const cube = source.spawn(host, source.snapshot, {
+      onChart: () => this.openChart(undefined, id),
+      onNewGrid: () => this.addGrid(id),
+    });
+    const stop = cube.on('view', () => {
+      this.#refreshGrid(id);
+      this.#reconcileGrid(id, cube.snapshot.filter);
+    });
+    this.#grids.set(id, { source: cube.chartSource(), added: { cube, stop } });
+    const add = this.#button('+ Chart', 'Add a chart of this grid');
+    add.addEventListener('click', () => this.openChart(undefined, id));
+    const before = this.#board.layout;
+    this.#board.add({ id, title: `Grid ${n + 1}`, element: host, actions: [add], minW: 3, minH: TILE_MIN_ROWS }, { w: 6, h: 12 });
+    if (this.#auto) this.#arrange();
+    else this.#board.setLayout(addToRow(before, id, BOARD_COLUMNS, BOARD_ROWS - GRID_ROWS_ABOVE_CHARTS, CHARTS_PER_ROW, 3));
+    this.#board.reveal(id);
+    void cube.open();
+    this.#options.onChange();
+    return id;
+  }
+
+  /** A chart of a grid (the cube's own, unless named) on the board: following, or as a saved page had it. */
+  openChart(restore?: ChartView, grid: string = GRID): void {
+    const link: ChartLink = { grid: this.#grids.has(grid) ? grid : GRID };
+    const source = (): ChartSource => this.#sourceOf(link);
     this.#chartCount += 1;
     const id = restore?.id ?? this.#freshChartId();
     const doc = this.#doc;
@@ -144,7 +218,15 @@ export class CubePage {
     options.setAttribute('aria-pressed', 'false');
     const paint = (): void => {
       const frozen = panel.frozen;
-      badge.hidden = frozen;
+      const detached = link.grid === null;
+      badge.hidden = frozen && !detached;
+      badge.textContent = detached ? 'Detached' : 'Following the grid';
+      badge.title = detached
+        ? 'Its grid was removed: this chart keeps its own copy of that grid\'s query. Open in grid to change it.'
+        : 'This chart re-draws as the grid is pivoted, grouped and filtered.';
+      badge.classList.toggle('dc-tile-badge-quiet', detached);
+      // a detached chart has no grid to follow
+      freeze.hidden = detached;
       freeze.textContent = frozen ? 'Follow the grid' : 'Freeze';
       freeze.title = frozen
         ? 'Follow the grid\'s pivots again (this chart takes the grid\'s grouping).'
@@ -160,10 +242,11 @@ export class CubePage {
       },
       onSpec: () => this.#options.onChange(),
       ...(restore ? { initial: restore.spec } : {}),
-      snapshot: () => source.snapshot,
-      run: (query, snapshot, signal) => source.run(query, snapshot, signal),
-      label: (value, column, type) => source.format(value, column, type),
-      onPick: (mark) => this.#select(id, mark),
+      snapshot: () => source().snapshot,
+      run: (query, snapshot, signal) => source().run(query, snapshot, signal),
+      label: (value, column, type) => source().format(value, column, type),
+      // a detached chart has no grid's filter to put a click on
+      onPick: (mark) => { if (link.grid !== null) this.#select(id, mark); },
       formOpen: false,
     });
     options.addEventListener('click', () => {
@@ -178,6 +261,8 @@ export class CubePage {
     paint();
     this.#charts.set(id, {
       panel,
+      link,
+      paint,
       chip,
       conditions: restore?.selection ? [...restore.selection] : [],
       key: restore?.selection ? JSON.stringify(restore.selection) : '',
@@ -209,18 +294,26 @@ export class CubePage {
     this.#options.onChange();
   }
 
-  /** The grid changed (a view landed, a sign-in): every chart draws again, a following one regrouped. */
+  /** The cube's own grid changed (a view landed, a sign-in): its charts draw again, a following one regrouped. */
   refresh(): void {
-    for (const chart of this.#charts.values()) chart.panel.refresh();
+    this.#refreshGrid(GRID);
   }
 
   /**
-   * The grid's filter changed: a selection whose conditions are no longer all in it (cleared or
-   * edited in the filter window, undone) is no longer the chart's to take off.
+   * The cube's own grid's filter changed: a selection whose conditions are no longer all in it
+   * (cleared or edited in the filter window, undone) is no longer the chart's to take off.
    */
   reconcile(filter: FilterNode | undefined): void {
+    this.#reconcileGrid(GRID, filter);
+  }
+
+  #refreshGrid(grid: string): void {
+    for (const chart of this.#charts.values()) if (chart.link.grid === grid) chart.panel.refresh();
+  }
+
+  #reconcileGrid(grid: string, filter: FilterNode | undefined): void {
     for (const [id, chart] of this.#charts) {
-      if (chart.conditions.length === 0) continue;
+      if (chart.link.grid !== grid || chart.conditions.length === 0) continue;
       if (withoutConditions(filter, chart.conditions, true) === null) {
         chart.conditions = [];
         chart.key = '';
@@ -242,7 +335,9 @@ export class CubePage {
     }];
     for (const [id, chart] of this.#charts) {
       const spec = chart.panel.spec;
-      if (!spec) continue;
+      // v1 saves the cube's own grid and its charts; added grids, theirs and detached charts are
+      // not saved yet (plan B2: the page document with several grids)
+      if (!spec || chart.link.grid !== GRID) continue;
       views.push({
         id,
         kind: 'chart',
@@ -257,7 +352,8 @@ export class CubePage {
       layout: {
         kind: 'grid',
         cols: BOARD_COLUMNS,
-        tiles: this.#pageTiles().map((t) => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h })),
+        tiles: this.#pageTiles().filter((t) => t.id === GRID || this.#charts.get(t.id)?.link.grid === GRID)
+          .map((t) => ({ id: t.id, x: t.x, y: t.y, w: t.w, h: t.h })),
         arranged: !this.#auto,
       },
     };
@@ -276,7 +372,8 @@ export class CubePage {
 
   /** The page's tiles as an export lays them out: where each is, a chart as its picture. */
   exportPage(): ExportPage {
-    const tiles = this.#pageTiles().map((t): ExportTile => {
+    // an added grid is not in an export yet (plan B2: an export of several grids); every chart is
+    const tiles = this.#pageTiles().filter((t) => !this.#grids.get(t.id)?.added).map((t): ExportTile => {
       const chart = this.#charts.get(t.id);
       const picture = chart?.panel.picture() ?? null;
       return {
@@ -296,6 +393,11 @@ export class CubePage {
       chart.panel.dispose();
     }
     this.#charts.clear();
+    for (const grid of this.#grids.values()) {
+      grid.added?.stop();
+      grid.added?.cube.dispose();
+    }
+    this.#grids.clear();
     this.#board.dispose();
   }
 
@@ -318,6 +420,22 @@ export class CubePage {
     return `chart-${n}`;
   }
 
+  /** Where a chart's rows come from now: its grid, or its own copy of the query once detached. */
+  #sourceOf(link: ChartLink): ChartSource {
+    const primary = this.#options.grid.source;
+    if (link.grid !== null) return this.#grids.get(link.grid)?.source ?? primary;
+    const snapshot = link.detached ?? primary.snapshot;
+    // the same runner and formats (every grid on the page runs on the same engine), its own query
+    return {
+      snapshot,
+      run: (query, s, signal) => primary.run(query, s, signal),
+      format: (value, column, type) => primary.format(value, column, type),
+      label: (column) => primary.label(column),
+      refilter: () => {},
+      spawn: (host, s, options) => primary.spawn(host, s, options),
+    };
+  }
+
   /** The board's tiles that are the page: the grid and the charts, not an editing grid. */
   #pageTiles(): Board['layout'] {
     const editing = new Set([...this.#charts.values()].flatMap((c) => (c.editor ? [c.editor.tile] : [])));
@@ -330,7 +448,9 @@ export class CubePage {
    */
   #arrange(): void {
     if (!this.#auto) return;
-    const tiles = [...this.#charts].flatMap(([id, chart]) => (chart.editor ? [id, chart.editor.tile] : [id]));
+    // each added grid, then each chart with its editing grid right after it
+    const added = [...this.#grids.keys()].filter((id) => id !== GRID);
+    const tiles = [...added, ...[...this.#charts].flatMap(([id, chart]) => (chart.editor ? [id, chart.editor.tile] : [id]))];
     this.#board.setLayout(below(GRID, tiles, BOARD_COLUMNS, BOARD_ROWS,
       GRID_ROWS_ABOVE_CHARTS, CHARTS_PER_ROW, TILE_MIN_ROWS));
   }
@@ -343,6 +463,10 @@ export class CubePage {
         return;
       }
     }
+    if (this.#grids.get(id)?.added) {
+      this.#removeGrid(id);
+      return;
+    }
     const chart = this.#charts.get(id);
     if (!chart) return;
     if (chart.conditions.length) this.#select(id, null);
@@ -351,11 +475,48 @@ export class CubePage {
     this.#charts.delete(id);
     this.#board.remove(id);
     this.#options.onChange();
-    if (this.#charts.size > 0) {
+    this.#afterRemove();
+  }
+
+  /** A tile is gone: the page arranges itself, or -- only the cube's own grid left -- is no more. */
+  #afterRemove(): void {
+    if (this.charts > 0) {
       this.#arrange();
       return;
     }
     this.#options.onEmpty();
+  }
+
+  /**
+   * REMOVE A GRID: the charts following it go with it; each frozen one stays, detached -- with its
+   * own copy of the grid's query as it is now, so it still draws and refreshes.
+   */
+  #removeGrid(id: string): void {
+    const grid = this.#grids.get(id);
+    if (!grid?.added) return;
+    const query = grid.source.snapshot;
+    for (const [chartId, chart] of [...this.#charts]) {
+      if (chart.link.grid !== id) continue;
+      if (!chart.panel.frozen) {
+        this.#closeEditor(chartId);
+        chart.panel.dispose();
+        this.#charts.delete(chartId);
+        this.#board.remove(chartId);
+        continue;
+      }
+      chart.conditions = [];
+      chart.key = '';
+      this.#paintSelection(chartId);
+      chart.link.detached = query;
+      chart.link.grid = null;
+      chart.paint();
+    }
+    grid.added.stop();
+    grid.added.cube.dispose();
+    this.#grids.delete(id);
+    this.#board.remove(id);
+    this.#options.onChange();
+    this.#afterRemove();
   }
 
   /**
@@ -373,7 +534,7 @@ export class CubePage {
     }
     const spec = chart.panel.spec;
     if (!spec || spec.mark === 'scatter' || spec.x === undefined) return;
-    const source = this.#options.grid.source;
+    const source = this.#sourceOf(chart.link);
     const tile = `edit-${chartId}`;
     const host = this.#doc.createElement('div');
     host.className = 'dc-chart-editor';
@@ -399,6 +560,8 @@ export class CubePage {
       // the chart regrouped the way the editing grid is -- as a following chart would follow it --
       // then frozen again: its mark and options are its own
       const { frozen: _f, ...following } = current;
+      // detached, it takes the editing grid's whole query (its filter too): it has no grid of its own
+      if (chart.link.grid === null) chart.link.detached = grid.snapshot;
       chart.panel.setSpec({ ...followCube(following, grid.snapshot), frozen: true });
       this.#closeEditor(chartId);
       this.#options.onChange();
@@ -451,7 +614,7 @@ export class CubePage {
     const add = key === chart.key ? [] : next;
     const old = chart.conditions;
     if (old.length === 0 && add.length === 0) return;
-    this.#options.grid.source.refilter(old, add, add.length === 0 ? 'clear chart selection' : 'filter to chart mark');
+    this.#sourceOf(chart.link).refilter(old, add, add.length === 0 ? 'clear chart selection' : 'filter to chart mark');
     chart.conditions = add;
     chart.key = add.length === 0 ? '' : key;
     this.#paintSelection(id);
@@ -461,7 +624,7 @@ export class CubePage {
   #paintSelection(id: string): void {
     const chart = this.#charts.get(id);
     if (!chart) return;
-    const source = this.#options.grid.source;
+    const source = this.#sourceOf(chart.link);
     const words = chart.conditions.map((c) => c.kind === 'condition'
       ? `${source.label(c.column)}: ${c.operator === 'isEmpty' ? '(empty)' : String(c.value)}`
       : '');

@@ -221,6 +221,12 @@ export interface CubeAppBaseOptions {
   readonly windowHost?: HTMLElement;
   /** A small cube in a tile (a chart's editing grid): its columns panel starts folded away. */
   readonly compact?: boolean;
+  /**
+   * A grid on a page (page/cube-page.ts): its "+ Chart" and "New grid" go to the page, which
+   * puts them on its board, instead of a board of this cube's own.
+   */
+  readonly onChart?: () => void;
+  readonly onNewGrid?: () => void;
   readonly writeClipboard?: (text: string) => void | Promise<void>;
   /**
    * Hand a file to the user.
@@ -1923,6 +1929,9 @@ export class CubeApp {
       case 'chart.plot':
         this.openChart();
         return;
+      case 'grid.new':
+        this.newGrid();
+        return;
       case 'chart.treemap':
         this.#chart('treemap');
         return;
@@ -2291,7 +2300,20 @@ export class CubeApp {
    * until frozen; a click on a mark filters the cube to it.
    */
   openChart(restore?: ChartView): void {
+    if (this.#options.onChart && !restore) {
+      this.#options.onChart();
+      return;
+    }
     this.#ensurePage().openChart(restore);
+  }
+
+  /** Another grid on the page, starting as this one is (page/cube-page.ts `addGrid`). */
+  newGrid(): void {
+    if (this.#options.onNewGrid) {
+      this.#options.onNewGrid();
+      return;
+    }
+    this.#ensurePage().addGrid();
   }
 
   /**
@@ -2306,7 +2328,7 @@ export class CubeApp {
     parent.insertBefore(host, this.#els.grid);
     const page = new CubePage({
       host,
-      grid: { element: this.#els.grid, source: this.#chartSource() },
+      grid: { element: this.#els.grid, source: this.chartSource() },
       onChange: () => this.#pageChanged(),
       onEmpty: () => {
         parent.insertBefore(this.#els.grid, host);
@@ -2320,7 +2342,7 @@ export class CubeApp {
   }
 
   /** What a chart of this cube needs from it (page/cube-page.ts `ChartSource`). */
-  #chartSource(): ChartSource {
+  chartSource(): ChartSource {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const app = this;
     return {
@@ -2338,7 +2360,7 @@ export class CubeApp {
             : { ...rest, filter: children.length === 1 ? children[0]! : { kind: 'and', children } };
         }, label);
       },
-      spawn: (host, snapshot) => {
+      spawn: (host, snapshot, spawned) => {
         const o = this.#options;
         // the same place to run as this cube: its engine and planner (and live warehouse), or its runner
         const source: CubeAppQuerySource = o.runner
@@ -2351,6 +2373,8 @@ export class CubeApp {
           // its windows float where this cube's do, not inside the small tile
           windowHost: o.windowHost ?? this.#els.root,
           compact: true,
+          ...(spawned?.onChart ? { onChart: spawned.onChart } : {}),
+          ...(spawned?.onNewGrid ? { onNewGrid: spawned.onNewGrid } : {}),
         });
       },
     };

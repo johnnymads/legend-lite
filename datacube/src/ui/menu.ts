@@ -200,6 +200,7 @@ export type MenuActionId =
   | 'heatmap.add'
   | 'heatmap.remove'
   | 'chart.plot'
+  | 'grid.new'
   | 'chart.treemap'
   | 'view.properties'
   // Upstream's Copy > Selected Rows, Resize > Minimize and Size to Fit,
@@ -682,6 +683,8 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
   // not belong in the column-scoped groups above.
   push('', [
     { id: 'chart.plot', label: 'Chart...' },
+    // another grid on the page, starting as this one is (page/cube-page.ts)
+    { id: 'grid.new', label: 'New grid' },
     { id: 'chart.treemap', label: 'Treemap' },
   ]);
 

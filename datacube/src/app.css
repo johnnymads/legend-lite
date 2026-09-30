@@ -2431,6 +2431,12 @@
   white-space: nowrap;
 }
 
+/* a detached chart's mark: quiet, it follows nothing */
+.dc-tile-badge.dc-tile-badge-quiet {
+  color: var(--tw-neutral-600);
+  background: var(--tw-neutral-100);
+}
+
 /* remove and resize are there on every tile, quiet until it is pointed at or focused */
 .dc-tile-remove { border-color: transparent; opacity: 0; }
 .dc-tile:hover .dc-tile-remove,

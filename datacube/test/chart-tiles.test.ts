@@ -131,3 +131,73 @@ describe('Open in grid: a grid of its own, beside the chart', () => {
     assert.deepEqual(app.snapshot.rows, ['region', 'desk'], 'the cube did not');
   });
 });
+
+describe('grids are tiles like charts: + Grid, their own charts, removing one', () => {
+  const added = (): HTMLElement[] => [...root.querySelectorAll<HTMLElement>('[data-tile^="grid-"]')];
+  const zoneOf = (tileId: string): HTMLElement => tile(tileId).querySelector('.dc-zone-rows') as HTMLElement;
+
+  it('New grid adds a grid of its own on the board, starting as the cube\'s grid is', async () => {
+    app.newGrid();
+    await settle();
+    const [g] = added();
+    assert.ok(g, 'a grid tile');
+    const id = g.dataset['tile']!;
+    assert.notEqual(g.querySelector('.dc-app')?.getAttribute('data-dc-cube'), root.getAttribute('data-dc-cube'));
+    assert.deepEqual(chips(zoneOf(id)), ['region', 'desk'], 'grouped as the cube\'s grid was');
+    // its own grouping, the cube's untouched
+    await ungroup(zoneOf(id), 'desk');
+    assert.deepEqual(chips(zoneOf(id)), ['region']);
+    assert.deepEqual(app.snapshot.rows, ['region', 'desk']);
+  });
+
+  it('a chart of an added grid follows that grid, not the cube\'s', async () => {
+    app.openChart();
+    app.newGrid();
+    await settle();
+    const id = added()[0]!.dataset['tile']!;
+    const mine = charts()[0]!.id;
+    await click(id, '+ Chart');
+    const theirs = [...root.querySelectorAll<HTMLElement>('[data-tile^="chart-"]')].map((t) => t.dataset['tile']!)
+      .find((t) => t !== mine)!;
+    assert.ok(theirs, 'a chart of the added grid');
+    await ungroup(zoneOf(id), 'desk');
+    assert.equal(chart(mine).spec.split, 'desk', 'the cube\'s chart did not move');
+    // the added grid's chart is not saved yet (v1); its tile shows it followed
+    assert.ok(tile(theirs).querySelector('.dc-tile-badge:not([hidden])'));
+  });
+
+  it('removing a grid removes its following charts and detaches its frozen ones', async () => {
+    app.newGrid();
+    await settle();
+    const id = added()[0]!.dataset['tile']!;
+    await click(id, '+ Chart');
+    await click(id, '+ Chart');
+    const ofGrid = [...root.querySelectorAll<HTMLElement>('[data-tile^="chart-"]')].map((t) => t.dataset['tile']!);
+    assert.equal(ofGrid.length, 2);
+    await click(ofGrid[0]!, 'Freeze');
+    (tile(id).querySelector('.dc-tile-remove') as HTMLElement).click();
+    await settle();
+    assert.equal(tile(id), null, 'the grid is gone');
+    assert.equal(tile(ofGrid[1]!), null, 'its following chart went with it');
+    assert.ok(tile(ofGrid[0]!), 'its frozen chart stayed');
+    assert.ok(shown(ofGrid[0]!).includes('Detached'), shown(ofGrid[0]!).join(', '));
+    assert.ok(!shown(ofGrid[0]!).includes('Freeze') && !shown(ofGrid[0]!).includes('Follow the grid'));
+    assert.ok(shown(ofGrid[0]!).includes('Open in grid'), 'it can still be changed');
+  });
+
+  it('New grid from an added grid\'s own menu adds to the page, not inside the grid', async () => {
+    app.newGrid();
+    await settle();
+    const first = added()[0]!;
+    const cell = first.querySelector('.dc-row .dc-cell') as HTMLElement;
+    cell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await settle();
+    const item = [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')]
+      .find((el) => el.textContent?.includes('New grid'));
+    assert.ok(item, 'the added grid\'s menu offers New grid');
+    item.click();
+    await settle();
+    assert.equal(added().length, 2, 'a second added grid, on the page');
+    assert.equal(first.querySelector('.dc-board-host'), null, 'no board inside the added grid');
+  });
+});

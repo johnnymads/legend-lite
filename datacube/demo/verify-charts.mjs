@@ -135,6 +135,29 @@ try {
     return `${frozen.title} updated to ${after.x}, no split; the cube's grid still ${rowsBefore.join(' > ')}`;
   });
 
+  await check('+ Grid adds a grid tile of its own; its + Chart charts it; removing it detaches a frozen chart', async () => {
+    const tilesBefore = await page.locator('[data-tile^="chart-"]').count();
+    await page.locator('[data-tile="grid"] .dc-tile-actions > button', { hasText: '+ Grid' }).click();
+    const grid = page.locator('[data-tile^="grid-"]').first();
+    await grid.locator('.dc-row').first().waitFor({ timeout: 20_000 });
+    await settle();
+    const gridId = await grid.getAttribute('data-tile');
+    await button(gridId, '+ Chart').click();
+    await button(gridId, '+ Chart').click();
+    await page.waitForFunction((n) => document.querySelectorAll('[data-tile^="chart-"]').length === n + 2, tilesBefore, { timeout: 20_000 });
+    await drawn();
+    const ids = await page.locator('[data-tile^="chart-"]').evaluateAll((els) => els.map((e) => e.dataset.tile));
+    const [frozenId, followingId] = ids.slice(-2);
+    await button(frozenId, 'Freeze').click();
+    if (process.env.SHOTS) { await page.waitForTimeout(1500); await page.screenshot({ path: `${process.env.SHOTS}/grids.png` }); }
+    await page.locator(`[data-tile="${gridId}"] .dc-tile-remove`).click();
+    await settle();
+    if (await page.locator(`[data-tile="${gridId}"]`).count()) throw new Error('the grid is still there');
+    if (await page.locator(`[data-tile="${followingId}"]`).count()) throw new Error('its following chart is still there');
+    await page.locator(`[data-tile="${frozenId}"] .dc-tile-badge:visible`, { hasText: 'Detached' }).waitFor({ timeout: 5_000 });
+    return `${gridId} removed: ${followingId} went with it, ${frozenId} detached`;
+  });
+
   await check('no page errors', async () => {
     if (pageErrors.length) throw new Error(pageErrors.slice(0, 2).join(' | '));
   });
