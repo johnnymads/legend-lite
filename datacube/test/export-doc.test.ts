@@ -120,3 +120,16 @@ describe('PDF is bytes, and its bytes are consistent', () => {
     assert.match(e, /\/Count 1 /);
   });
 });
+
+describe('the PDF draws each cell\'s look', () => {
+  it('fills a coloured cell, draws its text in its colour, and a gray header', () => {
+    const t = shown(result(2));
+    const styled: ExportTable = { ...t, rows: t.rows.map((r, i) => ({ ...r, styles: r.styles.map((st, c) =>
+      (c === 1 && i === 1 ? { ...st, background: '#ff8a65', color: '#ef4444', bold: true } : st)) })) };
+    const pdf = latin1(toPdf(styled));
+    assert.match(pdf, /1\.000 0\.541 0\.396 rg [\d.]+ [\d.]+ [\d.]+ [\d.]+ re f/, 'the heat fill');
+    assert.match(pdf, /0\.937 0\.267 0\.267 rg BT \/F2 /, 'red text, in the bold face');
+    assert.match(pdf, /0\.961 0\.961 0\.961 rg /, 'the gray header');
+    assert.match(pdf, /\/BaseFont \/Times-Roman/, 'every base-14 face is on offer');
+  });
+});

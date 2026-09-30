@@ -7,9 +7,9 @@ import { describe, it } from 'node:test';
 import { strFromU8, unzipSync } from 'fflate';
 import { JSDOM } from 'jsdom';
 
-import { escapeXml, toHtml } from '../src/export-rich.ts';
+import { cssOf, escapeXml, toHtml } from '../src/export-rich.ts';
 import { exportTable, REDACTED, type ExportTable } from '../src/export-model.ts';
-import { columnLetters, formatCode, sheetName, toXlsx } from '../src/export-xlsx.ts';
+import { argb, columnLetters, formatCode, sheetName, toXlsx } from '../src/export-xlsx.ts';
 import { buildColumnModel } from '../src/grid/columns.ts';
 import type { ResultTable } from '../src/result.ts';
 
@@ -118,5 +118,37 @@ describe('Excel: a real .xlsx', () => {
   });
   it('names its columns A..Z, AA..', () => {
     assert.deepEqual([0, 25, 26, 701, 702].map(columnLetters), ['A', 'Z', 'AA', 'ZZ', 'AAA']);
+  });
+});
+
+describe('the rich formats draw each cell\'s look', () => {
+  const styled = (): ExportTable => {
+    const t = table('Styled');
+    return { ...t, rows: t.rows.map((r, i) => ({ ...r, styles: r.styles.map((st, c) => (c === 1
+      ? { ...st, ...(i === 1 ? { color: '#ef4444' } : {}), ...(i === 0 ? { background: '#ff8a65', bold: true } : {}) }
+      : st)) })) };
+  };
+  it('HTML: inline colours and weight', () => {
+    const html = toHtml(styled());
+    const rule = (cls: string): string => new RegExp(`td\\.${cls} \\{ ([^}]*) \\}`).exec(html)?.[1] ?? '';
+    const cls = (i: number): string => [...html.matchAll(/<tr>(.*?)<\/tr>/g)][i + 1]?.[1]?.match(/<td(?: class="(s\d+)")?>/g)?.[1]
+      ?.match(/s\d+/)?.[0] ?? '';
+    assert.match(rule(cls(0)), /background:#ff8a65.*font-weight:600/, 'the first row\'s notional: its heat and weight');
+    assert.match(rule(cls(1)), /color:#ef4444/, 'the second row\'s: red');
+    assert.ok(!/<td style=/.test(html), 'no inline style: one class per look');
+    assert.match(html, /th \{ background: #f5f5f5/, 'a plain gray header');
+    assert.equal(cssOf({ align: 'right', underline: 'dashed' }), 'text-decoration:underline dashed;text-align:right');
+  });
+  it('the workbook: fills and font colours in its styles, a double as a NUMBER with its format', () => {
+    const files = unzipSync(toXlsx(styled(), { formats: { notional: { kind: 'currency', currency: 'USD', decimals: 0 } } }));
+    const styles = strFromU8(files['xl/styles.xml']!);
+    assert.match(styles, /<fgColor rgb="FFFF8A65"\/>/);
+    assert.match(styles, /<color rgb="FFEF4444"\/>/);
+    assert.match(styles, /<fgColor rgb="FFF5F5F5"\/>/, 'the gray header');
+    const precise = unzipSync(toXlsx({ ...styled(), rows: styled().rows.map((r) => ({ ...r, cells: r.cells.map((v, c) => (c === 1 ? 66677024.29998732 : v)) })) }));
+    assert.match(strFromU8(precise['xl/worksheets/sheet1.xml']!), /<c r="B2" s="\d+"><v>66677024\.29998732<\/v><\/c>/,
+      'a Float of 16 digits is a number, not text');
+    assert.equal(argb('#abc'), 'FFAABBCC');
+    assert.equal(argb('red'), null);
   });
 });

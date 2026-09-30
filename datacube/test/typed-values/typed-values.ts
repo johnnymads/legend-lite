@@ -373,8 +373,9 @@ describe('T7: one formatter on compiler types', () => {
       .find((b) => b.textContent === 'Accept'))?.click();
     const found = o.downloads.find(([name]) => name.endsWith('.html'))?.[2];
     const html = typeof found === 'string' ? found : '';
-    assert.match(html, /<td class="n">\(12\.50\)<\/td>/);
-    assert.match(html, /<td class="n">1,234\.56<\/td>/);
+    // the text the screen shows, in a cell styled as the grid styles it (inline, 2026-09-30)
+    assert.match(html, /<td[^>]*>\(12\.50\)<\/td>/);
+    assert.match(html, /<td[^>]*>1,234\.56<\/td>/);
   });
 
   it('T7d: the selection statistics read the column\'s type and format', async () => {

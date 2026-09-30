@@ -11,9 +11,9 @@
 // will not open -- 2026-09-29 audit.)
 
 import type { ColumnFormat, FormatterCache } from './format.ts';
-import type { ExportTable } from './export-model.ts';
+import { cased, type ExportStyle, type ExportTable } from './export-model.ts';
 import type { Scalar } from './result.ts';
-import { isNumeric } from './types.ts';
+import { fontStack } from './style.ts';
 
 export interface RichExportOptions {
   readonly formatters?: FormatterCache;
@@ -30,11 +30,33 @@ export function escapeXml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/** The grid as a standalone HTML document. */
+/** A CSS declaration list for one cell's look. */
+export function cssOf(style: ExportStyle): string {
+  const out: string[] = [];
+  if (style.color) out.push(`color:${style.color}`);
+  if (style.background) out.push(`background:${style.background}`);
+  if (style.fontFamily) out.push(`font-family:${fontStack(style.fontFamily)}`);
+  if (style.fontSize !== undefined) out.push(`font-size:${style.fontSize}px`);
+  if (style.bold) out.push('font-weight:600');
+  if (style.italic) out.push('font-style:italic');
+  const deco = [style.underline ? 'underline' : '', style.strike ? 'line-through' : ''].filter(Boolean);
+  if (deco.length) out.push(`text-decoration:${deco.join(' ')}${style.underline && style.underline !== 'solid' ? ` ${style.underline}` : ''}`);
+  if (style.align !== 'left') out.push(`text-align:${style.align}`);
+  return out.join(';');
+}
+
+/**
+ * The grid as a standalone HTML document that LOOKS like the grid: each cell's colours, font,
+ * alignment and decoration as the grid resolves them (export-model.ts), its grid lines, its
+ * banded and total rows, its header levels with their spans (a plain gray header). Styles are
+ * inline: the file is opened from disk or pasted into an email, where no stylesheet follows.
+ */
 export function toHtml(table: ExportTable, options: RichExportOptions = {}): string {
   const fmt = (v: Scalar, name: string, type: string | undefined): string =>
     options.formatters ? options.formatters.format(v, options.formats?.[name], type)
       : v === null ? '' : String(v);
+  const look = table.look;
+  const line = `1px solid ${look.lineColor}`;
 
   const head = table.headerRows.length > 0
     ? table.headerRows.map((row) => `<tr>${row.map((cell) => {
@@ -44,20 +66,29 @@ export function toHtml(table: ExportTable, options: RichExportOptions = {}): str
     }).join('')}</tr>`).join('\n')
     : `<tr>${table.columns.map((c) => `<th scope="col">${escapeXml(c.path.join(' '))}</th>`).join('')}</tr>`;
 
+  // ONE CLASS PER LOOK: a cube of a few thousand rows has a handful of distinct looks, and
+  // writing each inline made a 5,000-row page 6MB instead of 1.3MB (2026-09-30).
+  const classes = new Map<string, string>();
+  const classOf = (css: string): string => {
+    let name = classes.get(css);
+    if (name === undefined) {
+      name = `s${classes.size}`;
+      classes.set(css, name);
+    }
+    return name;
+  };
   const body = table.rows.map((row) => {
-    const cls = row.kind === 'total' ? ' class="total"' : row.kind === 'group' ? ' class="group"' : '';
     const cells = table.columns.map((c, i) => {
       const v = row.cells[i] ?? null;
-      const text = c.redacted ? String(v) : fmt(v, c.name, c.type);
-      const classes = [
-        v !== null && !c.redacted && !c.tree && isNumeric(c.type) ? 'n' : '',
-        c.redacted ? 'r' : '',
-      ].filter(Boolean).join(' ');
-      const style = c.tree && row.depth > 1 ? ` style="padding-left:${8 + (row.depth - 1) * 16}px"` : '';
-      return `<td${classes ? ` class="${classes}"` : ''}${style}>${escapeXml(text)}</td>`;
+      const style = row.styles[i] ?? { align: 'left' as const };
+      const text = cased(c.redacted ? String(v) : fmt(v, c.name, c.type), style.fontCase);
+      const indent = c.tree && row.depth > 1 ? `;padding-left:${4 + (row.depth - 1) * 16}px` : '';
+      const css = (cssOf(style) + indent).replace(/^;/, '');
+      return `<td${css ? ` class="${classOf(css)}"` : ''}>${escapeXml(text)}</td>`;
     }).join('');
-    return `<tr${cls}>${cells}</tr>`;
+    return `<tr>${cells}</tr>`;
   });
+  const looks = [...classes].map(([css, name]) => `  td.${name} { ${css.replace(/</g, '')}; }`).join('\n');
 
   const notes = table.notes.map((n) => `<p class="note">${escapeXml(n)}</p>`).join('\n');
   return `<!doctype html>
@@ -66,15 +97,14 @@ export function toHtml(table: ExportTable, options: RichExportOptions = {}): str
 <meta charset="utf-8">
 <title>${escapeXml(table.title)}</title>
 <style>
-  body { font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; margin: 24px; }
-  table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
-  th { background: #f4f4f4; font-weight: 600; text-align: center; }
-  td.n { text-align: right; }
-  td.r { color: #888; font-style: italic; }
-  tr.total td, tr.group td:first-child { font-weight: 600; }
-  tr.total td { background: #fafafa; }
+  body { font: 13px/1.4 ${fontStack(look.fontFamily)}; margin: 24px; color: ${look.color}; }
+  table { border-collapse: collapse; font-family: ${fontStack(look.fontFamily)}; font-size: ${look.fontSize}px;
+    font-variant-numeric: tabular-nums; border: 1px solid #e5e5e5; }
+  th { background: ${look.headerBackground}; color: ${look.headerColor}; font-weight: 500; text-align: center;
+    padding: 2px 6px; border: 1px solid #e5e5e5; }
+  td { padding: 1px 6px; white-space: nowrap;${look.verticalLines ? ` border-right: ${line};` : ''}${look.horizontalLines ? ` border-bottom: ${line};` : ''} }
   p.note { color: #555; margin: 4px 0; }
+${looks}
 </style>
 </head>
 <body>

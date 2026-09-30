@@ -600,16 +600,7 @@ export class CubeApp {
           { columnOrder: mergeColumnOrder(this.#columnOrder(), order) },
         ), 'reorder columns');
       },
-      cellBackground: (leaf, row, value) => {
-        const heat = this.#heatmaps.get(leaf.index);
-        if (!heat) return null;
-        return heatColour(
-          value,
-          heat.spec,
-          this.#heatRange(leaf.index, row) ?? null,
-          heat.type,
-        );
-      },
+      cellBackground: (leaf, row, value) => this.#heatFor(leaf, row, value),
       rowMeta: (abs) => this.#rowMeta(abs),
       // SET, never toggled: the grid says which way the person asked, and
       // asking for what already is changes nothing (P2-127).
@@ -2639,6 +2630,10 @@ export class CubeApp {
       groupLabels: view.snapshot.rows.map((name) => labelFor(this.#config, name)),
       truncated: view.truncated.length > 0,
       ...(this.#config.maxRows !== undefined ? { maxRows: this.#config.maxRows } : {}),
+      // and how the grid DRAWS it: the same appearance and heatmaps, so the file looks like it
+      appearance: this.#config.appearance,
+      columnAppearance: toColumnAppearance(this.#config),
+      cellBackground: (leaf, row, value) => this.#heatFor(leaf, row, value),
     });
     const doc = { formatters: this.#formatters, formats: this.#formats };
     switch (kind) {
@@ -2722,6 +2717,13 @@ export class CubeApp {
     } catch (e) {
       this.#status(e instanceof Error ? e.message : String(e), 'error');
     }
+  }
+
+  /** A cell's heatmap colour, for the grid and for an export alike; null when it has none. */
+  #heatFor(leaf: LeafColumn, row: number, value: Scalar): string | null {
+    const heat = this.#heatmaps.get(leaf.index);
+    if (!heat) return null;
+    return heatColour(value, heat.spec, this.#heatRange(leaf.index, row) ?? null, heat.type);
   }
 
   /** What an email's body says about its attachment: the title, the rows, when, and any note. */

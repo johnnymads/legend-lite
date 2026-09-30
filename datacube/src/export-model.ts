@@ -13,6 +13,11 @@
 
 import type { ColumnModel, HeaderCell, LeafColumn } from './grid/columns.ts';
 import type { ResultTable, Scalar } from './result.ts';
+import {
+  coloursFor, highlightBand, isAlternateRow, mergeAppearance, valueState,
+  type CellAppearance, type GridAppearance, type TextAlign, type UnderlineVariant,
+} from './style.ts';
+import type { FontCase } from './format.ts';
 import type { TreeRow } from './tree.ts';
 import { TREE_COLUMN } from './treeview.ts';
 
@@ -35,8 +40,54 @@ export interface ExportColumn {
 /** What a row is, which a flat file must say in words and a workbook as an outline level. */
 export type ExportRowKind = 'row' | 'group' | 'total' | 'detail';
 
+/**
+ * One cell's look, resolved exactly as the grid resolves it (style.ts): the cube's appearance
+ * with the column's over it, the colour its VALUE earns (normal, negative, zero), a heatmap
+ * over that, the total row's shading and the band under everything. Every rich format draws
+ * this, so a workbook, a page and a PDF look like the grid and like each other.
+ */
+export interface ExportStyle {
+  readonly color?: string;
+  readonly background?: string;
+  readonly fontFamily?: string;
+  /** In CSS pixels, as the grid sets it. */
+  readonly fontSize?: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: UnderlineVariant;
+  readonly strike?: boolean;
+  readonly align: TextAlign;
+  readonly fontCase?: FontCase;
+}
+
+/** The grid-wide look: its font, its lines, its header (plain gray, whatever the grid's is). */
+export interface ExportLook {
+  readonly fontFamily: string;
+  readonly fontSize: number;
+  readonly color: string;
+  readonly headerBackground: string;
+  readonly headerColor: string;
+  readonly horizontalLines: boolean;
+  readonly verticalLines: boolean;
+  readonly lineColor: string;
+}
+
+/** The grid's own defaults (grid.css, theme.css), for what an appearance leaves unsaid. */
+export const GRID_LOOK = {
+  fontFamily: 'Roboto',
+  fontSize: 12,
+  color: '#181d1f',
+  headerBackground: '#f5f5f5',
+  headerColor: '#000000',
+  lineColor: '#d4d4d4',
+  totalBackground: '#fafafa',
+  bandColor: '#d7e0eb',
+} as const;
+
 export interface ExportRow {
   readonly cells: readonly Scalar[];
+  /** Each cell's look, parallel to `cells`. */
+  readonly styles: readonly ExportStyle[];
   /** 1-based presentation depth in the tree; 1 for a flat cube. */
   readonly depth: number;
   readonly kind: ExportRowKind;
@@ -52,6 +103,7 @@ export interface ExportTable {
   readonly grouped: boolean;
   /** What a reader must be told about this file, in words: truncation, redaction. */
   readonly notes: readonly string[];
+  readonly look: ExportLook;
 }
 
 export interface ExportSource {
@@ -68,6 +120,11 @@ export interface ExportSource {
   readonly truncated: boolean;
   /** The row limit, for the note. */
   readonly maxRows?: number;
+  /** The grid's appearance, as it draws the cells (absent: the grid's defaults, uncoloured). */
+  readonly appearance?: GridAppearance;
+  readonly columnAppearance?: Readonly<Record<string, CellAppearance>>;
+  /** A cell's heatmap colour, as the grid asks for it: (leaf, row, value). */
+  readonly cellBackground?: (leaf: LeafColumn, row: number, value: Scalar) => string | null;
 }
 
 /** The label the grid shows over one leaf, per header level (from the header cells that cover it). */
@@ -120,7 +177,33 @@ export function exportTable(source: ExportSource): ExportTable {
       if (c.tree && kind === 'total' && meta?.level === 0 && (v === null || v === '')) return 'Total';
       return v;
     });
-    out.push({ cells, depth: meta?.depth ?? 1, kind });
+    const band = highlightBand(source.appearance ?? {});
+    const banded = band > 0 && isAlternateRow(r, band)
+      ? (source.appearance?.alternateRows ? source.appearance.alternateRowsColor : undefined) ?? GRID_LOOK.bandColor
+      : undefined;
+    const styles = model.leaves.map((leaf, i): ExportStyle => {
+      const c = columns[i]!;
+      const a = mergeAppearance(source.appearance ?? {}, source.columnAppearance?.[leaf.name]);
+      const v = c.redacted ? null : cells[i] ?? null;
+      const { foreground, background } = c.redacted ? {} : coloursFor(a, valueState(v, c.type));
+      // the grid's order: the band, the total's shading over it, the value's colour, a heatmap last
+      const heat = c.redacted || !source.cellBackground ? null : source.cellBackground(leaf, r, v);
+      const bg = heat ?? background ?? (kind === 'total' ? GRID_LOOK.totalBackground : banded);
+      return {
+        ...(c.redacted ? { color: '#a3a3a3', italic: true } : foreground ? { color: foreground } : {}),
+        ...(bg ? { background: bg } : {}),
+        ...(a.fontFamily ? { fontFamily: a.fontFamily } : {}),
+        ...(a.fontSize !== undefined ? { fontSize: a.fontSize } : {}),
+        ...(a.bold || kind === 'total' ? { bold: true } : {}),
+        ...(a.italic && !c.redacted ? { italic: true } : {}),
+        ...(a.underline ? { underline: a.underline } : {}),
+        ...(a.strikethrough ? { strike: true } : {}),
+        // the grid's own default is left for every column, figures included
+        align: c.tree ? 'left' : a.textAlign ?? 'left',
+        ...(a.fontCase ? { fontCase: a.fontCase } : {}),
+      };
+    });
+    out.push({ cells, styles, depth: meta?.depth ?? 1, kind });
   }
 
   const notes: string[] = [];
@@ -133,10 +216,29 @@ export function exportTable(source: ExportSource): ExportTable {
       ? `Truncated: showing the first ${source.maxRows.toLocaleString()} rows of a level, as the grid does.`
       : 'Truncated at the row limit, as the grid is.');
   }
-  return { title: source.title, columns, headerRows, rows: out, grouped, notes };
+  const g = source.appearance ?? {};
+  const look: ExportLook = {
+    fontFamily: g.fontFamily ?? GRID_LOOK.fontFamily,
+    fontSize: g.fontSize ?? GRID_LOOK.fontSize,
+    color: g.normalForeground ?? GRID_LOOK.color,
+    headerBackground: GRID_LOOK.headerBackground,
+    headerColor: GRID_LOOK.headerColor,
+    horizontalLines: g.showHorizontalGridLines === true,
+    verticalLines: g.showVerticalGridLines !== false,
+    lineColor: g.gridLineColor ?? GRID_LOOK.lineColor,
+  };
+  return { title: source.title, columns, headerRows, rows: out, grouped, notes, look };
 }
 
 /** One header line for a format with a single header row: the levels joined ("2021 notional"). */
 export function flatHeader(column: ExportColumn): string {
   return column.path.join(' ');
+}
+
+/** Text as the grid shows it after its letter case (CSS text-transform, done here for files). */
+export function cased(text: string, fontCase: FontCase | undefined): string {
+  if (fontCase === 'uppercase') return text.toUpperCase();
+  if (fontCase === 'lowercase') return text.toLowerCase();
+  if (fontCase === 'capitalize') return text.replace(/(^|\s)(\S)/g, (_m, sp: string, ch: string) => sp + ch.toUpperCase());
+  return text;
 }

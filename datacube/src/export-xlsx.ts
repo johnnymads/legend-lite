@@ -18,8 +18,9 @@
 import { strToU8, zipSync } from 'fflate';
 
 import type { ColumnFormat } from './format.ts';
-import type { ExportColumn, ExportTable } from './export-model.ts';
+import { cased, type ExportColumn, type ExportTable } from './export-model.ts';
 import type { Scalar } from './result.ts';
+import { fontStack } from './style.ts';
 import { isNumeric, isTemporal, isTimeOfDay } from './types.ts';
 
 export interface XlsxOptions {
@@ -91,11 +92,45 @@ function exactInExcel(text: string): boolean {
   return digits.replace(/0+$/, '').length <= 15;
 }
 
-/** Styles, registered as cells need them: a number format, bold, an indent, a header fill. */
+/** '#rrggbb' (or '#rgb') as Excel's ARGB, or null for anything else. */
+export function argb(colour: string | undefined): string | null {
+  if (!colour) return null;
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(colour.trim());
+  if (!m) return null;
+  const hex = m[1]!.length === 3 ? [...m[1]!].map((c) => c + c).join('') : m[1]!;
+  return `FF${hex.toUpperCase()}`;
+}
+
+/** A font family's first face, as Excel names a font ('Roboto', 'Arial'). */
+function faceOf(family: string): string {
+  return (fontStack(family).split(',')[0] ?? family).trim().replace(/^['"]|['"]$/g, '');
+}
+
+/** What one cell looks like in the workbook: its font, fill, border, number format and alignment. */
+interface XfSpec {
+  readonly numFmt: number;
+  readonly font: string;
+  readonly fill: string;
+  readonly border: string;
+  readonly align: string;
+}
+
+/** Styles, registered as cells need them: fonts, fills, borders, number formats, alignments. */
 class Styles {
   readonly #fmts = new Map<string, number>();
+  readonly #fonts = new Map<string, number>();
+  readonly #fills = new Map<string, number>();
+  readonly #borders = new Map<string, number>();
   readonly #xfs = new Map<string, number>();
-  readonly #xfList: string[] = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+  readonly #xfList: string[] = [];
+
+  constructor(defaultFont: string) {
+    this.#fonts.set(defaultFont, 0);
+    this.#fills.set('<fill><patternFill patternType="none"/></fill>', 0);
+    this.#fills.set('<fill><patternFill patternType="gray125"/></fill>', 1);
+    this.#borders.set('<border><left/><right/><top/><bottom/><diagonal/></border>', 0);
+    this.#xfList.push('<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>');
+  }
 
   /** A number format's id: 0 for General, else a custom format (ids from 164, Excel's first free one). */
   fmt(code: string | null): number {
@@ -107,28 +142,38 @@ class Styles {
     }
     return id;
   }
-  xf(numFmtId: number, bold: boolean, indent: number, header = false): number {
-    const key = `${numFmtId}|${bold}|${indent}|${header}`;
+  static #id(map: Map<string, number>, xml: string): number {
+    let id = map.get(xml);
+    if (id === undefined) {
+      id = map.size;
+      map.set(xml, id);
+    }
+    return id;
+  }
+  xf(spec: XfSpec): number {
+    const key = JSON.stringify(spec);
     let id = this.#xfs.get(key);
     if (id === undefined) {
       id = this.#xfList.length;
       this.#xfs.set(key, id);
-      const align = indent > 0 ? `<alignment indent="${indent}"/>` : header ? '<alignment horizontal="center"/>' : '';
-      this.#xfList.push(`<xf numFmtId="${numFmtId}" fontId="${bold ? 1 : 0}" fillId="${header ? 2 : 0}" borderId="0" xfId="0"`
-        + `${numFmtId ? ' applyNumberFormat="1"' : ''}${bold ? ' applyFont="1"' : ''}${header ? ' applyFill="1"' : ''}`
-        + `${align ? ` applyAlignment="1">${align}</xf>` : '/>'}`);
+      const font = Styles.#id(this.#fonts, spec.font);
+      const fill = Styles.#id(this.#fills, spec.fill);
+      const border = Styles.#id(this.#borders, spec.border);
+      this.#xfList.push(`<xf numFmtId="${spec.numFmt}" fontId="${font}" fillId="${fill}" borderId="${border}" xfId="0"`
+        + ' applyNumberFormat="1" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1">'
+        + `${spec.align}</xf>`);
     }
     return id;
   }
   xml(): string {
+    const list = (m: Map<string, number>): string => [...m].sort((a, b) => a[1] - b[1]).map(([x]) => x).join('');
     const fmts = [...this.#fmts].map(([code, id]) => `<numFmt numFmtId="${id}" formatCode="${esc(code)}"/>`).join('');
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
       + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
       + (fmts ? `<numFmts count="${this.#fmts.size}">${fmts}</numFmts>` : '')
-      + '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'
-      + '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'
-      + '<fill><patternFill patternType="solid"><fgColor rgb="FFF4F4F4"/><bgColor indexed="64"/></patternFill></fill></fills>'
-      + '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+      + `<fonts count="${this.#fonts.size}">${list(this.#fonts)}</fonts>`
+      + `<fills count="${this.#fills.size}">${list(this.#fills)}</fills>`
+      + `<borders count="${this.#borders.size}">${list(this.#borders)}</borders>`
       + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
       + `<cellXfs count="${this.#xfList.length}">${this.#xfList.join('')}</cellXfs>`
       + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
@@ -136,48 +181,76 @@ class Styles {
   }
 }
 
-/** One cell's XML; `style` is its xf id. */
-function cellXml(ref: string, v: Scalar, column: ExportColumn, style: number, dateStyle: () => number,
-  dateTimeStyle: () => number, timeStyle: () => number, bold: boolean, indent: number, styles: Styles): string {
-  const s = (id: number): string => (id ? ` s="${id}"` : '');
-  const text = (t: string, id = style): string => `<c r="${ref}"${s(id)} t="inlineStr"><is><t xml:space="preserve">${esc(t)}</t></is></c>`;
-  if (v === null) return style ? `<c r="${ref}"${s(style)}/>` : '';
-  if (column.redacted || column.tree) return text(String(v));
-  if (typeof v === 'boolean') return `<c r="${ref}"${s(style)} t="b"><v>${v ? 1 : 0}</v></c>`;
-  const type = column.type;
-  if (isNumeric(type)) {
+/** A font element for a look: face, size in points (CSS px x 0.75), weight, slant, lines, colour. */
+function fontXml(look: { readonly face: string; readonly px: number; readonly bold?: boolean; readonly italic?: boolean;
+  readonly underline?: boolean; readonly strike?: boolean; readonly color?: string | null }): string {
+  const pt = Math.round(look.px * 0.75 * 2) / 2;
+  return `<font>${look.bold ? '<b/>' : ''}${look.italic ? '<i/>' : ''}${look.strike ? '<strike/>' : ''}`
+    + `${look.underline ? '<u/>' : ''}<sz val="${pt}"/>${look.color ? `<color rgb="${look.color}"/>` : ''}`
+    + `<name val="${esc(look.face)}"/></font>`;
+}
+
+const fillXml = (rgb: string | null): string => (rgb
+  ? `<fill><patternFill patternType="solid"><fgColor rgb="${rgb}"/><bgColor indexed="64"/></patternFill></fill>`
+  : '<fill><patternFill patternType="none"/></fill>');
+
+/** What a value is in a workbook: its cell type, its content, and which number format it takes. */
+function valueOf(v: Scalar, column: ExportColumn, code: string | null):
+  { readonly kind: 'n' | 'b' | 's'; readonly content: string; readonly fmt: string | null } {
+  if (typeof v === 'boolean') return { kind: 'b', content: v ? '1' : '0', fmt: null };
+  if (!column.redacted && !column.tree && isNumeric(column.type)) {
+    // A double IS what Excel holds, whatever its digits. An exact value -- a DECIMAL's text, an
+    // integer past 2^53 (a bigint) -- beyond 15 significant digits stays text, never silently
+    // rounded (a Float's 66677024.29998732 was caught by that rule and lost its format, 2026-09-30).
+    if (typeof v === 'number') {
+      return Number.isFinite(v) ? { kind: 'n', content: String(v), fmt: code } : { kind: 's', content: String(v), fmt: null };
+    }
     const t = String(v);
-    const n = Number(t);
-    if (!Number.isFinite(n) || !exactInExcel(t)) return text(t, styles.xf(0, bold, indent));
-    return `<c r="${ref}"${s(style)}><v>${t}</v></c>`;
+    return Number.isFinite(Number(t)) && exactInExcel(t) ? { kind: 'n', content: t, fmt: code } : { kind: 's', content: t, fmt: null };
   }
-  if (isTemporal(type) && typeof v === 'string') {
-    if (isTimeOfDay(type)) {
+  if (!column.redacted && isTemporal(column.type) && typeof v === 'string') {
+    if (isTimeOfDay(column.type)) {
       const m = TIME.exec(v);
       if (m) {
         const secs = Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] ?? 0) + Number(m[4] ?? 0);
-        return `<c r="${ref}" s="${timeStyle()}"><v>${secs / 86_400}</v></c>`;
+        return { kind: 'n', content: String(secs / 86_400), fmt: 'hh:mm:ss' };
       }
     } else {
       const m = DATE.exec(v);
       if (m) {
-        const hasTime = m[4] !== undefined;
         const n = serial(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0),
           Number(m[6] ?? 0), Number(m[7] ?? 0));
-        return `<c r="${ref}" s="${hasTime ? dateTimeStyle() : dateStyle()}"><v>${n}</v></c>`;
+        return { kind: 'n', content: String(n), fmt: m[4] !== undefined ? 'yyyy-mm-dd hh:mm:ss' : 'yyyy-mm-dd' };
       }
     }
   }
-  return text(String(v));
+  return { kind: 's', content: String(v), fmt: null };
 }
 
-/** The grid as an .xlsx file. */
+/**
+ * The grid as an .xlsx file that LOOKS like the grid: each cell's font, colours, alignment and
+ * decoration as the grid resolves them (export-model.ts), its grid lines as borders, its banded
+ * and total rows, a plain gray header -- and values a spreadsheet can compute on.
+ */
 export function toXlsx(table: ExportTable, options: XlsxOptions = {}): Uint8Array {
-  const styles = new Styles();
-  const headerStyle = styles.xf(0, true, 0, true);
-  const dateStyle = (): number => styles.xf(styles.fmt('yyyy-mm-dd'), false, 0);
-  const dateTimeStyle = (): number => styles.xf(styles.fmt('yyyy-mm-dd hh:mm:ss'), false, 0);
-  const timeStyle = (): number => styles.xf(styles.fmt('hh:mm:ss'), false, 0);
+  const look = table.look;
+  const face = faceOf(look.fontFamily);
+  const defaultFont = fontXml({ face, px: look.fontSize, color: argb(look.color) });
+  const styles = new Styles(defaultFont);
+  const line = argb(look.lineColor) ?? 'FFD4D4D4';
+  // the grid's lines: vertical ones as each cell's right edge, horizontal ones as its bottom
+  const edge = (tag: 'right' | 'bottom', on: boolean): string =>
+    (on ? `<${tag} style="thin"><color rgb="${line}"/></${tag}>` : `<${tag}/>`);
+  const cellBorder = `<border><left/>${edge('right', look.verticalLines)}<top/>${edge('bottom', look.horizontalLines)}<diagonal/></border>`;
+  const headerBorder = '<border><left style="thin"><color rgb="FFE5E5E5"/></left><right style="thin"><color rgb="FFE5E5E5"/></right>'
+    + '<top style="thin"><color rgb="FFE5E5E5"/></top><bottom style="thin"><color rgb="FFE5E5E5"/></bottom><diagonal/></border>';
+  const headerStyle = styles.xf({
+    numFmt: 0,
+    font: fontXml({ face, px: look.fontSize, color: argb(look.headerColor) }),
+    fill: fillXml(argb(look.headerBackground)),
+    border: headerBorder,
+    align: '<alignment horizontal="center" vertical="center"/>',
+  });
   const codes = table.columns.map((c) => (c.redacted || c.tree ? null : formatCode(options.formats?.[c.name], c.type)));
 
   const rows: string[] = [];
@@ -198,12 +271,33 @@ export function toXlsx(table: ExportTable, options: XlsxOptions = {}): Uint8Arra
   const top = headerRows.length;
   table.rows.forEach((row, r) => {
     const at = top + r + 1;
-    const bold = row.kind === 'total';
     const cells = table.columns.map((c, i) => {
+      const st = row.styles[i] ?? { align: 'left' as const };
+      const v = row.cells[i] ?? null;
+      const value = v === null ? null : valueOf(v, c, codes[i] ?? null);
       const indent = c.tree ? Math.max(0, row.depth - 1) : 0;
-      const style = styles.xf(styles.fmt(codes[i] ?? null), bold || (c.tree && row.kind === 'group'), indent);
-      return cellXml(`${columnLetters(i)}${at}`, row.cells[i] ?? null, c, style, dateStyle, dateTimeStyle, timeStyle,
-        bold, indent, styles);
+      const align = `<alignment horizontal="${st.align}"${indent > 0 ? ` indent="${indent}"` : ''}/>`;
+      const id = styles.xf({
+        numFmt: styles.fmt(value?.fmt ?? null),
+        font: fontXml({
+          face: st.fontFamily ? faceOf(st.fontFamily) : face,
+          px: st.fontSize ?? look.fontSize,
+          bold: st.bold === true,
+          italic: st.italic === true,
+          underline: st.underline !== undefined,
+          strike: st.strike === true,
+          color: argb(st.color) ?? argb(look.color),
+        }),
+        fill: fillXml(argb(st.background)),
+        border: cellBorder,
+        align,
+      });
+      const ref = `${columnLetters(i)}${at}`;
+      if (!value) return `<c r="${ref}" s="${id}"/>`;
+      if (value.kind === 's') {
+        return `<c r="${ref}" s="${id}" t="inlineStr"><is><t xml:space="preserve">${esc(cased(value.content, st.fontCase))}</t></is></c>`;
+      }
+      return `<c r="${ref}" s="${id}"${value.kind === 'b' ? ' t="b"' : ''}><v>${value.content}</v></c>`;
     }).join('');
     const outline = row.depth > 1 ? ` outlineLevel="${Math.min(7, row.depth - 1)}"` : '';
     rows.push(`<row r="${at}"${outline}>${cells}</row>`);
