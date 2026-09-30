@@ -5683,6 +5683,59 @@ reproduced with both match orderings. Every earlier slice was checked against ou
 behaviour and against tests most overloads pass either way; this is the first check against the
 reference itself.
 
+## 2026-09-30 — Rebuild W0.6 push 2: the query scope can no longer shadow a binder; both pins removed
+
+**What changed and why.** `|let x = 10; [1, 2, 3]->map(x | $x + 1)` returned `[11, 11, 11]`. The lowerer keeps query
+scope (plan parameters, the query-level lets it seeds, lets met in expression position) in one flat map keyed by name,
+read AHEAD of every row scope (`Lowerer.java` `letBindings`, the variable arm and the property arm); the store resolver
+has the same shape (`StoreResolver.letBindings`, read by `SubQueryLift` and the temporal frames' date resolution). So
+any lambda, match or nested-let binder spelled like a query-scope name was read from the map. The homework's first design
+(the lets as the outermost link of the resolver chain) was set aside by the dry run (T1: sixteen root resolvers ignore
+the variable name and would turn a loud miss into a silent column read); E1 was chosen instead and is what landed:
+**the Barendregt convention at both boundaries.** `Lowerer.lower(List)` and `StoreResolver.resolve` first rename every
+binder in the body spelled like a query-scope name (`TypedSubst.renameBinders`: a lambda or match parameter against
+the query-level lets, the plan parameters and every nested let; a nested let against the query-level lets and the plan
+parameters, since it would overwrite one), so the flat maps never meet a name they do not own. No resolver, arm or map
+changed. Sizes: `TypedSubst` +34 (the reserved sets), `FreeVars.lets` +16, `Lowerer` +19, `StoreResolver` +18.
+
+**Fixed, each with its old value in the test:** the map and filter pins; exists and forAll (`false` → `true`); a fold
+whose element or accumulator is spelled like the let (`30`, `103` → `6`); sortBy (`[3, 1, 2]` → `[1, 2, 3]`); a
+property read on a binder spelled like a struct-valued let (`0` → `5`); three levels spelled `x` (`[202, 202]` →
+`[32, 32]`); a multi-statement program whose second let and final expression both bind `x` (`[100, 100, 100]` →
+`[4, 9, 16]`); a plan parameter `x` with a lambda binder `x` (the placeholder reached the executable dialect, a loud
+failure; on the engine-text path it was a wrong `${x}` in the plan). All eight fail on `795611e2e` and pass here
+(`LowererLetScopeTest`, the same class compiled against the previous jars). **Seen, not this push's:** a lambda
+returning a list inside `map` (`[1, 2]->map(x | [10, 20]->map(x | $x + 1))`, Pure `[11, 21, 11, 21]`) fails loudly
+before and after ("unrolled quantified assert: element verdict not adjudicable for null"): a list-of-lists shape the
+executor does not flatten; a loud failure, owner W1.10's defect list.
+
+**The probe** (local only, never committed; receipt `receipts/rebuild-W0.6-p2-probe-795611e2e/`): the rename site
+printed every binder it renamed over `bazel test //... --nocache_test_results`. The first rule reserved every nested
+let's name for the nested lets themselves and renamed about 1,300 of them for colliding with themselves (`products`,
+`limits`, `whenClauses`, …: the inlined platform bodies keep their lets inside lambdas, so the lowerer's
+expression-position let arm is hit constantly, not "reachability unknown"); the rule was narrowed as above. With the
+narrowed rule: 69 renames per corpus run (138 per lane, both runs), all lambda parameters spelled like a query let or a
+plan parameter (`p`, `s`, `cm`, `f`, `x`, `c`, `dt`, and the service parameters `optionalPnl`,
+`optionalSettlementDateTime`); no other lane renames anything; every lane green, rosters unchanged, so none of these
+changed a verdict: they are α-renamings that appear only in SQL lambda text. Conservative by design: the resolver cannot
+know which lets the lowerer will seed, so it reserves them all; unique ids (the audit's finding 2) make the pass
+unnecessary.
+
+**Gate lanes.** `bazel test //core:guardrails //core:census //parser-equivalence:parser_parity //spec:spec_tests`
+"Executed 4 out of 4 tests: 4 tests pass" (no pin moved); `bazel test //...` "Executed 38 out of 129 tests: 129 tests
+pass"; `bazel test //tools/deps:all` "Executed 0 out of 5 tests: 5 tests pass"; `bazel test //spec:reference_lane`
+PASSED (47.5 s; `compiler/spec/typed` changed, so front-end). Corpus rosters LOST 0, GAINED 0.
+**Timing.** `//spec:corpus_duckdb` alone, `--nocache_test_results`: 78.4 s at a one-minute load of 2.98, but the five-minute
+load was 11 (another session had just been running): indicative only, inside push 1's 75.9–77.4 s band plus that noise.
+The pass costs two walks per statement; no quiet machine was available within twenty minutes.
+
+**Pins moved.** Both `@KnownDefect(owner = "W2.5")` pins in `LowererLetScopeTest` removed (fixed, D14). **Deleted:**
+nothing (the flat maps stay until unique ids). **Number:** open wrong-results defects 13 → 12. **Net product lines:** +87.
+
+**Cost.** One session; chain runs: two with the probe (the first rule, the narrowed rule), one on the final tree. The
+homework's remaining sites (`TemporalFrame.normalizeContextDate`, `SubQueryLift.walk`) are covered by the resolver-side
+rename rather than threaded scopes.
+
 ## 2026-09-29 — Rebuild D23: the wrong-rows tool is built on the stress corpus, with swappable data
 
 **What.** The user asked, in plain words, what the corpus and PCT lanes cannot see and why the stress corpus is not

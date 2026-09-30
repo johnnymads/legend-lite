@@ -186,8 +186,26 @@ public final class StoreResolver {
                         chainMappings)
                 : driverRuntimeFqn == null ? Context.NONE
                 : Context.ofRuntime(driverRuntimeFqn);
+        // The let env below is one flat map keyed by name and read ahead of
+        // every binder (SubQueryLift, the temporal frames' date reads): a
+        // binder spelled like a let would be read as the let. Every such
+        // binder is renamed first, as the lowerer does at its own boundary
+        // (rebuild W0.6 push 2 / E1).
+        java.util.Set<String> queryScope = new java.util.HashSet<>(letBindings.keySet());
+        java.util.Set<String> reserved = new java.util.HashSet<>(letBindings.keySet());
+        for (TypedSpec st : body) {
+            if (st instanceof com.legend.compiler.spec.typed.TypedLet let) {
+                queryScope.add(let.name());
+                reserved.add(let.name());
+            }
+            reserved.addAll(com.legend.compiler.spec.typed.FreeVars.lets(st));
+        }
         List<TypedSpec> out = new ArrayList<>(body.size());
-        for (TypedSpec stmt0 : body) {
+        for (TypedSpec stmt00 : body) {
+            TypedSpec stmt0 = stmt00 instanceof com.legend.compiler.spec.typed.TypedLet let
+                    ? let.withChildren(List.of(com.legend.compiler.spec.typed.TypedSubst
+                            .renameBinders(let.value(), reserved, queryScope)))
+                    : com.legend.compiler.spec.typed.TypedSubst.renameBinders(stmt00, reserved, queryScope);
             TypedSpec stmt = ChainNormalizer.normalize(chainDispatch.runtimeIfsAsUnions(stmt0, this::storeRooted), ctx,
                     pr -> java.util.Optional.ofNullable(trackedElementClass(pr)));
             // milestoning-date let env (engine inScopeVars, M:648):

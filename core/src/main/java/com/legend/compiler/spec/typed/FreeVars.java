@@ -78,6 +78,22 @@ public final class FreeVars {
         return out;
     }
 
+    /** The name of every {@link TypedLet} beneath {@code term}. */
+    public static Set<String> lets(TypedSpec term) {
+        Set<String> out = new LinkedHashSet<>();
+        lets(term, out);
+        return out;
+    }
+
+    private static void lets(TypedSpec n, Set<String> out) {
+        if (n instanceof TypedLet let) {
+            out.add(let.name());
+        }
+        for (TypedSpec c : n.children()) {
+            lets(c, out);
+        }
+    }
+
     private static void binders(TypedSpec n, Set<String> out) {
         switch (n) {
             case TypedLambda l -> out.addAll(l.parameters());

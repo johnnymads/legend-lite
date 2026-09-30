@@ -17,7 +17,7 @@ Keep it current: when an item lands, move it to §3 with its GATES.md heading, a
 
 ## 0. Start here (a fresh session with no context)
 
-**Now (update in every push):** W0.6 push 2 (the lowerer's let scope). Push 1 is done (§3). The scope, design choice,
+**Now (update in every push):** W0.6 push 3 (the `TypedFilter` stamp). Pushes 1 and 2 are done (§3). The scope, design choice,
 tests and gate of every W0.6 push are in `plan-audit-2026-09-26/w0.6-homework/README.md` §"Push list" (homework and a
 dry run against the code done); **the order is §4 Phase 1's (D22, D23): the six small pushes now (2, 3, 7, 8, 11, 13);
 then the wrong-rows tool over the stress corpus (W1.10, as rewritten under D23); then the remaining pushes, each judged by
@@ -370,6 +370,7 @@ over onto `ResolvedExpr`. Read `h2-resolved-expr-design-2026-09-29.md` with its 
 | W1.0 | the documents executable: rev H2, the register, routing, banners; the cold read passed after fixes (its 15 contradictions and 12 gaps fixed) | `plan-audit-2026-09-26/cold-read/2026-09-29-rev-H2.md`; GATES "Rebuild W1.0" |
 | rev H3 | the tractability audit (five reviewers) folded in: every W0.6 push dry-run against the code and fully specified; W1 items given tools, spikes, sizes; W2.3a, W3.3, W4.3 decomposed; W3.7 made runnable; C4 given a rule; the consistency sweep's fixes; E1–E13 | `plan-audit-2026-09-26/tractability-2026-09-29/`; GATES "Rebuild rev H3" |
 | W0.6 push 1 | capture-avoiding substitution in the inliner, `SourceSubst` and `MatchFold`; the `InlinerMatchCaptureTest` pin removed; three further wrong answers reproduced and fixed; 14 latent captures in library code fixed; six bodies newly typed in the reference lane; a purpose-built stress (compile time by size against the previous commit, and a permanent correctness test) | GATES "Rebuild W0.6 push 1" |
+| W0.6 push 2 | the Barendregt convention at both boundaries: `Lowerer.lower(List)` and `StoreResolver.resolve` rename every binder spelled like a query-scope name before their flat let maps read it; both `LowererLetScopeTest` pins removed, eight cases fixed; 69 α-renamings per corpus run, no verdict changed | GATES "Rebuild W0.6 push 2" |
 | independent audit; D22 | one session's own audit of rev H4 against the code (input for C1); the user ruled the W0.6 reorder | `plan-audit-2026-09-26/independent-audit-2026-09-29.md` |
 | rev H4 | the re-cut (approved by the user): phases in §4; learn and decide before building; the middle before the front end; net-deletion and build-don't-re-plan rules; the gate diet | GATES "Rebuild rev H4" |
 
