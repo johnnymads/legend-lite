@@ -198,6 +198,10 @@ public class LegendHttpServer {
                         PureV1Api.jsonToGrammarLambdaBatch(body, queryParam(query, "renderStyle"));
                 case "/api/pure/v1/compilation/lambdaRelationType" ->
                         PureV1Api.lambdaRelationType(body);
+                case "/api/pure/v1/compilation/compile" ->
+                        PureV1Api.compile(body);
+                case "/api/pure/v1/compilation/lambdaReturnType" ->
+                        PureV1Api.lambdaReturnType(body);
                 case "/api/pure/v1/execution/generatePlan" ->
                         PureV1Api.generatePlan(body);
                 case "/api/pure/v1/execution/execute" ->

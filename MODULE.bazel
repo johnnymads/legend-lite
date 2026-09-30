@@ -36,6 +36,16 @@ npm.npm_translate_lock(
 )
 use_repo(npm, "npm")
 
+# The Query app's own lock (docs/QUERY_APP_DESIGN_2026_09_30.md D6): its own repository, so
+# neither app's dependency change moves the other's lock. Same pinned versions as DataCube's
+# tools. Updated with: bazel run -- @pnpm//:pnpm --dir $PWD/query install --lockfile-only
+npm.npm_translate_lock(
+    name = "npm_query",
+    pnpm_lock = "//query:pnpm-lock.yaml",
+    data = ["//query:package.json"],
+)
+use_repo(npm, "npm_query")
+
 # pnpm itself, pinned by rules_js: the lock file is updated through Bazel, never a machine's pnpm:
 #   bazel run -- @pnpm//:pnpm --dir $PWD/datacube install --lockfile-only
 pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm")

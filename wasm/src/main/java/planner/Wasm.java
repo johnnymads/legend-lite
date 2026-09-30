@@ -217,6 +217,22 @@ public final class Wasm {
     }
 
     /**
+     * E2's twin: a model's text to its PMCD JSON ({@code {"_type":"data","elements":[...]}}),
+     * without source information -- the same {@code PmcdParser.parseDocument} the server's
+     * {@code grammar/grammarToJson/model} calls. How a browser app browses a model's classes,
+     * mappings, data spaces and services without a server (docs/QUERY_APP_DESIGN_2026_09_30.md G11).
+     */
+    @org.teavm.jso.JSExport
+    public static String modelJsonOrError(String text) {
+        try {
+            return "OK\n" + com.legend.protocol.SourceInformation.strip(
+                    com.legend.parser.PmcdParser.parseDocument(text));
+        } catch (RuntimeException | StackOverflowError e) {
+            return folded(e);
+        }
+    }
+
+    /**
      * A Pure Database from a DuckDB table's CATALOG (T2): the rows {@code DESCRIBE} reports,
      * read by legend-lite's DuckDB dialect -- the declared types, and the conversions the
      * source must apply, or the columns left out when it cannot.

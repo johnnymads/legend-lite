@@ -1,0 +1,19 @@
+{
+  "name": "@legend/query",
+  "version": "0.1.0",
+  "description": "Legend Query, rebuilt light: find data, build a query, run it, save it -- on legend-lite and its WASM planner, speaking only upstream APIs.",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/jsdom": "30.0.0",
+    "@types/node": "26.6.2",
+    "esbuild": "0.28.2",
+    "jsdom": "29.1.1",
+    "playwright": "1.63.0",
+    "typescript": "7.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": []
+  }
+}

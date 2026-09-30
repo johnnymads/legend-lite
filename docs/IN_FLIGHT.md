@@ -70,6 +70,19 @@ and `$x.n * 1.1` compiles over it without `->toOne()`:
   `name TYPE NOT NULL` for such a column. Callers move with it: `Wasm.databaseFromCatalogOrError`, the warehouse's
   catalog listing (adds `notNull`), DataCube's generated writer and corpus.
 
+## A fourth line, 2026-09-30: the Query app (the user's ask; design `docs/QUERY_APP_DESIGN_2026_09_30.md`)
+
+In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new). **Touches, one line each:**
+- `core/src/main/java/com/legend/server/PureV1Api.java` + `LegendHttpServer.java` routes (+ `PureV1ApiTest`):
+  the upstream `pure/v1` endpoints the Query app needs and lite lacks, each in legend-engine's shape, measured
+  against 4.145.0 -- `execute` with `parameterValues` (landed on the branch), `compilation/compile`,
+  `compilation/lambdaReturnType`, `analytics/mapping/modelCoverage`, `analytics/dataSpace/render`, the query store.
+- `wasm/src/main/java/planner/Wasm.java`: `modelJsonOrError` (E2's twin, byte-identical to the server's).
+- `MODULE.bazel`: a second `npm_translate_lock` (`npm_query`, `//query:pnpm-lock.yaml`), so `datacube/`'s lock
+  is not touched.
+
+Nothing in `datacube/`, the compiler packages, `warehouse/`.
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).

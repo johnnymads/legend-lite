@@ -122,6 +122,53 @@ public final class PureV1Api {
         });
     }
 
+    // ---------------------------------------------------------------------
+    // C1 / E6: compile, lambdaReturnType
+    // ---------------------------------------------------------------------
+
+    /**
+     * C1 {@code compilation/compile}: a model context compiled whole -- its elements, then every
+     * body in it (functions, derived properties, service queries) -- as legend-engine compiles
+     * a model before answering. {@code {"message":"OK","defects":[]}}, or the first failure in
+     * the engine's error shape, 400 (measured, 4.145.0, 2026-09-30). Recorded differences: lite
+     * reports no {@code defects} (the engine's are warnings, e.g. a service without a title), and
+     * its refusal carries the element in the message, not a {@code sourceInformation}.
+     */
+    public static Answer compile(String body) {
+        String[] wall = new String[1];
+        Answer a = answer(400, "COMPILATION", () -> {
+            Map<String, String> walls = com.legend.Compiler.compileAllBodies(
+                    com.legend.Compiler.compileModel(modelText(request(body))));
+            if (!walls.isEmpty()) {
+                // the wall's message names the element ("in function '...'"); its key is the
+                // overload signature, which a person does not need
+                wall[0] = walls.values().iterator().next();
+                return "";
+            }
+            return "{\"message\":\"OK\",\"defects\":[]}";
+        });
+        return wall[0] != null ? error(400, "COMPILATION", wall[0]) : a;
+    }
+
+    /**
+     * E6 {@code compilation/lambdaReturnType}: {@code {model, lambda}} to {@code {"returnType":
+     * path}} -- the result's type as legend-engine names it (measured, 4.145.0, 2026-09-30): a
+     * relation is {@code meta::pure::metamodel::relation::Relation}, a class or enumeration its
+     * path, a primitive its name; a failure is 400 COMPILATION.
+     */
+    public static Answer lambdaReturnType(String body) {
+        return answer(400, "COMPILATION", () -> {
+            Json.Obj request = request(body);
+            String model = modelText(request.getObj("model"));
+            LambdaFunction lambda = ProtocolReader.lambda(request.getObj("lambda"));
+            com.legend.compiler.element.type.Type t = com.legend.Compiler.resultType(model, lambda).type();
+            String path = com.legend.compiler.element.type.Type.schemaView(t) != null
+                    ? "meta::pure::metamodel::relation::Relation"
+                    : UpstreamRelationType.typePath(t);
+            return Json.toCompact(Map.of("returnType", path));
+        });
+    }
+
     private static PureComposer.Style style(@com.legend.base.Nullable String renderStyle) {
         if (renderStyle == null || renderStyle.isEmpty() || "PRETTY".equals(renderStyle)) {
             return PureComposer.Style.PRETTY;
@@ -180,12 +227,73 @@ public final class PureV1Api {
         return answer(500, "COMPILATION", () -> {
             Json.Obj request = request(body);
             String model = modelText(request.getObj("model"));
-            LambdaFunction lambda = ProtocolReader.lambda(request.getObj("function"));
+            LambdaFunction lambda = ProtocolReader.lambda(
+                    boundParameters(request.getObj("function"), request.getArrOr("parameterValues", null)));
             String runtime = runtimeOf(request, com.legend.Compiler.target(model, lambda));
             java.io.StringWriter rows = new java.io.StringWriter();
             QueryPlan plan = new QueryService().executeUpstream(model, lambda, runtime, rows);
             return tdsResult(plan, rows.toString());
         });
+    }
+
+    /**
+     * {@code ExecuteInput.parameterValues} ({@code [{name, value}]}, each value a protocol value
+     * specification -- a literal, a collection, an enum value, a call such as {@code today()})
+     * bound to the lambda's parameters: each becomes {@code let name = value;} ahead of the
+     * body, in the lambda's declared order, and the lambda takes no parameters. The database
+     * still computes every value; this only rearranges the query's shape. As legend-engine
+     * 4.145.0 answers (measured 2026-09-30): a parameter with no value is refused, named with
+     * its type and multiplicity; a value for no parameter of the lambda is ignored.
+     */
+    static Json.Obj boundParameters(Json.Obj function, @com.legend.base.Nullable Json.Arr values) {
+        List<Json.Node> declared = function.has("parameters") ? function.getArr("parameters").items() : List.of();
+        Map<String, Json.Node> byName = new LinkedHashMap<>();
+        if (values != null) {
+            for (Json.Node n : values.items()) {
+                Json.Obj pv = (Json.Obj) n;
+                byName.put(pv.getString("name"), pv.get("value"));
+            }
+        }
+        if (declared.isEmpty() && byName.isEmpty()) {
+            return function;
+        }
+        List<Json.Node> body = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        for (Json.Node p : declared) {
+            String name = ((Json.Obj) p).getString("name");
+            Json.Node value = byName.remove(name);
+            if (value == null) {
+                missing.add(name + ":" + signature((Json.Obj) p));
+                continue;
+            }
+            LinkedHashMap<String, Json.Node> let = new LinkedHashMap<>();
+            let.put("_type", Json.str("func"));
+            let.put("function", Json.str("letFunction"));
+            LinkedHashMap<String, Json.Node> letName = new LinkedHashMap<>();
+            letName.put("_type", Json.str("string"));
+            letName.put("value", Json.str(name));
+            let.put("parameters", new Json.Arr(List.of(new Json.Obj(letName), value)));
+            body.add(new Json.Obj(let));
+        }
+        if (!missing.isEmpty()) {
+            throw new IllegalArgumentException("Missing external parameter(s): " + String.join(", ", missing));
+        }
+        body.addAll(function.getArr("body").items());
+        LinkedHashMap<String, Json.Node> out = new LinkedHashMap<>(function.fields());
+        out.put("parameters", new Json.Arr(List.of()));
+        out.put("body", new Json.Arr(body));
+        return new Json.Obj(out);
+    }
+
+    /** A lambda parameter's {@code Type[m]}, as the engine's refusal spells it. */
+    private static String signature(Json.Obj parameter) {
+        Json.Obj raw = parameter.getObj("genericType").getObj("rawType");
+        Json.Obj m = parameter.getObj("multiplicity");
+        long lower = m.getLong("lowerBound");
+        String mult = !m.has("upperBound") || m.get("upperBound") instanceof Json.Null
+                ? (lower == 0 ? "*" : lower + "..*")
+                : lower == m.getLong("upperBound") ? String.valueOf(lower) : lower + ".." + m.getLong("upperBound");
+        return raw.getString("fullPath") + "[" + mult + "]";
     }
 
     /**

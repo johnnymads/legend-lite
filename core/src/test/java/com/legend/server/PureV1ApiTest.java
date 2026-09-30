@@ -166,6 +166,82 @@ class PureV1ApiTest {
         assertEquals(rows(setup, activitySql(engine)), rows(setup, activitySql(lite)));
     }
 
+    /** {@code parameterValues}: a lambda's parameters bound to the request's values (Query app G1). */
+    @Test
+    void e8_execute_bindsParameterValues_scalarAndList() {
+        String lam = PureV1Api.grammarToJsonLambda("{region:String[1], minQty:Integer[1], books:String[*]|"
+                + "#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#"
+                + "->filter(r|(($r.region == $region) && ($r.qty > $minQty)) && $r.book->in($books))"
+                + "->select(~[region, book, qty])->from(trades::h2::RT)}", false).json();
+        PureV1Api.Answer a = PureV1Api.execute("{\"function\":" + lam + ",\"model\":" + textModel()
+                + ",\"parameterValues\":["
+                + "{\"name\":\"region\",\"value\":{\"_type\":\"string\",\"value\":\"EMEA\"}},"
+                + "{\"name\":\"minQty\",\"value\":{\"_type\":\"integer\",\"value\":5}},"
+                + "{\"name\":\"books\",\"value\":{\"_type\":\"collection\",\"multiplicity\":{\"lowerBound\":1,\"upperBound\":1},"
+                + "\"values\":[{\"_type\":\"string\",\"value\":\"Alpha\"}]}}]}");
+        assertEquals(200, a.status(), a.json());
+        List<Json.Node> rows = Json.parseObject(a.json()).getObj("result").getArr("rows").items();
+        assertFalse(rows.isEmpty(), a.json());
+        for (Json.Node r : rows) {
+            List<Json.Node> v = ((Json.Obj) r).getArr("values").items();
+            assertEquals("EMEA", ((Json.Str) v.get(0)).value());
+            assertEquals("Alpha", ((Json.Str) v.get(1)).value());
+            assertTrue(((Json.Num) v.get(2)).longValue() > 5, a.json());
+        }
+    }
+
+    @Test
+    void e8_execute_aParameterWithNoValue_isRefused_aStrayValueIgnored_asTheEngineAnswers() {
+        String lam = PureV1Api.grammarToJsonLambda("{region:String[1]|#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#"
+                + "->filter(r|$r.region == $region)->from(trades::h2::RT)}", false).json();
+        PureV1Api.Answer missing = PureV1Api.execute("{\"function\":" + lam + ",\"model\":" + textModel() + "}");
+        assertEquals(500, missing.status(), missing.json());
+        assertTrue(Json.parseObject(missing.json()).getString("message").contains("Missing external parameter(s): region:String[1]"),
+                missing.json());
+        PureV1Api.Answer stray = PureV1Api.execute("{\"function\":" + lam + ",\"model\":" + textModel()
+                + ",\"parameterValues\":[{\"name\":\"region\",\"value\":{\"_type\":\"string\",\"value\":\"EMEA\"}},"
+                + "{\"name\":\"nope\",\"value\":{\"_type\":\"integer\",\"value\":1}}]}");
+        // measured, 4.145.0: a value for no parameter of the lambda is ignored
+        assertEquals(200, stray.status(), stray.json());
+    }
+
+    /** C1: a model compiles whole -- elements and every body -- or answers its first failure, 400. */
+    @Test
+    void c1_compile_okOrTheFirstFailure_asTheEngineAnswers() {
+        PureV1Api.Answer ok = PureV1Api.compile(textModel());
+        assertEquals(200, ok.status(), ok.json());
+        assertEquals("OK", Json.parseObject(ok.json()).getString("message"));
+        assertTrue(Json.parseObject(ok.json()).getArr("defects").items().isEmpty(), ok.json());
+
+        // a function body that does not type: the engine answers 400 COMPILATION (measured, 4.145.0)
+        String bad = model + "\n###Pure\nfunction trades::h2::broken(): Any[*] { #>{trades::h2::DB.TRADES_SCHEMA.TRADES}#->select(~[nope]) }\n";
+        PureV1Api.Answer refused = PureV1Api.compile(Json.toCompact(Map.of("_type", "text", "code", bad)));
+        assertEquals(400, refused.status(), refused.json());
+        Json.Obj o = Json.parseObject(refused.json());
+        assertEquals("COMPILATION", o.getString("errorType"));
+        assertTrue(o.getString("message").contains("trades::h2::broken"), refused.json());
+    }
+
+    /** E6: a lambda's result type, named as the engine names it (measured, 4.145.0). */
+    @Test
+    void e6_lambdaReturnType_namesTheTypeAsTheEngineDoes() {
+        Map<String, String> expected = new LinkedHashMap<>();
+        expected.put("|#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#->select(~[region])", "meta::pure::metamodel::relation::Relation");
+        expected.put("|1 + 2", "Integer");
+        expected.put("|'a'", "String");
+        expected.put("|%2024-01-01", "StrictDate");
+        for (Map.Entry<String, String> e : expected.entrySet()) {
+            String lam = PureV1Api.grammarToJsonLambda(e.getKey(), false).json();
+            PureV1Api.Answer a = PureV1Api.lambdaReturnType("{\"model\":" + textModel() + ",\"lambda\":" + lam + "}");
+            assertEquals(200, a.status(), a.json());
+            assertEquals(e.getValue(), Json.parseObject(a.json()).getString("returnType"), e.getKey());
+        }
+        String unbound = PureV1Api.grammarToJsonLambda("|$x.nope", false).json();
+        PureV1Api.Answer refused = PureV1Api.lambdaReturnType("{\"model\":" + textModel() + ",\"lambda\":" + unbound + "}");
+        assertEquals(400, refused.status(), refused.json());
+        assertEquals("COMPILATION", Json.parseObject(refused.json()).getString("errorType"));
+    }
+
     // ---------------------------------------------------------------------
 
     /** The result's text with the per-run trace id, the SQL, the values and the type names
