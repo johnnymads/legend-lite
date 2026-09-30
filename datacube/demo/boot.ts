@@ -542,7 +542,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         }
       },
       download: (name, mime, text) => {
-        const url = URL.createObjectURL(new Blob([text], { type: mime }));
+        const url = URL.createObjectURL(new Blob([typeof text === 'string' ? text : text.slice()], { type: mime }));
         const a = document.createElement('a');
         a.href = url;
         a.download = name;

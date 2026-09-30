@@ -1,28 +1,27 @@
-// Plain text and PDF export.
+// Plain text and PDF export, from the export model.
 //
-// The PDF tests assert STRUCTURE rather than appearance, because a
-// PDF that looks right in one reader and is rejected by another is
-// the failure mode that matters, and it is always structural: a byte
-// offset in the xref table, an object count, an unescaped character
-// ending a string early. Those are checkable; "does it look nice" is
-// not, and pretending otherwise would be a green check over nothing.
+// The PDF tests assert STRUCTURE in BYTES: a PDF's /Length and xref are byte counts into the file,
+// and the first version counted JavaScript characters -- every é or £ then broke the file for a
+// strict reader, and its tests passed because they measured the same wrong thing (2026-09-29).
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { escapePdfText, toPdf, toPlainText } from '../src/export-doc.ts';
+import { toPdf, toPlainText, winAnsiByte } from '../src/export-doc.ts';
+import { exportTable, type ExportTable } from '../src/export-model.ts';
+import { buildColumnModel } from '../src/grid/columns.ts';
 import type { ResultTable } from '../src/result.ts';
 
-function table(rows: number): ResultTable {
-  const region: (string | null)[] = [];
+function result(rows: number, region = (i: number) => `Region ${i}`): ResultTable {
+  const r: (string | null)[] = [];
   const amount: (number | null)[] = [];
   for (let i = 0; i < rows; i++) {
-    region.push(`Region ${i}`);
+    r.push(region(i));
     amount.push(i % 3 === 0 ? null : i * 1000.5);
   }
   return {
     columns: [
-      { name: 'region', type: 'String', values: region },
+      { name: 'region', type: 'String', values: r },
       { name: 'amount', type: 'Float', values: amount },
     ],
     rowCount: rows,
@@ -31,184 +30,93 @@ function table(rows: number): ResultTable {
   };
 }
 
+const shown = (rt: ResultTable, title = ''): ExportTable =>
+  exportTable({ title, rows: rt, model: buildColumnModel(rt), treeRows: [], groupLabels: [], truncated: false });
+
+const latin1 = (b: Uint8Array): string => Buffer.from(b).toString('latin1');
+
 describe('plain text export', () => {
-  it('lines the columns up in a fixed width', () => {
-    const out = toPlainText(table(3));
-    const lines = out.trimEnd().split('\n');
-    // Header, rule, three rows.
+  it('lines the columns up: header, rule, rows; numbers right, text left', () => {
+    const lines = toPlainText(shown(result(3))).trimEnd().split('\n');
     assert.equal(lines.length, 5);
-
-    // Every row's SECOND column ends at the same offset. Measured
-    // from the right, because a row whose last cell is blank has its
-    // padding trimmed -- which is correct, and which makes measuring
-    // from the left meaningless for that row.
-    const ends = lines
-      .filter((l) => !/^-+/.test(l) && /\S\s\s+\S/.test(l))
-      .map((l) => l.length);
-    assert.equal(new Set(ends).size, 1, lines.join('\n'));
+    assert.match(lines[1] ?? '', /^-+ {2}-+$/);
+    const [a, b] = [lines[3] ?? '', lines[4] ?? ''];
+    assert.equal(a.length, b.length, 'numbers end on the same column');
   });
-
-  it('right-aligns numbers and left-aligns text', () => {
-    const t: ResultTable = {
-      columns: [
-        { name: 'k', type: 'String', values: ['a', 'bbbb'] },
-        { name: 'n', type: 'Float', values: [1, 1000] },
-      ],
-      rowCount: 2,
-      epoch: 1,
-      elapsedMs: 0,
+  it('leaves no trailing whitespace, and a title and notes head it', () => {
+    const out = toPlainText({ ...shown(result(2), 'Trades'), notes: ['Truncated.'] });
+    assert.ok(out.split('\n').every((l) => !/\s$/.test(l)));
+    assert.match(out, /^Trades\n\nTruncated\.\n\n/);
+  });
+  it('indents the tree by depth', () => {
+    const t = shown(result(2));
+    const tree: ExportTable = {
+      ...t,
+      grouped: true,
+      columns: [{ ...t.columns[0]!, tree: true }, t.columns[1]!],
+      rows: [{ ...t.rows[0]!, depth: 1, kind: 'group' }, { ...t.rows[1]!, depth: 3, kind: 'row' }],
     };
-    const lines = toPlainText(t).trimEnd().split('\n');
-    const first = lines[2] ?? '';
-    const second = lines[3] ?? '';
-    // '1' is padded left to sit under the last digit of '1000'.
-    assert.match(first, /a\s+1$/);
-    assert.match(second, /bbbb\s+1000$/);
-  });
-
-  it('leaves no trailing whitespace on a row', () => {
-    // Invisible on screen, and it survives a paste looking like
-    // corruption.
-    for (const line of toPlainText(table(4)).split('\n')) {
-      assert.equal(line, line.replace(/\s+$/, ''), JSON.stringify(line));
-    }
-  });
-
-  it('renders an empty table without throwing', () => {
-    const empty: ResultTable = {
-      columns: [{ name: 'a', type: 'String', values: [] }],
-      rowCount: 0,
-      epoch: 1,
-      elapsedMs: 0,
-    };
-    assert.match(toPlainText(empty), /^a\n-\n$/);
-  });
-
-  it('includes a title when given one', () => {
-    assert.match(toPlainText(table(1), { title: 'Q3' }), /^Q3\n\n/);
+    const lines = toPlainText(tree).split('\n');
+    assert.match(lines[3] ?? '', /^ {4}Region 1/, 'depth 3: two levels of two spaces');
   });
 });
 
-describe('PDF escaping', () => {
-  it('escapes the characters that end a string object', () => {
-    assert.equal(escapePdfText('a(b)c'), 'a\\(b\\)c');
-    assert.equal(escapePdfText('a\\b'), 'a\\\\b');
-  });
+describe('PDF is bytes, and its bytes are consistent', () => {
+  const pdf = toPdf(shown(result(80, (i) => (i % 2 ? `Zürich £${i}` : `Paris €${i} — ok…`)), 'Café report'));
+  const text = latin1(pdf);
 
-  it('flattens newlines rather than emitting them raw', () => {
-    // A raw newline inside a literal would terminate it and shift
-    // every byte offset in the xref after it.
-    assert.equal(escapePdfText('a\nb'), 'a b');
-    assert.equal(escapePdfText('a\r\nb'), 'a  b');
+  it('is a PDF: header, binary comment, trailer', () => {
+    assert.ok(text.startsWith('%PDF-1.4\n%'));
+    assert.ok(text.trimEnd().endsWith('%%EOF'));
   });
-
-  it('replaces characters a base-14 font cannot draw', () => {
-    assert.equal(escapePdfText('a🙂b'), 'a??b');
+  it('points startxref at the xref table, in bytes', () => {
+    const at = Number(/startxref\n(\d+)\n%%EOF/.exec(text)?.[1]);
+    assert.equal(text.slice(at, at + 4), 'xref');
   });
-});
-
-describe('PDF structure', () => {
-  const parse = (pdf: string) => ({
-    objects: [...pdf.matchAll(/^(\d+) 0 obj$/gm)].map((m) => Number(m[1])),
-    startxref: Number(/startxref\n(\d+)/.exec(pdf)?.[1] ?? -1),
-    size: Number(/\/Size (\d+)/.exec(pdf)?.[1] ?? -1),
-    pages: Number(/\/Count (\d+)/.exec(pdf)?.[1] ?? -1),
-  });
-
-  it('writes a well-formed header and trailer', () => {
-    const pdf = toPdf(table(3));
-    assert.match(pdf, /^%PDF-1\.4\n/);
-    assert.match(pdf, /%%EOF\n$/);
-    assert.match(pdf, /\/Type \/Catalog/);
-  });
-
-  it('numbers every object once, in order', () => {
-    const { objects } = parse(toPdf(table(3)));
-    assert.deepEqual(objects, [...objects].sort((a, b) => a - b));
-    assert.equal(new Set(objects).size, objects.length);
-    assert.equal(objects[0], 1);
-  });
-
-  it('declares a Size that matches the objects written', () => {
-    const pdf = toPdf(table(3));
-    const { objects, size } = parse(pdf);
-    assert.equal(size, objects.length + 1, 'Size counts the free object');
-  });
-
-  it('points startxref at the actual xref table', () => {
-    // The failure this catches produces a file every reader rejects,
-    // with no indication of where the problem is.
-    const pdf = toPdf(table(3));
-    const { startxref } = parse(pdf);
-    assert.ok(startxref > 0);
-    assert.equal(pdf.slice(startxref, startxref + 4), 'xref');
-  });
-
   it('gives every xref offset the byte where its object begins', () => {
-    const pdf = toPdf(table(5));
-    const { startxref } = parse(pdf);
-    const lines = pdf.slice(startxref).split('\n');
-    // lines[0] 'xref', lines[1] '0 N', lines[2] the free entry.
-    const entries = lines.slice(3).filter((l) => /^\d{10} \d{5} n/.test(l));
-    assert.ok(entries.length > 0, 'there are xref entries at all');
-    entries.forEach((entry, i) => {
-      const offset = Number(entry.slice(0, 10));
-      assert.equal(
-        pdf.slice(offset, offset + `${i + 1} 0 obj`.length),
-        `${i + 1} 0 obj`,
-        `entry ${i} points at the wrong byte`,
-      );
-    });
+    const xref = text.slice(text.lastIndexOf('\nxref\n'));
+    const offsets = [...xref.matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
+    assert.ok(offsets.length > 4);
+    offsets.forEach((off, i) => assert.ok(text.startsWith(`${i + 1} 0 obj`, off), `object ${i + 1} at ${off}`));
   });
-
-  it('declares a stream Length matching its content', () => {
-    // A wrong Length truncates the page or runs past its end.
-    const pdf = toPdf(table(4));
-    for (const m of pdf.matchAll(/<< \/Length (\d+) >>\nstream\n/g)) {
-      const declared = Number(m[1]);
-      const start = m.index + m[0].length;
-      const end = pdf.indexOf('\nendstream', start);
-      assert.equal(end - start, declared, 'stream length disagrees');
+  it('declares each stream Length as its bytes', () => {
+    for (const m of text.matchAll(/<< \/Length (\d+) >>\nstream\n/g)) {
+      const start = (m.index ?? 0) + m[0].length;
+      assert.equal(text.slice(start + Number(m[1]), start + Number(m[1]) + 10), '\nendstream');
     }
   });
-
-  it('paginates a long table and repeats the header', () => {
-    const pdf = toPdf(table(300));
-    const { pages } = parse(pdf);
-    assert.ok(pages > 1, `expected several pages, got ${pages}`);
-    // One /Type /Page object per page.
-    const pageObjects = [...pdf.matchAll(/\/Type \/Page[^s]/g)].length;
-    assert.equal(pageObjects, pages);
-    // The heading appears once per page.
-    const headings = [...pdf.matchAll(/\(region\) Tj/g)].length;
-    assert.equal(headings, pages, 'the header repeats on every page');
+  it('draws Latin-1 and WinAnsi characters as themselves: é ü £ € — …', () => {
+    assert.ok(text.includes(`Caf${String.fromCharCode(0xe9)} report`), 'é as one WinAnsi byte');
+    assert.ok(text.includes(`Z${String.fromCharCode(0xfc)}rich ${String.fromCharCode(0xa3)}`), 'ü and £');
+    assert.ok(text.includes(String.fromCharCode(0x80)), '€ at 0x80');
+    assert.ok(text.includes(String.fromCharCode(0x97)), '— at 0x97');
+    assert.ok(text.includes(String.fromCharCode(0x85)), '… at 0x85');
+    assert.equal(winAnsiByte('中'), undefined);
   });
-
-  it('produces a valid file for an empty table', () => {
-    const empty: ResultTable = {
-      columns: [{ name: 'a', type: 'String', values: [] }],
-      rowCount: 0,
-      epoch: 1,
-      elapsedMs: 0,
-    };
-    const pdf = toPdf(empty);
-    const { startxref, pages } = parse(pdf);
-    assert.equal(pages, 1, 'an empty result is still one page');
-    assert.equal(pdf.slice(startxref, startxref + 4), 'xref');
+  it('names what its font cannot draw, instead of a silent "?"', () => {
+    const cjk = latin1(toPdf(shown(result(2, () => '北京'))));
+    assert.match(cjk, /cannot be drawn.*U\+5317 U\+4EAC/);
   });
-
-  it('does not let a cell containing a bracket corrupt the file', () => {
-    const t: ResultTable = {
-      columns: [
-        { name: 'k', type: 'String', values: ['a)b(c\\d', 'plain'] },
-      ],
-      rowCount: 2,
-      epoch: 1,
-      elapsedMs: 0,
+  it('paginates a long table and repeats the header on every page', () => {
+    const pages = (text.match(/\/Type \/Page /g) ?? []).length;
+    assert.ok(pages >= 2);
+    assert.equal((text.match(/\(region\) Tj/g) ?? []).length, pages);
+  });
+  it('turns landscape for a wide table, and never overlaps: columns continue on another page', () => {
+    const wide: ResultTable = {
+      columns: Array.from({ length: 40 }, (_, i) => ({ name: `column_${i}`, type: 'String', values: [`value ${i} long text`] })),
+      rowCount: 1, epoch: 1, elapsedMs: 0,
     };
-    const pdf = toPdf(t);
-    const { startxref } = parse(pdf);
-    assert.equal(pdf.slice(startxref, startxref + 4), 'xref');
-    assert.match(pdf, /\(a\\\)b\\\(c\\\\d\) Tj/);
+    const w = latin1(toPdf(shown(wide)));
+    assert.match(w, /\/MediaBox \[0 0 842 595\]/, 'landscape A4');
+    assert.ok((w.match(/\/Type \/Page /g) ?? []).length > 1, 'the columns went on to another page');
+  });
+  it('escapes a bracket or backslash in a cell so it cannot end the string', () => {
+    const b = latin1(toPdf(shown(result(1, () => 'a) b\\ (c'))));
+    assert.ok(b.includes('(a\\) b\\\\ \\(c) Tj'));
+  });
+  it('an empty table is still a valid file', () => {
+    const e = latin1(toPdf(shown(result(0))));
+    assert.match(e, /\/Count 1 /);
   });
 });

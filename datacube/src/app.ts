@@ -52,7 +52,7 @@ import { isPivotTotalColumn } from './snapshot.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
 import type { RemoteSource, SnapTarget } from './snap.ts';
-import { exportFileName, toCsv, toEml } from './export.ts';
+import { exportCsv, exportFileName, toCsv, toEml } from './export.ts';
 import {
   ALERT_WINDOW,
   CODE_CHECK_WINDOW,
@@ -64,8 +64,10 @@ import {
   type AlertOptions,
 } from './ui/alert.ts';
 import { pivotLabel, type PivotColumn } from './query.ts';
-import { toHtml, toSpreadsheetML } from './export-rich.ts';
+import { toHtml } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
+import { exportTable } from './export-model.ts';
+import { toXlsx, XLSX_MIME } from './export-xlsx.ts';
 import { toBarChart, toTreemap } from './chart.ts';
 import type { MarkKey } from './chart-option.ts';
 import { ChartPanel } from './ui/chart-panel.ts';
@@ -229,14 +231,14 @@ export interface CubeAppBaseOptions {
    * with an anchor, an embedder may want a save dialog -- and
    * because a test must not depend on a browser writing to disk.
    */
-  readonly download?: (name: string, mime: string, text: string) => void;
+  readonly download?: (name: string, mime: string, content: string | Uint8Array) => void;
   /**
    * Hand a message with an attachment to the host's mail client.
    *
    * A host concern, and unavoidably so: a browser cannot attach a
-   * file to a mailto: link, so there is no in-page implementation to
-   * fall back to. Absent means the Email entries are DISABLED rather
-   * than missing -- the capability is legible either way.
+   * file to a mailto: link. Absent, Email downloads an unsent `.eml` draft
+   * (upstream's way) through `download` instead. The attachment is BYTES for
+   * a binary format (a PDF, a workbook) and text for the others.
    */
   readonly email?: (message: {
     readonly subject: string;
@@ -244,7 +246,7 @@ export interface CubeAppBaseOptions {
     readonly attachment: {
       readonly name: string;
       readonly mime: string;
-      readonly content: string;
+      readonly content: string | Uint8Array;
     };
   }) => void | Promise<void>;
   /**
@@ -2272,22 +2274,6 @@ export class CubeApp {
   // -- export -----------------------------------------------------------
 
   /**
-   * Header text per column, where the user renamed one.
-   *
-   * The document exports are READ by people, so they must say what
-   * the screen says -- an export whose headings are the raw generated
-   * names is a different document from the one on screen.
-   */
-  #labels(): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const c of this.#view?.rows.columns ?? []) {
-      const label = labelFor(this.#config, c.name);
-      if (label !== c.name) out[c.name] = label;
-    }
-    return out;
-  }
-
-  /**
    * Add a chart of the cube to the board, below the grid: the cube's query
    * regrouped by the chart's options, drawn by ECharts (`ui/chart-panel.ts`).
    * It follows the cube -- a filter added to the grid narrows it -- and a
@@ -2635,41 +2621,41 @@ export class CubeApp {
   #render(kind: 'csv' | 'excel' | 'html' | 'text' | 'pdf'): {
     name: string;
     mime: string;
-    content: string;
+    content: string | Uint8Array;
   } | null {
     const view = this.#view;
-    if (!view) return null;
+    const model = this.#grid.columns;
+    if (!view || !model) return null;
     const title = this.#config.reportTitle ?? 'cube';
-    const base = exportFileName(title, new Date());
-    const doc = {
+    const at = new Date();
+    const base = exportFileName(title, at);
+    // WHAT THE GRID SHOWS, once, for every format (export-model.ts): its leaves in its order
+    // under its headers, the tree's depth, blurred columns REDACTED, the notes a reader needs.
+    const table = exportTable({
       title,
-      formatters: this.#formatters,
-      formats: this.#formats,
-      labels: this.#labels(),
-    };
+      rows: view.rows,
+      model,
+      treeRows: view.treeRows,
+      groupLabels: view.snapshot.rows.map((name) => labelFor(this.#config, name)),
+      truncated: view.truncated.length > 0,
+      ...(this.#config.maxRows !== undefined ? { maxRows: this.#config.maxRows } : {}),
+    });
+    const doc = { formatters: this.#formatters, formats: this.#formats };
     switch (kind) {
       case 'csv':
-        return { name: `${base}.csv`, mime: 'text/csv', content: toCsv(view.rows) };
+        // raw values: CSV is the one that is computed on again
+        return { name: `${base}.csv`, mime: 'text/csv', content: exportCsv(table) };
       case 'excel':
-        // SpreadsheetML rather than CSV so numbers arrive as numbers;
-        // a CSV of "1,234" opens as text in every locale that uses a
-        // comma for the decimal point.
-        return {
-          name: `${base}.xls`,
-          mime: 'application/vnd.ms-excel',
-          content: toSpreadsheetML(view.rows, { title }),
-        };
+        // a real workbook: numbers as numbers in the column's own format, the tree as outlines
+        return { name: `${base}.xlsx`, mime: XLSX_MIME, content: toXlsx(table, { formats: this.#formats, at }) };
       case 'html':
         // Formatted: a page exists to be read, so it says what the screen says.
-        return { name: `${base}.html`, mime: 'text/html', content: toHtml(view.rows, doc) };
+        return { name: `${base}.html`, mime: 'text/html', content: toHtml(table, doc) };
       case 'text':
-        // Formatted, not raw: plain text exists to be READ -- pasted
-        // into a message or a ticket -- so it should say what the
-        // screen says. CSV is the one that stays raw so it can be
-        // computed on again.
-        return { name: `${base}.txt`, mime: 'text/plain', content: toPlainText(view.rows, doc) };
+        // Formatted, not raw: plain text exists to be READ -- pasted into a message or a ticket.
+        return { name: `${base}.txt`, mime: 'text/plain', content: toPlainText(table, doc) };
       case 'pdf':
-        return { name: `${base}.pdf`, mime: 'application/pdf', content: toPdf(view.rows, doc) };
+        return { name: `${base}.pdf`, mime: 'application/pdf', content: toPdf(table, doc) };
     }
   }
 
@@ -2717,7 +2703,11 @@ export class CubeApp {
         return;
       }
       const draft = rendered.name.replace(/\.[^.]+$/, '.eml');
-      download(draft, 'message/rfc822', toEml(rendered));
+      download(draft, 'message/rfc822', toEml({
+        subject: this.#config.reportTitle ?? 'cube',
+        text: this.#emailSummary(rendered.name),
+        attachment: rendered,
+      }));
       this.#status(`email draft ${draft}`, 'ok');
       return;
     }
@@ -2725,13 +2715,26 @@ export class CubeApp {
     try {
       await send({
         subject: title,
-        body: `${title} — ${this.#view?.rows.rowCount ?? 0} rows`,
+        body: this.#emailSummary(rendered.name),
         attachment: rendered,
       });
       this.#status(`emailed ${rendered.name}`, 'ok');
     } catch (e) {
       this.#status(e instanceof Error ? e.message : String(e), 'error');
     }
+  }
+
+  /** What an email's body says about its attachment: the title, the rows, when, and any note. */
+  #emailSummary(file: string): string {
+    const title = this.#config.reportTitle ?? 'cube';
+    const rows = this.#view?.rows.rowCount ?? 0;
+    const receipt = this.#view?.receipts.at(-1);
+    return [
+      `${title}: ${rows.toLocaleString()} row${rows === 1 ? '' : 's'}, exported ${new Date().toLocaleString()}.`,
+      `Attached: ${file}`,
+      ...(receipt ? [`Answered by ${receipt.where}${receipt.as ? ` as ${receipt.as}` : ''}`
+        + `${receipt.statementId ? ` (statement ${receipt.statementId})` : ''}.`] : []),
+    ].join('\n');
   }
 
   #export(

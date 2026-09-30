@@ -1,42 +1,23 @@
-// HTML and Excel export.
+// HTML export, from the export model (export-model.ts): the grid as shown.
 //
-// DataCube offers HTML, plain text, PDF, Excel and CSV. CSV and
-// plain text already exist in export.ts; this adds the two that carry
-// structure.
+// The header is the grid's own: one row per level, with the spans the grid draws, so a pivot's
+// years sit over their measures exactly as on screen. The tree reads as a tree (indented by
+// depth, totals in bold); a blurred column is REDACTED; the notes (truncation, redaction) head
+// the page. Styles are inline: the file is opened from disk or pasted into an email, where no
+// stylesheet follows it.
 //
-// Excel is written as SpreadsheetML -- a single XML document Excel
-// opens natively -- rather than as .xlsx. An .xlsx is a zip of
-// several XML parts plus a relationship graph, which needs a zip
-// implementation in the browser to produce something Excel reads no
-// better. SpreadsheetML keeps types and number formats, which is the
-// part that actually matters: a CSV turns every figure back into
-// text for Excel to re-guess.
-//
-// Both exporters take the RENDERED text for labels and the RAW value
-// for numbers. That is deliberate: a header should read as the user
-// configured it, while a number must arrive as a number or the
-// spreadsheet cannot sum it.
+// (Excel is export-xlsx.ts: a real OOXML workbook. The SpreadsheetML-2003 file this module
+// used to write was named .xls, which Excel warns about and Excel Online and Google Sheets
+// will not open -- 2026-09-29 audit.)
 
 import type { ColumnFormat, FormatterCache } from './format.ts';
-import type { ResultTable, Scalar } from './result.ts';
-import { isNumeric, isTemporal, isTimeOfDay } from './types.ts';
+import type { ExportTable } from './export-model.ts';
+import type { Scalar } from './result.ts';
+import { isNumeric } from './types.ts';
 
 export interface RichExportOptions {
-  readonly title?: string;
   readonly formatters?: FormatterCache;
   readonly formats?: Readonly<Record<string, ColumnFormat>>;
-  /** Restrict and order columns; defaults to all, in table order. */
-  readonly columns?: readonly string[];
-  /** Header labels, where they differ from the column names. */
-  readonly labels?: Readonly<Record<string, string>>;
-}
-
-function chosen(table: ResultTable, options: RichExportOptions) {
-  return options.columns
-    ? options.columns
-        .map((n) => table.columns.find((c) => c.name === n))
-        .filter((c): c is NonNullable<typeof c> => c !== undefined)
-    : table.columns;
 }
 
 /** Escape text for an XML or HTML text node or attribute. */
@@ -49,140 +30,65 @@ export function escapeXml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
-/**
- * The grid as a standalone HTML document.
- *
- * Styles are inlined rather than linked, because the file is opened
- * from disk or pasted into an email where no stylesheet follows it.
- */
-export function toHtml(
-  table: ResultTable,
-  options: RichExportOptions = {},
-): string {
-  const cols = chosen(table, options);
-  const typeOfName = (n: string): string | undefined => cols.find((c) => c.name === n)?.type;
-  const title = options.title ?? 'DataCube export';
-  const fmt = (v: Scalar, name: string): string =>
-    options.formatters
-      ? options.formatters.format(v, options.formats?.[name], typeOfName(name))
-      : v === null
-        ? ''
-        : String(v);
+/** The grid as a standalone HTML document. */
+export function toHtml(table: ExportTable, options: RichExportOptions = {}): string {
+  const fmt = (v: Scalar, name: string, type: string | undefined): string =>
+    options.formatters ? options.formatters.format(v, options.formats?.[name], type)
+      : v === null ? '' : String(v);
 
-  const head = cols
-    .map(
-      (c) =>
-        `<th scope="col">${escapeXml(options.labels?.[c.name] ?? c.name)}</th>`,
-    )
-    .join('');
+  const head = table.headerRows.length > 0
+    ? table.headerRows.map((row) => `<tr>${row.map((cell) => {
+      const span = (cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : '')
+        + (cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : '');
+      return `<th scope="col"${span}>${escapeXml(cell.label)}</th>`;
+    }).join('')}</tr>`).join('\n')
+    : `<tr>${table.columns.map((c) => `<th scope="col">${escapeXml(c.path.join(' '))}</th>`).join('')}</tr>`;
 
-  const rows: string[] = [];
-  for (let r = 0; r < table.rowCount; r++) {
-    const cells = cols
-      .map((c) => {
-        const v = c.values[r] ?? null;
-        // Numbers right-align; text does not -- by the column's compiler type alone (a
-        // decimal's value is its exact text), and a non-null cell of it.
-        const cls = v !== null && isNumeric(c.type) ? ' class="n"' : '';
-        return `<td${cls}>${escapeXml(fmt(v, c.name))}</td>`;
-      })
-      .join('');
-    rows.push(`<tr>${cells}</tr>`);
-  }
+  const body = table.rows.map((row) => {
+    const cls = row.kind === 'total' ? ' class="total"' : row.kind === 'group' ? ' class="group"' : '';
+    const cells = table.columns.map((c, i) => {
+      const v = row.cells[i] ?? null;
+      const text = c.redacted ? String(v) : fmt(v, c.name, c.type);
+      const classes = [
+        v !== null && !c.redacted && !c.tree && isNumeric(c.type) ? 'n' : '',
+        c.redacted ? 'r' : '',
+      ].filter(Boolean).join(' ');
+      const style = c.tree && row.depth > 1 ? ` style="padding-left:${8 + (row.depth - 1) * 16}px"` : '';
+      return `<td${classes ? ` class="${classes}"` : ''}${style}>${escapeXml(text)}</td>`;
+    }).join('');
+    return `<tr${cls}>${cells}</tr>`;
+  });
 
+  const notes = table.notes.map((n) => `<p class="note">${escapeXml(n)}</p>`).join('\n');
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>${escapeXml(title)}</title>
+<title>${escapeXml(table.title)}</title>
 <style>
   body { font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; margin: 24px; }
   table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { border: 1px solid #ddd; padding: 4px 8px; text-align: left; }
-  th { background: #f4f4f4; font-weight: 600; }
+  th { background: #f4f4f4; font-weight: 600; text-align: center; }
   td.n { text-align: right; }
+  td.r { color: #888; font-style: italic; }
+  tr.total td, tr.group td:first-child { font-weight: 600; }
+  tr.total td { background: #fafafa; }
+  p.note { color: #555; margin: 4px 0; }
 </style>
 </head>
 <body>
-<h1>${escapeXml(title)}</h1>
+<h1>${escapeXml(table.title)}</h1>
+${notes}
 <table>
-<thead><tr>${head}</tr></thead>
+<thead>
+${head}
+</thead>
 <tbody>
-${rows.join('\n')}
+${body.join('\n')}
 </tbody>
 </table>
 </body>
 </html>
-`;
-}
-
-/**
- * The grid as SpreadsheetML, which Excel opens natively.
- *
- * Numbers are written with a Number type and their RAW value, so the
- * spreadsheet can sum them; only labels carry rendered text. A CSV
- * cannot make that distinction, which is why "export to Excel" and
- * "export to CSV" are genuinely different actions rather than the
- * same file with a different extension.
- */
-export function toSpreadsheetML(
-  table: ResultTable,
-  options: RichExportOptions = {},
-): string {
-  const cols = chosen(table, options);
-  const typeOfName = (n: string): string | undefined => cols.find((c) => c.name === n)?.type;
-  const title = options.title ?? 'DataCube';
-
-  // A cell's spreadsheet type is its column's COMPILER type, never its JS type: a
-  // date's value is its exact calendar text (values.ts), a decimal its exact digits.
-  const typeOf = new Map(cols.map((c) => [c.name, c.type]));
-  const cell = (v: Scalar, name: string): string => {
-    if (v === null) return '<Cell/>';
-    const type = typeOf.get(name);
-    if (isNumeric(type)) {
-      return `<Cell><Data ss:Type="Number">${String(v)}</Data></Cell>`;
-    }
-    if (isTemporal(type) && !isTimeOfDay(type) && typeof v === 'string') {
-      // SpreadsheetML's DateTime is seconds precision, no zone: the day, or the time as stored
-      const at = v.includes('T') || v.includes(' ') ? v.replace(' ', 'T').replace(/\.\d+$/, '') : `${v}T00:00:00`;
-      return `<Cell ss:StyleID="d"><Data ss:Type="DateTime">${at}</Data></Cell>`;
-    }
-    const text = options.formatters
-      ? options.formatters.format(v, options.formats?.[name], typeOfName(name))
-      : String(v);
-    return `<Cell><Data ss:Type="String">${escapeXml(text)}</Data></Cell>`;
-  };
-
-  const header = cols
-    .map(
-      (c) =>
-        `<Cell ss:StyleID="h"><Data ss:Type="String">` +
-        `${escapeXml(options.labels?.[c.name] ?? c.name)}</Data></Cell>`,
-    )
-    .join('');
-
-  const body: string[] = [];
-  for (let r = 0; r < table.rowCount; r++) {
-    body.push(
-      `<Row>${cols.map((c) => cell(c.values[r] ?? null, c.name)).join('')}</Row>`,
-    );
-  }
-
-  return `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
-<Styles>
- <Style ss:ID="h"><Font ss:Bold="1"/>
-  <Interior ss:Color="#F4F4F4" ss:Pattern="Solid"/></Style>
- <Style ss:ID="d"><NumberFormat ss:Format="Short Date"/></Style>
-</Styles>
-<Worksheet ss:Name="${escapeXml(title).slice(0, 31)}">
-<Table>
-<Row>${header}</Row>
-${body.join('\n')}
-</Table>
-</Worksheet>
-</Workbook>
 `;
 }

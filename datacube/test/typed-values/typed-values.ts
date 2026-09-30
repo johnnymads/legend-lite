@@ -108,7 +108,7 @@ async function quiet(engine: Watched): Promise<void> {
 
 async function openCube(snapshot: CubeSnapshot, configuration = DEFAULT_CONFIGURATION): Promise<{
   app: CubeApp; engine: Watched; errors: string[]; root: HTMLElement; dom: JSDOM;
-  downloads: [string, string, string][];
+  downloads: [string, string, string | Uint8Array][];
 }> {
   const dom = new JSDOM('<!doctype html><body><div id="r"></div></body>');
   (globalThis as { requestAnimationFrame?: unknown }).requestAnimationFrame =
@@ -116,7 +116,7 @@ async function openCube(snapshot: CubeSnapshot, configuration = DEFAULT_CONFIGUR
   const root = dom.window.document.getElementById('r') as HTMLElement;
   const engine = new Watched(new DuckDbEngine(conn));
   const errors: string[] = [];
-  const downloads: [string, string, string][] = [];
+  const downloads: [string, string, string | Uint8Array][] = [];
   const app = new CubeApp(root, snapshot, {
     engine,
     planner,
@@ -371,7 +371,8 @@ describe('T7: one formatter on compiler types', () => {
     menu('HTML');
     ([...o.root.ownerDocument.querySelectorAll<HTMLButtonElement>('button')]
       .find((b) => b.textContent === 'Accept'))?.click();
-    const html = o.downloads.find(([name]) => name.endsWith('.html'))?.[2] ?? '';
+    const found = o.downloads.find(([name]) => name.endsWith('.html'))?.[2];
+    const html = typeof found === 'string' ? found : '';
     assert.match(html, /<td class="n">\(12\.50\)<\/td>/);
     assert.match(html, /<td class="n">1,234\.56<\/td>/);
   });

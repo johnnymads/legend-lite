@@ -14,6 +14,7 @@
 // mangling any non-ASCII name.
 
 import type { FormatterCache, ColumnFormat } from './format.ts';
+import { flatHeader, type ExportTable } from './export-model.ts';
 import type { ResultTable, Scalar } from './result.ts';
 
 export interface ExportOptions {
@@ -151,34 +152,76 @@ export function exportFileName(title: string, at: Date): string {
     + ` ${at.getFullYear()} ${two(at.getHours())}_${two(at.getMinutes())}_${two(at.getSeconds())}`;
 }
 
-/** Base64 of a string's UTF-8 bytes, wrapped at 76 as MIME wants. */
-function base64Lines(text: string): string {
-  const bytes = new TextEncoder().encode(text);
+/** Base64 of bytes (a string is taken as its UTF-8), wrapped at 76 as MIME wants, CRLF between lines. */
+function base64Lines(content: string | Uint8Array): string {
+  const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content;
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
-  return btoa(binary).replace(/.{76}/g, '$&\n');
+  return (btoa(binary).match(/.{1,76}/g) ?? ['']).join('\r\n');
 }
 
+/** A header value as RFC 2047 encoded-words when it is not plain ASCII (each word within 75 characters). */
+export function encodedWords(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x20-\x7e]*$/.test(text)) return text;
+  const words: string[] = [];
+  let chunk = '';
+  const flush = (): void => {
+    if (chunk) words.push(`=?UTF-8?B?${base64Lines(chunk).replace(/\r\n/g, '')}?=`);
+    chunk = '';
+  };
+  for (const ch of text) {
+    // 45 bytes of UTF-8 is 60 of base64: the word stays under 75 with its markers
+    if (new TextEncoder().encode(chunk + ch).length > 45) flush();
+    chunk += ch;
+  }
+  flush();
+  return words.join('\r\n ');
+}
+
+/** A filename as a MIME parameter: an ASCII fallback, and RFC 2231's exact UTF-8 form beside it. */
+function fileParam(key: 'name' | 'filename', name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  // eslint-disable-next-line no-control-regex
+  if (/^[\x20-\x7e]*$/.test(name) && !/["\\]/.test(name)) return `${key}="${name}"`;
+  const exact = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${key}="${ascii}"; ${key}*=UTF-8''${exact}`;
+}
+
+const escapeHtml = (s: string): string =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 /**
- * An UNSENT email with the file attached -- upstream's Email, which
- * needs no mail host: the browser downloads the `.eml`, and opening it
- * gives a draft (`X-Unsent: 1`) in the user's own mail client. The
- * layout is upstream's, including no blank line before the headers,
- * which some clients (Outlook) will not read.
+ * An UNSENT email with the file attached -- upstream's Email, which needs no mail host: the
+ * browser downloads the `.eml`, and opening it gives a draft (`X-Unsent: 1`) in the user's own
+ * mail client.
+ *
+ * Written to the letter (the 2026-09-29 audit found the upstream layout breaking it): the
+ * `MIME-Version` header, CRLF line endings, the subject in RFC 2047 when it is not ASCII,
+ * the filename in RFC 2231's form beside an ASCII fallback, a text and an HTML body that say
+ * what is attached, and the attachment's real BYTES (a PDF or a workbook is binary) in base64.
  */
-export function toEml(attachment: {
-  readonly name: string;
-  readonly mime: string;
-  readonly content: string;
+export function toEml(message: {
+  readonly subject: string;
+  /** What the body says; the HTML body says the same. */
+  readonly text: string;
+  readonly attachment: {
+    readonly name: string;
+    readonly mime: string;
+    readonly content: string | Uint8Array;
+  };
 }): string {
-  const mixed = 'mixed_boundary';
-  const alternative = 'alternative_boundary';
+  const mixed = '=_mixed_datacube';
+  const alternative = '=_alternative_datacube';
+  const { attachment } = message;
+  const html = `<html><body><p>${escapeHtml(message.text).replace(/\n/g, '<br>')}</p></body></html>`;
   return [
+    'MIME-Version: 1.0',
     'From:',
     'To:',
-    'Subject:',
+    `Subject: ${encodedWords(message.subject)}`,
     'X-Unsent: 1',
     `Content-Type: multipart/mixed; boundary="${mixed}"`,
     '',
@@ -187,25 +230,45 @@ export function toEml(attachment: {
     '',
     `--${alternative}`,
     'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: 7bit',
+    'Content-Transfer-Encoding: base64',
     '',
-    '',
-    '',
+    base64Lines(message.text),
     `--${alternative}`,
     'Content-Type: text/html; charset="UTF-8"',
-    'Content-Transfer-Encoding: 7bit',
+    'Content-Transfer-Encoding: base64',
     '',
-    '<html><body><p></p><body></html>',
-    '',
+    base64Lines(html),
     `--${alternative}--`,
     '',
     `--${mixed}`,
-    `Content-Type: ${attachment.mime}; name="${attachment.name}"`,
+    `Content-Type: ${attachment.mime}; ${fileParam('name', attachment.name)}`,
     'Content-Transfer-Encoding: base64',
-    `Content-Disposition: attachment; filename="${attachment.name}"`,
+    `Content-Disposition: attachment; ${fileParam('filename', attachment.name)}`,
     '',
     base64Lines(attachment.content),
-    '',
     `--${mixed}--`,
-  ].join('\n');
+    '',
+  ].join('\r\n');
+}
+
+// -- CSV of the grid as shown ------------------------------------------------------------
+
+/**
+ * The grid AS SHOWN as CSV (export-model.ts): its columns in its order under its headers,
+ * blurred ones REDACTED, raw values so the file can be computed on again. A grouped cube gets
+ * a leading `Level` column (1 = top), because a CSV has no other way to say which rows are
+ * groups and which are their children.
+ */
+export function exportCsv(table: ExportTable): string {
+  const d = ',';
+  const header = [
+    ...(table.grouped ? ['Level'] : []),
+    ...table.columns.map((c) => flatHeader(c)),
+  ].map((h) => escapeField(h, d)).join(d);
+  const lines = [header];
+  for (const row of table.rows) {
+    const cells = row.cells.map((v) => escapeField(rawText(v), d));
+    lines.push([...(table.grouped ? [String(row.depth)] : []), ...cells].join(d));
+  }
+  return `\ufeff${lines.join('\r\n')}\r\n`;
 }

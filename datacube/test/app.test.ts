@@ -148,7 +148,7 @@ describe('the app', () => {
   let app: CubeApp;
   let engine: StubEngine;
   let planner: StubPlanner;
-  let downloads: [string, string, string][];
+  let downloads: [string, string, string | Uint8Array][];
   let clipboard: string[];
   let statuses: [string, string][];
 
@@ -541,12 +541,14 @@ describe('the app', () => {
       downloads.map((d) => d[1]),
       [
         'text/html',
-        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'text/csv',
       ],
     );
-    // SpreadsheetML rather than CSV, so numbers arrive as numbers.
-    assert.ok(downloads[1]?.[2].includes('<Workbook'));
+    // A real workbook: an OOXML zip (its first bytes are the zip's 'PK'), named .xlsx.
+    const workbook = downloads[1]?.[2];
+    assert.ok(workbook instanceof Uint8Array && workbook[0] === 0x50 && workbook[1] === 0x4b);
+    assert.match(downloads[1]?.[0] ?? '', /\.xlsx$/);
     // Upstream's names: the title and the moment, so nothing is overwritten.
     assert.match(downloads[0]?.[0] ?? '',
       / - (Sun|Mon|Tue|Wed|Thu|Fri|Sat) [A-Z][a-z]{2} \d{2} \d{4} \d{2}_\d{2}_\d{2}\.html$/);
@@ -589,8 +591,12 @@ describe('the app', () => {
     const [name, mime, eml] = downloads[0] ?? [];
     assert.match(name ?? '', /\.eml$/);
     assert.equal(mime, 'message/rfc822');
-    assert.match(eml ?? '', /^From:\nTo:\nSubject:\nX-Unsent: 1\n/);
-    assert.match(eml ?? '', /Content-Disposition: attachment; filename=".* - .*\.csv"/);
+    assert.equal(typeof eml, 'string');
+    const text = eml as string;
+    // RFC 2045 and 5322: the MIME version first, every line ending CRLF, a subject
+    assert.match(text, /^MIME-Version: 1\.0\r\nFrom:\r\nTo:\r\nSubject: \S/);
+    assert.ok(!/[^\r]\n/.test(text), 'a bare LF');
+    assert.match(text, /Content-Disposition: attachment; filename=".* - .*\.csv"/);
   });
 
   it('opens the editor from the right-click menu, as DataCube does', () => {
@@ -709,7 +715,7 @@ describe('the app', () => {
     const [name, mime, text] = downloads.at(-1) ?? [];
     assert.equal(mime, 'application/json');
     assert.match(name ?? '', /\.json$/);
-    assert.match(text ?? '', /"kind":"datacube\.cube"/);
+    assert.match(typeof text === 'string' ? text : '', /"kind":"datacube\.cube"/);
   });
 
   it('the columns PANEL follows the grid order, not the declared one', async () => {

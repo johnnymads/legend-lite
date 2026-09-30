@@ -1666,27 +1666,91 @@ try {
 
   // ---- export and clipboard ---------------------------------------------
 
-  for (const [label, ext] of [['CSV (Grid)', 'csv'], ['Excel (Grid)', 'xls'],
+  // WHAT EACH FILE IS, not only that one arrived (2026-09-29: the old check passed a .xls that
+  // was not a workbook, a PDF a strict reader refused, and every format carrying columns the
+  // grid did not show). Each file is parsed and its headers compared with the grid's own.
+  /** The leaf headers the grid shows, in order, as text (sort marks left out). */
+  const gridLabels = () => page.evaluate(() =>
+    [...document.querySelectorAll('.dc-th[data-column]')].map((th) => {
+      const c = th.cloneNode(true);
+      c.querySelectorAll('.dc-sort-mark, .dc-col-resize').forEach((e) => e.remove());
+      return (c.textContent ?? '').trim();
+    }));
+  /** Well-formed XML, by the browser's own parser. */
+  const wellFormed = (text) => page.evaluate((t) =>
+    new DOMParser().parseFromString(t, 'application/xml').getElementsByTagName('parsererror').length === 0, text);
+  const csvHeader = (text) => text.replace(/^\ufeff/, '').split('\r\n')[0].split(',')
+    .map((h) => h.replace(/^"|"$/g, '').replace(/""/g, '"'));
+  const pdfConsistent = (bytes) => {
+    // one byte, one character: a PDF's offsets are bytes (latin1 maps each to itself)
+    const text = Buffer.from(bytes).toString('latin1');
+    const xrefAt = Number(/startxref\n(\d+)\n%%EOF/.exec(text)?.[1]);
+    if (text.slice(xrefAt, xrefAt + 4) !== 'xref') return 'startxref does not point at the xref table';
+    const offsets = [...text.slice(xrefAt).matchAll(/^(\d{10}) 00000 n $/gm)].map((m) => Number(m[1]));
+    const bad = offsets.findIndex((off, i) => !text.startsWith(`${i + 1} 0 obj`, off));
+    if (bad >= 0) return `xref entry ${bad + 1} misses its object`;
+    for (const m of text.matchAll(/<< \/Length (\d+) >>\nstream\n/g)) {
+      const at = (m.index ?? 0) + m[0].length + Number(m[1]);
+      if (text.slice(at, at + 10) !== '\nendstream') return 'a stream /Length is not its byte count';
+    }
+    return null;
+  };
+  const { unzipSync, strFromU8 } = await import('fflate');
+
+  for (const [label, ext] of [['CSV (Grid)', 'csv'], ['Excel (Grid)', 'xlsx'],
     ['HTML', 'html'], ['Plain Text', 'txt'], ['PDF', 'pdf'],
     ['Cube File (JSON)', 'json']]) {
     await check(`export ${label}`, async () => {
+      const labels = await gridLabels();
       const wait = page.waitForEvent('download', { timeout: 15_000 });
       await menu(['Export', label], { requery: false });
       // Upstream's attestation first, for anything carrying rows.
       if (ext !== 'json') await answerExport('Accept');
       const dl = await wait;
-      const path = await dl.path();
-      const body = await readFile(path);
+      const body = await readFile(await dl.path());
       if (!body.length) throw new Error('the file is empty');
-      // the cube file is the cube's definition, never its rows
-      if (ext === 'json' && !/"kind":"datacube\.cube"/.test(body.toString('utf8'))) {
-        throw new Error('the cube file is not a saved cube');
-      }
       const name = dl.suggestedFilename();
-      if (!name.endsWith(`.${ext}`)) {
-        throw new Error(`downloaded ${name}, expected .${ext}`);
+      if (!name.endsWith(`.${ext}`)) throw new Error(`downloaded ${name}, expected .${ext}`);
+      const text = body.toString('utf8');
+      const same = (got, what) => {
+        if (JSON.stringify(got) !== JSON.stringify(labels)) {
+          throw new Error(`${what} ${JSON.stringify(got)} are not the grid's ${JSON.stringify(labels)}`);
+        }
+      };
+      switch (ext) {
+        case 'json':
+          // the cube file is the cube's definition, never its rows
+          if (!/"kind":"datacube\.(cube|page)"/.test(text)) throw new Error('the cube file is not a saved cube');
+          break;
+        case 'csv':
+          same(csvHeader(text), 'the CSV headers');
+          break;
+        case 'xlsx': {
+          const zip = unzipSync(new Uint8Array(body));
+          const sheet = zip['xl/worksheets/sheet1.xml'];
+          if (!sheet || !zip['[Content_Types].xml']) throw new Error('not an OOXML workbook');
+          for (const [part, bytes] of Object.entries(zip)) {
+            if (part.endsWith('.xml') && !(await wellFormed(strFromU8(bytes)))) throw new Error(`${part} is not well-formed`);
+          }
+          const row1 = /<row r="1">(.*?)<\/row>/s.exec(strFromU8(sheet))?.[1] ?? '';
+          same([...row1.matchAll(/<t xml:space="preserve">([^<]*)<\/t>/g)].map((m) => m[1]), 'the workbook headers');
+          break;
+        }
+        case 'html':
+          for (const l of labels) if (!text.includes(`>${l}</th>`)) throw new Error(`the page has no header "${l}"`);
+          break;
+        case 'txt': {
+          const header = text.split('\n').find((line) => labels.every((l) => line.includes(l)));
+          if (!header) throw new Error('no line carries the grid\'s headers');
+          break;
+        }
+        case 'pdf': {
+          const why = pdfConsistent(new Uint8Array(body));
+          if (why) throw new Error(why);
+          break;
+        }
       }
-      return `${name}, ${body.length} bytes`;
+      return `${name}, ${body.length} bytes, headers as the grid's`;
     });
   }
 
@@ -1722,9 +1786,19 @@ try {
     const name = dl.suggestedFilename();
     const body = String(await readFile(await dl.path()));
     if (!name.endsWith('.eml')) throw new Error(`downloaded ${name}`);
-    if (!/^From:\nTo:\nSubject:\nX-Unsent: 1\n/.test(body)) throw new Error('not an unsent draft');
+    // RFC 2045/5322 (2026-09-29): the MIME version, CRLF throughout, a subject; an unsent draft
+    if (!/^MIME-Version: 1\.0\r\n/.test(body)) throw new Error('no MIME-Version first');
+    if (/[^\r]\n/.test(body)) throw new Error('a bare LF: every line must end CRLF');
+    if (!/\r\nSubject: \S/.test(body) || !/\r\nX-Unsent: 1\r\n/.test(body)) throw new Error('not an unsent draft with a subject');
     if (!/filename=".* - .*\.csv"/.test(body)) throw new Error('no timestamped CSV attached');
-    return name;
+    // the attachment decodes to the CSV the grid would export
+    const b64 = /filename="[^"]*\.csv"[^\r]*\r\n\r\n([A-Za-z0-9+/=\r\n]+?)\r\n--/.exec(body)?.[1] ?? '';
+    const csv = Buffer.from(b64.replace(/\r\n/g, ''), 'base64').toString('utf8');
+    const labels = await gridLabels();
+    if (JSON.stringify(csvHeader(csv)) !== JSON.stringify(labels)) {
+      throw new Error(`the attached CSV's headers ${JSON.stringify(csvHeader(csv))} are not the grid's`);
+    }
+    return `${name}: a draft, its CSV decoded, headers as the grid's`;
   });
 
   await check('Pin Left is checked once the column is pinned left', async () => {

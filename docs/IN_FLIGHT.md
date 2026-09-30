@@ -30,6 +30,12 @@ line each, announced here before landing):
 Nothing in `core/`, `spec/`, `tools/`. Runs a warehouse (`:9090`) and the DataCube site (`:8000`), idle: stop them before
 a timing (rule 4).
 
+## A third line, 2026-09-30: DataCube track A and the BI plan (the user's ask, rule 5)
+
+`docs/BI_AND_ETL_PLAN_2026_09_29.md`; the user: "start track A now, and go in the suggested order for everything that does
+not need any server side work". **Owns:** `datacube/` (and its CI lane). No edit in `core/`, `spec/`, `tools/` or
+`warehouse/`; the plan's server-side items (F1 write, F2's resolver, F4, F5, unpivot) wait for the rebuild's say (§8).
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).
