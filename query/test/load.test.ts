@@ -11,7 +11,7 @@ import { demoModel, grammar } from './lite.ts';
 const { graph } = await demoModel();
 
 const SOURCE = {
-  kind: 'class', class: 'demo::trading::Trade', mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::H2Runtime',
+  kind: 'class', class: 'demo::trading::Trade', mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::Runtime',
 } as const;
 
 /** The query with its generated ids blanked, for comparison. */
@@ -102,7 +102,7 @@ describe('load', () => {
     const ds = graph.dataSpaces.get('demo::trading::TradingDataSpace')!;
     for (const e of ds.executables ?? []) {
       if (e._type !== 'dataSpaceTemplateExecutable') continue;
-      const r = loadLambda(graph, e.query, { mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::H2Runtime' });
+      const r = loadLambda(graph, e.query, { mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::Runtime' });
       assert.ok(r.ok, r.ok ? '' : `${e.title}: ${r.reason}`);
     }
   });

@@ -48,8 +48,10 @@ class DirectPort implements PlannerPort {
 
 export const grammar = new WasmGrammar(new DirectPort());
 
-/** The demo project's model: its text, its model context, and its graph. */
+/** The demo project's model (the domain, and its DuckDB runtime): its text, its model context, and its graph. */
 export async function demoModel(): Promise<{ text: string; context: PureModelContextText; graph: ModelGraph }> {
-  const text = readFileSync(fileURLToPath(new URL('../demo/models/trading.pure', import.meta.url)), 'utf8');
+  const text = ['trading.pure', 'runtime-duckdb.pure']
+    .map((f) => readFileSync(fileURLToPath(new URL(`../demo/models/${f}`, import.meta.url)), 'utf8'))
+    .join('\n');
   return { text, context: { _type: 'text', code: text }, graph: new ModelGraph(await grammar.modelJson(text)) };
 }

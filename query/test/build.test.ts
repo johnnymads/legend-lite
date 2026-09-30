@@ -10,7 +10,7 @@ import { demoModel, grammar } from './lite.ts';
 const { context, graph } = await demoModel();
 
 const SOURCE = {
-  kind: 'class', class: 'demo::trading::Trade', mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::H2Runtime',
+  kind: 'class', class: 'demo::trading::Trade', mapping: 'demo::trading::TradingMapping', runtime: 'demo::trading::Runtime',
 } as const;
 
 function trades(overrides: Partial<QueryState>): QueryState {
@@ -49,7 +49,7 @@ describe('build', () => {
       },
     });
     assert.equal(await text(q, true),
-      "minQty: Integer[1]|demo::trading::Trade.all()->filter(x|(($x.side == demo::trading::Side.BUY) && ($x.quantity > $minQty)) && $x.trader.trades->exists(x_1|$x_1.status->in(['EXECUTED', 'SETTLED'])))->project(~[id:x|$x.tradeId])->from(demo::trading::TradingMapping, demo::trading::H2Runtime)");
+      "minQty: Integer[1]|demo::trading::Trade.all()->filter(x|(($x.side == demo::trading::Side.BUY) && ($x.quantity > $minQty)) && $x.trader.trades->exists(x_1|$x_1.status->in(['EXECUTED', 'SETTLED'])))->project(~[id:x|$x.tradeId])->from(demo::trading::TradingMapping, demo::trading::Runtime)");
     // typed without its parameter: legend-lite types a PARAMETERIZED lambda as the lambda itself
     // (a function type) where legend-engine types its result -- recorded in docs/IN_FLIGHT.md for
     // the compiler's owners; the query app does not depend on it
@@ -81,7 +81,7 @@ describe('build', () => {
   it('builds a graph fetch, a preview taking its rows first', async () => {
     const q = trades({ graph: { checked: false, tree: [{ property: 'tradeId', children: [] }, { property: 'trader', children: [{ property: 'lastName', children: [] }] }] } });
     assert.equal(await grammar.lambdaText(buildLambda(graph, q, { withFrom: true, previewLimit: 5 }), 'STANDARD'),
-      '|demo::trading::Trade.all()->take(5)->graphFetch(#{demo::trading::Trade{tradeId,trader{lastName}}}#)->serialize(#{demo::trading::Trade{tradeId,trader{lastName}}}#)->from(demo::trading::TradingMapping, demo::trading::H2Runtime)');
+      '|demo::trading::Trade.all()->take(5)->graphFetch(#{demo::trading::Trade{tradeId,trader{lastName}}}#)->serialize(#{demo::trading::Trade{tradeId,trader{lastName}}}#)->from(demo::trading::TradingMapping, demo::trading::Runtime)');
   });
 
   it('refuses a query with no columns, and a path the model does not have', () => {

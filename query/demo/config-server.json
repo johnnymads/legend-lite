@@ -1,5 +1,5 @@
 {
-  "execution": { "kind": "duckdb-wasm", "user": "me", "seed": ["./models/trading-seed.sql"] },
+  "execution": { "kind": "server", "engine": "http://localhost:8090/api" },
   "planner": { "worker": "./planner-worker.js", "vendor": "./vendor/" },
   "projects": [
     {
@@ -7,7 +7,7 @@
       "artifactId": "trading",
       "versionId": "0.0.0",
       "title": "Trading demo",
-      "models": ["./models/trading.pure", "./models/runtime-duckdb.pure"]
+      "models": ["./models/trading.pure", "./models/runtime-h2.pure"]
     }
   ]
 }

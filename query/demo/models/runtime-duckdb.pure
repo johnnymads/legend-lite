@@ -1,0 +1,28 @@
+// Where the trading demo runs in the BROWSER: DuckDB (DuckDB-WASM in the tab, or the warehouse,
+// which is DuckDB on a server). legend-lite's planner writes DuckDB SQL for this connection; the
+// page seeds the tables from trading-seed.sql. The server's H2 twin is runtime-h2.pure.
+
+###Connection
+RelationalDatabaseConnection demo::trading::Connection
+{
+  store: demo::trading::DB;
+  type: DuckDB;
+  specification: DuckDB { };
+  auth: Test;
+}
+
+###Runtime
+Runtime demo::trading::Runtime
+{
+  mappings:
+  [
+    demo::trading::TradingMapping
+  ];
+  connections:
+  [
+    demo::trading::DB:
+    [
+      db: demo::trading::Connection
+    ]
+  ];
+}

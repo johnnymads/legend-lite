@@ -85,6 +85,8 @@ In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new
   are engine ANALYSES lite does not have -- new platform features, proposed for core (design doc §1, G6/G9), not
   added here. The Query app shows every property and lists a mapping's classes as the mapping declares them.
 - `wasm/src/main/java/planner/Wasm.java`: `modelJsonOrError` (E2's twin, byte-identical to the server's).
+- `datacube/BUILD.bazel`: ONE line, `visibility = ["//query:__pkg__"]` on `:src` (2026-09-30), so the Query app runs
+  its planned SQL on DataCube's engines (`engine.ts`, `duckdb.ts`, `warehouse.ts`). No other DataCube change.
 - `MODULE.bazel`: a second `npm_translate_lock` (`npm_query`, `//query:pnpm-lock.yaml`), so `datacube/`'s lock
   is not touched.
 

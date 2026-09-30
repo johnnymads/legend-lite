@@ -88,10 +88,14 @@ export class WasmGrammar implements Grammar {
     return JSON.parse(unfold(await this.#port.ask({ kind: 'relationType', model: model.code, lambda: toJson(lambda) }))) as RelationTypeAnswer;
   }
 
+  /** The SQL a query compiles to on its runtime, and the type of its result (upstream's relationType shape). */
+  async plan(model: PureModelContext, lambda: Lambda, runtime: string): Promise<{ sql: string; type: unknown }> {
+    return JSON.parse(unfold(await this.#port.ask({ kind: 'plan', model: model.code, lambda: toJson(lambda), runtime }))) as { sql: string; type: unknown };
+  }
+
   /** The SQL a query compiles to on its runtime -- legend-lite's plan, shown to a person ("Show SQL"). */
   async sql(model: PureModelContext, lambda: Lambda, runtime: string): Promise<string> {
-    const planned = JSON.parse(unfold(await this.#port.ask({ kind: 'plan', model: model.code, lambda: toJson(lambda), runtime }))) as { sql: string };
-    return planned.sql;
+    return (await this.plan(model, lambda, runtime)).sql;
   }
 
   /** Build the planner's boot layer for this model now, before a person waits on it. */

@@ -29,6 +29,8 @@ js_library(
         "package.json",
         "tsconfig.json",
     ],
+    # the Query app runs its planned SQL on DataCube's engines (DuckDB-WASM, the warehouse)
+    visibility = ["//query:__pkg__"],
     deps = [
         # the protocol library (T4b): the cube's queries built as protocol JSON
         "//pure-protocol:pure_protocol",

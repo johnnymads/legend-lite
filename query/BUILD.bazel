@@ -14,7 +14,11 @@ exports_files(["pnpm-lock.yaml", "package.json"])
 js_library(
     name = "src",
     srcs = glob(["src/**/*.ts", "src/**/*.css"]) + ["package.json", "tsconfig.json"],
-    deps = ["//pure-protocol:pure_protocol"],
+    deps = [
+        "//pure-protocol:pure_protocol",
+        # DataCube's engines: queries run in the browser on DuckDB-WASM or the warehouse
+        "//datacube:src",
+    ],
 )
 
 # entry point -> bundle
@@ -25,7 +29,7 @@ _BUNDLES = {
 
 [esbuild.esbuild(
     name = "bundle_" + out[len("demo/"):-len(".js")].replace("-", "_"),
-    srcs = glob(["demo/**/*.ts"]) + [":src"],
+    srcs = glob(["demo/**/*.ts"]) + [":src", ":node_modules/@duckdb/duckdb-wasm"],
     outs = [out],
     args = [
         entry,
@@ -38,16 +42,27 @@ _BUNDLES = {
     chdir = package_name(),
 ) for entry, out in _BUNDLES.items()]
 
-# legend-lite's planner, which the page runs in a worker (grammar and typing in the tab)
+# The two WebAssembly runtimes the page loads from ./vendor/: legend-lite's planner (grammar,
+# typing, SQL in the tab) and DuckDB's (where queries run in the browser).
 copy_to_directory(
     name = "vendor",
-    srcs = ["//wasm:planner"],
+    srcs = [
+        ":node_modules/@duckdb/duckdb-wasm",
+        "//wasm:planner",
+    ],
     out = "demo/vendor",
     include_srcs_patterns = [
         "wasm/planner/classes.wasm",
         "wasm/planner/wasm-gc-module-runtime.js",
+        "**/dist/duckdb-mvp.wasm",
+        "**/dist/duckdb-eh.wasm",
+        "**/dist/duckdb-browser-mvp.worker.js",
+        "**/dist/duckdb-browser-eh.worker.js",
     ],
-    replace_prefixes = {"wasm/planner/": ""},
+    replace_prefixes = {
+        "wasm/planner/": "",
+        "**/dist/": "",
+    },
 )
 
 # Everything a browser fetches.
@@ -57,6 +72,7 @@ filegroup(
         "demo/*.html",
         "demo/*.json",
         "demo/models/*.pure",
+        "demo/models/*.sql",
         "src/**/*.css",
     ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [":vendor"],
 )
@@ -123,6 +139,8 @@ typescript.tsc_test(
         "package.json",
         "tsconfig.json",
         "//pure-protocol:pure_protocol",
+        "//datacube:src",
+        ":node_modules/@duckdb/duckdb-wasm",
         ":node_modules/@types/jsdom",
         ":node_modules/@types/node",
         ":node_modules/jsdom",

@@ -15,10 +15,20 @@ export interface ProjectConfig {
   readonly models: readonly string[];
 }
 
+/**
+ * Where queries run. In the browser (`duckdb-wasm`: DuckDB in this tab, seeded from SQL files;
+ * `warehouse`: the warehouse's DuckDB, as the signed-in user) the tab's planner writes the SQL
+ * and saved queries stay in this browser. On a `server` (legend-lite's, or legend-engine) the
+ * server executes and keeps saved queries.
+ */
+export type ExecutionConfig =
+  | { readonly kind: 'duckdb-wasm'; readonly seed?: readonly string[]; readonly user: string }
+  | { readonly kind: 'warehouse'; readonly url: string; readonly catalog?: string; readonly seed?: readonly string[] }
+  | { readonly kind: 'server'; readonly engine: string };
+
 export interface AppConfig {
-  /** The engine's API root: legend-lite's server or legend-engine (`http://host:port/api`). */
-  readonly engine: string;
-  /** legend-lite's planner in the tab, for grammar and typing; absent means the server answers them. */
+  readonly execution: ExecutionConfig;
+  /** legend-lite's planner in the tab (grammar, typing, SQL); required unless a server answers them. */
   readonly planner?: { readonly worker: string; readonly vendor: string };
   readonly projects: readonly ProjectConfig[];
 }

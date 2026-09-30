@@ -5,6 +5,9 @@
   "type": "module",
   "private": true,
   "license": "Apache-2.0",
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0"
+  },
   "devDependencies": {
     "@types/jsdom": "30.0.0",
     "@types/node": "26.6.2",
