@@ -227,6 +227,9 @@ public class LegendHttpServer {
                         PureV1Api.compile(body);
                 case "/api/pure/v1/compilation/lambdaReturnType" ->
                         PureV1Api.lambdaReturnType(body);
+                case "/api/pure/v1/analytics/mapping/modelCoverage" ->
+                        PureV1Api.modelCoverage(body, queryParam(query, "returnMappedEntityInfo"),
+                                queryParam(query, "returnMappedPropertyInfo"), queryParam(query, "returnLightGraph"));
                 case "/api/pure/v1/execution/generatePlan" ->
                         PureV1Api.generatePlan(body);
                 case "/api/pure/v1/execution/execute" ->

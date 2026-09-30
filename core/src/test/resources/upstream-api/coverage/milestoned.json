@@ -1,0 +1,1 @@
+{"mappedEntities":[{"path":"test::coverage::Product","properties":[{"_type":"MappedProperty","name":"id"},{"_type":"MappedProperty","name":"name"}]},{"path":"test_coverage_Product_milestoning","properties":[{"_type":"MappedProperty","name":"from"},{"_type":"MappedProperty","name":"thru"}]}]}

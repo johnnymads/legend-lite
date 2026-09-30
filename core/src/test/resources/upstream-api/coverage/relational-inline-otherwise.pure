@@ -1,0 +1,97 @@
+// Inline-embedded and otherwise-embedded property mappings, and a relational
+// association mapping with routed set ids.
+###Relational
+Database test::coverage::InDB
+(
+  Table FIRM
+  (
+    ID INTEGER PRIMARY KEY,
+    LEGAL_NAME VARCHAR(200),
+    ADDR_STREET VARCHAR(200),
+    ADDR_ZIP INTEGER,
+    ADDR_ID INTEGER
+  )
+  Table ADDRESS
+  (
+    ID INTEGER PRIMARY KEY,
+    STREET VARCHAR(200),
+    ZIP INTEGER,
+    CITY VARCHAR(200)
+  )
+  Table PERSON
+  (
+    ID INTEGER PRIMARY KEY,
+    FIRM_ID INTEGER,
+    NAME VARCHAR(200)
+  )
+  Join FirmAddress(FIRM.ADDR_ID = ADDRESS.ID)
+  Join FirmPerson(PERSON.FIRM_ID = FIRM.ID)
+)
+
+###Pure
+Class test::coverage::Address
+{
+  street: String[1];
+  zip: Integer[0..1];
+  city: String[0..1];
+}
+
+Class test::coverage::Firm
+{
+  id: Integer[1];
+  legalName: String[1];
+  hq: test::coverage::Address[0..1];
+  branch: test::coverage::Address[0..1];
+}
+
+Class test::coverage::Person
+{
+  name: String[1];
+}
+
+Association test::coverage::FirmPeople
+{
+  employer: test::coverage::Firm[0..1];
+  people: test::coverage::Person[*];
+}
+
+###Mapping
+Mapping test::coverage::InlineMapping
+(
+  *test::coverage::Firm[firm]: Relational
+  {
+    ~mainTable [test::coverage::InDB]FIRM
+    id: [test::coverage::InDB]FIRM.ID,
+    legalName: [test::coverage::InDB]FIRM.LEGAL_NAME,
+    hq() Inline[firmAddr],
+    branch
+    (
+      street: [test::coverage::InDB]FIRM.ADDR_STREET
+    ) Otherwise([addr]: [test::coverage::InDB]@FirmAddress)
+  }
+  test::coverage::Address[firmAddr]: Relational
+  {
+    street: [test::coverage::InDB]FIRM.ADDR_STREET,
+    zip: [test::coverage::InDB]FIRM.ADDR_ZIP
+  }
+  *test::coverage::Address[addr]: Relational
+  {
+    ~mainTable [test::coverage::InDB]ADDRESS
+    street: [test::coverage::InDB]ADDRESS.STREET,
+    zip: [test::coverage::InDB]ADDRESS.ZIP,
+    city: [test::coverage::InDB]ADDRESS.CITY
+  }
+  *test::coverage::Person[person]: Relational
+  {
+    ~mainTable [test::coverage::InDB]PERSON
+    name: [test::coverage::InDB]PERSON.NAME
+  }
+  test::coverage::FirmPeople: Relational
+  {
+    AssociationMapping
+    (
+      employer[person, firm]: [test::coverage::InDB]@FirmPerson,
+      people[firm, person]: [test::coverage::InDB]@FirmPerson
+    )
+  }
+)
