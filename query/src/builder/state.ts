@@ -2,7 +2,7 @@
 // options. build.ts turns it into the lambda (protocol JSON, never text -- design D5); load.ts
 // reads a lambda back into it, or says why it cannot (the query then stays in text mode).
 
-import type { Multiplicity } from '../../../pure-protocol/src/index.ts';
+import type { Lambda, Multiplicity } from '../../../pure-protocol/src/index.ts';
 
 /** Where rows come from: a class, through a mapping, on a runtime -- optionally chosen via a data space. */
 export interface ClassSource {
@@ -29,9 +29,40 @@ export type PropertyPath = readonly PropertyStep[];
 export interface ProjectionColumn {
   readonly id: string;
   readonly name: string;
+  /** The property the column reads (empty for a calculated column). */
   readonly path: PropertyPath;
+  /** A calculated column: its own lambda, `x|$x.quantity * $x.price` (census §5.3 "derivation"). */
+  readonly derivation?: Lambda;
   /** An aggregate over the column: the query then groups by every other column. */
   readonly aggregate?: AggregateOp;
+}
+
+/** Window (OLAP) functions: a rank over the window, or an aggregate of a column over it. */
+export type WindowOp = 'rank' | 'denseRank' | 'rowNumber' | 'percentRank' | 'sum' | 'count' | 'min' | 'max' | 'average';
+
+export const RANKING: ReadonlySet<WindowOp> = new Set(['rank', 'denseRank', 'rowNumber', 'percentRank']);
+
+/** A column computed over a window of rows: partitioned by columns, ordered by one (census §5.3). */
+export interface WindowColumn {
+  readonly id: string;
+  readonly name: string;
+  readonly op: WindowOp;
+  /** The column an aggregate reads (a ranking reads none). */
+  readonly column?: string;
+  readonly partition: readonly string[];
+  readonly sort?: SortSpec;
+}
+
+/** A graph fetch: the properties to fetch as a tree, the result JSON objects (census §5.3). */
+export interface GraphNode {
+  readonly property: string;
+  readonly children: readonly GraphNode[];
+}
+
+export interface GraphFetch {
+  readonly tree: readonly GraphNode[];
+  /** graphFetchChecked: constraint violations reported with each object rather than failing. */
+  readonly checked: boolean;
 }
 
 export type AggregateOp =
@@ -103,11 +134,19 @@ export interface ResultOptions {
   readonly slice?: { readonly start: number; readonly end: number };
 }
 
-/** A tabular query: rows of the columns the person picked. */
+/**
+ * A query: rows of the columns the person picked (a table), or, when `graph` is set, objects of
+ * the source class as JSON (a graph fetch; columns, windows and post-filter then do not apply).
+ */
 export interface QueryState {
   readonly source: Source;
   readonly columns: readonly ProjectionColumn[];
   readonly filter?: Group;
+  /** Window columns, computed after grouping. */
+  readonly windows?: readonly WindowColumn[];
+  /** A filter on the result's columns (after grouping and windows): conditions name a column as a one-step path. */
+  readonly postFilter?: Group;
+  readonly graph?: GraphFetch;
   readonly parameters: readonly Parameter[];
   readonly options: ResultOptions;
 }

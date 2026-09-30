@@ -7,8 +7,9 @@ import type {
 } from '../../../pure-protocol/src/index.ts';
 import type { ModelGraph } from '../model/graph.ts';
 import {
-  freshId, type AggregateOp, type ClassSource, type DateFunction, type FilterNode, type Group, type Operator,
+  freshId, type AggregateOp, type ClassSource, type DateFunction, type FilterNode, type GraphFetch, type GraphNode, type Group, type Operator,
   type Parameter, type ProjectionColumn, type PropertyPath, type PropertyStep, type QueryState, type SortSpec, type Value,
+  type WindowColumn, type WindowOp,
 } from './state.ts';
 
 export type Loaded =
@@ -250,28 +251,54 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
   let sort: SortSpec[] = [];
   let distinct = false;
   let groupBy: { keys: string[]; aggs: readonly ColSpec[] } | undefined;
+  let postFilter: Group | undefined;
+  const windows: WindowColumn[] = [];
+  let graphFetch: GraphFetch | undefined;
   const step = (name: string): Node[] | undefined => (isFunc(n) && funcName(n) === name ? (n as AppliedFunction).parameters as Node[] : undefined);
   let a: Node[] | undefined;
-  if ((a = step('slice')) && a.length === 3) { slice = { start: intOf(a[1]), end: intOf(a[2]) }; n = a[0]!; }
-  if ((a = step('limit')) && a.length === 2) { limit = intOf(a[1]); n = a[0]!; }
-  if ((a = step('take')) && a.length === 2) fail('take() (a TDS query)');
-  if ((a = step('sort')) && a.length === 2) {
-    const keys = a[1]!._type === 'collection' ? (a[1] as unknown as { values: Node[] }).values : [a[1]!];
-    sort = keys.map(sortOf);
+  let specs: readonly ColSpec[] = [];
+  if ((a = step('serialize')) && a.length === 2) {
+    // a graph fetch: serialize(graphFetch[Checked](source, tree), tree)
+    const inner = a[0]!;
+    const name = isFunc(inner) ? funcName(inner) : '';
+    if (name !== 'graphFetch' && name !== 'graphFetchChecked') return fail('serialize() of other than a graph fetch');
+    const [src, tree] = (inner as AppliedFunction).parameters as Node[];
+    graphFetch = { tree: graphTreeOf(tree!), checked: name === 'graphFetchChecked' };
+    n = src!;
+  } else {
+    if ((a = step('slice')) && a.length === 3) { slice = { start: intOf(a[1]), end: intOf(a[2]) }; n = a[0]!; }
+    if ((a = step('limit')) && a.length === 2) { limit = intOf(a[1]); n = a[0]!; }
+    if ((a = step('take')) && a.length === 2) fail('take() (a TDS query)');
+    if ((a = step('sort')) && a.length === 2) {
+      const keys = a[1]!._type === 'collection' ? (a[1] as unknown as { values: Node[] }).values : [a[1]!];
+      sort = keys.map(sortOf);
+      n = a[0]!;
+    }
+    if ((a = step('distinct')) && a.length === 1) { distinct = true; n = a[0]!; }
+    if ((a = step('filter')) && a.length === 2) {
+      // after project/groupBy/extend: a post-filter on the result's columns
+      const { param, body } = lambdaBody(a[1]!);
+      const f = conditionOf(body, param, []);
+      postFilter = f.kind === 'group' ? f : { kind: 'group', id: freshId('g'), op: 'and', children: [f] };
+      n = a[0]!;
+    }
+    while ((a = step('extend')) && a.length === 3) {
+      windows.unshift(windowOf(a[1]!, a[2]!));
+      n = a[0]!;
+    }
+    if ((a = step('extend'))) fail('extend() without a window (a calculated column belongs in project(~[...]))');
+    if ((a = step('groupBy')) && a.length === 3) {
+      groupBy = { keys: colSpecs(a[1]!).map((c) => c.name), aggs: colSpecs(a[2]!) };
+      n = a[0]!;
+    } else if ((a = step('aggregate')) && a.length === 2) {
+      groupBy = { keys: [], aggs: colSpecs(a[1]!) };
+      n = a[0]!;
+    }
+    a = step('project');
+    if (!a || a.length !== 2) return fail(isFunc(n) ? `${funcName(n)}() where the form expects project(~[...])` : 'a query that does not project columns');
+    specs = colSpecs(a[1]!);
     n = a[0]!;
   }
-  if ((a = step('distinct')) && a.length === 1) { distinct = true; n = a[0]!; }
-  if ((a = step('groupBy')) && a.length === 3) {
-    groupBy = { keys: colSpecs(a[1]!).map((c) => c.name), aggs: colSpecs(a[2]!) };
-    n = a[0]!;
-  } else if ((a = step('aggregate')) && a.length === 2) {
-    groupBy = { keys: [], aggs: colSpecs(a[1]!) };
-    n = a[0]!;
-  }
-  a = step('project');
-  if (!a || a.length !== 2) return fail(isFunc(n) ? `${funcName(n)}() where the form expects project(~[...])` : 'a query that does not project columns');
-  const specs = colSpecs(a[1]!);
-  n = a[0]!;
   let filter: Group | undefined;
   if ((a = step('filter')) && a.length === 2) {
     const { param, body } = lambdaBody(a[1]!);
@@ -288,7 +315,13 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
   const columns: ProjectionColumn[] = specs.map((s) => {
     if (!s.function1) return fail(`the column ${s.name} has no function`);
     const { param, body } = lambdaBody(s.function1 as Node);
-    return { id: freshId('col'), name: s.name, path: chainOf(body, param) };
+    try {
+      return { id: freshId('col'), name: s.name, path: chainOf(body, param) };
+    } catch (e) {
+      if (!(e instanceof Unsupported)) throw e;
+      // not a property path: a calculated column, kept as its lambda
+      return { id: freshId('col'), name: s.name, path: [], derivation: s.function1 };
+    }
   });
   if (groupBy) {
     // each aggregate reads one projected column; an aggregate may rename it (`~[headcount:
@@ -318,6 +351,59 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
   return {
     source, columns, parameters,
     ...(filter ? { filter } : {}),
+    ...(windows.length > 0 ? { windows } : {}),
+    ...(postFilter ? { postFilter } : {}),
+    ...(graphFetch ? { graph: graphFetch } : {}),
     options: { sort, distinct, ...(limit !== undefined ? { limit } : {}), ...(slice ? { slice } : {}) },
   };
+}
+
+/** `over(~[partition], [~sort->ascending()])` and a window column spec, read back. */
+function windowOf(window: Node, specNode: Node): WindowColumn {
+  if (!isFunc(window) || funcName(window) !== 'over') return fail('extend() with a window other than over()');
+  let partition: string[] = [];
+  let sortSpec: SortSpec | undefined;
+  for (const part of window.parameters as Node[]) {
+    if (part._type === 'classInstance') partition = colSpecs(part).map((c) => c.name);
+    else {
+      const keys = part._type === 'collection' ? (part as unknown as { values: Node[] }).values : [part];
+      if (keys.length > 1) fail('a window sorted by more than one column');
+      if (keys[0]) sortSpec = sortOf(keys[0]);
+    }
+  }
+  const [spec] = colSpecs(specNode);
+  if (!spec?.function1) return fail('a window column with no function');
+  const f = spec.function1 as unknown as Lambda;
+  if (f.parameters.length !== 3 || f.body.length !== 1) return fail('a window function of other than {p,w,r|...}');
+  const [pn, wn, rn] = f.parameters.map((p) => p.name);
+  const body = f.body[0] as Node;
+  const base = { id: freshId('w'), name: spec.name, partition, ...(sortSpec ? { sort: sortSpec } : {}) };
+  if (!spec.function2) {
+    if (!isFunc(body)) return fail('a window function that is not a ranking');
+    const name = funcName(body);
+    const args = (body.parameters as Node[]).map((x) => (x._type === 'var' ? (x as Variable).name : ''));
+    if ((name === 'rank' || name === 'denseRank' || name === 'percentRank') && args.join() === [pn, wn, rn].join()) return { ...base, op: name };
+    if (name === 'rowNumber' && args.join() === [pn, rn].join()) return { ...base, op: 'rowNumber' };
+    return fail(`the window function ${name}()`);
+  }
+  const read = chainOf(body, rn!);
+  if (read.length !== 1) return fail('a window aggregate reading more than a column');
+  const op = reducerOf(spec.function2 as Node);
+  if (!['sum', 'count', 'min', 'max', 'average'].includes(op)) return fail(`the window aggregate ${op}`);
+  return { ...base, op: op as WindowOp, column: read[0]!.property };
+}
+
+/** A graph fetch tree's properties, read back (aliases, arguments and subtypes stay text). */
+function graphTreeOf(n: Node): GraphNode[] {
+  const ci = n as unknown as { _type: string; type?: string; value?: { subTrees?: unknown[]; subTypeTrees?: unknown[] } };
+  if (ci._type !== 'classInstance' || ci.type !== 'rootGraphFetchTree' || !ci.value) return fail('a graph fetch tree that is not #{...}#');
+  if ((ci.value.subTypeTrees ?? []).length > 0) fail('a graph fetch tree with subtypes');
+  const node = (t: unknown): GraphNode => {
+    const p = t as { _type: string; property: string; parameters?: unknown[]; alias?: string; subType?: string; subTrees?: unknown[]; subTypeTrees?: unknown[] };
+    if (p._type !== 'propertyGraphFetchTree' || (p.parameters ?? []).length > 0 || p.alias || p.subType || (p.subTypeTrees ?? []).length > 0) {
+      return fail(`the graph fetch property ${p.property} (arguments, alias or subtype)`);
+    }
+    return { property: p.property, children: (p.subTrees ?? []).map(node) };
+  };
+  return (ci.value.subTrees ?? []).map(node);
 }

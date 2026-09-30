@@ -17,7 +17,13 @@ const SOURCE = {
 /** The query with its generated ids blanked, for comparison. */
 function shape(q: QueryState): unknown {
   const node = (n: FilterNode): unknown => (n.kind === 'group' ? { ...n, id: '', children: n.children.map(node) } : { ...n, id: '' });
-  return { ...q, columns: q.columns.map((c) => ({ ...c, id: '' })), ...(q.filter ? { filter: node(q.filter) } : {}) };
+  return {
+    ...q,
+    columns: q.columns.map((c) => ({ ...c, id: '' })),
+    ...(q.filter ? { filter: node(q.filter) } : {}),
+    ...(q.postFilter ? { postFilter: node(q.postFilter) } : {}),
+    ...(q.windows ? { windows: q.windows.map((w) => ({ ...w, id: '' })) } : {}),
+  };
 }
 
 async function roundTrip(q: QueryState): Promise<void> {
@@ -54,6 +60,35 @@ describe('load', () => {
       },
       options: { distinct: true, sort: [{ column: 'Quantity (sum)', direction: 'desc' }, { column: 'Ticker', direction: 'asc' }], limit: 100, slice: { start: 2, end: 10 } },
     });
+  });
+
+  it('reads back calculated columns, window columns and a post-filter', async () => {
+    const derivation = await grammar.lambdaJson('x|$x.quantity->toFloat() * $x.price');
+    await roundTrip({
+      ...emptyQuery(SOURCE),
+      columns: [col('Ticker', 'product', 'ticker'), col('Quantity', 'quantity'), { id: 'n', name: 'Notional', path: [], derivation }],
+      windows: [
+        { id: 'w1', name: 'Rank', op: 'rank', partition: ['Ticker'], sort: { column: 'Quantity', direction: 'desc' } },
+        { id: 'w2', name: 'Ticker Total', op: 'sum', column: 'Quantity', partition: ['Ticker'] },
+        { id: 'w3', name: 'Running', op: 'sum', column: 'Quantity', partition: [], sort: { column: 'Quantity', direction: 'asc' } },
+      ],
+      postFilter: { kind: 'group', id: 'p', op: 'and', children: [
+        { kind: 'condition', id: 'pc', path: [{ property: 'Rank' }], operator: 'lessThanEqual', value: { kind: 'integer', value: '2' } },
+      ] },
+      options: { distinct: false, sort: [{ column: 'Ticker', direction: 'asc' }] },
+    });
+  });
+
+  it('reads back a graph fetch, checked or not', async () => {
+    for (const checked of [false, true]) {
+      await roundTrip({
+        ...emptyQuery(SOURCE),
+        graph: { checked, tree: [{ property: 'tradeId', children: [] }, { property: 'product', children: [{ property: 'ticker', children: [] }] }] },
+        filter: { kind: 'group', id: 'g', op: 'and', children: [
+          { kind: 'condition', id: 'c', path: [{ property: 'status' }], operator: 'equal', value: { kind: 'string', value: 'EXECUTED' } },
+        ] },
+      });
+    }
   });
 
   it('aggregates every column with aggregate(), which legend-engine runs (groupBy with no key it cannot)', async () => {

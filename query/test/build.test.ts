@@ -66,6 +66,24 @@ describe('build', () => {
     assert.deepEqual(await columns(q), ['ticker:String', 'qty:Integer']);
   });
 
+  it('types window columns, a calculated column and a post-filter with lite', async () => {
+    const q = trades({
+      columns: [col('ticker', 'product', 'ticker'), col('qty', 'quantity'), { id: 'd', name: 'double', path: [], derivation: await grammar.lambdaJson('x|$x.quantity * 2') }],
+      windows: [{ id: 'w', name: 'rk', op: 'denseRank', partition: ['ticker'], sort: { column: 'qty', direction: 'desc' } },
+        { id: 'w2', name: 'n', op: 'count', column: 'qty', partition: ['ticker'] }],
+      postFilter: { kind: 'group', id: 'p', op: 'and', children: [{ kind: 'condition', id: 'c', path: [{ property: 'rk' }], operator: 'equal', value: { kind: 'integer', value: '1' } }] },
+    });
+    assert.equal(await text(q),
+      '|demo::trading::Trade.all()->project(~[ticker:x|$x.product.ticker, qty:x|$x.quantity, double:x|$x.quantity * 2])->extend(over(~[ticker], [~qty->descending()]), ~rk:{p, w, r|$p->denseRank($w, $r)})->extend(over(~[ticker]), ~n:{p, w, r|$r.qty}:y|$y->count())->filter(r|$r.rk == 1)');
+    assert.deepEqual(await columns(q), ['ticker:String', 'qty:Integer', 'double:Integer', 'rk:Integer', 'n:Integer']);
+  });
+
+  it('builds a graph fetch, a preview taking its rows first', async () => {
+    const q = trades({ graph: { checked: false, tree: [{ property: 'tradeId', children: [] }, { property: 'trader', children: [{ property: 'lastName', children: [] }] }] } });
+    assert.equal(await grammar.lambdaText(buildLambda(graph, q, { withFrom: true, previewLimit: 5 }), 'STANDARD'),
+      '|demo::trading::Trade.all()->take(5)->graphFetch(#{demo::trading::Trade{tradeId,trader{lastName}}}#)->serialize(#{demo::trading::Trade{tradeId,trader{lastName}}}#)->from(demo::trading::TradingMapping, demo::trading::H2Runtime)');
+  });
+
   it('refuses a query with no columns, and a path the model does not have', () => {
     assert.throws(() => buildLambda(graph, trades({}), { withFrom: false }), BuildError);
     assert.throws(() => buildLambda(graph, trades({

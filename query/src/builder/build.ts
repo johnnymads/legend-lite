@@ -10,10 +10,10 @@ import {
   and, collection, element, enumValue, fn, lambda, lit, not, or, parameter, property, type, variable,
   type AppliedFunction, type ColSpec, type Lambda, type ValueSpecification,
 } from '../../../pure-protocol/src/index.ts';
-import { agg, asc, colSpecs, derive, desc, from } from '../../../pure-protocol/src/index.ts';
+import { agg, asc, colSpecs, derive, desc, from, over } from '../../../pure-protocol/src/index.ts';
 import { isToMany, type ModelGraph } from '../model/graph.ts';
 import type {
-  AggregateOp, Condition, DateFunction, FilterNode, Group, PropertyPath, QueryState, Value,
+  AggregateOp, Condition, DateFunction, FilterNode, GraphNode, Group, PropertyPath, QueryState, Value, WindowColumn, WindowOp,
 } from './state.ts';
 
 /** A path's property chain from `$root`, and where it first crosses a to-many property. */
@@ -136,7 +136,7 @@ export function hasConditions(g: Group | undefined): boolean {
   return g !== undefined && g.children.some((c) => c.kind === 'condition' || hasConditions(c));
 }
 
-function reducer(op: AggregateOp): Lambda {
+function reducer(op: AggregateOp | WindowOp): Lambda {
   const y = variable('y');
   switch (op) {
     case 'count': return lambda(['y'], fn('count', y));
@@ -148,6 +148,7 @@ function reducer(op: AggregateOp): Lambda {
     case 'stdDevPopulation': return lambda(['y'], fn('stdDevPopulation', y));
     case 'stdDevSample': return lambda(['y'], fn('stdDevSample', y));
     case 'joinStrings': return lambda(['y'], fn('joinStrings', y, lit.string(',')));
+    default: throw new BuildError(`${op} is not an aggregate`);
   }
 }
 
@@ -158,34 +159,88 @@ export interface BuildOptions {
   readonly previewLimit?: number;
 }
 
+/** A window column's function over its window: a ranking, or an aggregate of a column. */
+function windowSpec(w: WindowColumn): ColSpec {
+  const p = variable('p'), wv = variable('w'), r = variable('r');
+  const params = ['p', 'w', 'r'];
+  switch (w.op) {
+    case 'rank': case 'denseRank': case 'percentRank':
+      return derive(w.name, lambda(params, fn(w.op, p, wv, r)));
+    case 'rowNumber':
+      return derive(w.name, lambda(params, fn('rowNumber', p, r)));
+    default: {
+      if (w.column === undefined) throw new BuildError(`the window column ${w.name} needs a column to ${w.op}`);
+      return agg(w.name, lambda(params, property(r, w.column)), reducer(w.op));
+    }
+  }
+}
+
+/** The graph fetch tree, `#{Class{a, b{c}}}#`, as its protocol node. */
+export function graphTree(root: string, tree: readonly GraphNode[]): ValueSpecification {
+  const node = (n: GraphNode): unknown => ({
+    _type: 'propertyGraphFetchTree', parameters: [], property: n.property, subTrees: n.children.map(node), subTypeTrees: [],
+  });
+  return {
+    _type: 'classInstance', type: 'rootGraphFetchTree',
+    value: { _type: 'rootGraphFetchTree', class: root, subTrees: tree.map(node), subTypeTrees: [] },
+  } as unknown as ValueSpecification;
+}
+
 /** The query as its lambda. */
 export function buildLambda(graph: ModelGraph, q: QueryState, options: BuildOptions): Lambda {
-  if (q.columns.length === 0) throw new BuildError('add at least one column');
   const root = q.source.class;
   let rel: ValueSpecification = fn('getAll', element(root));
   if (hasConditions(q.filter)) {
     rel = fn('filter', rel, lambda(['x'], filterNode(graph, root, q.filter!, 'x')));
   }
-  const cols: ColSpec[] = q.columns.map((c) => derive(c.name, lambda(['x'], chain(variable('x'), c.path, 0, c.path.length))));
-  let r = from(rel).apply('project', colSpecs(cols));
-  const aggregated = q.columns.filter((c) => c.aggregate !== undefined);
-  if (aggregated.length > 0) {
-    const keys = q.columns.filter((c) => c.aggregate === undefined).map((c) => c.name);
-    // the aggregate replaces its column: map the row to the column, reduce the values
-    const aggs = aggregated.map((c) => agg(c.name, lambda(['x'], property(variable('x'), c.name)), reducer(c.aggregate!)));
-    // with no key: `aggregate(~[...])` -- legend-engine fails on `groupBy(~[], ...)` (measured, 4.145.0)
-    r = keys.length > 0 ? r.groupBy(keys, aggs) : r.apply('aggregate', colSpecs(aggs));
+  let body: ValueSpecification;
+  if (q.graph) {
+    // a graph fetch: objects as JSON; a preview takes its rows before fetching (as upstream)
+    if (q.graph.tree.length === 0) throw new BuildError('add at least one property to fetch');
+    if (options.previewLimit !== undefined) rel = fn('take', rel, lit.integer(options.previewLimit) as ValueSpecification);
+    const tree = graphTree(root, q.graph.tree);
+    body = fn('serialize', fn(q.graph.checked ? 'graphFetchChecked' : 'graphFetch', rel, tree), tree);
+  } else {
+    if (q.columns.length === 0) throw new BuildError('add at least one column');
+    const cols: ColSpec[] = q.columns.map((c) => derive(c.name, c.derivation ?? lambda(['x'], chain(variable('x'), c.path, 0, c.path.length))));
+    let r = from(rel).apply('project', colSpecs(cols));
+    const aggregated = q.columns.filter((c) => c.aggregate !== undefined);
+    if (aggregated.length > 0) {
+      const keys = q.columns.filter((c) => c.aggregate === undefined).map((c) => c.name);
+      // the aggregate replaces its column: map the row to the column, reduce the values
+      const aggs = aggregated.map((c) => agg(c.name, lambda(['x'], property(variable('x'), c.name)), reducer(c.aggregate!)));
+      // with no key: `aggregate(~[...])` -- legend-engine fails on `groupBy(~[], ...)` (measured, 4.145.0)
+      r = keys.length > 0 ? r.groupBy(keys, aggs) : r.apply('aggregate', colSpecs(aggs));
+    }
+    for (const w of q.windows ?? []) {
+      const sort = w.sort ? [w.sort.direction === 'asc' ? asc(w.sort.column) : desc(w.sort.column)] : [];
+      r = r.extend(windowSpec(w), over(w.partition, sort));
+    }
+    if (hasConditions(q.postFilter)) {
+      r = r.filter(lambda(['r'], postFilterNode(q.postFilter!)));
+    }
+    if (q.options.distinct) r = r.distinct();
+    if (q.options.sort.length > 0) {
+      r = r.sort(q.options.sort.map((s): AppliedFunction => (s.direction === 'asc' ? asc(s.column) : desc(s.column))));
+    }
+    if (q.options.limit !== undefined) r = r.limit(q.options.limit);
+    if (q.options.slice !== undefined) r = r.slice(q.options.slice.start, q.options.slice.end);
+    if (options.previewLimit !== undefined) r = r.limit(options.previewLimit);
+    body = r.node;
   }
-  if (q.options.distinct) r = r.distinct();
-  if (q.options.sort.length > 0) {
-    r = r.sort(q.options.sort.map((s): AppliedFunction => (s.direction === 'asc' ? asc(s.column) : desc(s.column))));
-  }
-  if (q.options.limit !== undefined) r = r.limit(q.options.limit);
-  if (q.options.slice !== undefined) r = r.slice(q.options.slice.start, q.options.slice.end);
-  if (options.previewLimit !== undefined) r = r.limit(options.previewLimit);
-  let body: ValueSpecification = r.node;
   if (options.withFrom) body = fn('from', body, element(q.source.mapping), element(q.source.runtime));
   return lambda(q.parameters.map((p) => parameter(p.name, type(p.type), p.multiplicity)), body);
+}
+
+/** A post-filter on the result's columns: each condition names a column as its one-step path, `$r.column`. */
+function postFilterNode(n: FilterNode): ValueSpecification {
+  if (n.kind === 'condition') {
+    if (n.path.length !== 1) throw new BuildError('a post-filter condition names one column');
+    return predicate(n, property(variable('r'), n.path[0]!.property));
+  }
+  const terms = n.children.filter((c) => c.kind === 'condition' || hasConditions(c)).map(postFilterNode);
+  if (terms.length === 0) throw new BuildError('an empty filter group');
+  return n.op === 'and' ? and(...terms) : or(...terms);
 }
 
 /** Every parameter a query references, by name. */
@@ -203,6 +258,7 @@ export function referencedParameters(q: QueryState): Set<string> {
     } else n.children.forEach(visit);
   };
   if (q.filter) visit(q.filter);
+  if (q.postFilter) visit(q.postFilter);
   q.columns.forEach((c) => c.path.forEach((s) => s.args?.forEach(visitValue)));
   return out;
 }
