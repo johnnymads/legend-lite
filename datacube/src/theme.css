@@ -33,6 +33,7 @@
  */
 
 .dc-app,
+.dc-app-floating,
 .dc-grid,
 .dc-menu,
 .dc-filters {
@@ -142,24 +143,29 @@
  * transparent border so it reads as a thin pill. Suppressing the
  * OS auto-hide is deliberate on their part -- a grid whose
  * scrollbar vanishes hides how much is left to read. */
-.dc-app ::-webkit-scrollbar {
+.dc-app ::-webkit-scrollbar,
+.dc-app-floating ::-webkit-scrollbar {
   appearance: none;
   width: 10px;
   height: 10px;
 }
 
 .dc-app ::-webkit-scrollbar-track,
-.dc-app ::-webkit-scrollbar-corner {
+.dc-app ::-webkit-scrollbar-corner,
+.dc-app-floating ::-webkit-scrollbar-track,
+.dc-app-floating ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
-.dc-app ::-webkit-scrollbar-thumb {
+.dc-app ::-webkit-scrollbar-thumb,
+.dc-app-floating ::-webkit-scrollbar-thumb {
   background: var(--tw-neutral-400);
   border: 3.5px solid transparent;
   background-clip: content-box;
   border-radius: 2px;
 }
 
-.dc-app ::-webkit-scrollbar-thumb:hover {
+.dc-app ::-webkit-scrollbar-thumb:hover,
+.dc-app-floating ::-webkit-scrollbar-thumb:hover {
   background: var(--tw-neutral-500);
 }

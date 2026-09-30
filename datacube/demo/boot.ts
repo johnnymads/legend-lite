@@ -247,27 +247,12 @@ export async function loadModel(): Promise<string> {
 const REGIONS = ['EMEA', 'AMER', 'APAC'];
 const DESKS = ['Rates', 'Credit', 'FX', 'Equity', 'Commodities'];
 
-export async function boot(makePlanner: MakePlanner): Promise<void> {
-  const status = must('status');
-
-  // Start the planner NOW, and await it further down where it is
-  // first needed.
-  //
-  // It needs nothing from DuckDB and DuckDB needs nothing from it,
-  // but boot used to run them in series, so ~1.3s of boot-layer
-  // construction (prelude parse, system metamodel, resolve and
-  // normalize) waited for a 36 MB WASM instantiate that had already
-  // finished nothing useful for it. Overlapped, the slower of the
-  // two sets the floor instead of their sum.
-  performance.mark('dc:boot-start');
-  const engineReady = makePlanner(status);
-  void engineReady.then(() => performance.mark('dc:planner-ready'));
-  // Await happens below; this only stops an early rejection being
-  // reported as unhandled in the window before that.
-  engineReady.catch(() => {});
-
-  status.textContent = 'starting DuckDB…';
-
+/**
+ * DuckDB in this tab: its bundle from our own origin, its worker, one connection -- the engine,
+ * and the database itself (files are registered on it). Shared by the demo page and the page of
+ * several cubes (page.ts).
+ */
+export async function startDuckDb(): Promise<{ readonly engine: DuckDbEngine; readonly db: duckdb.AsyncDuckDB }> {
   // Bundles are served from OUR origin, copied out of node_modules by
   // `bazel build //datacube:vendor`. Loading them from a CDN instead forces a
   // cross-origin Worker, which the platform forbids outright and which
@@ -294,7 +279,49 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   const db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
   const conn = await db.connect();
-  const engine = new DuckDbEngine(conn as unknown as ArrowishConnection);
+  return { engine: new DuckDbEngine(conn as unknown as ArrowishConnection), db };
+}
+
+/** The demo's trades, generated in this tab's DuckDB as the table the model reads. */
+export async function generateTrades(engine: DuckDbEngine): Promise<void> {
+  await engine.run(
+    `CREATE OR REPLACE TABLE trades AS
+     SELECT
+       ${sqlPick(REGIONS, 'i % 3')}            AS region,
+       ${sqlPick(DESKS, '(i // 3) % 5')}       AS desk,
+       (2021 + ((i // 15) % 5))                AS year,
+       ('Q' || (1 + ((i // 75) % 4)))          AS qtr,
+       ('Book ' || (1 + ((i // 300) % 4)))     AS book,
+       ((i * 7919) % 1000000) / 100.0  AS notional,
+       ((i * 104729) % 200000) / 100.0 - 1000.0 AS pnl,
+       ((i * 31) % 97) + 1             AS qty
+     FROM range(${ROWS}) t(i)`,
+    0,
+  );
+}
+
+export async function boot(makePlanner: MakePlanner): Promise<void> {
+  const status = must('status');
+
+  // Start the planner NOW, and await it further down where it is
+  // first needed.
+  //
+  // It needs nothing from DuckDB and DuckDB needs nothing from it,
+  // but boot used to run them in series, so ~1.3s of boot-layer
+  // construction (prelude parse, system metamodel, resolve and
+  // normalize) waited for a 36 MB WASM instantiate that had already
+  // finished nothing useful for it. Overlapped, the slower of the
+  // two sets the floor instead of their sum.
+  performance.mark('dc:boot-start');
+  const engineReady = makePlanner(status);
+  void engineReady.then(() => performance.mark('dc:planner-ready'));
+  // Await happens below; this only stops an early rejection being
+  // reported as unhandled in the window before that.
+  engineReady.catch(() => {});
+
+  status.textContent = 'starting DuckDB…';
+
+  const { engine, db } = await startDuckDb();
   performance.mark('dc:duckdb-ready');
 
   // A REMOTE SOURCE, when one is named.
@@ -334,20 +361,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   } else {
 
   status.textContent = `generating ${ROWS.toLocaleString()} rows…`;
-  await engine.run(
-    `CREATE OR REPLACE TABLE trades AS
-     SELECT
-       ${sqlPick(REGIONS, 'i % 3')}            AS region,
-       ${sqlPick(DESKS, '(i // 3) % 5')}       AS desk,
-       (2021 + ((i // 15) % 5))                AS year,
-       ('Q' || (1 + ((i // 75) % 4)))          AS qtr,
-       ('Book ' || (1 + ((i // 300) % 4)))     AS book,
-       ((i * 7919) % 1000000) / 100.0  AS notional,
-       ((i * 104729) % 200000) / 100.0 - 1000.0 AS pnl,
-       ((i * 31) % 97) + 1             AS qty
-     FROM range(${ROWS}) t(i)`,
-    0,
-  );
+  await generateTrades(engine);
   generated = { label: 'trades (generated in this tab)', takenAt: new Date(), rowCount: ROWS };
   }
 
