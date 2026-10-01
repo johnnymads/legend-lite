@@ -105,12 +105,14 @@ describe('queries are protocol, never Pure text (docs/DATACUBE_TYPES_TO_SERVER_2
   const PURE_SYNTAX = /(['"`])(?:(?!\1).)*(->|~\[|#>\{)/;
   /**
    * The text a person edits, and what it may say: the calculated-column editor's typing
-   * help (its examples and completions are inserted into what the person types) and one
-   * refusal that suggests an expression to type.
+   * help (its examples and completions are inserted into what the person types), one
+   * refusal that suggests an expression to type, and one that names the accessor a table's
+   * name cannot be read through.
    */
   const FOR_A_PERSON = new Map([
     [join('src', 'calc.ts'), 'the column editor\'s examples and completions'],
     [join('src', 'query.ts'), 'a refusal suggesting what to type'],
+    [join('src', 'catalog-model.ts'), 'a refusal naming the accessor a name cannot be read through, in legend-lite\'s words'],
   ]);
 
   it('builds no Pure text outside what a person types', () => {

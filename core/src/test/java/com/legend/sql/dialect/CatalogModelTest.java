@@ -59,13 +59,50 @@ class CatalogModelTest {
             Runtime t::RT { mappings: []; connections: [ t::DB: [ c: t::C ] ]; }
             """;
 
-    @Test
-    void everyDuckDbTypeCompiles_andTheCompilerTypesIt() {
-        List<CatalogModel.Column> columns = new java.util.ArrayList<>();
-        int i = 0;
-        for (String type : EXPECTED.keySet()) {
-            columns.add(new CatalogModel.Column("c" + i++, type));
+    /**
+     * A table of every type, created in a real DuckDB and read back through its STRUCTURED catalog
+     * ({@link DuckDb#CATALOG_COLUMNS_SQL}): no type string parsed.
+     */
+    static List<CatalogModel.Column> readCatalog(java.util.Collection<String> types) throws java.sql.SQLException {
+        try (java.sql.Connection conn = java.sql.DriverManager.getConnection("jdbc:duckdb:");
+             java.sql.Statement st = conn.createStatement()) {
+            List<String> cols = new java.util.ArrayList<>();
+            int i = 0;
+            for (String type : types) {
+                cols.add("c" + i++ + " " + type);
+            }
+            st.execute("CREATE TABLE T (" + String.join(", ", cols) + ")");
+            return columnsOf(st, "main", "T");
         }
+    }
+
+    /** A table's columns, read by THE catalog question. */
+    static List<CatalogModel.Column> columnsOf(java.sql.Statement st, String schema, String table) throws java.sql.SQLException {
+        List<CatalogModel.Column> out = new java.util.ArrayList<>();
+        String sql = DuckDb.CATALOG_COLUMNS_SQL.replace("{schema}", "'" + schema + "'").replace("{table}", "'" + table + "'");
+        try (java.sql.ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                out.add(new CatalogModel.Column(rs.getString(1), rs.getString(2), rs.getString(3),
+                        (Integer) rs.getObject(4), (Integer) rs.getObject(5)));
+            }
+        }
+        return out;
+    }
+
+    /** The columns of a real DuckDB table declared as {@code ddl}, read by THE catalog question. */
+    static List<CatalogModel.Column> catalog(String ddl) {
+        try (java.sql.Connection conn = java.sql.DriverManager.getConnection("jdbc:duckdb:");
+             java.sql.Statement st = conn.createStatement()) {
+            st.execute("CREATE TABLE T (" + ddl + ")");
+            return columnsOf(st, "main", "T");
+        } catch (java.sql.SQLException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    void everyDuckDbTypeCompiles_andTheCompilerTypesIt() throws java.sql.SQLException {
+        List<CatalogModel.Column> columns = readCatalog(EXPECTED.keySet());
         CatalogModel.Database db = CatalogModel.database("t::DB", null, "T", columns, new DuckDb(), true);
         ExprType root = com.legend.Compiler.resultType(db.text() + WRAPPER, db.accessor());
         List<String> types = UpstreamRelationType.columns(root).stream()
@@ -73,12 +110,32 @@ class CatalogModelTest {
         assertEquals(List.copyOf(EXPECTED.values()), types, db.text());
     }
 
+    /**
+     * EVERY canonical type the DuckDB this builds with knows has a DECISION: declared
+     * ({@link DuckDb#CATALOG_TYPES}, or DECIMAL from its precision and scale) or refused with a
+     * reason ({@link DuckDb#CATALOG_REFUSED}). A DuckDB upgrade that adds a type fails here until
+     * someone decides -- it is never refused by accident.
+     */
+    @Test
+    void everyCanonicalDuckDbTypeHasADecision() throws java.sql.SQLException {
+        List<String> undecided = new java.util.ArrayList<>();
+        try (java.sql.Connection conn = java.sql.DriverManager.getConnection("jdbc:duckdb:");
+             java.sql.Statement st = conn.createStatement();
+             java.sql.ResultSet rs = st.executeQuery(
+                     "SELECT DISTINCT logical_type FROM duckdb_types() WHERE internal AND type_oid IS NOT NULL ORDER BY 1")) {
+            while (rs.next()) {
+                String t = rs.getString(1);
+                if (!t.equals("DECIMAL") && !DuckDb.CATALOG_TYPES.containsKey(t) && !DuckDb.CATALOG_REFUSED.containsKey(t)) {
+                    undecided.add(t);
+                }
+            }
+        }
+        assertEquals(List.of(), undecided, "canonical DuckDB types with no decision");
+    }
+
     @Test
     void aTypeTheDdlCannotSayIsConvertedAtTheSource_named() {
-        CatalogModel.Database db = CatalogModel.database("t::DB", "s", "orders", List.of(
-                new CatalogModel.Column("id", "BIGINT"),
-                new CatalogModel.Column("at", "TIMESTAMP WITH TIME ZONE"),
-                new CatalogModel.Column("big", "UBIGINT")), new DuckDb(), true);
+        CatalogModel.Database db = CatalogModel.database("t::DB", "s", "orders", catalog("id BIGINT, \"at\" TIMESTAMP WITH TIME ZONE, big UBIGINT"), new DuckDb(), true);
         assertEquals(List.of(new CatalogModel.Conversion("at", "CAST(timezone('UTC', \"at\") AS TIMESTAMP)"),
                 new CatalogModel.Conversion("big", "CAST(\"big\" AS DECIMAL(20,0))")), db.conversions());
         assertTrue(db.text().contains("Schema s"), db.text());
@@ -87,9 +144,7 @@ class CatalogModelTest {
 
     @Test
     void aNestedColumnIsAVariantAsStored_evenOnAReadOnlySource() {
-        CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", List.of(
-                new CatalogModel.Column("items", "STRUCT(sku VARCHAR)[]"),
-                new CatalogModel.Column("attrs", "MAP(VARCHAR, INTEGER)")), new DuckDb(), false);
+        CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", catalog("items STRUCT(sku VARCHAR)[], attrs MAP(VARCHAR, INTEGER)"), new DuckDb(), false);
         assertEquals(List.of(), db.conversions());
         assertEquals(List.of(), db.excluded());
         assertTrue(db.text().contains("items SEMISTRUCTURED") && db.text().contains("attrs SEMISTRUCTURED"), db.text());
@@ -97,28 +152,26 @@ class CatalogModelTest {
 
     @Test
     void aReadOnlySourceLeavesOutWhatItCannotConvert_namingIt() {
-        CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", List.of(
-                new CatalogModel.Column("id", "BIGINT"),
-                new CatalogModel.Column("at", "TIMESTAMPTZ")), new DuckDb(), false);
+        CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", catalog("id BIGINT, \"at\" TIMESTAMPTZ"), new DuckDb(), false);
         assertEquals(List.of("at"), db.excluded());
         assertEquals(List.of(), db.conversions());
         assertTrue(!db.text().contains("at "), db.text());
         assertThrows(IllegalArgumentException.class, () -> CatalogModel.database("t::DB", null, "T",
-                List.of(new CatalogModel.Column("at", "TIMESTAMPTZ")), new DuckDb(), false));
+                catalog("\"at\" TIMESTAMPTZ"), new DuckDb(), false));
     }
 
     @Test
     void twoColumnsOneNameApartByCaseAreRefused() {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> CatalogModel.database("t::DB", null, "T", List.of(new CatalogModel.Column("a", "INTEGER"),
-                        new CatalogModel.Column("A", "INTEGER")), new DuckDb(), true));
+                () -> CatalogModel.database("t::DB", null, "T", List.of(new CatalogModel.Column("a", "INTEGER", "INTEGER", 32, 0),
+                        new CatalogModel.Column("A", "INTEGER", "INTEGER", 32, 0)), new DuckDb(), true));
         assertTrue(e.getMessage().contains("'A'"), e.getMessage());
     }
 
     @Test
     void awkwardNamesReadThroughTheAccessor_andRenderAsTheDatabaseSpellsThem() {
         CatalogModel.Database db = CatalogModel.database("t::DB", "my schema", "total \"pnl\" 2024",
-                List.of(new CatalogModel.Column("a b", "INTEGER")), new DuckDb(), true);
+                catalog("\"a b\" INTEGER"), new DuckDb(), true);
         assertEquals("#>{t::DB.\"my schema\".\"total \\\"pnl\\\" 2024\"}#", db.accessor());
         ExprType root = com.legend.Compiler.resultType(db.text() + WRAPPER, db.accessor());
         assertEquals(List.of("a b"), UpstreamRelationType.columns(root).stream().map(c -> c.name()).toList());
@@ -126,21 +179,21 @@ class CatalogModelTest {
         assertTrue(sql.contains("FROM \"my schema\".\"total \"\"pnl\"\" 2024\""), sql);
         for (String name : List.of("select", "a-b", "2024")) {
             CatalogModel.Database k = CatalogModel.database("t::DB", null, name,
-                    List.of(new CatalogModel.Column("a", "INTEGER")), new DuckDb(), true);
+                    catalog("a INTEGER"), new DuckDb(), true);
             assertEquals(List.of("a"), UpstreamRelationType.columns(
                     com.legend.Compiler.resultType(k.text() + WRAPPER, k.accessor())).stream().map(c -> c.name()).toList(),
                     name);
         }
         // upstream splits the accessor on '.': a dotted name cannot be carried
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> CatalogModel.database(
-                "t::DB", null, "a.b", List.of(new CatalogModel.Column("a", "INTEGER")), new DuckDb(), true));
+                "t::DB", null, "a.b", catalog("a INTEGER"), new DuckDb(), true));
         assertTrue(e.getMessage().contains("a.b"), e.getMessage());
     }
 
     @Test
     void aBlobIsRefused_namingTheColumn() {
         DialectCapability e = assertThrows(DialectCapability.class, () -> CatalogModel.database("t::DB", null, "T",
-                List.of(new CatalogModel.Column("payload", "BLOB")), new DuckDb(), true));
+                catalog("payload BLOB"), new DuckDb(), true));
         assertTrue(e.getMessage().contains("payload") && e.getMessage().contains("BLOB"), e.getMessage());
     }
 

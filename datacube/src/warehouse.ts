@@ -40,8 +40,17 @@ export interface CatalogObject {
   readonly schema: string;
   readonly name: string;
   readonly kind: string;
-  /** DuckDB's names for the column types, which `inferModel` reads. */
-  readonly columns: readonly { readonly name: string; readonly type: string }[];
+  /**
+   * Its columns, as the warehouse's DuckDB catalog reports them: `type` its own name, and
+   * STRUCTURED (catalog-model.ts) its canonical type and a DECIMAL's precision and scale.
+   */
+  readonly columns: readonly {
+    readonly name: string;
+    readonly type: string;
+    readonly logicalType: string | null;
+    readonly precision: number | null;
+    readonly scale: number | null;
+  }[];
 }
 
 interface ApiError {

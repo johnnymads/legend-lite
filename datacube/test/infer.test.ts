@@ -3,7 +3,7 @@ import { PIVOT_SEPARATOR } from '../src/generated/lite-facts.ts';
 import { describe, it } from 'node:test';
 
 import { inferModel } from '../src/infer.ts';
-import { build } from './catalog-builder.ts';
+import type { CatalogColumn } from '../src/catalog-model.ts';
 import { formatOf, tableNameOf } from '../src/upload.ts';
 import { lambda } from '../../pure-protocol/src/index.ts';
 import { print } from './lite-compiler.ts';
@@ -36,19 +36,25 @@ describe('formatOf', () => {
   });
 });
 
-// Each column's declared type is the COMPILER's reading of DuckDB's (CatalogModelTest, every
-// DuckDB type, and typed-values.ts through the real app); what is pinned here is the model
-// around it.
+// Each column's declared type is legend-lite's reading of DuckDB's catalog (CatalogModelTest, every
+// DuckDB type; catalog-model.test.ts, the TypeScript writer against it; typed-values.ts through the
+// real app); what is pinned here is the model around it.
+
+/** A catalog column of a canonical type (its own name the same, unless given). */
+function col(name: string, logicalType: string, dataType = logicalType): CatalogColumn {
+  return { name, dataType, logicalType, precision: null, scale: null };
+}
+
 describe('inferModel', () => {
   const described = [
-    { name: 'region', type: 'VARCHAR' },
-    { name: 'year', type: 'BIGINT' },
-    { name: 'notional', type: 'DOUBLE' },
-    { name: 'booked', type: 'DATE' },
+    col('region', 'VARCHAR'),
+    col('year', 'BIGINT'),
+    col('notional', 'DOUBLE'),
+    col('booked', 'DATE'),
   ];
 
   it('writes a model the planner can compile', async () => {
-    const m = await inferModel(build, described, { table: 'trades', convertible: true });
+    const m = inferModel(described, { table: 'trades', convertible: true });
     assert.match(m.model, /###Relational/);
     assert.match(m.model, /Database local::DB/);
     assert.match(m.model, /Table trades/);
@@ -65,43 +71,43 @@ describe('inferModel', () => {
   });
 
   it('quotes a column name that needs it, and leaves a keyword bare', async () => {
-    const m = await inferModel(build, [{ name: 'total pnl', type: 'DOUBLE' },
-      { name: 'select', type: 'VARCHAR' }], { table: 't', convertible: true });
+    const m = inferModel([col('total pnl', 'DOUBLE'),
+      col('select', 'VARCHAR')], { table: 't', convertible: true });
     assert.match(m.model, /"total pnl" DOUBLE/);
     assert.match(m.model, /\bselect VARCHAR/);
   });
 
   it('quotes an awkward table name, and refuses a dotted one (upstream splits the accessor on dots)', async () => {
-    const m = await inferModel(build, [{ name: 'a', type: 'VARCHAR' }],
+    const m = inferModel([col('a', 'VARCHAR')],
       { table: 'my table', convertible: true });
     assert.match(m.model, /Table "my table"/);
     assert.equal(print(lambda([], m.source)), '|#>{local::DB."my table"}#');
-    await assert.rejects(inferModel(build, [{ name: 'a', type: 'VARCHAR' }],
+    assert.throws(() => inferModel([col('a', 'VARCHAR')],
       { table: 'a.b', convertible: true }), /cannot be carried/);
   });
 
   it('refuses an empty schema and duplicate column names', async () => {
-    await assert.rejects(inferModel(build, [], { table: 't', convertible: true }), /no columns/);
-    await assert.rejects(inferModel(build, [
-      { name: 'a', type: 'VARCHAR' },
-      { name: 'A', type: 'VARCHAR' },
+    assert.throws(() => inferModel([], { table: 't', convertible: true }), /no columns/);
+    assert.throws(() => inferModel([
+      col('a', 'VARCHAR'),
+      col('A', 'VARCHAR'),
     ], { table: 't', convertible: true }), /two columns named/);
   });
 
   it('names what the source must convert, or what a read-only source leaves out', async () => {
-    const cols = [{ name: 'id', type: 'BIGINT' }, { name: 'at', type: 'TIMESTAMPTZ' }];
-    const upload = await inferModel(build, cols, { table: 't', convertible: true });
+    const cols = [col('id', 'BIGINT'), col('at', 'TIMESTAMP WITH TIME ZONE')];
+    const upload = inferModel(cols, { table: 't', convertible: true });
     assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
     assert.match(upload.model, /at TIMESTAMP/);
-    const warehouse = await inferModel(build, cols, { table: 't', schema: 's', convertible: false });
+    const warehouse = inferModel(cols, { table: 't', schema: 's', convertible: false });
     assert.deepEqual(warehouse.excluded, ['at']);
     assert.doesNotMatch(warehouse.model, / at /);
   });
 
   it('declares a nested column a Variant as stored, on any source (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)', async () => {
-    const cols = [{ name: 'items', type: 'STRUCT(sku VARCHAR)[]' }, { name: 'attrs', type: 'MAP(VARCHAR, INTEGER)' }];
+    const cols = [col('items', 'LIST', 'STRUCT(sku VARCHAR)[]'), col('attrs', 'MAP', 'MAP(VARCHAR, INTEGER)')];
     for (const convertible of [true, false]) {
-      const m = await inferModel(build, cols, { table: 't', convertible });
+      const m = inferModel(cols, { table: 't', convertible });
       assert.deepEqual([m.conversions, m.excluded], [[], []]);
       assert.match(m.model, /items SEMISTRUCTURED,\n\s*attrs SEMISTRUCTURED/);
     }
@@ -118,14 +124,14 @@ describe('the facts that belong to legend-lite', () => {
 
 describe('inferModel with a schema (a warehouse table)', () => {
   it('declares the table inside its schema and reads it by the qualified name', async () => {
-    const m = await inferModel(build, [{ name: 'id', type: 'INTEGER' }, { name: 'region', type: 'VARCHAR' }],
+    const m = inferModel([col('id', 'INTEGER'), col('region', 'VARCHAR')],
       { table: 'v_orders', schema: 'sales', convertible: false });
     assert.match(m.model, /Schema sales\n {4}\(\n {8}Table v_orders\n {8}\(\n {12}id INTEGER,\n {12}region VARCHAR\(4096\)\n {8}\)\n {4}\)/);
     assert.equal(print(lambda([], m.source)), '|#>{local::DB.sales.v_orders}#');
   });
 
   it('declares no schema when there is none', async () => {
-    const m = await inferModel(build, [{ name: 'id', type: 'INTEGER' }], { table: 't', convertible: true });
+    const m = inferModel([col('id', 'INTEGER')], { table: 't', convertible: true });
     assert.doesNotMatch(m.model, /Schema/);
   });
 });

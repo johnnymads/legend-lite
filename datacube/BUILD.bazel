@@ -52,6 +52,8 @@ _TESTS = glob(["test/*.test.ts"])
 _EXTRA_DATA = {
     # the page's own bundle and its lazy chunks, measured against their budget (plan F7)
     "bundle-budget": [":bundle_bundle"],
+    # legend-lite's own answers for the TypeScript Database writer to match
+    "catalog-model": ["test/generated/catalog-corpus.ts"],
     # the in-memory source the Ad Hoc Analysis tests query
     "adhoc-session": ["test/adhoc-fixture.ts"],
     "adhoc-mode": ["test/adhoc-fixture.ts"],
@@ -262,12 +264,45 @@ java_run(
     deps = [":offer_facts_main"],
 )
 
+# A DUCKDB TABLE'S MODEL, written in TypeScript with no WebAssembly on any planner (the user,
+# 2026-10-01): legend-lite's catalog decisions and THE catalog question, generated as data; and
+# CatalogModel's answers for a corpus of real DuckDB tables, which src/catalog-model.ts is tested
+# against (test/catalog-model.test.ts). Nothing parses a type string.
+java_library(
+    name = "catalog_facts_main",
+    srcs = ["tools/catalogfacts/CatalogFacts.java"],
+    deps = [
+        "//core",
+        "//json",
+    ],
+    # the DuckDB DataCube meets -- the warehouse's 1.5.x, as the tab's DuckDB-WASM is -- not core's 1.4.4
+    runtime_deps = ["@maven_warehouse//:org_duckdb_duckdb_jdbc"],
+)
+
+java_run(
+    name = "catalog_rules",
+    outs = ["generated/catalog-facts.gen.ts"],
+    arguments = ["rules", "{OUT}"],
+    main_class = "catalogfacts.CatalogFacts",
+    deps = [":catalog_facts_main"],
+)
+
+java_run(
+    name = "catalog_corpus",
+    outs = ["generated/catalog-corpus.gen.ts"],
+    arguments = ["corpus", "{OUT}"],
+    main_class = "catalogfacts.CatalogFacts",
+    deps = [":catalog_facts_main"],
+)
+
 write_source_files(
     name = "update_generated",
     diff_test_failure_message = "{{DEFAULT_MESSAGE}}\nlegend-lite changed a fact this cube mirrors — regenerate: bazel run //datacube:update_generated, then read the diff (a changed Pure kind or pivot separator changes what the grid shows; a changed offer fact changes what a column is offered)",
     files = {
         "src/generated/lite-facts.ts": ":lite_facts",
         "src/generated/offer-facts.ts": ":offer_facts",
+        "src/generated/catalog-facts.ts": ":catalog_rules",
+        "test/generated/catalog-corpus.ts": ":catalog_corpus",
     },
     visibility = ["//:__pkg__"],
 )

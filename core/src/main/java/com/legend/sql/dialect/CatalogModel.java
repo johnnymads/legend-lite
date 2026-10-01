@@ -9,8 +9,9 @@ import java.util.List;
 /**
  * A Pure Database built from a database's own CATALOG (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md,
  * T2) -- the shape upstream's {@code pure/v1/utilities/database/schemaExploration} builds from
- * JDBC metadata, here from the catalog rows a caller read ({@code DESCRIBE}, a warehouse's
- * listing). Each column's type is read by the database's own dialect
+ * JDBC metadata, here from the STRUCTURED catalog rows a caller read (DuckDB's
+ * {@code duckdb_columns()} joined to {@code duckdb_types()}: no type string is parsed; the user,
+ * 2026-10-01). Each column's type is read by the database's own dialect
  * ({@link SqlDialect#catalogType}); a column whose value must be converted at the source
  * comes back with its conversion, for the caller to apply where the source allows it. The
  * browser's copy of this (a TypeScript type table) is deleted: the compiler decides.
@@ -20,8 +21,18 @@ public final class CatalogModel {
     private CatalogModel() {
     }
 
-    /** One catalog column: its name and the type the database reports for it. */
-    public record Column(String name, String catalogType) {
+    /**
+     * One catalog column, as the database's catalog describes it.
+     *
+     * @param dataType    the column's own type name, as the catalog writes it ({@code DECIMAL(18,3)},
+     *                    {@code JSON}, a user type's name): for an ALIAS and for messages, never parsed
+     * @param logicalType its canonical type ({@code duckdb_types().logical_type}), or null when the
+     *                    catalog names none
+     * @param precision   a DECIMAL's precision, as a number; null for any other type
+     * @param scale       a DECIMAL's scale, as a number; null for any other type
+     */
+    public record Column(String name, String dataType, @com.legend.base.Nullable String logicalType,
+            @com.legend.base.Nullable Integer precision, @com.legend.base.Nullable Integer scale) {
     }
 
     /** A column's conversion at the source: SQL over the column, e.g. {@code to_json("items")}. */
@@ -63,7 +74,7 @@ public final class CatalogModel {
             }
             CatalogType t;
             try {
-                t = dialect.catalogType(c.catalogType());
+                t = dialect.catalogType(c);
             } catch (DialectCapability e) {
                 throw new DialectCapability("column '" + c.name() + "': " + e.getMessage());
             }

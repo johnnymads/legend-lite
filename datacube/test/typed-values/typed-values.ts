@@ -20,6 +20,8 @@ import type { ResultTable } from '../../src/result.ts';
 import type { CubeSnapshot } from '../../src/snapshot.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
 import { inferModel } from '../../src/infer.ts';
+import { catalogColumns } from '../../src/upload.ts';
+import { CATALOG_REFUSED, CATALOG_TYPES } from '../../src/generated/catalog-facts.ts';
 import { sourceColumns } from '../../src/source-columns.ts';
 import { familyOf } from '../../src/types.ts';
 import { toCsv } from '../../src/export.ts';
@@ -225,21 +227,23 @@ describe('step 1: types from the compiler', () => {
 
 describe('a source\'s columns come from the compiler', () => {
   it('an inferred model of every DuckDB type compiles, and the compiler types each column', async () => {
-    // The compiler declares each column (T2: DuckDB's dialect reads DESCRIBE's type); this
-    // compiles the model for real and reads the types the compiler gives back.
-    const described = [
+    // A REAL table of DuckDB-WASM (the browser's DuckDB), read through the catalog question as the
+    // page reads an opened file (catalog-model.ts); this compiles its model for real and reads
+    // the types the compiler gives back.
+    const declared = [
       ['s', 'VARCHAR'], ['big', 'BIGINT'], ['huge', 'HUGEINT'], ['ubig', 'UBIGINT'], ['i', 'INTEGER'],
       ['ti', 'TINYINT'], ['si', 'SMALLINT'], ['d', 'DOUBLE'], ['f', 'FLOAT'], ['r', 'REAL'],
       ['b', 'BOOLEAN'], ['day', 'DATE'], ['ts', 'TIMESTAMP'], ['tstz', 'TIMESTAMPTZ'],
       ['dec', 'DECIMAL(9,2)'], ['num', 'NUMERIC(18,4)'], ['uuid', 'UUID'],
       ['iv', 'INTERVAL'], ['nested', 'STRUCT(a INTEGER)'], ['j', 'JSON'],
-    ].map(([name, type]) => ({ name: name as string, type: type as string }));
-    const m = await inferModel((t) => planner.databaseFromCatalog(t), described,
-      { table: 'every_type', convertible: true });
+    ];
+    const duck = new DuckDbEngine(conn);
+    await duck.run(`CREATE TABLE every_type (${declared.map(([n, t]) => `${n} ${t}`).join(', ')})`, 0);
+    const m = inferModel(await catalogColumns(duck, 'every_type'), { table: 'every_type', convertible: true });
     const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
     const columns = await sourceColumns(own, m.source, [{ name: 'big', kind: 'dimension' }]);
     const family = Object.fromEntries(columns.map((c) => [c.name, familyOf(c.type)]));
-    assert.deepEqual(columns.map((c) => c.name), described.map((c) => c.name), 'every column, in order');
+    assert.deepEqual(columns.map((c) => c.name), declared.map(([n]) => n), 'every column, in order');
     for (const n of ['big', 'huge', 'ubig', 'i', 'ti', 'si', 'd', 'f', 'r', 'dec', 'num']) {
       assert.equal(family[n], 'numeric', n);
     }
@@ -253,9 +257,21 @@ describe('a source\'s columns come from the compiler', () => {
     assert.equal(columns.find((c) => c.name === 'big')?.kind, 'dimension', 'the declared kind is kept');
   });
 
+  it('every canonical type of the browser\'s DuckDB has a decision (declared, DECIMAL, or refused)', async () => {
+    // the browser runs its own DuckDB, a version apart from legend-lite's: a type it adds must be
+    // decided in legend-lite (DuckDb.CATALOG_TYPES / CATALOG_REFUSED), not met by a person first
+    const types = await new DuckDbEngine(conn).run(
+      'SELECT DISTINCT logical_type FROM duckdb_types() WHERE internal AND type_oid IS NOT NULL', 0);
+    const undecided = (types.columns[0]?.values ?? []).map(String)
+      .filter((t) => t !== 'DECIMAL' && !(t in CATALOG_TYPES) && !(t in CATALOG_REFUSED));
+    assert.deepEqual(undecided, []);
+  });
+
   it('a type the dialect cannot declare is refused, naming the column', async () => {
-    await assert.rejects(inferModel((t) => planner.databaseFromCatalog(t), [{ name: 'payload', type: 'BLOB' }],
-      { table: 'blobs', convertible: true }), /payload.*BLOB/s);
+    const duck = new DuckDbEngine(conn);
+    await duck.run('CREATE TABLE blobs (payload BLOB)', 0);
+    const blobs = await catalogColumns(duck, 'blobs');
+    assert.throws(() => inferModel(blobs, { table: 'blobs', convertible: true }), /payload.*BLOB/s);
   });
 
   it('refuses a declared column the source does not have', async () => {

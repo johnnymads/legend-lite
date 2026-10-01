@@ -7,10 +7,11 @@
 // planner is asked whether it is there first; not there, the page says so and stops
 // (`refusePlanner`): there is no fallback.
 //
-// A FILE OPENED IN THIS TAB: its model (the `CREATE TABLE` of a Pure Database, from DuckDB's own
-// catalog) is written in the tab, as upstream DataCube writes a local file's -- no server can
-// read a database inside the browser -- and then compiled and typed by the chosen planner, whose
-// answer decides whether the file opens.
+// A FILE OPENED IN THIS TAB: its model (a Pure Database, from DuckDB's own catalog) is written in
+// the tab by legend-lite's writer in TypeScript (src/catalog-model.ts), as upstream DataCube
+// writes a local file's -- no server can read a database inside the browser, and no planner is
+// needed to write one -- and then compiled and typed by the chosen planner, whose answer decides
+// whether the file opens.
 
 import { refusePlanner, RUNTIME, SNAP_TARGET, SOURCE, type Engine, type PlaneWord } from './boot.ts';
 import { pageConfig } from './page-config.ts';
@@ -42,7 +43,6 @@ async function inTab(model: string): Promise<Engine> {
     snapTarget: SNAP_TARGET,
     label: 'local',
     models: {
-      fromCatalog: (table) => planner.databaseFromCatalog(table),
       use: (next, runtime) => planner.useModel(next, runtime),
     },
   };
@@ -61,16 +61,12 @@ async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engi
   const answered = await fetch(health, { signal: AbortSignal.timeout(2500) }).then((r) => r.ok, () => false);
   if (!answered) refusePlanner(name, url, start);
   const planner = new UpstreamPlanner({ baseUrl: url, model, runtime: RUNTIME });
-  // the model-writer for a file opened in this tab (see above): loaded only when one is opened
-  let catalog: WasmPlanner | undefined;
   return {
     planner,
     source: SOURCE,
     snapTarget: SNAP_TARGET,
     label: which,
     models: {
-      fromCatalog: (table) => (catalog ??= new WasmPlanner({ model, runtime: RUNTIME, workerUrl: WORKER() }))
-        .databaseFromCatalog(table),
       use: (next, runtime) => planner.useModel(next, runtime),
     },
   };

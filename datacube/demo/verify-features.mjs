@@ -97,6 +97,18 @@ const context = await browser.newContext({
   permissions: ['clipboard-read', 'clipboard-write'],
 });
 const page = await context.newPage();
+// PLANNER=remote|engine: the same harness on another planner (the one page's ?planner=).
+// NO_WASM=1: the in-tab planner's files are not there at all -- every request for them is refused,
+// and asking for one at all is a failure (a drop-in replacement on a server planner must never need
+// them).
+const PLANNER = process.env.PLANNER ?? '';
+const wasmAsked = [];
+if (process.env.NO_WASM) {
+  await context.route(/\/(classes\.wasm|wasm-gc-module-runtime\.js|planner-worker\.js)(\?|$)/, (route) => {
+    wasmAsked.push(route.request().url());
+    return route.abort();
+  });
+}
 // CPU_THROTTLE=4: the page's CPU slowed that many times (Chrome's own emulation), to see here
 // what a slower machine -- CI's runner -- sees: a wait that guesses passes fast and fails slow.
 if (process.env.CPU_THROTTLE) {
@@ -566,7 +578,7 @@ async function freshCube() {
     await settle();
     return;
   }
-  await page.goto(`${URL_BASE}/demo/index.html`);
+  await page.goto(`${URL_BASE}/demo/index.html${PLANNER ? `?planner=${PLANNER}` : ''}`);
   await page.waitForSelector('.dc-row', { timeout: 90_000 });
   pageLoaded = true;
   if (!DATA) return;
@@ -4987,6 +4999,11 @@ if (pageErrors.length) {
   for (const e of [...new Set(pageErrors)].slice(0, 8)) {
     console.log(`  ${e.split('\n')[0]}`);
   }
+}
+// NO_WASM: the in-tab planner was never asked for, or the drop-in claim is false
+if (process.env.NO_WASM) {
+  if (wasmAsked.length) bad.push({ name: 'the in-tab planner was never needed (NO_WASM)', detail: `asked for ${[...new Set(wasmAsked)].join(', ')} ${wasmAsked.length}x` });
+  else console.log(`\nNO_WASM: the in-tab planner's files were never asked for (planner: ${PLANNER || 'local'})`);
 }
 if (bad.length) {
   console.log(`\nBROKEN (${bad.length}):`);

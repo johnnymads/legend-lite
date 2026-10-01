@@ -85,7 +85,7 @@ async function read(name: string, text: string): Promise<{
   relation: ValueSpecification; columns: CubeSnapshot['columns']; source: FileSource;
 }> {
   const file = new File([text], name, { type: 'text/csv' });
-  const opened = await ingestFile(engine, files, file, (t) => planner.databaseFromCatalog(t));
+  const opened = await ingestFile(engine, files, file);
   planner.useModel(opened.model, opened.runtime);
   const columns = await sourceColumns(planner, opened.source);
   return { relation: opened.source, columns, source: await fileSource(file, 'csv', columns) };

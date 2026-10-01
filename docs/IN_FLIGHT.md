@@ -36,6 +36,22 @@ a timing (rule 4).
 not need any server side work". **Owns:** `datacube/` (and its CI lane). No edit in `core/`, `spec/`, `tools/` or
 `warehouse/`; the plan's server-side items (F1 write, F2's resolver, F4, F5, unpivot) wait for the rebuild's say (§8).
 
+**2026-10-01, announced before landing (rule 5): a cross-area edit in `core/`** (the user: "announce it and do
+it"). So a file opened in DataCube's tab has its model written WITHOUT the WebAssembly module, on any planner (legend-engine
+included), and the writer cannot drift from the compiler's:
+- STRUCTURED, no type string parsed (the user: "do the homework first of how to do this CORRECTLY in structured form"):
+  `DuckDb.CATALOG_COLUMNS_SQL` reads a table's columns from `duckdb_columns()` joined on the type id to
+  `duckdb_types()` -- each column's canonical type, and a DECIMAL's precision and scale as numbers. `catalogType` is
+  data over that (`CATALOG_TYPES`, `CATALOG_ALIASES` for JSON, `CATALOG_REFUSED` with reasons); the regexes are gone.
+  `CatalogModel.Column` CHANGED: `(name, dataType, logicalType, precision, scale)`. `CatalogModelTest` reads real
+  DuckDB tables, and a completeness test fails on a canonical type with no decision.
+- Callers moved with it: `wasm/.../Wasm.java` `databaseFromCatalogOrError` takes the structured column; the warehouse's
+  `/sql/v1/catalogs/{c}/objects` adds `logicalType`, `precision`, `scale` to each column (`type` kept).
+- `datacube/tools/catalogfacts/` generates `datacube/src/generated/catalog-facts.ts` (the tables and the catalog
+  question) and `datacube/test/generated/catalog-corpus.ts` (what `CatalogModel.database` answers for real DuckDB
+  tables); `datacube/src/catalog-model.ts` is DataCube's writer, tested against the corpus case for case.
+  `WasmPlanner.databaseFromCatalog` is kept (its input is now the structured column); DataCube no longer calls it.
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).

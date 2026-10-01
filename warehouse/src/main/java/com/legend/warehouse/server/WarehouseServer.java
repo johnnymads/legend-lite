@@ -407,9 +407,11 @@ public final class WarehouseServer implements AutoCloseable {
             run = statements.submit(Statements.SERVER, new StatementRequest("""
                     SELECT c.schema_name AS schema, c.table_name AS name,
                            CASE WHEN v.view_name IS NULL THEN 'table' ELSE 'view' END AS kind,
-                           c.column_name, c.data_type
+                           c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale
                     FROM duckdb_columns() c
                     LEFT JOIN duckdb_views() v ON v.schema_name = c.schema_name AND v.view_name = c.table_name
+                    LEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()
+                               WHERE internal AND type_oid IS NOT NULL) t ON t.type_oid = c.data_type_id
                     WHERE NOT c.internal
                     ORDER BY 1, 2, c.column_index""", catalog, 30_000, 30_000, 1_000_000));
         } catch (Statements.QueueFull full) {
@@ -438,6 +440,12 @@ public final class WarehouseServer implements AutoCloseable {
             LinkedHashMap<String, Json.Node> col = new LinkedHashMap<>();
             col.put("name", row.get(3));
             col.put("type", row.get(4));
+            // STRUCTURED, as DuckDb.CATALOG_COLUMNS_SQL reads a table: the canonical type (joined on the
+            // type id) and a DECIMAL's precision and scale -- a model is written from these, never by
+            // parsing "type" (the user, 2026-10-01)
+            col.put("logicalType", row.get(5));
+            col.put("precision", row.get(6));
+            col.put("scale", row.get(7));
             columns.computeIfAbsent(key, k -> new ArrayList<>()).add(new Json.Obj(col));
         }
         List<Json.Node> out = new ArrayList<>();

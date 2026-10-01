@@ -2,11 +2,11 @@
 //
 // This is what lets someone open the page and drop a file in, rather
 // than hand-authoring a Pure model that happens to match their
-// columns. DuckDB sniffs the types and reports them (`DESCRIBE`, or a
-// warehouse's catalog); legend-lite's DuckDB dialect reads those into the
-// `###Relational Database` (T2: `WasmPlanner.databaseFromCatalog`, the
-// compiler's own reading -- this file holds no type table); this wraps it
-// in the `###Connection` + `###Runtime` the planner needs. The cube's COLUMNS are not decided here: the
+// columns. DuckDB sniffs the types and its catalog reports them, structured
+// (`catalogColumnsSql`, or a warehouse's listing); legend-lite's writer, generated
+// and tested against legend-lite (catalog-model.ts -- this file holds no type
+// table), declares them in the `###Relational Database`; this wraps it in the
+// `###Connection` + `###Runtime` the planner needs. The cube's COLUMNS are not decided here: the
 // compiler types the source once the model is in (`sourceColumns`,
 // docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md).
 //
@@ -25,43 +25,7 @@
 // makes it no harder.
 
 import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
-
-
-/** One column, as DuckDB's `DESCRIBE` reports it. */
-export interface DescribedColumn {
-  readonly name: string;
-  /** DuckDB's own type name, e.g. 'VARCHAR', 'BIGINT', 'DECIMAL(9,2)'. */
-  readonly type: string;
-}
-
-/** A table's catalog, as the compiler's builder takes it. */
-export interface CatalogTable {
-  /** The Database element's path, e.g. `local::DB`. */
-  readonly path: string;
-  readonly schema?: string;
-  readonly table: string;
-  readonly columns: readonly DescribedColumn[];
-  /**
-   * Whether the source can apply a conversion: an upload, rewritten at ingest, can; a
-   * read-only warehouse table cannot, and a column that needs one is left out.
-   */
-  readonly convertible: boolean;
-}
-
-/** The compiler's Database for a catalog. */
-export interface CatalogDatabase {
-  /** `###Relational Database ...`, every column declared by the dialect. */
-  readonly text: string;
-  /** The relation that reads the table, `#>{local::DB.t}#`, as protocol. */
-  readonly source: ValueSpecification;
-  /** SQL over a column the source must apply so it holds its declared type. */
-  readonly conversions: readonly { readonly column: string; readonly sql: string }[];
-  /** Columns left out because the source cannot convert them. */
-  readonly excluded: readonly string[];
-}
-
-/** The compiler's builder: `WasmPlanner.databaseFromCatalog`. */
-export type CatalogBuilder = (table: CatalogTable) => Promise<CatalogDatabase>;
+import { databaseFromCatalog, type CatalogColumn, type CatalogDatabase } from './catalog-model.ts';
 
 export interface InferredModel {
   /** Pure source: database, connection, runtime. */
@@ -91,20 +55,20 @@ export interface InferOptions {
 }
 
 /**
- * Turn a table's catalog into a model the planner can compile: the compiler's Database,
- * wrapped in a DuckDB connection and a runtime.
+ * Turn a table's catalog into a model the planner can compile: legend-lite's Database (written
+ * here, catalog-model.ts), wrapped in a DuckDB connection and a runtime. A column of a type no
+ * Database declares is refused (`CatalogRefusal`), naming it.
  */
-export async function inferModel(
-  build: CatalogBuilder,
-  described: readonly DescribedColumn[],
+export function inferModel(
+  columns: readonly CatalogColumn[],
   options: InferOptions,
-): Promise<InferredModel> {
+): InferredModel {
   const pkg = options.pkg ?? 'local';
-  const db = await build({
+  const db = databaseFromCatalog({
     path: `${pkg}::DB`,
     ...(options.schema === undefined ? {} : { schema: options.schema }),
     table: options.table,
-    columns: described,
+    columns,
     convertible: options.convertible,
   });
 

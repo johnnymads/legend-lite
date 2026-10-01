@@ -168,7 +168,7 @@ export async function runStress(): Promise<Outcome[]> {
     const file = new File([entry.text], entry.name, { type: 'text/csv' });
     let opened;
     try {
-      opened = await ingestFile(engine, db, file, models.fromCatalog);
+      opened = await ingestFile(engine, db, file);
     } catch (e) {
       // Refusing a malformed file is fine; the message must name the
       // problem. Crashing is not.

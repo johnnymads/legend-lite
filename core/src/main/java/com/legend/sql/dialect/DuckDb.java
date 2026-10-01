@@ -73,64 +73,125 @@ public final class DuckDb extends AnsiSqlRenderer {
     }
 
     /**
-     * A DuckDB catalog type (what {@code DESCRIBE} reports) as a Pure Database declares it
-     * (T2; the design's step 3 table). Every type the DDL can say is declared as itself; a
-     * type it cannot is converted at the source, explicitly -- the unsigned and 128-bit
-     * integers to exact decimals, a zoned timestamp to UTC, a time of day, a UUID,
-     * an interval, an enum and a bit string to their canonical text; a nested value (STRUCT,
-     * LIST, MAP, UNION) is a Variant as stored. A BLOB, and any type
-     * this dialect does not know, is refused: never guessed as text.
+     * A DuckDB column, from its STRUCTURED catalog (T2; the user, 2026-10-01: no type strings
+     * parsed): its canonical type ({@code duckdb_types().logical_type}, joined on the column's
+     * {@code data_type_id}), and a DECIMAL's precision and scale as numbers. Every type the DDL can
+     * say is declared as itself; a type it cannot is converted at the source, explicitly -- the
+     * unsigned and 128-bit integers to exact decimals, a zoned timestamp to UTC, a time of day, a
+     * UUID, an interval, an enum and a bit string to their canonical text; a nested value (STRUCT,
+     * LIST, MAP, UNION, ARRAY) is a Variant as stored; JSON (an ALIAS of VARCHAR, so known by its
+     * alias name) is a Variant. Every other canonical type is refused, by a decision recorded in
+     * {@link #CATALOG_REFUSED} -- never guessed.
      */
     @Override
-    public CatalogType catalogType(String catalogType) {
-        String t = catalogType.trim().toUpperCase(java.util.Locale.ROOT);
-        java.util.regex.Matcher dec = java.util.regex.Pattern
-                .compile("^(DECIMAL|NUMERIC)\\s*\\(\\s*(\\d+)\\s*(?:,\\s*(\\d+)\\s*)?\\)$").matcher(t);
-        if (dec.matches()) {
-            return new CatalogType("DECIMAL(" + dec.group(2) + ","
-                    + (dec.group(3) == null ? "0" : dec.group(3)) + ")", null);
+    public CatalogType catalogType(CatalogModel.Column column) {
+        CatalogType alias = CATALOG_ALIASES.get(column.dataType().trim().toUpperCase(java.util.Locale.ROOT));
+        if (alias != null) {
+            return alias;
         }
-        java.util.regex.Matcher varchar = java.util.regex.Pattern
-                .compile("^VARCHAR\\s*\\(\\s*(\\d+)\\s*\\)$").matcher(t);
-        if (varchar.matches()) {
-            return new CatalogType("VARCHAR(" + varchar.group(1) + ")", null);
+        String logical = column.logicalType() == null ? null : column.logicalType().toUpperCase(java.util.Locale.ROOT);
+        if (logical != null && logical.equals("DECIMAL")) {
+            if (column.precision() == null || column.scale() == null) {
+                throw new DialectCapability("a DECIMAL column whose catalog gives no precision and scale ('"
+                        + column.dataType() + "') cannot be declared");
+            }
+            return new CatalogType("DECIMAL(" + column.precision() + "," + column.scale() + ")", null);
         }
-        // nested: STRUCT(...), MAP(...), UNION(...), a LIST (T[]) or an ARRAY (T[n]) is a Variant
-        // AS STORED -- no conversion: navigation reads it as it is, and a whole value is read
-        // through to_json where it is used whole (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)
-        if (t.matches("^(STRUCT|MAP|UNION)\\s*\\(.*") || t.matches(".*\\[\\d*\\]$")) {
-            return new CatalogType("SEMISTRUCTURED", null);
+        CatalogType known = logical == null ? null : CATALOG_TYPES.get(logical);
+        if (known != null) {
+            return known;
         }
-        if (t.startsWith("ENUM(") || t.startsWith("ENUM (")) {
-            return new CatalogType("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
-        }
-        return switch (t) {
-            case "VARCHAR", "TEXT", "STRING", "CHAR", "BPCHAR" -> new CatalogType("VARCHAR(4096)", null);
-            case "BOOLEAN", "BOOL", "LOGICAL" -> new CatalogType("BIT", null);
-            case "TINYINT", "INT1" -> new CatalogType("TINYINT", null);
-            case "SMALLINT", "INT2", "SHORT" -> new CatalogType("SMALLINT", null);
-            case "INTEGER", "INT", "INT4", "SIGNED" -> new CatalogType("INTEGER", null);
-            case "BIGINT", "INT8", "LONG" -> new CatalogType("BIGINT", null);
-            // an unsigned or 128-bit integer holds values its signed width cannot: exact decimals
-            case "UTINYINT" -> new CatalogType("SMALLINT", null);
-            case "USMALLINT" -> new CatalogType("INTEGER", null);
-            case "UINTEGER" -> new CatalogType("BIGINT", null);
-            case "UBIGINT" -> new CatalogType("DECIMAL(20,0)", "CAST(%s AS DECIMAL(20,0))");
-            case "HUGEINT", "INT128" -> new CatalogType("DECIMAL(38,0)", "CAST(%s AS DECIMAL(38,0))");
-            case "FLOAT", "REAL", "FLOAT4" -> new CatalogType("REAL", null);
-            case "DOUBLE", "FLOAT8" -> new CatalogType("DOUBLE", null);
-            case "DATE" -> new CatalogType("DATE", null);
-            case "TIMESTAMP", "DATETIME", "TIMESTAMP_US", "TIMESTAMP_MS", "TIMESTAMP_S", "TIMESTAMP_NS"
-                -> new CatalogType("TIMESTAMP", null);
-            // a zoned timestamp is its UTC instant: read as stored, in UTC
-            case "TIMESTAMP WITH TIME ZONE", "TIMESTAMPTZ"
-                -> new CatalogType("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)");
-            case "JSON" -> new CatalogType("SEMISTRUCTURED", null);
-            case "TIME", "TIME WITH TIME ZONE", "TIMETZ", "UUID", "INTERVAL", "BIT", "BITSTRING", "VARINT"
-                -> new CatalogType("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
-            default -> throw new DialectCapability("a column of DuckDB type '" + catalogType
-                    + "' cannot be declared in a Pure Database (a BLOB, or a type this dialect does not read)");
-        };
+        String why = logical == null ? null : CATALOG_REFUSED.get(logical);
+        throw new DialectCapability("a column of DuckDB type '" + column.dataType()
+                + "' cannot be declared in a Pure Database ("
+                + (why != null ? why : logical == null ? "its catalog names no canonical type" : "a type this dialect does not read")
+                + ")");
+    }
+
+    /**
+     * Every canonical DuckDB type ({@code duckdb_types().logical_type}) a Database declares, and how.
+     * DECIMAL is declared from its precision and scale ({@link #catalogType}). A canonical type is
+     * here, in {@link #CATALOG_REFUSED}, or DECIMAL: a test holds the three to every canonical type
+     * the DuckDB this builds with has, so a new one is a decision, not a silent refusal. Public, as
+     * data, so a writer outside this JVM (DataCube's, datacube/tools/catalogfacts) is generated from
+     * it and tested against {@link CatalogModel}.
+     */
+    public static final java.util.Map<String, CatalogType> CATALOG_TYPES = catalogTypes();
+
+    /**
+     * THE question every reader asks DuckDB's catalog for a table's columns -- the tab's, the
+     * warehouse's, a test's: each column's name, its own type name, its canonical type (joined on
+     * its type id, inside the same DuckDB), and a DECIMAL's precision and scale. A LEFT join: a column
+     * whose type names no canonical one is kept, with none, and refused by name -- never dropped.
+     * {@code {schema}} and {@code {table}} are filled with SQL string literals by the reader.
+     */
+    public static final String CATALOG_COLUMNS_SQL = """
+            SELECT c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale
+            FROM duckdb_columns() c
+            LEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()
+                       WHERE internal AND type_oid IS NOT NULL) t ON t.type_oid = c.data_type_id
+            WHERE c.database_name = current_database() AND c.schema_name = {schema} AND c.table_name = {table}
+            ORDER BY c.column_index""";
+
+    /** Type ALIASES (a column's own type name, upper-cased) that are not their canonical type's: JSON. */
+    public static final java.util.Map<String, CatalogType> CATALOG_ALIASES =
+            java.util.Map.of("JSON", new CatalogType("SEMISTRUCTURED", null));
+
+    /** Canonical types refused, each with its reason. */
+    public static final java.util.Map<String, String> CATALOG_REFUSED = catalogRefused();
+
+    private static java.util.Map<String, CatalogType> catalogTypes() {
+        java.util.Map<String, CatalogType> m = new java.util.LinkedHashMap<>();
+        CatalogType text = new CatalogType("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
+        CatalogType variant = new CatalogType("SEMISTRUCTURED", null);
+        m.put("VARCHAR", new CatalogType("VARCHAR(4096)", null));
+        m.put("BOOLEAN", new CatalogType("BIT", null));
+        m.put("TINYINT", new CatalogType("TINYINT", null));
+        m.put("SMALLINT", new CatalogType("SMALLINT", null));
+        m.put("INTEGER", new CatalogType("INTEGER", null));
+        m.put("BIGINT", new CatalogType("BIGINT", null));
+        // an unsigned or 128-bit integer holds values its signed width cannot: the next width, or exact decimals
+        m.put("UTINYINT", new CatalogType("SMALLINT", null));
+        m.put("USMALLINT", new CatalogType("INTEGER", null));
+        m.put("UINTEGER", new CatalogType("BIGINT", null));
+        m.put("UBIGINT", new CatalogType("DECIMAL(20,0)", "CAST(%s AS DECIMAL(20,0))"));
+        m.put("HUGEINT", new CatalogType("DECIMAL(38,0)", "CAST(%s AS DECIMAL(38,0))"));
+        m.put("FLOAT", new CatalogType("REAL", null));
+        m.put("DOUBLE", new CatalogType("DOUBLE", null));
+        m.put("DATE", new CatalogType("DATE", null));
+        m.put("TIMESTAMP", new CatalogType("TIMESTAMP", null));
+        m.put("TIMESTAMP_S", new CatalogType("TIMESTAMP", null));
+        m.put("TIMESTAMP_MS", new CatalogType("TIMESTAMP", null));
+        m.put("TIMESTAMP_NS", new CatalogType("TIMESTAMP", null));
+        // a zoned timestamp is its UTC instant: read as stored, in UTC
+        m.put("TIMESTAMP WITH TIME ZONE", new CatalogType("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)"));
+        m.put("TIME", text);
+        m.put("TIME WITH TIME ZONE", text);
+        m.put("UUID", text);
+        m.put("INTERVAL", text);
+        m.put("BIT", text);
+        m.put("BIGNUM", text);
+        m.put("ENUM", text);
+        // nested: a Variant AS STORED -- no conversion: navigation reads it as it is, and a whole value
+        // is read through to_json where it is used whole (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)
+        m.put("STRUCT", variant);
+        m.put("LIST", variant);
+        m.put("MAP", variant);
+        m.put("UNION", variant);
+        m.put("ARRAY", variant);
+        return java.util.Collections.unmodifiableMap(m);
+    }
+
+    private static java.util.Map<String, String> catalogRefused() {
+        java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+        m.put("BLOB", "bytes: no Pure Database type holds them");
+        m.put("GEOMETRY", "a spatial value: no Pure Database type holds it");
+        m.put("UHUGEINT", "not yet decided");
+        m.put("TIME_NS", "not yet decided");
+        m.put("VARIANT", "not yet decided");
+        m.put("NULL", "a column of no type");
+        m.put("TYPE", "a type, not a value");
+        return java.util.Collections.unmodifiableMap(m);
     }
 
     public DuckDb() {

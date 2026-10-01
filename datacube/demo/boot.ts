@@ -48,7 +48,7 @@ import {
   type PageDocument,
   type SavedDocument,
 } from '../src/page-document.ts';
-import { inferModel, type CatalogBuilder } from '../src/infer.ts';
+import { inferModel } from '../src/infer.ts';
 import { pageConfig } from './page-config.ts';
 import {
   connect,
@@ -210,12 +210,11 @@ export interface Engine {
   readonly source: ValueSpecification;
   readonly snapTarget: SnapTarget;
   /**
-   * A file opened in this tab: its Database written from DuckDB's catalog (T2), and the planner
-   * repointed at the model that holds it. Every planner takes one (planners.ts); absent, the
-   * page offers no file to open -- the capability and the affordance are the same fact.
+   * A file opened in this tab: the planner repointed at the model written for it from DuckDB's
+   * catalog (src/catalog-model.ts). Every planner takes one (planners.ts); absent, the page
+   * offers no file to open -- the capability and the affordance are the same fact.
    */
   readonly models?: {
-    readonly fromCatalog: CatalogBuilder;
     use(model: string, runtime: string): void;
   };
   /**
@@ -648,8 +647,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   // OPENING A FILE.
   //
-  // DuckDB reads it and sniffs the schema, the compiler declares what it
-  // found and `inferModel` writes a Pure model around that, and the cube is rebuilt against that.
+  // DuckDB reads it and sniffs the schema, legend-lite's writer declares what its
+  // catalog found and `inferModel` writes a Pure model around that, and the cube is rebuilt against that.
   // Nothing downstream learns the data was uploaded: the planner
   // compiles an ordinary model over an ordinary table, which is why
   // the SQL panel, the tree and the snap plane all keep working
@@ -784,7 +783,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           try {
             // A warehouse table is read-only: a column the compiler says must be
             // converted to be declared cannot be, so it is left out, and named.
-            const m = await inferModel(local.fromCatalog, chosen.columns,
+            const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
               { table: chosen.name, schema: chosen.schema, convertible: false });
             local.use(m.model, m.runtime);
             const columns = await sourceColumns(planner, m.source);
@@ -906,7 +905,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       note.classList.remove('bad');
       note.textContent = `reading ${file.name}…`;
       try {
-        const opened = await ingestFile(engine, db, file, local.fromCatalog);
+        const opened = await ingestFile(engine, db, file);
         const loadedAt = new Date();
         if (!newest()) {
           // overtaken: nothing of this open is kept -- unless a newer open, or the cube on

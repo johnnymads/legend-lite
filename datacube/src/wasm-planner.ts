@@ -26,7 +26,7 @@
 
 import { fromJson, readLambda, readValueSpecification, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { Planner } from './cube.ts';
-import type { CatalogDatabase, CatalogTable } from './infer.ts';
+import type { CatalogDatabase, CatalogTable } from './catalog-model.ts';
 import { PlanError } from './planner.ts';
 import type { PrintStyle } from './pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from './relation-type.ts';
@@ -413,8 +413,8 @@ export class WasmPlanner implements Planner {
   }
 
   /**
-   * A Pure Database for a table, from the rows its CATALOG reports (`DESCRIBE`, a
-   * warehouse's listing), read by legend-lite's DuckDB dialect
+   * A Pure Database for a table, from the rows its CATALOG reports (structured: catalog-model.ts),
+   * read by legend-lite's DuckDB dialect
    * (docs/DATACUBE_TYPES_TO_SERVER_2026_09_27.md, T2): the declared types, the accessor that
    * reads it, and the conversions the source must apply -- or, for a source that cannot
    * convert, the columns left out. The compiler decides every column; nothing here does.

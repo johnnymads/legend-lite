@@ -7,12 +7,8 @@
 import type { QueryEngine } from './engine.ts';
 import type { RawTable } from './engine.ts';
 import type { Scalar } from './result.ts';
-import {
-  inferModel,
-  type CatalogBuilder,
-  type DescribedColumn,
-  type InferredModel,
-} from './infer.ts';
+import { inferModel, type InferredModel } from './infer.ts';
+import { catalogColumnsSql, type CatalogColumn } from './catalog-model.ts';
 
 /**
  * The duckdb-wasm surface used here.
@@ -72,7 +68,7 @@ export function tableNameOf(fileName: string): string {
  * CSV goes in as text with `read_csv(..., AUTO_DETECT)` so DuckDB
  * sniffs the header and types; Parquet goes in as bytes and carries
  * its own schema. Either way the result is a real table, and from
- * there `DESCRIBE` is the only thing that says what the columns are
+ * there DuckDB's catalog is the only thing that says what the columns are
  * -- guessing from the file would be a second, worse sniffer.
  */
 /**
@@ -91,7 +87,6 @@ export async function ingestFile(
   db: DuckDbFiles,
   file: { name: string; text(): Promise<string>;
     arrayBuffer(): Promise<ArrayBuffer> },
-  build: CatalogBuilder,
 ): Promise<UploadResult> {
   const format = formatOf(file.name);
   const table = tableNameOf(file.name);
@@ -134,14 +129,13 @@ export async function ingestFile(
   await engine.run(
     `CREATE OR REPLACE TABLE ${qt} AS SELECT * FROM ${reader}`, 0);
 
-  // The compiler reads DESCRIBE's types (T2) and says which columns the
+  // legend-lite's writer reads the catalog's types and says which columns the
   // table must convert to hold what the model declares: a TIMESTAMPTZ its UTC
   // timestamp, a UBIGINT an exact DECIMAL(20,0), a UUID or TIME its text. A
   // nested STRUCT or LIST needs none: it is a Variant as stored
   // (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md). An upload is ours to
   // rewrite, so it is rewritten here.
-  const inferred = await inferModel(build, await describeTable(engine, qt),
-    { table, convertible: true });
+  const inferred = inferModel(await catalogColumns(engine, table), { table, convertible: true });
   if (inferred.conversions.length > 0) {
     const replaced = inferred.conversions
       .map((c) => `${c.sql} AS ${dq(c.column)}`).join(', ');
@@ -163,28 +157,32 @@ export async function ingestFile(
 }
 
 /**
- * The table's columns and DuckDB types. A RawTable is COLUMNAR, so
- * DESCRIBE's answer is read by picking the two columns out and zipping
- * them, not row by row.
+ * The table's columns, as DuckDB's catalog reports them, STRUCTURED: each one's canonical
+ * type and a DECIMAL's precision and scale as data (catalog-model.ts), no type string parsed.
+ * A RawTable is COLUMNAR, so the answer is read by picking its columns out and zipping them.
  */
-async function describeTable(
-  engine: QueryEngine,
-  qt: string,
-): Promise<DescribedColumn[]> {
-  const describe = await engine.run(`DESCRIBE ${qt}`, 0);
-  const names = columnOf(describe, 'column_name');
-  const types = columnOf(describe, 'column_type');
+export async function catalogColumns(engine: QueryEngine, table: string): Promise<CatalogColumn[]> {
+  const answer = await engine.run(catalogColumnsSql('main', table), 0);
+  const names = columnOf(answer, 'column_name');
+  const types = columnOf(answer, 'data_type');
+  const logical = columnOf(answer, 'logical_type');
+  const precision = columnOf(answer, 'numeric_precision');
+  const scale = columnOf(answer, 'numeric_scale');
+  const num = (v: Scalar | undefined): number | null => (v === null || v === undefined ? null : Number(v));
   return names.map((n, i) => ({
     name: String(n),
-    type: String(types[i] ?? 'VARCHAR'),
+    dataType: String(types[i]),
+    logicalType: logical[i] === null || logical[i] === undefined ? null : String(logical[i]),
+    precision: num(precision[i]),
+    scale: num(scale[i]),
   }));
 }
 
-/** One column of a DESCRIBE result, by name. */
+/** One column of the catalog's answer, by name. */
 function columnOf(t: RawTable, name: string): readonly Scalar[] {
   const col = t.columns.find((c) => c.name === name);
   if (!col) {
-    throw new Error(`DESCRIBE did not return ${name} — got `
+    throw new Error(`the catalog did not return ${name} — got `
       + t.columns.map((c) => c.name).join(', '));
   }
   return col.values;

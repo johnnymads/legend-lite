@@ -225,6 +225,12 @@ public final class Wasm {
      * or the refusal out, as
      * {@link #planOrError}'s are folded.
      */
+    /** A JSON number field as an Integer, or null when absent or null. */
+    private static Integer intOrNull(com.legend.json.Json.Obj o, String field) {
+        com.legend.json.Json.Node n = o.has(field) ? o.get(field) : null;
+        return n instanceof com.legend.json.Json.Num num ? Integer.valueOf((int) num.longValue()) : null;
+    }
+
     @org.teavm.jso.JSExport
     public static String databaseFromCatalogOrError(String catalogJson) {
         try {
@@ -232,7 +238,9 @@ public final class Wasm {
             java.util.List<com.legend.sql.dialect.CatalogModel.Column> columns = new java.util.ArrayList<>();
             for (com.legend.json.Json.Node n : in.getArr("columns").items()) {
                 com.legend.json.Json.Obj c = (com.legend.json.Json.Obj) n;
-                columns.add(new com.legend.sql.dialect.CatalogModel.Column(c.getString("name"), c.getString("type")));
+                // structured, as the catalog question answers it (DuckDb.CATALOG_COLUMNS_SQL): no type string parsed
+                columns.add(new com.legend.sql.dialect.CatalogModel.Column(c.getString("name"), c.getString("dataType"),
+                        c.getStringOr("logicalType", null), intOrNull(c, "precision"), intOrNull(c, "scale")));
             }
             com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
                     in.getString("path"), in.getStringOr("schema", null), in.getString("table"), columns,
