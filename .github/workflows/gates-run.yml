@@ -149,7 +149,7 @@ jobs:
           done
           echo "targets: ${targets[*]}"
           bazel test "${flags[@]}" "${targets[@]}"
-      - name: the browser harnesses (every //datacube target tagged browser-ci)
+      - name: the browser harnesses (every //datacube and //query target tagged browser-ci)
         if: matrix.lane.key == 'browser'
         run: |
           set -u
@@ -157,7 +157,7 @@ jobs:
           mkdir -p harness-logs
           failed=()
           # one at a time: each serves the site and drives its own browser
-          for t in $(bazel query --repository_cache="$HOME/.cache/bazel-repo" 'attr(tags, "browser-ci", //datacube:*)'); do
+          for t in $(bazel query --repository_cache="$HOME/.cache/bazel-repo" 'attr(tags, "browser-ci", //datacube:* + //query:*)'); do
             name=${t##*:}
             echo "::group::$t"
             if bazel run "${flags[@]}" "$t" 2>&1 | tee "harness-logs/$name.log"; then :; else failed+=("$t"); fi

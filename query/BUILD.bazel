@@ -99,9 +99,12 @@ js_binary(
     data = [
         ":site",
         ":node_modules/playwright",
-        "//core:server_deploy.jar",
+        # legend-lite's server through its Bazel launcher: the hermetic JDK, whatever `java` a machine has
+        "//core:server",
     ],
     entry_point = "demo/verify.mjs",
+    # CI's browser lane runs it (.github/workflows/gates-run.yml), with DataCube's harnesses
+    tags = ["browser-ci"],
 )
 
 _TESTS = glob(["test/*.test.ts"])

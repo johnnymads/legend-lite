@@ -72,7 +72,13 @@ and `$x.n * 1.1` compiles over it without `->toOne()`:
 
 ## A fourth line, 2026-09-30: the Query app (the user's ask; design `docs/QUERY_APP_DESIGN_2026_09_30.md`)
 
+**STATUS 2026-10-01: v1 LANDED on main** (the branch `query/app`, fast-forwarded after the full gate). Everything
+below is on main; the line continues on the same branch -- next, upstream's look and layout, then the gaps in the
+design doc's v1 status. A cross-area edit from here on is announced here first, as before.
+
 In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new). **Touches, one line each:**
+- `.github/workflows/gates-run.yml` (2026-10-01): the browser lane runs every `browser-ci` target in `//query` as
+  well as `//datacube` -- `//query:verify` (the 8 end-to-end steps, both planes), its server on Bazel's JDK.
 - `core/src/main/java/com/legend/server/PureV1Api.java` + `LegendHttpServer.java` routes (+ `PureV1ApiTest`):
   the upstream `pure/v1` endpoints the Query app needs and lite lacks, each in legend-engine's shape, measured
   against 4.145.0 -- `execute` with `parameterValues`, `compilation/compile`, `compilation/lambdaReturnType`,

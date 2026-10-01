@@ -4,7 +4,7 @@
 // queries; started here with an empty store). The same steps, each asserting what a person would
 // see -- rows, not "a request was made". Exit code 0 when every step holds in both.
 //
-// Needs `java` on the PATH and Playwright's Chromium (`npx playwright install chromium` once).
+// Needs Playwright's Chromium (`bazel run //datacube:install_browser` once); legend-lite's server comes with its JDK.
 
 import { strict as assert } from 'node:assert';
 import { spawn } from 'node:child_process';
@@ -16,7 +16,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
-const JAR = process.env.LEGEND_LITE_JAR ?? resolve(ROOT, '..', 'core', 'server_deploy.jar');
+// legend-lite's server: its Bazel launcher (//core:server) in this target's runfiles, which brings
+// its own JDK -- so a machine's `java` (or none) does not matter
+const RUNFILES = resolve(ROOT, '..', '..');
+const SERVER = resolve(ROOT, '..', 'core', 'server');
 const ENGINE_PORT = 18090 + Math.floor(Math.random() * 500);
 const SITE_PORT = ENGINE_PORT + 1000;
 
@@ -26,8 +29,8 @@ mkdirSync(OUT, { recursive: true });
 const store = mkdtempSync(join(OUT, 'run-'));
 
 // ---- legend-lite's server, for the server mode
-const engine = spawn('java', ['-jar', JAR, String(ENGINE_PORT), '--query-store', store], {
-  env: process.env,
+const engine = spawn(SERVER, [String(ENGINE_PORT), '--query-store', store], {
+  env: { ...process.env, RUNFILES_DIR: RUNFILES, JAVA_RUNFILES: RUNFILES },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let engineLog = '';
