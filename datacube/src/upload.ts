@@ -168,6 +168,7 @@ export async function catalogColumns(engine: QueryEngine, table: string): Promis
   const logical = columnOf(answer, 'logical_type');
   const precision = columnOf(answer, 'numeric_precision');
   const scale = columnOf(answer, 'numeric_scale');
+  const notNull = columnOf(answer, 'not_null');
   const num = (v: Scalar | undefined): number | null => (v === null || v === undefined ? null : Number(v));
   return names.map((n, i) => ({
     name: String(n),
@@ -175,6 +176,7 @@ export async function catalogColumns(engine: QueryEngine, table: string): Promis
     logicalType: logical[i] === null || logical[i] === undefined ? null : String(logical[i]),
     precision: num(precision[i]),
     scale: num(scale[i]),
+    notNull: notNull[i] === true,
   }));
 }
 

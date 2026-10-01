@@ -30,9 +30,11 @@ public final class CatalogModel {
      *                    catalog names none
      * @param precision   a DECIMAL's precision, as a number; null for any other type
      * @param scale       a DECIMAL's scale, as a number; null for any other type
+     * @param notNull     the catalog says the column holds no NULL: it is declared {@code NOT NULL}, so the
+     *                    compiler types it {@code [1]} (as legend-engine does a NOT NULL column)
      */
     public record Column(String name, String dataType, @com.legend.base.Nullable String logicalType,
-            @com.legend.base.Nullable Integer precision, @com.legend.base.Nullable Integer scale) {
+            @com.legend.base.Nullable Integer precision, @com.legend.base.Nullable Integer scale, boolean notNull) {
     }
 
     /** A column's conversion at the source: SQL over the column, e.g. {@code to_json("items")}. */
@@ -82,7 +84,7 @@ public final class CatalogModel {
                 excluded.add(c.name());
                 continue;
             }
-            lines.add(ident(c.name()) + " " + t.declared());
+            lines.add(ident(c.name()) + " " + t.declared() + (c.notNull() ? " NOT NULL" : ""));
             if (t.conversion() != null) {
                 conversions.add(new Conversion(c.name(),
                         t.conversion().replace("%s", sqlIdent(c.name()))));

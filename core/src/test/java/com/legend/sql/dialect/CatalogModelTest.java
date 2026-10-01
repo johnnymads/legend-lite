@@ -83,7 +83,7 @@ class CatalogModelTest {
         try (java.sql.ResultSet rs = st.executeQuery(sql)) {
             while (rs.next()) {
                 out.add(new CatalogModel.Column(rs.getString(1), rs.getString(2), rs.getString(3),
-                        (Integer) rs.getObject(4), (Integer) rs.getObject(5)));
+                        (Integer) rs.getObject(4), (Integer) rs.getObject(5), rs.getBoolean(6)));
             }
         }
         return out;
@@ -163,8 +163,8 @@ class CatalogModelTest {
     @Test
     void twoColumnsOneNameApartByCaseAreRefused() {
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> CatalogModel.database("t::DB", null, "T", List.of(new CatalogModel.Column("a", "INTEGER", "INTEGER", 32, 0),
-                        new CatalogModel.Column("A", "INTEGER", "INTEGER", 32, 0)), new DuckDb(), true));
+                () -> CatalogModel.database("t::DB", null, "T", List.of(new CatalogModel.Column("a", "INTEGER", "INTEGER", 32, 0, false),
+                        new CatalogModel.Column("A", "INTEGER", "INTEGER", 32, 0, false)), new DuckDb(), true));
         assertTrue(e.getMessage().contains("'A'"), e.getMessage());
     }
 

@@ -63,4 +63,4 @@ export const CATALOG_REFUSED: Readonly<Record<string, string>> = {
 
 /** THE question every reader asks DuckDB's catalog for a table's columns ({schema}, {table}: SQL string
  *  literals). */
-export const CATALOG_COLUMNS_SQL = 'SELECT c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale\nFROM duckdb_columns() c\nLEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()\n           WHERE internal AND type_oid IS NOT NULL) t ON t.type_oid = c.data_type_id\nWHERE c.database_name = current_database() AND c.schema_name = {schema} AND c.table_name = {table}\nORDER BY c.column_index';
+export const CATALOG_COLUMNS_SQL = 'SELECT c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale, NOT c.is_nullable AS not_null\nFROM duckdb_columns() c\nLEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()\n           WHERE internal AND type_oid IS NOT NULL) t ON t.type_oid = c.data_type_id\nWHERE c.database_name = current_database() AND c.schema_name = {schema} AND c.table_name = {table}\nORDER BY c.column_index';

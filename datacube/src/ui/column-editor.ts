@@ -29,6 +29,8 @@ import type { CompileOutcome } from '../cube.ts';
 import type { Lambda } from '../../../pure-protocol/src/index.ts';
 import type { PivotColumn } from '../query.ts';
 import { docHint } from './docs.ts';
+import { emptyOperands, isEmptyOperandRefusal, sayEmpty, type EmptyAs } from '../calc-fix.ts';
+import { columnType } from '../snapshot.ts';
 import {
   WINDOW_FUNCTIONS,
   renameColumnReferences,
@@ -123,7 +125,11 @@ type Check =
   | { readonly state: 'compiling' }
   | { readonly state: 'ok' }
   | { readonly state: 'unavailable' }
-  | { readonly state: 'refused'; readonly message: string; readonly caret?: string };
+  | {
+    readonly state: 'refused'; readonly message: string; readonly caret?: string;
+    /** What was compiled, when the refusal is the compiler's: a quick fix rewrites it (calc-fix.ts). */
+    readonly lambda?: Lambda;
+  };
 
 export class ColumnEditor {
   readonly #root: HTMLElement;
@@ -145,6 +151,7 @@ export class ColumnEditor {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #inflight: AbortController | null = null;
   #els!: {
+    expr: HTMLTextAreaElement;
     nameMark: HTMLElement;
     check: HTMLElement;
     problem: HTMLElement;
@@ -366,7 +373,7 @@ export class ColumnEditor {
       // form on "Compiling..." with OK disabled for good (P2-152).
       if (abort.signal.aborted || this.#inflight !== abort) return;
       this.#inflight = null;
-      this.#check = { state: 'refused', message: error instanceof Error ? error.message : String(error) };
+      this.#check = { state: 'refused', message: error instanceof Error ? error.message : String(error), ...this.#compiled(parsed) };
       this.#paint();
       return;
     }
@@ -377,9 +384,33 @@ export class ColumnEditor {
     } else if (outcome.refusal === null) {
       this.#check = { state: 'ok' };
     } else {
-      this.#check = { state: 'refused', message: outcome.refusal };
+      this.#check = { state: 'refused', message: outcome.refusal, ...this.#compiled(parsed) };
     }
     this.#paint();
+  }
+
+  #compiled(parsed: { readonly lambda?: Lambda }): { readonly lambda?: Lambda } {
+    return parsed.lambda === undefined ? {} : { lambda: parsed.lambda };
+  }
+
+  /**
+   * The quick fix: the person's expression with each bare column operand said (calc-fix.ts),
+   * printed by the compiler into the box, and compiled again -- the compiler judges it.
+   */
+  async #sayEmpty(lambda: Lambda, as: EmptyAs): Promise<void> {
+    const snapshot = this.#options.snapshot();
+    const fixed = sayEmpty(lambda, as, (c) => columnType(snapshot, c));
+    let text: string;
+    try {
+      text = await this.#options.print(fixed);
+    } catch (error: unknown) {
+      this.#refusal = error instanceof Error ? error.message : String(error);
+      this.#paint();
+      return;
+    }
+    this.#draft.expression = text;
+    this.#els.expr.value = text;
+    this.#edited();
   }
 
   // -- actions ---------------------------------------------------------------
@@ -633,7 +664,7 @@ export class ColumnEditor {
     }
     const ok = button('OK', 'dc-calc-ok', () => void this.#ok());
 
-    this.#els = { nameMark, check, problem, ok };
+    this.#els = { expr, nameMark, check, problem, ok };
     this.#paint();
   }
 
@@ -667,6 +698,24 @@ export class ColumnEditor {
         if (c.caret) {
           const pre = el(this.#doc, 'pre', 'dc-calc-caret', check);
           pre.textContent = c.caret;
+        }
+        const operands = c.lambda !== undefined && isEmptyOperandRefusal(c.message) ? emptyOperands(c.lambda) : [];
+        if (c.lambda !== undefined && operands.length > 0) {
+          const lambda = c.lambda;
+          const fix = el(this.#doc, 'div', 'dc-calc-fix', check);
+          const names = operands.map((o) => `'${o}'`).join(', ');
+          el(this.#doc, 'span', 'dc-calc-fix-why', fix).textContent = `${names} can be empty, and arithmetic needs a value. `
+            + 'Where it is empty, the result is:';
+          const offer = (label: string, title: string, as: EmptyAs): void => {
+            const b = el(this.#doc, 'button', 'dc-button dc-calc-fix-button', fix) as HTMLButtonElement;
+            b.type = 'button';
+            b.textContent = label;
+            b.title = title;
+            b.dataset['as'] = as;
+            b.addEventListener('click', () => void this.#sayEmpty(lambda, as));
+          };
+          offer('Empty', 'An empty row\'s result is empty (each such column read with toOne)', 'blank');
+          offer('As if zero', 'An empty value counts as zero (each such column read with coalesce)', 'zero');
         }
         break;
       }

@@ -407,7 +407,8 @@ public final class WarehouseServer implements AutoCloseable {
             run = statements.submit(Statements.SERVER, new StatementRequest("""
                     SELECT c.schema_name AS schema, c.table_name AS name,
                            CASE WHEN v.view_name IS NULL THEN 'table' ELSE 'view' END AS kind,
-                           c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale
+                           c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale,
+                           NOT c.is_nullable AS not_null
                     FROM duckdb_columns() c
                     LEFT JOIN duckdb_views() v ON v.schema_name = c.schema_name AND v.view_name = c.table_name
                     LEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()
@@ -446,6 +447,8 @@ public final class WarehouseServer implements AutoCloseable {
             col.put("logicalType", row.get(5));
             col.put("precision", row.get(6));
             col.put("scale", row.get(7));
+            // a NOT NULL column is declared NOT NULL, so the compiler types it [1] (CatalogModel.Column)
+            col.put("notNull", row.get(8));
             columns.computeIfAbsent(key, k -> new ArrayList<>()).add(new Json.Obj(col));
         }
         List<Json.Node> out = new ArrayList<>();

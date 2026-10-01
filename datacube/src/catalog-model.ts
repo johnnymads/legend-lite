@@ -24,6 +24,8 @@ export interface CatalogColumn {
   /** A DECIMAL's precision and scale, as numbers; null for any other type. */
   readonly precision: number | null;
   readonly scale: number | null;
+  /** The catalog says it holds no NULL: declared `NOT NULL`, so the compiler types it `[1]`. */
+  readonly notNull: boolean;
 }
 
 /** A table's catalog, to write its Database from. */
@@ -113,7 +115,7 @@ export function databaseFromCatalog(t: CatalogTable): CatalogDatabase {
       excluded.push(c.name);
       continue;
     }
-    lines.push(`${ident(c.name)} ${type.declared}`);
+    lines.push(`${ident(c.name)} ${type.declared}${c.notNull ? ' NOT NULL' : ''}`);
     if (type.conversion !== null) conversions.push({ column: c.name, sql: type.conversion.replace('%s', sqlIdent(c.name)) });
   }
   if (lines.length === 0) {

@@ -50,6 +50,8 @@ export interface CatalogObject {
     readonly logicalType: string | null;
     readonly precision: number | null;
     readonly scale: number | null;
+    /** The catalog says it holds no NULL. */
+    readonly notNull: boolean;
   }[];
 }
 

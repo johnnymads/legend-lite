@@ -240,7 +240,8 @@ public final class Wasm {
                 com.legend.json.Json.Obj c = (com.legend.json.Json.Obj) n;
                 // structured, as the catalog question answers it (DuckDb.CATALOG_COLUMNS_SQL): no type string parsed
                 columns.add(new com.legend.sql.dialect.CatalogModel.Column(c.getString("name"), c.getString("dataType"),
-                        c.getStringOr("logicalType", null), intOrNull(c, "precision"), intOrNull(c, "scale")));
+                        c.getStringOr("logicalType", null), intOrNull(c, "precision"), intOrNull(c, "scale"),
+                        c.getBoolOr("notNull", false)));
             }
             com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
                     in.getString("path"), in.getStringOr("schema", null), in.getString("table"), columns,

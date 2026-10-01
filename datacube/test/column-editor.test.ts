@@ -465,3 +465,40 @@ describe('a compile that FAILS (P2-152)', () => {
     assert.doesNotMatch($('.dc-calc-check').textContent ?? '', /Compiling/);
   });
 });
+
+describe('arithmetic over a possibly-empty column (src/calc-fix.ts)', () => {
+  it('names the column, offers Empty or As if zero, and writes the chosen one into the box', async () => {
+    open({});
+    refuse = 'Collection element must have a multiplicity [1], found [0..1]';
+    type('.dc-calc-input-expr', 'x|$x.notional * 1.1');
+    await settle();
+    assert.match($('.dc-calc-fix').textContent ?? '', /'notional' can be empty/);
+    // nothing is changed until the person chooses
+    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 1.1');
+    refuse = null;
+    $<HTMLButtonElement>('.dc-calc-fix-button[data-as="blank"]').click();
+    await settle();
+    assert.match($<HTMLTextAreaElement>('.dc-calc-input-expr').value, /\$x\.notional->toOne\(\) \* 1\.1/);
+    assert.equal(root.querySelector('.dc-calc-fix'), null, 'compiled again, and taken');
+    assert.equal($<HTMLButtonElement>('.dc-calc-ok').disabled, false);
+  });
+
+  it('As if zero: a zero of the column\'s type', async () => {
+    open({});
+    refuse = 'Collection element must have a multiplicity [1] - Context:[Applying times], multiplicity:[0..1]';
+    type('.dc-calc-input-expr', 'x|$x.notional * 1.1');
+    await settle();
+    refuse = null;
+    $<HTMLButtonElement>('.dc-calc-fix-button[data-as="zero"]').click();
+    await settle();
+    assert.match($<HTMLTextAreaElement>('.dc-calc-input-expr').value, /\$x\.notional->coalesce\(0\.0\) \* 1\.1/);
+  });
+
+  it('offers nothing for another refusal', async () => {
+    open({});
+    refuse = "the source has no column 'nope'";
+    type('.dc-calc-input-expr', 'x|$x.notional * 1.1');
+    await settle();
+    assert.equal(root.querySelector('.dc-calc-fix'), null);
+  });
+});

@@ -86,6 +86,7 @@ _EXTRA_DATA = {
 # the tests that write a model from a table's columns ask the compiler (T2): legend-lite's
 # own WASM module, loaded by test/catalog-builder.ts
 _WASM_TESTS = [
+    "calc-fix",
     "infer",
     "offer-facts",
     "upload",

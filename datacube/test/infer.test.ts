@@ -5,8 +5,9 @@ import { describe, it } from 'node:test';
 import { inferModel } from '../src/infer.ts';
 import type { CatalogColumn } from '../src/catalog-model.ts';
 import { formatOf, tableNameOf } from '../src/upload.ts';
-import { lambda } from '../../pure-protocol/src/index.ts';
+import { col, derive, from, lambda, lit, times } from '../../pure-protocol/src/index.ts';
 import { print } from './lite-compiler.ts';
+import { plannerFor } from './catalog-builder.ts';
 
 describe('tableNameOf', () => {
   it('derives an identifier from a filename', () => {
@@ -41,16 +42,16 @@ describe('formatOf', () => {
 // real app); what is pinned here is the model around it.
 
 /** A catalog column of a canonical type (its own name the same, unless given). */
-function col(name: string, logicalType: string, dataType = logicalType): CatalogColumn {
-  return { name, dataType, logicalType, precision: null, scale: null };
+function col_(name: string, logicalType: string, dataType = logicalType): CatalogColumn {
+  return { name, dataType, logicalType, precision: null, scale: null, notNull: false };
 }
 
 describe('inferModel', () => {
   const described = [
-    col('region', 'VARCHAR'),
-    col('year', 'BIGINT'),
-    col('notional', 'DOUBLE'),
-    col('booked', 'DATE'),
+    col_('region', 'VARCHAR'),
+    col_('year', 'BIGINT'),
+    col_('notional', 'DOUBLE'),
+    col_('booked', 'DATE'),
   ];
 
   it('writes a model the planner can compile', async () => {
@@ -71,31 +72,31 @@ describe('inferModel', () => {
   });
 
   it('quotes a column name that needs it, and leaves a keyword bare', async () => {
-    const m = inferModel([col('total pnl', 'DOUBLE'),
-      col('select', 'VARCHAR')], { table: 't', convertible: true });
+    const m = inferModel([col_('total pnl', 'DOUBLE'),
+      col_('select', 'VARCHAR')], { table: 't', convertible: true });
     assert.match(m.model, /"total pnl" DOUBLE/);
     assert.match(m.model, /\bselect VARCHAR/);
   });
 
   it('quotes an awkward table name, and refuses a dotted one (upstream splits the accessor on dots)', async () => {
-    const m = inferModel([col('a', 'VARCHAR')],
+    const m = inferModel([col_('a', 'VARCHAR')],
       { table: 'my table', convertible: true });
     assert.match(m.model, /Table "my table"/);
     assert.equal(print(lambda([], m.source)), '|#>{local::DB."my table"}#');
-    assert.throws(() => inferModel([col('a', 'VARCHAR')],
+    assert.throws(() => inferModel([col_('a', 'VARCHAR')],
       { table: 'a.b', convertible: true }), /cannot be carried/);
   });
 
   it('refuses an empty schema and duplicate column names', async () => {
     assert.throws(() => inferModel([], { table: 't', convertible: true }), /no columns/);
     assert.throws(() => inferModel([
-      col('a', 'VARCHAR'),
-      col('A', 'VARCHAR'),
+      col_('a', 'VARCHAR'),
+      col_('A', 'VARCHAR'),
     ], { table: 't', convertible: true }), /two columns named/);
   });
 
   it('names what the source must convert, or what a read-only source leaves out', async () => {
-    const cols = [col('id', 'BIGINT'), col('at', 'TIMESTAMP WITH TIME ZONE')];
+    const cols = [col_('id', 'BIGINT'), col_('at', 'TIMESTAMP WITH TIME ZONE')];
     const upload = inferModel(cols, { table: 't', convertible: true });
     assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
     assert.match(upload.model, /at TIMESTAMP/);
@@ -105,12 +106,26 @@ describe('inferModel', () => {
   });
 
   it('declares a nested column a Variant as stored, on any source (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)', async () => {
-    const cols = [col('items', 'LIST', 'STRUCT(sku VARCHAR)[]'), col('attrs', 'MAP', 'MAP(VARCHAR, INTEGER)')];
+    const cols = [col_('items', 'LIST', 'STRUCT(sku VARCHAR)[]'), col_('attrs', 'MAP', 'MAP(VARCHAR, INTEGER)')];
     for (const convertible of [true, false]) {
       const m = inferModel(cols, { table: 't', convertible });
       assert.deepEqual([m.conversions, m.excluded], [[], []]);
       assert.match(m.model, /items SEMISTRUCTURED,\n\s*attrs SEMISTRUCTURED/);
     }
+  });
+});
+
+describe('a column the catalog says holds no NULL', () => {
+  // declared NOT NULL, the compiler types it [1] (as legend-engine does), so arithmetic over it
+  // needs no ->toOne(); a nullable column's still does (Typer.collection, as engine and pure)
+  it('is declared NOT NULL, and plain arithmetic compiles over it -- not over a nullable one', async () => {
+    const m = inferModel([{ ...col_('n', 'DOUBLE'), notNull: true }, col_('maybe', 'DOUBLE')], { table: 't', convertible: true });
+    assert.match(m.model, /n DOUBLE NOT NULL,\n\s*maybe DOUBLE\n/);
+    const planner = plannerFor(m.model, m.runtime);
+    const uplift = (c: string) => from(m.source).extend([derive('u', lambda(['x'], times(col('x', c), lit.float(1.1))))]).lambda();
+    const typed = await planner.relationType(uplift('n'));
+    assert.equal(typed.find((c) => c.name === 'u')?.type, 'Float');
+    await assert.rejects(planner.relationType(uplift('maybe')), /Collection element must have a multiplicity \[1\], found \[0\.\.1\]/);
   });
 });
 
@@ -124,14 +139,14 @@ describe('the facts that belong to legend-lite', () => {
 
 describe('inferModel with a schema (a warehouse table)', () => {
   it('declares the table inside its schema and reads it by the qualified name', async () => {
-    const m = inferModel([col('id', 'INTEGER'), col('region', 'VARCHAR')],
+    const m = inferModel([col_('id', 'INTEGER'), col_('region', 'VARCHAR')],
       { table: 'v_orders', schema: 'sales', convertible: false });
     assert.match(m.model, /Schema sales\n {4}\(\n {8}Table v_orders\n {8}\(\n {12}id INTEGER,\n {12}region VARCHAR\(4096\)\n {8}\)\n {4}\)/);
     assert.equal(print(lambda([], m.source)), '|#>{local::DB.sales.v_orders}#');
   });
 
   it('declares no schema when there is none', async () => {
-    const m = inferModel([col('id', 'INTEGER')], { table: 't', convertible: true });
+    const m = inferModel([col_('id', 'INTEGER')], { table: 't', convertible: true });
     assert.doesNotMatch(m.model, /Schema/);
   });
 });

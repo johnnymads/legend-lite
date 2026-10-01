@@ -10,6 +10,7 @@ export interface CorpusColumn {
   readonly logicalType: string | null;
   readonly precision: number | null;
   readonly scale: number | null;
+  readonly notNull: boolean;
 }
 
 /** What legend-lite's CatalogModel.database answers for each table of a fixed corpus, read from real DuckDB. */
@@ -25,7 +26,7 @@ export const CATALOG_CORPUS: readonly {
 }[] = [
   {
     name: 'type VARCHAR',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -36,7 +37,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type VARCHAR(12)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -47,7 +48,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TEXT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -58,7 +59,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type BOOLEAN',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BOOLEAN', logicalType: 'BOOLEAN', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BOOLEAN', logicalType: 'BOOLEAN', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c BIT\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -69,7 +70,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TINYINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TINYINT', logicalType: 'TINYINT', precision: 8, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TINYINT', logicalType: 'TINYINT', precision: 8, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c TINYINT\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -80,7 +81,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type SMALLINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'SMALLINT', logicalType: 'SMALLINT', precision: 16, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'SMALLINT', logicalType: 'SMALLINT', precision: 16, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SMALLINT\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -91,7 +92,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type INTEGER',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c INTEGER\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -102,7 +103,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type BIGINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c BIGINT\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -113,7 +114,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type UTINYINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UTINYINT', logicalType: 'UTINYINT', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UTINYINT', logicalType: 'UTINYINT', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SMALLINT\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -124,7 +125,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type USMALLINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'USMALLINT', logicalType: 'USMALLINT', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'USMALLINT', logicalType: 'USMALLINT', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c INTEGER\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -135,7 +136,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type UINTEGER',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UINTEGER', logicalType: 'UINTEGER', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UINTEGER', logicalType: 'UINTEGER', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c BIGINT\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -146,7 +147,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type UBIGINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UBIGINT', logicalType: 'UBIGINT', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UBIGINT', logicalType: 'UBIGINT', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DECIMAL(20,0)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -157,7 +158,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type HUGEINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DECIMAL(38,0)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -168,12 +169,12 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type UHUGEINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UHUGEINT', logicalType: 'UHUGEINT', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UHUGEINT', logicalType: 'UHUGEINT', precision: null, scale: null, notNull: false }], convertible: true },
     expected: { error: 'column \'c\': a column of DuckDB type \'UHUGEINT\' cannot be declared in a Pure Database (not yet decided)' },
   },
   {
     name: 'type FLOAT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'FLOAT', logicalType: 'FLOAT', precision: 24, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'FLOAT', logicalType: 'FLOAT', precision: 24, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c REAL\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -184,7 +185,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type DOUBLE',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DOUBLE\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -195,7 +196,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type DECIMAL(18,3)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(18,3)', logicalType: 'DECIMAL', precision: 18, scale: 3 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(18,3)', logicalType: 'DECIMAL', precision: 18, scale: 3, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DECIMAL(18,3)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -206,7 +207,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type DECIMAL(4,1)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(4,1)', logicalType: 'DECIMAL', precision: 4, scale: 1 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(4,1)', logicalType: 'DECIMAL', precision: 4, scale: 1, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DECIMAL(4,1)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -217,7 +218,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type NUMERIC(10)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(10,0)', logicalType: 'DECIMAL', precision: 10, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(10,0)', logicalType: 'DECIMAL', precision: 10, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DECIMAL(10,0)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -228,7 +229,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type DECIMAL(38,0)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(38,0)', logicalType: 'DECIMAL', precision: 38, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DECIMAL(38,0)', logicalType: 'DECIMAL', precision: 38, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DECIMAL(38,0)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -239,7 +240,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type DATE',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c DATE\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -250,7 +251,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIMESTAMP',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP', logicalType: 'TIMESTAMP', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP', logicalType: 'TIMESTAMP', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c TIMESTAMP\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -261,7 +262,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIMESTAMP_S',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP_S', logicalType: 'TIMESTAMP_S', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP_S', logicalType: 'TIMESTAMP_S', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c TIMESTAMP\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -272,7 +273,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIMESTAMP_MS',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP_MS', logicalType: 'TIMESTAMP_MS', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP_MS', logicalType: 'TIMESTAMP_MS', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c TIMESTAMP\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -283,7 +284,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIMESTAMP_NS',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP_NS', logicalType: 'TIMESTAMP_NS', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP_NS', logicalType: 'TIMESTAMP_NS', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c TIMESTAMP\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -294,7 +295,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIMESTAMPTZ',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c TIMESTAMP\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -305,7 +306,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIME',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIME', logicalType: 'TIME', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIME', logicalType: 'TIME', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -316,7 +317,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIMETZ',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIME WITH TIME ZONE', logicalType: 'TIME WITH TIME ZONE', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIME WITH TIME ZONE', logicalType: 'TIME WITH TIME ZONE', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -327,12 +328,12 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type TIME_NS',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIME_NS', logicalType: 'TIME_NS', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'TIME_NS', logicalType: 'TIME_NS', precision: null, scale: null, notNull: false }], convertible: true },
     expected: { error: 'column \'c\': a column of DuckDB type \'TIME_NS\' cannot be declared in a Pure Database (not yet decided)' },
   },
   {
     name: 'type UUID',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -343,7 +344,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type INTERVAL',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTERVAL', logicalType: 'INTERVAL', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTERVAL', logicalType: 'INTERVAL', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -354,7 +355,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type BIT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIT', logicalType: 'BIT', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIT', logicalType: 'BIT', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -365,7 +366,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type BIGNUM',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIGNUM', logicalType: 'BIGNUM', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIGNUM', logicalType: 'BIGNUM', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -376,7 +377,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type VARINT',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIGNUM', logicalType: 'BIGNUM', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BIGNUM', logicalType: 'BIGNUM', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -387,7 +388,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type JSON',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -398,7 +399,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type ENUM(\'a\', \'b\')',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'ENUM(\'a\', \'b\')', logicalType: 'ENUM', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'ENUM(\'a\', \'b\')', logicalType: 'ENUM', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -409,7 +410,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type mood',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'ENUM(\'sad\', \'ok\', \'happy\')', logicalType: 'ENUM', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'ENUM(\'sad\', \'ok\', \'happy\')', logicalType: 'ENUM', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c VARCHAR(4096)\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -420,7 +421,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type STRUCT(a INTEGER, b VARCHAR)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'STRUCT(a INTEGER, b VARCHAR)', logicalType: 'STRUCT', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'STRUCT(a INTEGER, b VARCHAR)', logicalType: 'STRUCT', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -431,7 +432,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type INTEGER[]',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTEGER[]', logicalType: 'LIST', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTEGER[]', logicalType: 'LIST', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -442,7 +443,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type INTEGER[3]',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTEGER[3]', logicalType: 'ARRAY', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'INTEGER[3]', logicalType: 'ARRAY', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -453,7 +454,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type STRUCT(a INTEGER)[]',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'STRUCT(a INTEGER)[]', logicalType: 'LIST', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'STRUCT(a INTEGER)[]', logicalType: 'LIST', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -464,7 +465,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type MAP(VARCHAR, INTEGER)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'MAP(VARCHAR, INTEGER)', logicalType: 'MAP', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'MAP(VARCHAR, INTEGER)', logicalType: 'MAP', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -475,7 +476,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type UNION(a INTEGER, b VARCHAR)',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UNION(a INTEGER, b VARCHAR)', logicalType: 'UNION', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'UNION(a INTEGER, b VARCHAR)', logicalType: 'UNION', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        c SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.t}#',
@@ -486,12 +487,12 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'type BLOB',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BLOB', logicalType: 'BLOB', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BLOB', logicalType: 'BLOB', precision: null, scale: null, notNull: false }], convertible: true },
     expected: { error: 'column \'c\': a column of DuckDB type \'BLOB\' cannot be declared in a Pure Database (bytes: no Pure Database type holds them)' },
   },
   {
     name: 'mixed, no schema',
-    input: { path: 'local::DB', schema: null, table: 'trades', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2 }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0 }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0 }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0 }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 'trades', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null, notNull: false }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2, notNull: false }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: false }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null, notNull: false }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: false }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Table trades\n    (\n        region VARCHAR(4096),\n        "trade date" DATE,\n        amount DECIMAL(18,2),\n        big DECIMAL(38,0),\n        at TIMESTAMP,\n        id VARCHAR(4096),\n        payload SEMISTRUCTURED,\n        "say \\"hi\\"" VARCHAR(4096),\n        "back\\\\slash" INTEGER,\n        _ok9 BIGINT,\n        "9lead" DOUBLE,\n        doc SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{local::DB.trades}#',
@@ -502,7 +503,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'mixed, a schema',
-    input: { path: 'local::DB', schema: 'main', table: 'trades', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2 }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0 }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0 }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0 }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: 'main', table: 'trades', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null, notNull: false }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2, notNull: false }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: false }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null, notNull: false }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: false }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Schema main\n    (\n        Table trades\n        (\n            region VARCHAR(4096),\n            "trade date" DATE,\n            amount DECIMAL(18,2),\n            big DECIMAL(38,0),\n            at TIMESTAMP,\n            id VARCHAR(4096),\n            payload SEMISTRUCTURED,\n            "say \\"hi\\"" VARCHAR(4096),\n            "back\\\\slash" INTEGER,\n            _ok9 BIGINT,\n            "9lead" DOUBLE,\n            doc SEMISTRUCTURED\n        )\n    )\n)\n',
       accessor: '#>{local::DB.main.trades}#',
@@ -513,7 +514,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'mixed, read-only',
-    input: { path: 'local::DB', schema: 'sales', table: 'v_orders', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2 }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0 }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0 }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0 }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: false },
+    input: { path: 'local::DB', schema: 'sales', table: 'v_orders', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null, notNull: false }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2, notNull: false }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: false }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null, notNull: false }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: false }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: false },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Schema sales\n    (\n        Table v_orders\n        (\n            region VARCHAR(4096),\n            "trade date" DATE,\n            amount DECIMAL(18,2),\n            payload SEMISTRUCTURED,\n            "say \\"hi\\"" VARCHAR(4096),\n            "back\\\\slash" INTEGER,\n            _ok9 BIGINT,\n            "9lead" DOUBLE,\n            doc SEMISTRUCTURED\n        )\n    )\n)\n',
       accessor: '#>{local::DB.sales.v_orders}#',
@@ -524,7 +525,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'awkward schema and table',
-    input: { path: 'local::DB', schema: 'my s', table: 'my t', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2 }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0 }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0 }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0 }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'local::DB', schema: 'my s', table: 'my t', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null, notNull: false }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2, notNull: false }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: false }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null, notNull: false }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: false }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase local::DB\n(\n    Schema "my s"\n    (\n        Table "my t"\n        (\n            region VARCHAR(4096),\n            "trade date" DATE,\n            amount DECIMAL(18,2),\n            big DECIMAL(38,0),\n            at TIMESTAMP,\n            id VARCHAR(4096),\n            payload SEMISTRUCTURED,\n            "say \\"hi\\"" VARCHAR(4096),\n            "back\\\\slash" INTEGER,\n            _ok9 BIGINT,\n            "9lead" DOUBLE,\n            doc SEMISTRUCTURED\n        )\n    )\n)\n',
       accessor: '#>{local::DB."my s"."my t"}#',
@@ -535,7 +536,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'quoted table',
-    input: { path: 'warehouse::DB', schema: null, table: 'Trades "2024"', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2 }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0 }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0 }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0 }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null }], convertible: true },
+    input: { path: 'warehouse::DB', schema: null, table: 'Trades "2024"', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null, notNull: false }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2, notNull: false }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: false }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null, notNull: false }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: false }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase warehouse::DB\n(\n    Table "Trades \\"2024\\""\n    (\n        region VARCHAR(4096),\n        "trade date" DATE,\n        amount DECIMAL(18,2),\n        big DECIMAL(38,0),\n        at TIMESTAMP,\n        id VARCHAR(4096),\n        payload SEMISTRUCTURED,\n        "say \\"hi\\"" VARCHAR(4096),\n        "back\\\\slash" INTEGER,\n        _ok9 BIGINT,\n        "9lead" DOUBLE,\n        doc SEMISTRUCTURED\n    )\n)\n',
       accessor: '#>{warehouse::DB."Trades \\"2024\\""}#',
@@ -546,7 +547,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'another package',
-    input: { path: 'my::pkg::Db', schema: 's', table: 't', columns: [{ name: 'x', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }], convertible: true },
+    input: { path: 'my::pkg::Db', schema: 's', table: 't', columns: [{ name: 'x', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }], convertible: true },
     expected: {
       text: '###Relational\nDatabase my::pkg::Db\n(\n    Schema s\n    (\n        Table t\n        (\n            x INTEGER\n        )\n    )\n)\n',
       accessor: '#>{my::pkg::Db.s.t}#',
@@ -556,18 +557,29 @@ export const CATALOG_CORPUS: readonly {
     },
   },
   {
+    name: 'NOT NULL columns, a primary key',
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'id', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: true }, { name: 'n', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: true }, { name: 'd', dataType: 'DECIMAL(9,2)', logicalType: 'DECIMAL', precision: 9, scale: 2, notNull: true }, { name: 'u', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: true }, { name: 'maybe', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }], convertible: true },
+    expected: {
+      text: '###Relational\nDatabase local::DB\n(\n    Table t\n    (\n        id INTEGER NOT NULL,\n        n DOUBLE NOT NULL,\n        d DECIMAL(9,2) NOT NULL,\n        u VARCHAR(4096) NOT NULL,\n        maybe DOUBLE\n    )\n)\n',
+      accessor: '#>{local::DB.t}#',
+      source: {"_type":"classInstance","type":">","value":{"path":["local::DB","t"]}},
+      conversions: [{ column: 'u', sql: 'CAST("u" AS VARCHAR)' }],
+      excluded: [],
+    },
+  },
+  {
     name: 'a dot in the table',
-    input: { path: 'local::DB', schema: null, table: 'a.b', columns: [{ name: 'c', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 'a.b', columns: [{ name: 'c', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }], convertible: true },
     expected: { error: 'the table name \'a.b\' cannot be read through #>{db.table}#: a \'.\', \'(\', \')\', \'{\', \'}\', \'|\', \';\', \'=\' or line break cannot be carried there' },
   },
   {
     name: 'a brace in the schema',
-    input: { path: 'local::DB', schema: 's{', table: 't', columns: [{ name: 'c', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: 's{', table: 't', columns: [{ name: 'c', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }], convertible: true },
     expected: { error: 'the schema name \'s{\' cannot be read through #>{db.schema}#: a \'.\', \'(\', \')\', \'{\', \'}\', \'|\', \';\', \'=\' or line break cannot be carried there' },
   },
   {
     name: 'every column needs a conversion, read-only',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'u', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null }, { name: 'h', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0 }], convertible: false },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'u', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'h', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }], convertible: false },
     expected: { error: 'every column of \'t\' needs a conversion its source cannot apply: u, h' },
   },
   {
@@ -577,7 +589,7 @@ export const CATALOG_CORPUS: readonly {
   },
   {
     name: 'two columns a case apart',
-    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'Amount', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0 }, { name: 'amount', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0 }], convertible: true },
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'Amount', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }, { name: 'amount', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }], convertible: true },
     expected: { error: 'the table \'t\' has two columns named \'amount\'' },
   },
 ];

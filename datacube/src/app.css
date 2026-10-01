@@ -1766,6 +1766,15 @@
   color: #b3261e;
 }
 
+.dc-calc-fix {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--tw-neutral-700);
+}
+
 .dc-calc-caret {
   margin: 2px 0 0;
   font-family: var(--dc-mono, ui-monospace, monospace);

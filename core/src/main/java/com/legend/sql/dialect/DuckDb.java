@@ -126,7 +126,7 @@ public final class DuckDb extends AnsiSqlRenderer {
      * {@code {schema}} and {@code {table}} are filled with SQL string literals by the reader.
      */
     public static final String CATALOG_COLUMNS_SQL = """
-            SELECT c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale
+            SELECT c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale, NOT c.is_nullable AS not_null
             FROM duckdb_columns() c
             LEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()
                        WHERE internal AND type_oid IS NOT NULL) t ON t.type_oid = c.data_type_id

@@ -123,18 +123,21 @@ public final class CatalogFacts {
         cases.add(real("awkward schema and table", "local::DB", "my s", "my t", mixed, true));
         cases.add(real("quoted table", "warehouse::DB", null, "Trades \"2024\"", mixed, true));
         cases.add(real("another package", "my::pkg::Db", "s", "t", "x INTEGER", true));
+        cases.add(real("NOT NULL columns, a primary key", "local::DB", null, "t",
+                "id INTEGER PRIMARY KEY, n DOUBLE NOT NULL, d DECIMAL(9,2) NOT NULL, u UUID NOT NULL, maybe DOUBLE", true));
         cases.add(real("a dot in the table", "local::DB", null, "a.b", "c INTEGER", true));
         cases.add(real("a brace in the schema", "local::DB", "s{", "t", "c INTEGER", true));
         cases.add(real("every column needs a conversion, read-only", "local::DB", null, "t", "u UUID, h HUGEINT", false));
         cases.add(new Case("no columns", "local::DB", null, "t", null, List.of(), true));
         cases.add(new Case("two columns a case apart", "local::DB", null, "t", null, List.of(
-                new CatalogModel.Column("Amount", "INTEGER", "INTEGER", 32, 0),
-                new CatalogModel.Column("amount", "DOUBLE", "DOUBLE", 53, 0)), true));
+                new CatalogModel.Column("Amount", "INTEGER", "INTEGER", 32, 0, false),
+                new CatalogModel.Column("amount", "DOUBLE", "DOUBLE", 53, 0, false)), true));
 
         StringBuilder out = new StringBuilder(HEAD);
         out.append("\n/** A catalog column, as THE catalog question answers it. */\n"
                 + "export interface CorpusColumn {\n  readonly name: string;\n  readonly dataType: string;\n"
-                + "  readonly logicalType: string | null;\n  readonly precision: number | null;\n  readonly scale: number | null;\n}\n\n");
+                + "  readonly logicalType: string | null;\n  readonly precision: number | null;\n  readonly scale: number | null;\n"
+                + "  readonly notNull: boolean;\n}\n\n");
         out.append("/** What legend-lite's CatalogModel.database answers for each table of a fixed corpus, read from real DuckDB. */\n");
         out.append("export const CATALOG_CORPUS: readonly {\n  readonly name: string;\n"
                 + "  readonly input: { readonly path: string; readonly schema: string | null; readonly table: string;\n"
@@ -152,7 +155,8 @@ public final class CatalogFacts {
                     cols.append(cols.length() > 1 ? ", " : "").append("{ name: ").append(str(col.name()))
                             .append(", dataType: ").append(str(col.dataType()))
                             .append(", logicalType: ").append(col.logicalType() == null ? "null" : str(col.logicalType()))
-                            .append(", precision: ").append(col.precision()).append(", scale: ").append(col.scale()).append(" }");
+                            .append(", precision: ").append(col.precision()).append(", scale: ").append(col.scale())
+                            .append(", notNull: ").append(col.notNull()).append(" }");
                 }
                 cols.append("]");
                 out.append("  {\n    name: ").append(str(c.name())).append(",\n    input: { path: ").append(str(c.path()))
@@ -202,7 +206,7 @@ public final class CatalogFacts {
         try (java.sql.ResultSet rs = st.executeQuery(sql)) {
             while (rs.next()) {
                 out.add(new CatalogModel.Column(rs.getString(1), rs.getString(2), rs.getString(3),
-                        (Integer) rs.getObject(4), (Integer) rs.getObject(5)));
+                        (Integer) rs.getObject(4), (Integer) rs.getObject(5), rs.getBoolean(6)));
             }
         }
         if (out.isEmpty()) {
