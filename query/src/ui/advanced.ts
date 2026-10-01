@@ -253,11 +253,18 @@ export function renderPostFilter(container: HTMLElement, app: AppContext, sessio
         h('span', { class: 'q-spacer' }),
         h('button', { class: 'q-icon-btn', title: 'Remove', onclick: () => setRoot((g) => mapNode(g, c.id, () => undefined)) }, '✕'));
     };
+    // upstream's group node, as the filter's: AND/OR at the left, the conditions to its right
+    const rows = root.children.filter((c): c is Condition => c.kind === 'condition').map(row);
     mount(container,
-      root.children.length > 1 ? h('div', { class: 'q-group-head' },
-        h('button', { class: 'q-op-toggle', onclick: () => setRoot((g) => ({ ...g, op: g.op === 'and' ? 'or' : 'and' })) }, root.op.toUpperCase()),
-        h('span', { class: 'q-faint' }, root.op === 'and' ? 'all of these' : 'any of these')) : null,
-      root.children.filter((c): c is Condition => c.kind === 'condition').map(row),
+      root.children.length > 1
+        ? h('div', { class: 'q-group' },
+          h('div', { class: 'q-group__op' },
+            h('button', {
+              class: 'q-editable', title: `${root.op === 'and' ? 'All' : 'Any'} of these -- click to switch between AND and OR`,
+              onclick: () => setRoot((g) => ({ ...g, op: g.op === 'and' ? 'or' : 'and' })),
+            }, root.op.toUpperCase())),
+          h('div', { class: 'q-group__children' }, rows))
+        : rows,
       cols.length === 0 ? h('div', { class: 'q-hint' }, 'Add columns first.') : h('button', {
         class: 'q-btn small', style: 'margin-top:6px',
         onclick: () => {

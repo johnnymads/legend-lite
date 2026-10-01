@@ -72,9 +72,10 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
         typeText = (e as Error).message;
       }
     }
-    const pathText = h('div', { class: 'path', title: typeText }, c.derivation ? '…' : `$x.${c.path.map((s) => s.property).join('.')} · ${typeText}`);
+    // upstream shows the column's property behind an info icon, not under its name
+    const info = h('span', { class: 'q-col__info', title: c.derivation ? 'a calculated column' : `\$x.${c.path.map((s) => s.property).join('.')} : ${typeText}` }, icon('info'));
     if (c.derivation) {
-      void app.engine.lambdaText(c.derivation, 'STANDARD').then((t) => { pathText.textContent = t; pathText.title = t; }, () => undefined);
+      void app.engine.lambdaText(c.derivation, 'STANDARD').then((t) => { info.title = t; }, () => undefined);
       // a calculated column's type is the compiler's: aggregate choices follow it
       family = 'number';
     }
@@ -92,13 +93,13 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
       },
     });
     const aggButton = h('button', {
-      class: `q-btn small${c.aggregate ? ' primary' : ''}`, title: 'Aggregate',
+      class: `q-btn small q-col__agg${c.aggregate ? ' primary' : ''}`, title: 'Aggregate',
       onclick: (e: MouseEvent) => showMenu(e.clientX, e.clientY, [
         { label: '(none) — group by this column', action: () => setAggregate(undefined) },
         'separator',
         ...AGGREGATES.filter((a) => a.fits(family, isEnum)).map((a) => ({ label: a.label, action: () => setAggregate(a.op) })),
       ]),
-    }, c.aggregate ? aggregateLabel(c.aggregate) : 'Σ');
+    }, c.aggregate ? aggregateLabel(c.aggregate) : icon('sigma'));
     const setAggregate = (op: AggregateOp | undefined): void => update((s) => ({
       ...s,
       columns: s.columns.map((o) => {
@@ -126,18 +127,18 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
         });
       },
     },
-    h('span', { class: 'grip', title: 'Drag to reorder' }, '⋮⋮'),
-    h('div', { style: 'min-width:0' }, name, pathText),
-    c.derivation ? h('span', { style: 'display:inline-flex; gap:2px' },
-      h('button', { class: 'q-icon-btn', title: 'Edit the calculation', onclick: () => void calculatedDialog(app, session, c) }, 'ƒx'), aggButton) : aggButton,
+    info,
+    h('div', { class: 'q-col__name' }, name),
+    c.derivation ? h('button', { class: 'q-icon-btn', title: 'Edit the calculation', onclick: () => void calculatedDialog(app, session, c) }, icon('calculator')) : null,
+    aggButton,
     h('button', {
-      class: 'q-icon-btn', title: 'Remove column',
+      class: 'q-col__remove', title: 'Remove column', 'aria-label': 'Remove column',
       onclick: () => update((s) => ({
         ...s,
         columns: s.columns.filter((o) => o.id !== c.id),
         options: { ...s.options, sort: s.options.sort.filter((x) => x.column !== c.name) },
       })),
-    }, '✕'));
+    }, icon('times')));
     return el;
   };
 
@@ -164,8 +165,8 @@ function optionChips(session: Session): Child {
   for (const s of o.sort) chips.push(h('span', { class: 'q-chip accent' }, `${s.column} ${s.direction === 'asc' ? '↑' : '↓'}`));
   if (o.limit !== undefined) chips.push(h('span', { class: 'q-chip accent' }, `limit ${o.limit}`));
   if (o.slice) chips.push(h('span', { class: 'q-chip accent' }, `rows ${o.slice.start}–${o.slice.end}`));
-  return h('span', { style: 'display:inline-flex; gap:4px; text-transform:none; letter-spacing:0; font-weight:400' },
-    chips, h('button', { class: 'q-btn small', onclick: () => optionsDialog(session) }, 'Options…'));
+  return h('span', { class: 'q-options' },
+    h('button', { class: 'q-editable', onclick: () => optionsDialog(session) }, icon('cog'), ' Set Query Options'), chips);
 }
 
 export function optionsDialog(session: Session): void {
@@ -244,7 +245,8 @@ function modeToggle(session: Session, humanized: () => boolean): HTMLElement {
     void _w; void _p;
     return { ...rest, columns: [], graph: { tree, checked: false }, options: { sort: [], distinct: false } };
   });
-  return h('span', { style: 'display:inline-flex; gap:2px; text-transform:none; letter-spacing:0' },
-    h('button', { class: `q-tab${graphMode ? '' : ' on'}`, style: 'padding:0 6px', onclick: () => graphMode && toTable(), title: 'Rows of columns' }, 'Table'),
-    h('button', { class: `q-tab${graphMode ? ' on' : ''}`, style: 'padding:0 6px', onclick: () => !graphMode && toGraph(), title: 'Objects as JSON (graph fetch)' }, 'Objects'));
+  // upstream's mode pills (QueryBuilderFetchStructurePanel)
+  return h('span', { class: 'q-modes' },
+    h('button', { class: `q-mode${graphMode ? '' : ' on'}`, onclick: () => graphMode && toTable(), title: 'Rows of columns' }, 'Tabular Data Structure'),
+    h('button', { class: `q-mode${graphMode ? ' on' : ''}`, onclick: () => !graphMode && toGraph(), title: 'Objects as JSON (graph fetch)' }, 'Graph Fetch'));
 }

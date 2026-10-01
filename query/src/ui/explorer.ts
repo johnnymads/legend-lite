@@ -10,7 +10,8 @@ import type { PropertyPath } from '../builder/state.ts';
 import {
   humanize, isToMany, multiplicityText, primitiveFamily, simpleName, type ModelGraph, type PropertyInfo,
 } from '../model/graph.ts';
-import { dialog, h, mount, showMenu, tooltip, type Child } from './dom.ts';
+import { dialog, h, icon, mount, showMenu, tooltip, type Child } from './dom.ts';
+import type { IconName } from './icons.ts';
 import { preview, probeable } from '../app/probe.ts';
 import { addToTree } from './advanced.ts';
 import type { AppContext } from '../app/context.ts';
@@ -20,14 +21,18 @@ export interface ExplorerOptions {
   humanized: boolean;
 }
 
-const ICONS: Readonly<Record<string, string>> = {
-  string: 'Aa', boolean: '✓', integer: '#', float: '#', decimal: '#', number: '#', date: '◷', time: '◷', other: '·',
+/** A property's type, as upstream's explorer shows it (legend-art TypeIcon): a letter for a class or an
+ *  enumeration, an icon for a primitive ("p" for one it has no icon for). */
+const PRIMITIVE_ICONS: Readonly<Partial<Record<string, IconName>>> = {
+  string: 'typeString', boolean: 'typeBoolean', integer: 'typeNumber', float: 'typeNumber', decimal: 'typeNumber',
+  number: 'typeNumber', date: 'typeDate', time: 'typeDate',
 };
 
-function iconOf(p: PropertyInfo): string {
-  if (p.kind === 'class') return 'C';
-  if (p.kind === 'enumeration') return 'E';
-  return ICONS[primitiveFamily(p.type)] ?? '·';
+function iconOf(p: PropertyInfo): HTMLElement {
+  if (p.kind === 'class') return h('span', { class: 'q-type q-type--class' }, 'C');
+  if (p.kind === 'enumeration') return h('span', { class: 'q-type q-type--enumeration' }, 'E');
+  const name = PRIMITIVE_ICONS[primitiveFamily(p.type)];
+  return name ? h('span', { class: 'q-type q-type--primitive' }, icon(name)) : h('span', { class: 'q-type q-type--primitive' }, 'p');
 }
 
 export class Explorer {
@@ -64,8 +69,9 @@ export class Explorer {
     if (this.#search) {
       rows.push(...this.#searchResults(root, used));
     } else {
-      rows.push(h('div', { class: 'q-node', style: 'padding-left:6px; font-weight:600' },
-        h('span', { class: 'ico' }, 'C'), h('span', { class: 'label', title: root }, simpleName(root))));
+      rows.push(h('div', { class: 'q-node q-node--root', style: 'padding-left:5px' },
+        h('span', { class: 'twist' }, icon('chevronDown')),
+        h('span', { class: 'ico' }, h('span', { class: 'q-type q-type--class' }, 'C')), h('span', { class: 'label', title: root }, simpleName(root))));
       rows.push(...this.#children(root, [], 1, used));
     }
     mount(this.element, rows);
@@ -85,8 +91,9 @@ export class Explorer {
       }
     }
     for (const sub of this.#graph.subclasses(owner)) {
-      out.push(h('div', { class: 'q-node', style: `padding-left:${depth * 14 + 6}px`, title: `Subtype ${sub}` },
-        h('span', { class: 'twist' }), h('span', { class: 'ico' }, '@'), h('span', { class: 'label q-muted' }, `@${simpleName(sub)}`)));
+      out.push(h('div', { class: 'q-node', style: `padding-left:${depth * 10 + 5}px`, title: `Subtype ${sub}` },
+        h('span', { class: 'twist' }), h('span', { class: 'ico' }, h('span', { class: 'q-type q-type--class' }, 'C')),
+        h('span', { class: 'label q-muted' }, `@${simpleName(sub)}`)));
     }
     return out;
   }
@@ -98,7 +105,7 @@ export class Explorer {
     const label = this.options.humanized ? humanize(p.name) : p.name;
     const node = h('div', {
       class: `q-node${used.has(path.map((s) => s.property).join('.')) ? ' used' : ''}`,
-      style: `padding-left:${depth * 14}px`,
+      style: `padding-left:${depth * 10 + 5}px`,
       role: 'treeitem',
       'aria-expanded': isClass ? String(open) : undefined,
       draggable: 'true',
@@ -118,11 +125,11 @@ export class Explorer {
         ]);
       },
     },
-    h('span', { class: 'twist', onclick: () => isClass && this.#toggle(k) }, isClass ? (open ? '▾' : '▸') : ''),
+    h('span', { class: 'twist', onclick: () => isClass && this.#toggle(k) }, isClass ? icon(open ? 'chevronDown' : 'chevronRight') : null),
     h('span', { class: 'ico' }, iconOf(p)),
     h('span', { class: 'label' }, label),
-    isToMany(p.multiplicity) ? h('span', { class: 'badge', title: 'Many values: this can multiply rows' }, '*') : null,
-    p.derived ? h('span', { class: 'badge', title: 'Derived property' }, '( )') : null);
+    p.derived ? h('span', { class: 'q-derived', title: 'Derived property' }, '(...)') : null,
+    isToMany(p.multiplicity) ? h('span', { class: 'q-many', title: 'Many values: this can multiply rows' }, '*') : null);
     tooltip(node, () => h('dl', null,
       h('dt', null, 'Property'), h('dd', null, h('b', null, p.name)),
       h('dt', null, 'Type'), h('dd', { class: 'mono' }, `${p.type}${multiplicityText(p.multiplicity)}`),

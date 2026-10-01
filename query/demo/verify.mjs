@@ -79,7 +79,7 @@ let failures = 0;
 
 /** Run, and wait for what it shows: rows or objects ("n rows in", "n objects in"), or an error. */
 async function run(page) {
-  await page.click('text=▶ Run');
+  await page.click('button.q-run');
   await page.waitForFunction(() => document.querySelector('.q-error-box')
     || /\d+ (rows?|objects?) in \d+ ms/.test(document.querySelector('.q-results-bar')?.textContent ?? ''), undefined, { timeout: 30000 });
   const error = await page.$('.q-error-box');
@@ -198,7 +198,7 @@ async function suite(title, query) {
     await page.click('.q-dialog button.primary');
     await page.click(".q-cond button[title='Parameters and relative values']");
     await page.click(".q-menu button:has-text('Use parameter')");
-    await page.click('text=▶ Run');
+    await page.click('button.q-run');
     await page.waitForSelector('.q-toast:has-text("Set a value for $minQty")');
     await page.fill('.q-side input[aria-label=Value]', '1000000');
     await page.press('.q-side input[aria-label=Value]', 'Tab');
@@ -212,7 +212,7 @@ async function suite(title, query) {
     for (const p of ['Trade Id', 'Side', 'Quantity']) await page.dblclick(`.q-node:has-text('${p}')`);
     await run(page);
     assert.equal((await gridRows(page)).length, 12);
-    await page.click('.q-results-bar button.q-tab:text-is("DataCube")');
+    await page.click('.q-results-bar button.q-mode:text-is("DataCube")');
     await page.waitForFunction(() => document.querySelectorAll('.q-cube .dc-row').length === 12, undefined, { timeout: 30000 });
     // the grid alone: no title bar, drag zones, columns panel or status bar
     assert.equal(await page.locator('.q-cube .dc-titlebar:visible, .q-cube .dc-zone-bar:visible, .q-cube .dc-app-side:visible, .q-cube .dc-app-stats:visible').count(), 0);
@@ -230,7 +230,7 @@ async function suite(title, query) {
     await page.click('.q-cube .dc-row >> nth=0 >> .dc-cell >> nth=1', { button: 'right' });
     await page.click('.dc-menu > .dc-menu-item:has(> .dc-menu-label:text-is("Show Controls"))');
     await page.waitForSelector('.q-cube .dc-titlebar:visible, .q-cube .dc-app-stats:visible', { timeout: 10000 });
-    await page.click('.q-results-bar button.q-tab:text-is("Grid")');
+    await page.click('.q-results-bar button.q-mode:text-is("Grid")');
     await page.waitForSelector('.q-grid tbody tr', { timeout: 30000 });
     assert.equal((await gridRows(page)).length, 12);
   });
@@ -239,7 +239,7 @@ async function suite(title, query) {
     await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Firm')}`));
     await page.waitForSelector('.q-node', { timeout: 60000 });
     await page.dblclick(".q-node:has-text('Legal Name')");
-    await page.click('.q-panel__header button:has-text("Objects")');
+    await page.click('.q-panel__header button:has-text("Graph Fetch")');
     await run(page);
     const json = JSON.parse(await page.textContent('.q-json'));
     assert.equal(json.length, 4);

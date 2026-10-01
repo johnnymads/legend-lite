@@ -9,7 +9,7 @@ import { probeable } from '../app/probe.ts';
 import type { AppContext } from '../app/context.ts';
 import { renderPostFilter } from './advanced.ts';
 import { humanize, isNumericFamily, isOptional, isToMany, primitiveFamily, type ModelGraph } from '../model/graph.ts';
-import { h, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
+import { h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
 import { propertyDropZone } from './columns.ts';
 import { defaultValue, valueEditor } from './values.ts';
 
@@ -98,8 +98,8 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
     return h('div', { class: 'q-cond' },
       h('span', { class: 'prop', title: `$x.${c.path.map((s) => s.property).join('.')}` },
         c.path.map((s) => humanize(s.property)).join(' / ')),
+      h('span', { class: 'q-cond__op' }, opSelect),
       many ? h('span', { class: 'q-chip', title: 'A to-many property: the condition holds when any value matches' }, 'any') : null,
-      opSelect,
       needsValue ? valueEditor({
         graph, type, many: c.operator === 'in' || c.operator === 'notIn', value: c.value, parameters: q.parameters,
         onChange: (v) => setRoot((g) => mapNode(g, c.id, (n) => ({ ...(n as Condition), value: v }))),
@@ -114,23 +114,27 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
           { label: 'Duplicate', action: () => setRoot((g) => insertAfter(g, c.id, { ...c, id: freshId('c') })) },
           { label: 'Remove', action: () => setRoot((g) => mapNode(g, c.id, () => undefined)) },
         ]),
-      }, '⋯'),
-      h('button', { class: 'q-icon-btn', title: 'Remove condition', onclick: () => setRoot((g) => mapNode(g, c.id, () => undefined)) }, '✕'));
+      }, icon('more')),
+      h('button', { class: 'q-icon-btn', title: 'Remove condition', 'aria-label': 'Remove condition', onclick: () => setRoot((g) => mapNode(g, c.id, () => undefined)) }, icon('times')));
   };
 
   const groupBlock = (g: Group, isRoot: boolean): HTMLElement => {
-    const block = h('div', { class: isRoot ? '' : 'q-group' },
-      g.children.length > 1 || !isRoot
-        ? h('div', { class: 'q-group-head' },
+    // upstream's group node: its AND/OR at the left (an editable value: click to switch), its
+    // children to the right of a connector line
+    const grouped = g.children.length > 1 || !isRoot;
+    const children = h('div', { class: grouped ? 'q-group__children' : 'q-group__solo' },
+      g.children.map((c): Child => (c.kind === 'condition' ? conditionRow(c) : groupBlock(c, false))),
+      !isRoot && g.children.length === 0 ? h('div', { class: 'q-cond q-cond--blank' }, 'blank') : null);
+    const block = grouped
+      ? h('div', { class: 'q-group' },
+        h('div', { class: 'q-group__op' },
           h('button', {
-            class: 'q-op-toggle', title: 'Switch between AND and OR',
+            class: 'q-editable', title: `${g.op === 'and' ? 'All' : 'Any'} of these -- click to switch between AND and OR`,
             onclick: () => setRoot((r) => mapGroup(r, g.id, (x) => ({ ...x, op: x.op === 'and' ? 'or' : 'and' }))),
           }, g.op.toUpperCase()),
-          h('span', { class: 'q-faint' }, g.op === 'and' ? 'all of these' : 'any of these'),
-          !isRoot ? h('button', { class: 'q-icon-btn', title: 'Remove group', onclick: () => setRoot((r) => mapNode(r, g.id, () => undefined)) }, '✕') : null)
-        : null,
-      g.children.map((c): Child => (c.kind === 'condition' ? conditionRow(c) : groupBlock(c, false))),
-      !isRoot && g.children.length === 0 ? h('div', { class: 'q-hint', style: 'padding:8px' }, 'Drop properties here') : null);
+          !isRoot ? h('button', { class: 'q-icon-btn', title: 'Remove group', 'aria-label': 'Remove group', onclick: () => setRoot((r) => mapNode(r, g.id, () => undefined)) }, icon('times')) : null),
+        children)
+      : h('div', null, children);
     if (!isRoot) {
       propertyDropZone(block, (path) => update((s) => addCondition(graph, s, path, g.id)));
     }

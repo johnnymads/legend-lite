@@ -14,7 +14,7 @@ import { freshId, type Condition, type Value } from '../builder/state.ts';
 import { isTds, type ExecutionResult, type TdsResult } from '../backend/wire.ts';
 import { primitiveFamily, isNumericFamily, standardPrimitive } from '../model/graph.ts';
 import { propertyAt } from '../app/actions.ts';
-import { dialog, h, mount, showMenu, toast } from './dom.ts';
+import { dialog, h, icon, menuButton, mount, panelHeader, showMenu, toast } from './dom.ts';
 import { cellText, plural } from './format.ts';
 import { missingValues } from './params.ts';
 
@@ -116,7 +116,7 @@ export class Results {
     const r = this.#session.run;
     const running = r.status === 'running';
     const limitInput = h('input', {
-      class: 'q-input', type: 'number', min: '1', value: String(this.#limit), style: 'width:80px', title: 'Rows to preview',
+      class: 'q-input', type: 'number', min: '1', value: String(this.#limit), style: 'width:70px', title: 'Rows to preview', 'aria-label': 'Preview row limit',
       onchange: () => { const n = Number(limitInput.value); if (Number.isInteger(n) && n > 0) this.#limit = n; },
     });
     const status: (Node | string)[] = [];
@@ -137,25 +137,31 @@ export class Results {
     };
     // a DataCube pages its rows itself; the preview limit is for the plain grid and objects
     const objects = this.#objects();
+    // upstream's results header (QueryBuilderResultPanel): "results", the SQL, the row count and
+    // time; at the right the preview row limit, Run Query (green), Export
     const preview = this.#view === 'grid' || objects
-      ? [h('span', { class: 'q-faint' }, 'Preview'), limitInput, h('span', { class: 'q-faint' }, objects ? 'objects' : 'rows')]
+      ? [h('span', { class: 'q-labelled' }, h('span', { class: 'q-labelled__label' }, 'preview row limit'), limitInput)]
       : [];
     const viewTab = (view: 'grid' | 'cube', label: string, title: string): HTMLElement => h('button', {
-      class: `q-tab${this.#view === view ? ' on' : ''}`, style: 'padding:0 6px', title, onclick: () => this.#show(view),
+      class: `q-mode${this.#view === view ? ' on' : ''}`, title, onclick: () => this.#show(view),
     }, label);
-    const views = objects ? [] : [h('span', { style: 'display:inline-flex; gap:2px', role: 'group', 'aria-label': 'Show rows as' },
+    const views = objects ? [] : [h('span', { class: 'q-modes', role: 'group', 'aria-label': 'Show rows as' },
       viewTab('grid', 'Grid', 'The rows, plainly: sort, copy, filter by a value'),
       viewTab('cube', 'DataCube', 'The rows in a DataCube: group, pivot, format, chart'))];
-    const bar = h('div', { class: 'q-results-bar' },
-      running
-        ? h('button', { class: 'q-btn', onclick: stop }, '■ Stop')
-        : h('button', { class: 'q-btn primary', title: 'Run (Ctrl+Enter)', onclick: () => this.run() }, '▶ Run'),
+    const bar = panelHeader('results', [
+      h('button', { class: 'q-panel__action q-panel__action--text', title: 'Show the executed SQL', onclick: () => void this.#showSql() }, 'SQL'),
+      h('span', { class: 'q-results__analytics' }, status),
       ...views,
+    ], [
       ...preview,
-      h('span', { class: 'q-muted', style: 'display:inline-flex; gap:6px; align-items:center' }, status),
-      h('span', { class: 'q-spacer' }),
-      h('button', { class: 'q-btn small', onclick: () => void this.#showSql() }, 'SQL'),
-      h('button', { class: 'q-btn small', onclick: () => void this.#exportCsv() }, 'Export CSV'));
+      running
+        ? h('button', { class: 'q-run q-run--stop', onclick: stop }, 'Stop')
+        : h('button', { class: 'q-run', title: 'Run Query (Ctrl+Enter)', onclick: () => this.run() }, icon('play'), 'Run Query'),
+      menuButton(['Export', icon('caretDown')], () => [
+        { label: 'CSV (every row)', action: () => void this.#exportCsv() },
+      ], { class: 'q-export', title: 'Export the result' }),
+    ]);
+    bar.classList.add('q-results-bar');
     let body: Node;
     if (r.status === 'error') body = h('div', { style: 'padding:12px' }, h('div', { class: 'q-error-box' }, r.message));
     else if (r.status === 'cube' && this.#cube) body = this.#cube.host;
