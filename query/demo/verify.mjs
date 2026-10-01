@@ -74,17 +74,23 @@ const enc = encodeURIComponent;
 let browser;
 let failures = 0;
 
-/** Run, and wait for what it shows: the rows (a DataCube over the query), objects (JSON), or an error. */
+/** Run, and wait for what it shows: rows or objects ("n rows in", "n objects in"), or an error. */
 async function run(page) {
   await page.click('text=▶ Run');
-  await page.waitForSelector('.q-cube .dc-row, .q-json, .q-error-box', { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector('.q-error-box')
+    || /\d+ (rows?|objects?) in \d+ ms/.test(document.querySelector('.q-results-bar')?.textContent ?? ''), undefined, { timeout: 30000 });
   const error = await page.$('.q-error-box');
   if (error) throw new Error(`the run failed: ${await error.textContent()}`);
 }
 
-/** The rows the results cube shows, each its cells' text. */
+/** The rows the plain grid shows, each its cells' text. */
 async function gridRows(page) {
-  return page.$$eval('.q-cube .dc-row', (rows) => rows.map((r) => [...r.querySelectorAll('.dc-cell')].map((c) => c.textContent)));
+  return page.$$eval('.q-grid tbody tr', (trs) => trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent)));
+}
+
+/** The rows a results DataCube shows, each its cells' text. */
+async function cubeRows(page) {
+  return page.$$eval('.q-cube .dc-row', (rows) => rows.map((r) => [...r.querySelectorAll('.dc-cell')].map((c) => c.textContent?.trim())));
 }
 
 /** Every step, on the page `query` configures (`''`: in the browser; `?config=...`: elsewhere). */
@@ -192,6 +198,25 @@ async function suite(title, query) {
     await page.press('.q-side input[aria-label=Value]', 'Tab');
     await run(page);
     assert.equal((await gridRows(page)).length, 6);
+  });
+
+  await step('DataCube shows the rows, and groups them on the same planner', async (page) => {
+    await page.goto(app(`#/extensions/dataspace/${GAV}/${enc('demo::trading::TradingDataSpace')}?class=${enc('demo::trading::Trade')}`));
+    await page.waitForSelector('.q-node', { timeout: 60000 });
+    for (const p of ['Trade Id', 'Side', 'Quantity']) await page.dblclick(`.q-node:has-text('${p}')`);
+    await run(page);
+    assert.equal((await gridRows(page)).length, 12);
+    await page.click('.q-results-bar button.q-tab:text-is("DataCube")');
+    await page.waitForFunction(() => document.querySelectorAll('.q-cube .dc-row').length === 12, undefined, { timeout: 30000 });
+    // Side (an enumeration) into Row Groups: the cube's own groupBy, planned on the query
+    await page.locator('.dc-th.dc-draggable', { hasText: 'Side' }).first().dragTo(page.locator('.dc-zone-bar .dc-zone-rows'));
+    await page.waitForFunction(() => document.querySelectorAll('.q-cube .dc-row').length === 2, undefined, { timeout: 30000 });
+    // a group's first cell carries the tree's expander (▸) before its label
+    const groups = (await cubeRows(page)).map((r) => [r[0].replace(/^[▸▾]\s*/, ''), r[r.length - 1]]);
+    assert.deepEqual(groups, [['BUY', '15,003,400'], ['SELL', '37,503,100']]);
+    await page.click('.q-results-bar button.q-tab:text-is("Grid")');
+    await page.waitForSelector('.q-grid tbody tr', { timeout: 30000 });
+    assert.equal((await gridRows(page)).length, 12);
   });
 
   await step('Objects mode fetches JSON', async (page) => {

@@ -31,6 +31,8 @@ export class Results {
   #runs = 0;
   /** The element a cube is opening into, shown while it types its source. */
   #opening: HTMLElement | undefined;
+  /** How a relation's rows show: the plain grid (the default) or a DataCube over the query. */
+  #view: 'grid' | 'cube' = 'grid';
 
   constructor(app: AppContext, session: Session) {
     this.#app = app;
@@ -38,8 +40,9 @@ export class Results {
   }
 
   /**
-   * Run the query. A relation opens as a DataCube over it, which runs (and re-runs) its own
-   * queries; anything else -- a graph fetch's objects -- runs on the engine and shows as JSON.
+   * Run the query. A relation's rows show in the plain grid, or -- when the person picks DataCube
+   * -- as a DataCube over the query, which runs (and re-runs) its own queries. A graph fetch's
+   * objects run on the engine and show as JSON.
    */
   run(): void {
     const missing = missingValues(this.#session);
@@ -52,16 +55,17 @@ export class Results {
     this.#closeCube();
     const mine = (this.#runs += 1);
     const session = this.#session;
+    if (this.#view === 'grid' || this.#objects()) {
+      void run(this.#app, session, this.#limit);
+      return;
+    }
     const abort = new AbortController();
     const queryHash = session.hash();
     // the cube measures its grid as it draws, so it opens in the page: render places the host
     const host = h('div', { class: 'q-cube' });
     this.#opening = host;
     session.setRun({ status: 'running', started: performance.now(), abort });
-    openCube(this.#app, session, host, {
-      onView: () => undefined,
-      onStatus: () => undefined,
-    }).then((cube) => {
+    openCube(this.#app, session, host).then((cube) => {
       if (mine !== this.#runs) { cube?.dispose(); return; }
       this.#opening = undefined;
       if (!cube) { void run(this.#app, session, this.#limit); return; }
@@ -80,6 +84,20 @@ export class Results {
   dispose(): void {
     this.#runs += 1;
     this.#closeCube();
+  }
+
+  /** Is the query a graph fetch built in the form (its answer is objects, never a grid)? */
+  #objects(): boolean {
+    return this.#session.query.graph !== undefined && !this.#session.text;
+  }
+
+  /** Show a relation's rows the other way; what is on screen is shown again, that way. */
+  #show(view: 'grid' | 'cube'): void {
+    if (view === this.#view) return;
+    this.#view = view;
+    const r = this.#session.run;
+    if (r.status === 'done' || r.status === 'cube') this.run();
+    else this.render();
   }
 
   #closeCube(): void {
@@ -110,14 +128,22 @@ export class Results {
         this.#session.setRun({ status: 'error', message: 'Stopped.' });
       } else if (r.status === 'running') r.abort.abort();
     };
-    // a relation's rows are a DataCube, which pages them itself; the preview limit is for objects
-    const preview = this.#session.query.graph && !this.#session.text
-      ? [h('span', { class: 'q-faint' }, 'Preview'), limitInput, h('span', { class: 'q-faint' }, 'objects')]
+    // a DataCube pages its rows itself; the preview limit is for the plain grid and objects
+    const objects = this.#objects();
+    const preview = this.#view === 'grid' || objects
+      ? [h('span', { class: 'q-faint' }, 'Preview'), limitInput, h('span', { class: 'q-faint' }, objects ? 'objects' : 'rows')]
       : [];
+    const viewTab = (view: 'grid' | 'cube', label: string, title: string): HTMLElement => h('button', {
+      class: `q-tab${this.#view === view ? ' on' : ''}`, style: 'padding:0 6px', title, onclick: () => this.#show(view),
+    }, label);
+    const views = objects ? [] : [h('span', { style: 'display:inline-flex; gap:2px', role: 'group', 'aria-label': 'Show rows as' },
+      viewTab('grid', 'Grid', 'The rows, plainly: sort, copy, filter by a value'),
+      viewTab('cube', 'DataCube', 'The rows in a DataCube: group, pivot, format, chart'))];
     const bar = h('div', { class: 'q-results-bar' },
       running
         ? h('button', { class: 'q-btn', onclick: stop }, '■ Stop')
         : h('button', { class: 'q-btn primary', title: 'Run (Ctrl+Enter)', onclick: () => this.run() }, '▶ Run'),
+      ...views,
       ...preview,
       h('span', { class: 'q-muted', style: 'display:inline-flex; gap:6px; align-items:center' }, status),
       h('span', { class: 'q-spacer' }),

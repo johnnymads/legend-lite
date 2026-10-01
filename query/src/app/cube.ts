@@ -9,7 +9,6 @@
 
 import { findAll, functionsCalled, isLambda, transform, type Lambda, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 import { CubeApp, type CubeAppOptions } from '../../../datacube/src/app.ts';
-import type { CubeView } from '../../../datacube/src/cube.ts';
 import { LegendEngineExecutor } from '../../../datacube/src/engine-remote.ts';
 import { RemoteRun } from '../../../datacube/src/runner.ts';
 import type { CubeSnapshot } from '../../../datacube/src/snapshot.ts';
@@ -34,11 +33,6 @@ export function cubeSource(l: Lambda, values: readonly ParameterValue[]): ValueS
   return transform(l.body[0]!, (n) => (n._type === 'var' && byName.has(n.name) ? byName.get(n.name)! : n));
 }
 
-export interface CubeHooks {
-  readonly onView: (view: CubeView) => void;
-  readonly onStatus: (text: string, kind: 'ok' | 'warn' | 'error') => void;
-}
-
 /** Functions whose answer is objects, not rows: such a query is not a cube source. */
 const OBJECT_ANSWERS = new Set(['graphFetch', 'graphFetchChecked', 'serialize']);
 
@@ -47,7 +41,7 @@ const OBJECT_ANSWERS = new Set(['graphFetch', 'graphFetchChecked', 'serialize'])
  * graph fetch (objects), or one `cubeSource` does not rewrite. Its columns are typed by the
  * compiler before it opens; a query that does not compile refuses here, with the compiler's error.
  */
-export async function openCube(app: AppContext, session: Session, host: HTMLElement, hooks: CubeHooks): Promise<CubeApp | undefined> {
+export async function openCube(app: AppContext, session: Session, host: HTMLElement): Promise<CubeApp | undefined> {
   if (session.query.graph && !session.text) return undefined;
   const l = executionLambda(session, undefined);
   if ([...functionsCalled(l)].some((f) => OBJECT_ANSWERS.has(f.slice(f.lastIndexOf(':') + 1)))) return undefined;
@@ -81,8 +75,6 @@ export async function openCube(app: AppContext, session: Session, host: HTMLElem
   };
   return new CubeApp(host, snapshot, {
     ...rows,
-    onView: hooks.onView,
-    onStatus: hooks.onStatus,
     writeClipboard: (text) => navigator.clipboard?.writeText(text),
     // an export is text (CSV, HTML) or bytes (Excel, PDF)
     download: (name, mime, content) => {
