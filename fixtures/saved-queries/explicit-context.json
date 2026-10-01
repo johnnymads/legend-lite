@@ -1,0 +1,26 @@
+{
+  "id": "fixture-explicit-context",
+  "name": "Big trades",
+  "description": null,
+  "groupId": "demo",
+  "artifactId": "trading",
+  "versionId": "0.0.0",
+  "originalVersionId": null,
+  "executionContext": {
+    "_type": "explicitExecutionContext",
+    "mapping": "demo::trading::TradingMapping",
+    "runtime": "demo::trading::Runtime"
+  },
+  "content": "|demo::trading::Trade.all()->filter(\n  x|$x.quantity > 1000000\n)->project(\n  ~[\n     'Trade Id': x|$x.tradeId,\n     Quantity: x|$x.quantity\n   ]\n)",
+  "lastUpdatedAt": 1790887287102,
+  "createdAt": 1790887287102,
+  "lastOpenAt": 1790887287110,
+  "deletedAt": null,
+  "validUntil": null,
+  "version": 1,
+  "taggedValues": [],
+  "stereotypes": [],
+  "defaultParameterValues": [],
+  "owner": "anonymous",
+  "gridConfig": null
+}

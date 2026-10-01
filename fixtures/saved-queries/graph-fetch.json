@@ -1,0 +1,26 @@
+{
+  "id": "fixture-graph-fetch",
+  "name": "Firms as objects",
+  "description": null,
+  "groupId": "demo",
+  "artifactId": "trading",
+  "versionId": "0.0.0",
+  "originalVersionId": null,
+  "executionContext": {
+    "_type": "explicitExecutionContext",
+    "mapping": "demo::trading::TradingMapping",
+    "runtime": "demo::trading::Runtime"
+  },
+  "content": "|demo::trading::Firm.all()->graphFetch(\n  #{demo::trading::Firm{legalName}}#\n)->serialize(\n  #{demo::trading::Firm{legalName}}#\n)",
+  "lastUpdatedAt": 1790887287713,
+  "createdAt": 1790887287713,
+  "lastOpenAt": 1790887287714,
+  "deletedAt": null,
+  "validUntil": null,
+  "version": 1,
+  "taggedValues": [],
+  "stereotypes": [],
+  "defaultParameterValues": [],
+  "owner": "anonymous",
+  "gridConfig": null
+}

@@ -55,7 +55,7 @@ export async function toQuery(app: AppContext, session: Session, identity: { id:
 }
 
 /** The source a saved query's execution context names, with its class read from the query itself. */
-function contextOf(project: LoadedProject, q: Query): { mapping: string; runtime: string; dataSpace?: ClassSource['dataSpace'] } {
+export function contextOf(project: LoadedProject, q: Query): { mapping: string; runtime: string; dataSpace?: ClassSource['dataSpace'] } {
   const ctx = q.executionContext;
   if (ctx?._type === 'explicitExecutionContext') return { mapping: ctx.mapping, runtime: ctx.runtime };
   if (ctx?._type === 'dataSpaceExecutionContext') {

@@ -1,0 +1,34 @@
+{
+  "id": "fixture-data-space-context",
+  "name": "Sells",
+  "description": null,
+  "groupId": "demo",
+  "artifactId": "trading",
+  "versionId": "0.0.0",
+  "originalVersionId": null,
+  "executionContext": {
+    "_type": "dataSpaceExecutionContext",
+    "dataSpacePath": "demo::trading::TradingDataSpace",
+    "executionKey": "Production"
+  },
+  "content": "|demo::trading::Trade.all()->filter(\n  x|$x.side ==\n    demo::trading::Side.SELL\n)->project(\n  ~[\n     'Trade Id': x|$x.tradeId,\n     Side: x|$x.side,\n     Quantity: x|$x.quantity\n   ]\n)",
+  "lastUpdatedAt": 1790887287645,
+  "createdAt": 1790887287645,
+  "lastOpenAt": 1790887287647,
+  "deletedAt": null,
+  "validUntil": null,
+  "version": 1,
+  "taggedValues": [
+    {
+      "tag": {
+        "profile": "meta::pure::profiles::query",
+        "value": "dataSpace"
+      },
+      "value": "demo::trading::TradingDataSpace"
+    }
+  ],
+  "stereotypes": [],
+  "defaultParameterValues": [],
+  "owner": "anonymous",
+  "gridConfig": null
+}

@@ -1,0 +1,13 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+
+# Saved queries as legend-lite's /api/pure/v1/query answers GET: the one contract Query writes and
+# DataCube reads (README.md). Both lines test against these records. A js_library, so a js_test in
+# either package takes them as data (rules_js copies them to the output tree).
+js_library(
+    name = "records",
+    srcs = glob(["*.json"]),
+    visibility = [
+        "//datacube:__pkg__",
+        "//query:__pkg__",
+    ],
+)

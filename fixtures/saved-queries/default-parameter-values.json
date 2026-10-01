@@ -1,0 +1,31 @@
+{
+  "id": "fixture-default-parameter-values",
+  "name": "Trades over a quantity",
+  "description": null,
+  "groupId": "demo",
+  "artifactId": "trading",
+  "versionId": "0.0.0",
+  "originalVersionId": null,
+  "executionContext": {
+    "_type": "explicitExecutionContext",
+    "mapping": "demo::trading::TradingMapping",
+    "runtime": "demo::trading::Runtime"
+  },
+  "content": "{minQty: Integer[1]|demo::trading::Trade.all()->filter(\n  x|$x.quantity > $minQty\n)->project(\n  ~[\n     'Trade Id': x|$x.tradeId,\n     Quantity: x|$x.quantity\n   ]\n)}",
+  "lastUpdatedAt": 1790887287682,
+  "createdAt": 1790887287682,
+  "lastOpenAt": 1790887287684,
+  "deletedAt": null,
+  "validUntil": null,
+  "version": 1,
+  "taggedValues": [],
+  "stereotypes": [],
+  "defaultParameterValues": [
+    {
+      "name": "minQty",
+      "content": "1000000"
+    }
+  ],
+  "owner": "anonymous",
+  "gridConfig": null
+}

@@ -77,6 +77,12 @@ below is on main; the line continues on the same branch -- next, upstream's look
 design doc's v1 status. A cross-area edit from here on is announced here first, as before.
 
 In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new). **Touches, one line each:**
+- `fixtures/saved-queries/` (new, 2026-10-01, asked by the DataCube line): saved queries exactly as
+  `GET /api/pure/v1/query/{id}` answers -- explicit context, data-space context, defaultParameterValues, a graph
+  fetch (not a cube source) -- made through the real API and each run on the demo model (`make.mjs`); README.md
+  says how to read one. `js_library` `//fixtures/saved-queries:records`, visible to `//query` and `//datacube`:
+  Query tests its reading against it (`query/test/saved-queries.test.ts`, through `persist.ts contextOf`); DataCube's
+  saved-query source will test against the same files.
 - `.github/workflows/gates-run.yml` (2026-10-01): the browser lane runs every `browser-ci` target in `//query` as
   well as `//datacube` -- `//query:verify` (the end-to-end steps, both planes), its server on Bazel's JDK.
 - `core/src/main/java/com/legend/server/PureV1Api.java` + `LegendHttpServer.java` routes (+ `PureV1ApiTest`):

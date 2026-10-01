@@ -127,6 +127,7 @@ _TESTS = glob(["test/*.test.ts"])
 _WASM_TESTS = [
     "build",
     "load",
+    "saved-queries",
 ]
 
 [js_test(
@@ -137,6 +138,8 @@ _WASM_TESTS = [
         ":node_modules/jsdom",
         ":src",
         "test/strict-reporter.mjs",
+        # the saved-query records Query writes and DataCube reads (fixtures/saved-queries/README.md)
+        "//fixtures/saved-queries:records",
     ] + glob(["test/*.ts"], exclude = ["test/*.test.ts"]) + glob(["demo/models/*.pure"]) + (
         ["//pure-protocol:pure_protocol", "//wasm:planner"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
     ),
