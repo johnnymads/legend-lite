@@ -220,8 +220,6 @@ export type MenuActionId =
   // change and not a column operation: what is on SCREEN. It left the
   // grid's menu by the user's direction (2026-09-25); a folded title
   // bar leaves a lip that restores it.
-  | 'view.zones'
-  | 'view.titleBar'
   // Host-level entries, which live in the title bar's menu rather
   // than the grid's. DataCube reserves that menu for the embedding
   // application the same way.
@@ -251,6 +249,11 @@ export interface MenuItem {
   /** Absent on a pure submenu parent, which does nothing itself. */
   readonly id?: MenuActionId;
   readonly label: string;
+  /**
+   * A host's entry: where it goes -- the main menu's file group (the default), its View, its
+   * top-level data entries, or the status bar's planner readout (`plane`: where the planner runs).
+   */
+  readonly section?: 'file' | 'view' | 'data' | 'plane';
   /** Column the action applies to, when it is column-specific. */
   readonly column?: string;
   readonly direction?: SortDirection;
@@ -356,6 +359,31 @@ function filterItem(
  * their structure, not a flattening of it. Groups here are the
  * separated blocks their menu draws rules between.
  */
+/** Export's entries: the right-click menu's and the menu bar's File, the same. */
+export function exportItems(canSaveCube: boolean): MenuItem[] {
+  return [
+    { id: 'export.html', label: 'HTML' },
+    { id: 'export.excel', label: 'Excel (Grid)' },
+    { id: 'export.csv', label: 'CSV (Grid)' },
+    { id: 'export.text', label: 'Plain Text' },
+    { id: 'export.pdf', label: 'PDF' },
+    // the cube itself, as a saved-cube document: offered when the host knows its source
+    { id: 'export.specification', label: 'Cube File (JSON)', ...(canSaveCube ? {} : { disabled: true }) },
+  ];
+}
+
+/** Email's entries: the right-click menu's and the menu bar's File, the same. */
+export function emailItems(canEmail: boolean): MenuItem[] {
+  const items: MenuItem[] = [
+    { id: 'email.html', label: 'HTML' },
+    { id: 'email.excel', label: 'Excel (Grid)' },
+    { id: 'email.csv', label: 'CSV (Grid)' },
+    { id: 'email.text', label: 'Plain Text' },
+    { id: 'email.pdf', label: 'PDF' },
+  ];
+  return items.map((i) => ({ ...i, ...(canEmail ? {} : { disabled: true }) }));
+}
+
 export function buildMenu(ctx: MenuContext): MenuGroup[] {
   const { snapshot: s } = ctx;
   // A pivot total is a real column of the level's query (a conditional
@@ -379,32 +407,8 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
 
   // ---- Export / Copy ----------------------------------------------
   push('', [
-    {
-      label: 'Export',
-      submenu: [
-        { id: 'export.html', label: 'HTML' },
-        { id: 'export.excel', label: 'Excel (Grid)' },
-        { id: 'export.csv', label: 'CSV (Grid)' },
-        { id: 'export.text', label: 'Plain Text' },
-        { id: 'export.pdf', label: 'PDF' },
-        // the cube itself, as a saved-cube document: offered when the host knows its source
-        { id: 'export.specification', label: 'Cube File (JSON)',
-          ...(ctx.canSaveCube ? {} : { disabled: true }) },
-      ],
-    },
-    {
-      label: 'Email',
-      submenu: [
-        { id: 'email.html', label: 'HTML' },
-        { id: 'email.excel', label: 'Excel (Grid)' },
-        { id: 'email.csv', label: 'CSV (Grid)' },
-        { id: 'email.text', label: 'Plain Text' },
-        { id: 'email.pdf', label: 'PDF' },
-      ].map((i) => ({
-        ...i,
-        ...(ctx.canEmail ? {} : { disabled: true }),
-      })) as MenuItem[],
-    },
+    { label: 'Export', submenu: exportItems(ctx.canSaveCube === true) },
+    { label: 'Email', submenu: emailItems(ctx.canEmail === true) },
     {
       label: 'Copy',
       submenu: [

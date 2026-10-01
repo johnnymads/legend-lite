@@ -126,6 +126,8 @@ export function planeMenu(): MenuItem[] {
   return PLANES.map((plane) => ({
     id: plane.id,
     label: plane.label,
+    // where the planner runs: the status bar's readout opens these
+    section: 'plane' as const,
     ...(plane.word === now ? { disabled: true as const } : {}),
   }));
 }
@@ -509,14 +511,16 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // controls is the dead-button fault one layer up.
         ...(models
           ? [
-            { id: 'host.data' as const, label: 'Data\u2026' },
+            { id: 'host.data' as const, label: 'Data\u2026', section: 'data' as const },
             // saved cubes: in this browser, over the files they were built on
-            { id: 'host.cubes' as const, label: 'Cubes\u2026' },
+            { id: 'host.save' as const, label: 'Save', section: 'file' as const },
+            { id: 'host.saveAs' as const, label: 'Save As\u2026', section: 'file' as const },
+            { id: 'host.open' as const, label: 'Open\u2026', section: 'file' as const },
             // the page's settings in a link: never a row of data (src/share/link.ts)
-            { id: 'host.share' as const, label: 'Copy Share Link' },
+            { id: 'host.share' as const, label: 'Share\u2026', section: 'file' as const },
           ]
           : []),
-        { id: 'host.query', label: 'Generated Pure & SQL\u2026' },
+        { id: 'host.query', label: 'Generated Pure & SQL\u2026', section: 'view' as const },
         // The planes, as entries rather than a control: the bar is
         // for what you watch, the menu for what you do occasionally.
         // The one you are ON is disabled rather than hidden, so the
@@ -525,7 +529,9 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       ],
       onHostMenu: (item) => {
         if (item.id === 'host.data') toggleHostWindow('datawin');
-        if (item.id === 'host.cubes') showCubes?.();
+        if (item.id === 'host.open') showCubes?.();
+        if (item.id === 'host.save') saveCube?.(false);
+        if (item.id === 'host.saveAs') saveCube?.(true);
         if (item.id === 'host.share') void copyShareLink?.();
         if (item.id === 'host.query') toggleHostWindow('querywin');
         // A NAVIGATION, not a switch. Each page loads exactly one
@@ -621,6 +627,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   /** Opens the saved cubes' window; set once the page can open files. */
   let showCubes: (() => void) | undefined;
+  /** Save the cube (over the one it was opened from), or Save As a new one. */
+  let saveCube: ((asNew: boolean) => void) | undefined;
   /** Copies the page's share link; set once the page can open files. */
   let copyShareLink: (() => Promise<void>) | undefined;
   /** Told when a view lands: "changed since saved" is re-read then. */
@@ -1143,13 +1151,21 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       },
     });
     showCubes = () => {
-      toggleHostWindow('cubeswin');
+      showHostWindow('cubeswin');
       library?.sync();
       void library?.refresh();
+    };
+    // the menu's Save and Save As: the saved-cubes window's own actions, said in it
+    saveCube = (asNew) => {
+      showCubes?.();
+      if (asNew) library?.saveAs();
+      else library?.save();
     };
 
     // THE SHARE LINK: the page's settings, never its data. It is said HOW LONG it is, and a long
     // one -- which some mail and chat tools cut -- is said so, with the file suggested instead.
+    // SHARE: the link in a window of its own, shown and copied to the clipboard at once, with a
+    // way to copy it again -- and what it holds (the page's settings, never its data) said there.
     copyShareLink = async () => {
       const refused = app.saveRefusal();
       const name = current.name ?? app.configuration.reportTitle ?? current.source?.name ?? 'cube';
@@ -1157,25 +1173,41 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         ...(current.unknown ? { cube: current.unknown } : {}),
         ...(current.pageUnknown ? { page: current.pageUnknown } : {}),
       });
-      showCubes?.();
+      const field = must('sharelink') as HTMLTextAreaElement;
+      const note = must('sharenote');
+      const copy = must('sharecopy') as HTMLButtonElement;
+      showHostWindow('sharewin', { width: 560, height: 200 });
+      // nothing to copy: the window says why, without an empty link and a dead button
+      field.hidden = !page;
+      copy.hidden = !page;
       if (!page) {
-        library?.say(refused ?? 'this cube cannot be shared yet: only cubes over a file are', 'warn');
+        field.value = '';
+        note.textContent = refused ?? 'This cube cannot be shared yet: only cubes over a file are.';
+        note.className = 'sharenote bad';
         return;
       }
       const link = shareLink(location.href, page);
-      try {
-        await navigator.clipboard.writeText(link.url);
-      } catch {
-        library?.say('the browser did not allow copying the link', 'error');
-        return;
-      }
+      field.value = link.url;
       const needs = page.cubes[0]?.cube.source.sample
         ? 'it rebuilds its sample on its own'
         : `whoever opens it needs ${page.cubes[0]?.cube.source.name ?? 'the same file'}`;
-      library?.say(link.long
-        ? `Link copied, but it is long (${link.length.toLocaleString()} characters): some mail and chat tools cut links this long. It holds the page's settings, not its data; ${needs}.`
-        : `Link copied (${link.length.toLocaleString()} characters). It holds the page's settings -- filter values included -- not its data; ${needs}.`,
-      link.long ? 'warn' : 'ok');
+      const about = `It holds the page's settings, filter values included, not its data; ${needs}.`;
+      const put = async (): Promise<void> => {
+        field.select();
+        try {
+          await navigator.clipboard.writeText(link.url);
+        } catch {
+          note.textContent = `The browser did not allow copying: select the link and copy it. ${about}`;
+          note.className = 'sharenote bad';
+          return;
+        }
+        note.textContent = link.long
+          ? `Copied, but it is long (${link.length.toLocaleString()} characters): some mail and chat tools cut links this long. ${about}`
+          : `Copied to the clipboard (${link.length.toLocaleString()} characters). ${about}`;
+        note.className = link.long ? 'sharenote warn' : 'sharenote';
+      };
+      copy.onclick = () => void put();
+      await put();
     };
 
     // Build the chosen sample. No row cap: the one hard limit is the
@@ -1300,12 +1332,18 @@ function toggleHostWindow(id: string): void {
     el.hidden = true;
     return;
   }
+  showHostWindow(id);
+}
+
+/** Show a host window (left where it is if already shown), at `size` the first time. */
+function showHostWindow(id: string, size: { width: number; height: number } = { width: 720, height: 420 }): void {
+  const el = must(id);
+  if (!el.hidden) return;
   el.hidden = false;
   const head = el.querySelector('.hostwin-head');
   if (!(head instanceof HTMLElement)) return;
   hostWindows.set(id, makeWindow(el, head, document.body, {
-    width: 720,
-    height: 420,
+    ...size,
     ...(hostWindows.get(id) ? { spec: hostWindows.get(id) } : {}),
     onChange: (spec) => hostWindows.set(id, spec),
   }));

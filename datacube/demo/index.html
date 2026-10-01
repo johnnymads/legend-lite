@@ -109,8 +109,17 @@
   /* In the cube's STATUS bar now, so it has to be small and quiet.
      Scoped to the bar: the same element is offstage until `boot`
      moves it, and an offstage width cap would be nonsense. */
+  /* the Share window: the link, whole, and what it holds */
+  .sharelink { width: 100%; box-sizing: border-box; font: 12px/16px ui-monospace, monospace;
+    resize: vertical; word-break: break-all; }
+  .sharerow { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
+  .sharenote { flex: 1; opacity: .8; }
+  .sharenote.warn { color: #b45309; opacity: 1; }
+  .sharenote.bad { color: crimson; opacity: 1; }
+
   .dc-status-host #status {
-    opacity: .75; white-space: nowrap; overflow: hidden;
+    /* the bar's own type: one face and size across it */
+    font: inherit; opacity: .75; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; max-width: 40vw; margin: 0;
   }
 
@@ -209,6 +218,18 @@
       <button type="button" class="hostwin-close" data-win="cubeswin"
               aria-label="Close">&times;</button></div>
     <div class="hostwin-body"><div id="cubelib"></div></div>
+  </div>
+
+  <div id="sharewin" class="hostwin" hidden>
+    <div class="hostwin-head"><span>Share</span>
+      <button type="button" class="hostwin-close" data-win="sharewin"
+              aria-label="Close">&times;</button></div>
+    <div class="hostwin-body">
+      <textarea id="sharelink" class="sharelink" rows="4" readonly
+                aria-label="The link to this page"></textarea>
+      <div class="sharerow"><button type="button" id="sharecopy">Copy</button>
+        <span id="sharenote" class="sharenote" role="status"></span></div>
+    </div>
   </div>
 
   <div id="querywin" class="hostwin" hidden>

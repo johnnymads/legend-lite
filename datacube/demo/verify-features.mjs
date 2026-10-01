@@ -465,10 +465,30 @@ const dimensionNames = () => page.evaluate(() =>
     .map((e) => e.dataset.column));
 
 /** Open the hamburger and pick an entry. */
+/**
+ * Pick a hamburger entry by its own label, through its submenus: an entry under View or Insert is
+ * shown only once its parent is hovered (and a parent's text holds its children's labels too).
+ */
+async function pickEntry(label) {
+  const item = page.locator(`.dc-menu-item:has(> .dc-menu-label:text-is(${JSON.stringify(label)}))`).first();
+  if (!(await item.isVisible())) {
+    const parents = await item.evaluate((el) => {
+      const out = [];
+      for (let p = el.parentElement?.closest('.dc-menu-item'); p; p = p.parentElement?.closest('.dc-menu-item')) {
+        out.unshift(p.querySelector(':scope > .dc-menu-label')?.textContent ?? '');
+      }
+      return out;
+    });
+    for (const parent of parents) {
+      await page.locator(`.dc-menu-item:has(> .dc-menu-label:text-is(${JSON.stringify(parent)}))`).first().hover();
+    }
+  }
+  await item.click();
+}
 async function burger(label) {
   await page.click('.dc-titlebar-menu');
   await page.waitForSelector('.dc-menu', { timeout: 5000 });
-  await page.locator('.dc-menu-item', { hasText: label }).first().click();
+  await pickEntry(label);
   await settle();
 }
 
@@ -1896,8 +1916,8 @@ try {
     await reset();
     await page.click('.dc-titlebar-menu');
     await page.waitForSelector('.dc-menu', { timeout: 10_000 });
-    await page.locator('.dc-menu-item:has(> .dc-menu-label'
-      + ':text-is("Properties..."))').click();
+    // under View, now
+    await pickEntry('Properties...');
     await page.waitForTimeout(300);
     await page.locator('.dc-editor-tab', { hasText: 'General Properties' })
       .click();
@@ -1921,8 +1941,8 @@ try {
     await reset();
     await page.click('.dc-titlebar-menu');
     await page.waitForSelector('.dc-menu', { timeout: 10_000 });
-    await page.locator('.dc-menu-item:has(> .dc-menu-label'
-      + ':text-is("Properties..."))').click();
+    // under View, now
+    await pickEntry('Properties...');
     await page.waitForTimeout(300);
     await page.locator('.dc-editor-tab', { hasText: 'General Properties' })
       .click();
@@ -2150,9 +2170,11 @@ try {
     if (!want) throw new Error(`no Integer column among ${opts.join(',')}`);
     await chooser.selectOption(want);
     await page.waitForTimeout(250);
-    // Upstream's one ADVANCED setting.
-    await page.locator('.dc-check', { hasText: 'Show advanced settings?' }).locator('input').check();
-    await page.waitForTimeout(150);
+    // the kind is always shown (the user, 2026-09-30): upstream's one ADVANCED setting, no
+    // checkbox to open first
+    if (await page.locator('.dc-check', { hasText: 'Show advanced settings?' }).count()) {
+      throw new Error('a "Show advanced settings?" checkbox is back');
+    }
 
     const kind = page.locator('.dc-field', { hasText: 'Column Kind:' })
       .first().locator('select').first();
@@ -4545,8 +4567,6 @@ try {
       await page.locator(`${O} .dc-editor-tab`, { hasText: tab }).first().click();
       if (column) {
         await fieldOf('Choose Column:').locator('select').selectOption(column);
-        const adv = boxOf('Show advanced settings?');
-        if (await adv.count() && !(await adv.isChecked())) await adv.check();
       }
     };
     const okEditor = async () => {
@@ -4705,8 +4725,7 @@ try {
       expect: (b, a) => (a.styles.some((x, i) => isNegative(a.values[i] ?? null, a.type) && x?.color !== b.styles[i]?.color) ? null : 'no negative recoloured') });
     await control('Default normal background', { act: general(() => put(sectionOf('Default Colors').locator('input[title="Normal background"]'), '#ffeeaa')),
       expect: (b, a) => (a.styles.some((x, i) => x?.bg !== b.styles[i]?.bg) ? null : 'no background') });
-    await control('Show drag zones, off', { act: general(() => boxOf('Show drag zones').uncheck()),
-      expect: (b, a) => (a.zonesHidden ? null : 'zones still shown') });
+    // (no "Show drag zones" here: the zones fold from their own chevron, the user, 2026-09-30)
     await control('Show title bar, off', { act: general(() => boxOf('Show title bar').uncheck()),
       expect: (b, a) => (a.titleFolded ? null : 'title bar still shown') });
 

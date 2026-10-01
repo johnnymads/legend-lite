@@ -542,10 +542,14 @@
   height: var(--dc-row-control-height);
   border-top: 1px solid var(--tw-neutral-200);
   background: var(--tw-neutral-100);
+  /* ONE TYPE FOR THE WHOLE BAR (the user, 2026-09-30): links, figures and the host's readout in
+     the same face and size. Tabular figures, so a count that changes as the tree expands does
+     not jitter its neighbours (the job the monospace face did). */
+  font-family: var(--dc-font);
+  font-size: var(--dc-text-sm-size);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Monospaced, because the count changes as the tree expands and a
-   proportional figure jitters its neighbours every time it does. */
 /* The two groups: the things you press, and the things you read. */
 .dc-status-actions,
 .dc-status-readout {
@@ -553,6 +557,10 @@
   align-items: center;
   min-width: 0;
 }
+
+/* the readout that changes where the planner runs: it says it can be clicked */
+.dc-status-host-pick { cursor: pointer; border-radius: var(--dc-radius-sm); }
+.dc-status-host-pick:hover { background: var(--tw-neutral-200); }
 
 /* The host's own readout, at the far right of the bar. */
 .dc-status-host {
@@ -567,8 +575,6 @@
 }
 
 .dc-status-rows {
-  font-family: var(--dc-font-mono);
-  font-size: var(--dc-text-sm-size);
   color: var(--tw-neutral-500);
   padding: 0 var(--dc-pad-2);
 }
@@ -584,15 +590,12 @@
   align-items: center;
   gap: 4px;
   padding: 0 var(--dc-pad-2);
-  font-size: var(--dc-text-sm-size);
   font-weight: 600;
   color: var(--tw-orange-500);
 }
 
 .dc-status-stats {
   padding: 0 var(--dc-pad-2);
-  font-size: var(--dc-text-sm-size);
-  font-variant-numeric: tabular-nums;
   color: var(--tw-neutral-600);
 }
 
@@ -612,6 +615,19 @@
 /* Hidden while Ad Hoc Analysis mode is on: the flex above would
    otherwise win over the hidden attribute, as it did for the zones. */
 .dc-app-middle[hidden] { display: none !important; }
+
+/* THE GRID IN ITS TILE, whole: zones, grid and columns panel, status bar -- as an added grid's.
+   The title bar stays above the board: it is the page's. */
+.dc-grid-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* a grid in a page's tile (an added grid, a chart's editing grid): the page has the title bar */
+.dc-app.dc-compact > .dc-titlebar { display: none; }
 
 .dc-app-middle .dc-app-grid {
   flex: 1;
@@ -633,7 +649,6 @@
 
 .dc-status-link {
   font: inherit;
-  font-size: var(--dc-text-sm-size);
   line-height: 1;
   border: 0;
   padding: 0 var(--dc-pad-1);

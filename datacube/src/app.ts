@@ -115,6 +115,9 @@ import {
   applyMenuAction,
   buildMenu,
   calcStageOf,
+  emailItems,
+  exportItems,
+  type MenuGroup,
   type MenuItem,
 } from './ui/menu.ts';
 import { MenuView } from './ui/menu-view.ts';
@@ -390,16 +393,6 @@ export class CubeApp {
     stats: HTMLElement;
   };
   /**
-   * The zones, shown for the length of a drag that needs them.
-   *
-   * Folded away they are not merely invisible, they are not there --
-   * so a person who folds them and then drags a column header has
-   * nowhere to drop it. The bar comes back while the drag is in
-   * flight and folds itself again afterwards, which means folding it
-   * takes nothing away.
-   */
-  #zonePeek = false;
-  /**
    * Where each dialog was last left, by title.
    *
    * Reopening one should find it where you put it; a window that
@@ -421,6 +414,16 @@ export class CubeApp {
   #settings: SettingValues;
   /** The open calculated-column editors, by window key. */
   readonly #columnEditors = new Map<string, ColumnEditor>();
+  /**
+   * The zones, shown for the length of a drag that needs them.
+   *
+   * Folded away they are not merely invisible, they are not there --
+   * so a person who folds them and then drags a column header has
+   * nowhere to drop it. The bar comes back while the drag is in
+   * flight and folds itself again afterwards, which means folding it
+   * takes nothing away.
+   */
+  #zonePeek = false;
   /** The board of the grid and its charts (page/cube-page.ts), once a chart is open; until then the grid sits alone. */
   #page: { readonly page: CubePage; readonly host: HTMLElement } | null = null;
   /** Where the grid lives when there is no board. */
@@ -492,6 +495,8 @@ export class CubeApp {
     Object.assign(this.#formats, renderFormats(this.#config, this.#snapshot));
 
     root.classList.add('dc-app');
+    // a grid in a page's tile: the page has the title bar
+    root.classList.toggle('dc-compact', this.#options.compact === true);
     // which cube this is, on a page of several: its drags land only on it (ui/scope.ts)
     root.dataset['dcCube'] = newCubeScope();
     this.#els = {
@@ -1393,6 +1398,29 @@ export class CubeApp {
     if (host.childElementCount > 0) host.append(this.#statusSeparator());
     host.append(slot);
     fill(slot);
+    // WHERE THE PLANNER RUNS, changed where it is read (the user, 2026-09-30): the readout
+    // opens the host's planes, when it has more than the one it is on.
+    if (this.#hostItems('plane').length > 1) {
+      slot.classList.add('dc-status-host-pick');
+      slot.setAttribute('role', 'button');
+      slot.tabIndex = 0;
+      slot.title = 'Where the planner runs: click to change';
+      const open = (): void => {
+        if (this.#menu.open) {
+          this.#menu.close();
+          return;
+        }
+        const at = slot.getBoundingClientRect();
+        this.#menu.show([{ label: '', items: this.#hostItems('plane') }], at.left, at.top, slot);
+      };
+      slot.addEventListener('click', open);
+      slot.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      });
+    }
   }
 
   /**
@@ -1414,7 +1442,7 @@ export class CubeApp {
     );
   }
 
-  /** Fold the zones away, or bring them back. */
+  /** Fold the zones or the title bar away, or bring them back. */
   #setChrome(patch: {
     readonly showDragZones?: boolean;
     readonly showTitleBar?: boolean;
@@ -1474,6 +1502,7 @@ export class CubeApp {
     });
     return show;
   }
+
 
   /**
    * A fold's chevron, drawn rather than typed: the ⌃ / ⌄ glyphs sat
@@ -1740,12 +1769,12 @@ export class CubeApp {
           value = undefined;
         }
       }
-      // FROM A HEADER, Properties... opens on that column (its measure,
-      // for a pivot result or a pivot total), as upstream's does.
       // the facts of the rows ON SCREEN, as everything this menu reads (P2-110)
       const facts = column !== undefined ? this.#columnFacts(column, this.#shown) : {};
-      const onHeader = el.closest('.dc-th') !== null;
-      const propertiesColumn = onHeader && column !== undefined
+      // FROM A COLUMN -- its header OR any of its cells (the user, 2026-09-30) -- Properties...
+      // opens on that column's Column Properties, it chosen (its measure, for a pivot result or a
+      // pivot total).
+      const propertiesColumn = column !== undefined
         && column !== TREE_COLUMN
         ? facts.pivotBase
           ?? this.#shown.measures.find((m) => m.name === column)?.column
@@ -1880,12 +1909,6 @@ export class CubeApp {
         return;
       case 'calc.delete':
         if (column) this.#deleteCalc(column);
-        return;
-      case 'view.zones':
-        this.#setChrome({ showDragZones: !this.#config.showDragZones });
-        return;
-      case 'view.titleBar':
-        this.#setChrome({ showTitleBar: !this.#config.showTitleBar });
         return;
       case 'heatmap.add':
         if (column) this.#setHeatmap(column, true);
@@ -2322,16 +2345,25 @@ export class CubeApp {
    */
   #ensurePage(): CubePage {
     if (this.#page) return this.#page.page;
+    const root = this.#els.root;
     const host = this.#doc.createElement('div');
     host.className = 'dc-board-host';
-    const parent = this.#middle ?? this.#els.root;
-    parent.insertBefore(host, this.#els.grid);
+    // THE GRID'S TILE HOLDS THE WHOLE GRID -- its zones, its columns panel and its status bar --
+    // as an added grid's does (the user, 2026-09-30: no grid looks special). The title bar stays
+    // above the board: it is the page's (its name, Snapped or Live, the menu).
+    const parts = [this.#els.zoneBar, this.#middle, this.#els.stats]
+      .filter((el): el is HTMLElement => el !== null && el.parentElement === root);
+    root.insertBefore(host, parts[0] ?? null);
+    const body = this.#doc.createElement('div');
+    body.className = 'dc-grid-body';
+    body.append(...parts);
     const page = new CubePage({
       host,
-      grid: { element: this.#els.grid, source: this.chartSource() },
+      grid: { element: body, source: this.chartSource() },
       onChange: () => this.#pageChanged(),
       onEmpty: () => {
-        parent.insertBefore(this.#els.grid, host);
+        // back where they were, the board gone
+        for (const el of parts) root.insertBefore(el, host);
         page.dispose();
         host.remove();
         this.#page = null;
@@ -3436,90 +3468,90 @@ export class CubeApp {
       this.#setChrome({ showTitleBar: false });
     });
 
-    // The hamburger. Theirs carries host-level entries -- View
-    // Source, Settings, About -- so ours carries the equivalents:
-    // the saved view, and the named hierarchies this cube was given.
+    // THE MENU, under the hamburger: like the grid's right-click menu -- a short list, the rest a
+    // level down (the user, 2026-09-30). Page-wide things live here; what belongs to a column or
+    // a cell stays in the right-click menu, in its order.
     const burger = doc.createElement('button');
     burger.type = 'button';
     burger.className = 'dc-titlebar-menu';
     burger.setAttribute('aria-label', 'Menu');
+    burger.setAttribute('aria-haspopup', 'menu');
     burger.textContent = '\u2261';
     burger.addEventListener('click', () => {
+      // A second press on the hamburger SHUTS it: the outside-press dismissal would close the
+      // menu and the click that follows reopen it, so the button would appear to do nothing.
       if (this.#menu.open) {
         this.#menu.close();
         return;
       }
-      // Undo and Redo are DISABLED rather than hidden when there is
-      // nothing to go back to -- the same choice the grid's own menu
-      // makes everywhere else, and the reason the entries exist at
-      // all: a keyboard shortcut that silently does nothing gives a
-      // person no way to tell "there is no undo here" from "undo is
-      // broken". A disabled entry answers that before they press it.
-      const cubeOnly = this.#adhoc ? { disabled: true } : {};
-      const items: MenuItem[] = [
-        // WHAT UNDO ACTS ON: Ad Hoc's session while it is on, never the
-        // hidden cube's history (P2-284).
-        {
-          id: 'view.undo',
-          label: 'Undo',
-          ...((this.#adhoc ? this.#adhoc.session.canUndo : this.#owner.canUndo) ? {} : { disabled: true }),
-        },
-        {
-          id: 'view.redo',
-          label: 'Redo',
-          ...((this.#adhoc ? this.#adhoc.session.canRedo : this.#owner.canRedo) ? {} : { disabled: true }),
-        },
-        // Upstream's hamburger: Undo, Redo, Settings..., then the rest.
-        { id: 'view.settings', label: 'Settings...' },
-        // The cube's own entries are not offered while Ad Hoc is on: they
-        // changed the hidden cube and nothing visible (P2-289).
-        { id: 'view.properties', label: 'Properties...', ...cubeOnly },
-        {
-          id: 'view.zones',
-          label: this.#config.showDragZones
-            ? 'Hide Drag Zones'
-            : 'Show Drag Zones',
-          ...cubeOnly,
-        },
-        { id: 'view.titleBar', label: 'Hide Title Bar' },
-        // The other way to work the cube: members on axes, the rest
-        // on the POV. Checked while it is on; choosing it again leaves.
-        {
-          id: 'view.adhoc',
-          label: 'Ad Hoc Analysis',
-          ...(this.#adhoc ? { checked: true } : {}),
-        },
-      ];
-      for (const d of availableDimensions(this.#snapshot, this.#dimensions())) {
-        items.push({ id: 'view.dimension', label: d.name, column: d.name, ...cubeOnly });
-      }
-      // The HOST's own entries last, so its additions never push the
-      // cube's own actions around as they come and go.
-      for (const item of this.#options.hostMenu?.() ?? []) {
-        items.push(item);
-      }
-      // A second press on the hamburger SHUTS it. Without this the
-      // outside-press dismissal closes the menu and the click that
-      // follows reopens it, so the button appears to do nothing and
-      // the menu cannot be dismissed from the control that opened it.
-      // BELOW THE BUTTON, not at the pointer: at the pointer the menu
-      // covered the button it came from (on the left edge nothing
-      // pushes it aside), so a second press picked the first entry
-      // instead of shutting the menu.
+      // BELOW THE BUTTON, not at the pointer: at the pointer the menu covered the button it came
+      // from, so a second press picked the first entry instead of shutting the menu.
       const at = burger.getBoundingClientRect();
-      this.#menu.show([{ label: '', items }], at.left, at.bottom, burger);
+      this.#menu.show(this.#mainMenu(), at.left, at.bottom, burger);
     });
-    // THE MENU ON THE LEFT, the folds alone on the right (user,
-    // 2026-09-25). Upstream ends its bar with the menu; ours gave that
-    // edge to the fold column, and the app menu takes the corner where
-    // people look for one.
+    // THE MENU ON THE LEFT, the folds alone on the right (user, 2026-09-25)
     bar.prepend(burger);
     bar.append(fold);
-    // THE ZONES' WAY BACK, at the far right: directly above where
-    // their own fold was. Only while they are folded -- a control that
-    // is always there but does nothing half the time is worse than one
-    // that appears when it has something to do.
+    // THE ZONES' WAY BACK, at the far right: directly above where their own fold was. Only while
+    // they are folded -- a control that is always there but does nothing half the time is worse
+    // than one that appears when it has something to do.
     if (!this.#config.showDragZones) bar.append(this.#zonesBack());
+  }
+
+  /**
+   * The hamburger's menu, built as it opens (Undo knows whether there is anything to undo):
+   * Data...; Undo and Redo; the cube as a file (Save, Save As, Open, Share, Export, Email); View
+   * and Insert a level down; Settings. Where the planner runs is the status bar's readout. A host's entries go where their `section` says, File unless
+   * named; an empty group or submenu is not shown.
+   */
+  /** A host's entries for one place (`MenuItem.section`, the file group unless named). */
+  #hostItems(section: 'file' | 'view' | 'data' | 'plane'): MenuItem[] {
+    return (this.#options.hostMenu?.() ?? []).filter((i) => (i.section ?? 'file') === section);
+  }
+
+  #mainMenu(): MenuGroup[] {
+    const host = (section: 'file' | 'view' | 'data'): MenuItem[] => this.#hostItems(section);
+    // The cube's own entries are not offered while Ad Hoc is on: they changed the hidden cube
+    // and nothing visible (P2-289).
+    const cubeOnly = this.#adhoc ? { disabled: true } : {};
+    const canEmail = this.#options.email !== undefined || this.#options.download !== undefined;
+    const dimensions = availableDimensions(this.#snapshot, this.#dimensions())
+      .map((d): MenuItem => ({ id: 'view.dimension', label: d.name, column: d.name, ...cubeOnly }));
+    const submenu = (label: string, items: MenuItem[]): MenuItem[] =>
+      (items.length > 0 ? [{ label, submenu: items }] : []);
+    const groups: MenuGroup[] = [
+      // the data first (the user, 2026-09-30): where the rows come from
+      { label: '', items: host('data') },
+      { label: '', items: [
+        // WHAT UNDO ACTS ON: Ad Hoc's session while it is on, never the hidden cube's history
+        // (P2-284). Disabled rather than hidden when there is nothing to go back to: a shortcut
+        // that silently does nothing cannot be told from one that is broken.
+        { id: 'view.undo', label: 'Undo',
+          ...((this.#adhoc ? this.#adhoc.session.canUndo : this.#owner.canUndo) ? {} : { disabled: true }) },
+        { id: 'view.redo', label: 'Redo',
+          ...((this.#adhoc ? this.#adhoc.session.canRedo : this.#owner.canRedo) ? {} : { disabled: true }) },
+      ] },
+      { label: '', items: [
+        ...host('file'),
+        { label: 'Export', submenu: exportItems(this.#options.cubeSource !== undefined) },
+        { label: 'Email', submenu: emailItems(canEmail) },
+      ] },
+      { label: '', items: [
+        ...submenu('View', [
+          { id: 'view.properties', label: 'Properties...', ...cubeOnly },
+          // the other way to work the cube: checked while it is on; choosing it again leaves
+          { id: 'view.adhoc', label: 'Ad Hoc Analysis', ...(this.#adhoc ? { checked: true } : {}) },
+          ...submenu('Dimensions', dimensions),
+          ...host('view'),
+        ]),
+        ...submenu('Insert', [
+          { id: 'chart.plot', label: 'Chart', ...cubeOnly },
+          { id: 'grid.new', label: 'Grid', ...cubeOnly },
+        ]),
+      ] },
+      { label: '', items: [{ id: 'view.settings', label: 'Settings...' }] },
+    ];
+    return groups.filter((g) => g.items.length > 0);
   }
 
   /**

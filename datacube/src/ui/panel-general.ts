@@ -499,19 +499,12 @@ export const generalPropertiesPanel: PanelBuilder = (ctx) => {
         setConfig({ showSelectionStats: v }),
       ),
     ),
-    // THE CHROME, where the rest of "what is on screen" is set.
-    //
-    // The chevrons on the bars themselves are how a person folds
-    // them in passing; this is where the setting LIVES, and it is
-    // the only place that shows both at once -- a cube opened with
-    // both folded is a legitimate way to hand someone a report, and
-    // there has to be somewhere to say so.
+    // THE CHROME, where the rest of "what is on screen" is set. The chevron on the title bar is
+    // how a person folds it in passing; this is where the setting LIVES. The drag zones are
+    // always shown (the user, 2026-09-30), so they have no setting to lose them by.
     field(
       doc,
       '',
-      checkbox(doc, 'Show drag zones', c.showDragZones, (v) =>
-        setConfig({ showDragZones: v }),
-      ),
       checkbox(doc, 'Show title bar', c.showTitleBar, (v) =>
         setConfig({ showTitleBar: v }),
       ),

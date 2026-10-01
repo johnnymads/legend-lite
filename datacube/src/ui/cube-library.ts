@@ -133,6 +133,21 @@ export class CubeLibrary {
   }
 
   /** Say something in the window (what opening found, or what failed). */
+  /**
+   * SAVE, as the menu's Save does it: over the cube this was opened from, or -- never saved -- as
+   * a new one, asking for its name in the window when it has none.
+   */
+  save(): void {
+    void this.#save(this.#host.currentId() === undefined);
+  }
+
+  /** SAVE AS: a new cube, under a name the person gives -- the name field, ready for it. */
+  saveAs(): void {
+    this.say('a name for the new cube, then Save as new');
+    this.#name.focus();
+    this.#name.select();
+  }
+
   say(text: string, kind: 'ok' | 'warn' | 'error' = 'ok'): void {
     this.#message.textContent = text;
     this.#message.dataset['kind'] = kind;

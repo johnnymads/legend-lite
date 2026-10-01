@@ -388,31 +388,27 @@ describe('the app', () => {
     assert.equal(menuItems().length, 0, 'the grid menu did not close');
     press('.dc-titlebar-lip');
     assert.notEqual(root.querySelector('.dc-titlebar-menu'), null);
-    hamburger();
-    pick('Show Drag Zones');
+    // the zones' way back is in the title bar, beside its fold
+    press('.dc-titlebar-zones');
     assert.equal(zoneBar().hidden, false);
   });
 
-  it('folds from the PROPERTIES editor, not only from the bars', async () => {
-    // The setting lives in General Properties, beside the rest of
-    // "what is on screen" -- the chevrons are the in-passing way to
-    // reach it. Applying the editor replaces the whole
-    // configuration, so this is also the check that the flags and
-    // the DOM cannot drift apart: a bar left on screen while the
-    // configuration says it is folded gives a toggle that folds when
-    // it should unfold.
+  it('folds the title bar from the PROPERTIES editor, not only from its chevron', async () => {
+    // The setting lives in General Properties, beside the rest of "what is on screen". Applying
+    // the editor replaces the whole configuration, so this is also the check that the flag and
+    // the DOM cannot drift apart. (The drag zones have no setting there: they fold from their
+    // own chevron, the user, 2026-09-30.)
     hamburger();
     pick('Properties...');
     const overlay = root.querySelector('.dc-app-overlay') as HTMLElement;
     [...overlay.querySelectorAll('.dc-editor-tab')]
       .find((b) => b.textContent === 'General Properties')
       ?.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
-    // BY ITS OWN LABEL. A `.dc-field` holds several inputs, so
-    // taking the first one in the row has twice now toggled a
-    // different setting than the one under test.
+    const labels = [...overlay.querySelectorAll('.dc-check-label')].map((l) => l.textContent);
+    assert.ok(!labels.includes('Show drag zones'), labels.join(', '));
+    // BY ITS OWN LABEL: a `.dc-field` holds several inputs
     const box = [...overlay.querySelectorAll('.dc-check')]
-      .find((l) => l.querySelector('.dc-check-label')?.textContent
-        === 'Show drag zones')
+      .find((l) => l.querySelector('.dc-check-label')?.textContent === 'Show title bar')
       ?.querySelector('input') as HTMLInputElement;
     assert.equal(box.checked, true);
     box.checked = false;
@@ -424,18 +420,19 @@ describe('the app', () => {
     ).click();
     // Apply compiles the draft first, so the cube answers a tick later.
     for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
-    assert.equal(app.configuration.showDragZones, false);
-    assert.equal(zoneBar().hidden, true, 'the DOM and the flag disagree');
-    // And the way back is on screen, as it is for every other fold.
-    assert.notEqual(root.querySelector('.dc-titlebar-zones'), null);
+    assert.equal(app.configuration.showTitleBar, false);
+    assert.equal(root.querySelector('.dc-titlebar')?.classList.contains('dc-collapsed'), true,
+      'the DOM and the flag disagree');
+    // and the way back is on screen: the lip
+    assert.notEqual(root.querySelector('.dc-titlebar-lip'), null);
   });
 
-  it('offers the folds in the hamburger as well', () => {
+
+  it('offers no folds in the hamburger: the bars fold from their own chevrons (the user, 2026-09-30)', () => {
     hamburger();
     const labels = menuItems().map((i) =>
       i.querySelector('.dc-menu-label')?.textContent ?? '');
-    assert.ok(labels.includes('Hide Drag Zones'), labels.join(', '));
-    assert.ok(labels.includes('Hide Title Bar'), labels.join(', '));
+    assert.equal(labels.some((l) => /Drag Zones|Title Bar/.test(l)), false, labels.join(', '));
   });
 
   it('switches to Ad Hoc Analysis from the hamburger, and back as it was', async () => {
@@ -458,7 +455,8 @@ describe('the app', () => {
     assert.deepEqual(app.adhoc.view?.table.columns[0]?.values, ['Geography']);
     // Checked while on; choosing it again leaves.
     hamburger();
-    const entry = menuItems().find((i) => i.textContent?.includes('Ad Hoc Analysis'));
+    // by its own label: View's entry holds the submenu's words too
+    const entry = menuItems().find((i) => i.querySelector('.dc-menu-label')?.textContent === 'Ad Hoc Analysis');
     assert.equal(entry?.getAttribute('aria-checked'), 'true');
     pick('Ad Hoc Analysis');
     assert.equal(app.adhoc, null);
@@ -772,6 +770,18 @@ describe('the app', () => {
     const active = win.querySelector('.dc-editor-tab[aria-selected="true"]');
     assert.equal(active?.textContent, 'Column Properties');
     // `total` is a measure over `notional`: the panel shows the column.
+    const chooser = [...win.querySelectorAll('.dc-field')]
+      .find((f) => f.querySelector('.dc-field-label')?.textContent === 'Choose Column:')
+      ?.querySelector('select') as HTMLSelectElement;
+    assert.equal(chooser.value, 'notional');
+  });
+
+  it('Properties... from a CELL opens Column Properties on its column too (the user, 2026-09-30)', () => {
+    rightClick('.dc-row [data-column="total"]');
+    pick('Properties...');
+    const win = root.querySelector('[data-window="Properties"]') as HTMLElement;
+    const active = win.querySelector('.dc-editor-tab[aria-selected="true"]');
+    assert.equal(active?.textContent, 'Column Properties');
     const chooser = [...win.querySelectorAll('.dc-field')]
       .find((f) => f.querySelector('.dc-field-label')?.textContent === 'Choose Column:')
       ?.querySelector('select') as HTMLSelectElement;

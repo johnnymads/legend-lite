@@ -3,8 +3,9 @@
 // Labels and grouping are DataCube's, from
 // DataCubeEditorColumnPropertiesPanel: Choose Column, then Column
 // Kind, Display Name, Aggregation, Number Format, Scale, Unit,
-// Missing Value Format, Visibility, Pin, Width, Font and Colors,
-// with the advanced settings behind a checkbox as it has them.
+// Missing Value Format, Visibility, Pin, Width, Font and Colors. Upstream keeps the kind behind a
+// "Show advanced settings?" checkbox, its one advanced setting; here it is always shown (the
+// user, 2026-09-30), so there is no checkbox.
 //
 // The panel is rebuilt whenever the chosen column changes, because
 // every control below the chooser is bound to that column; an
@@ -130,10 +131,9 @@ const WIDTH_MODES: readonly { value: WidthMode; label: string }[] = [
   { value: 'range', label: 'In range' },
 ];
 
-/** Which column the panel shows, and whether advanced is open. */
+/** Which column the panel shows. */
 export interface ColumnPanelUi {
   chosen: string | null;
-  advanced: boolean;
 }
 
 /**
@@ -143,7 +143,7 @@ export interface ColumnPanelUi {
 export function columnPanelUi(state: Record<string, unknown>): ColumnPanelUi {
   const existing = state['columnProperties'] as ColumnPanelUi | undefined;
   if (existing) return existing;
-  const fresh: ColumnPanelUi = { chosen: null, advanced: false };
+  const fresh: ColumnPanelUi = { chosen: null };
   state['columnProperties'] = fresh;
   return fresh;
 }
@@ -196,15 +196,6 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
       appearance: Object.keys(next).length === 0 ? undefined : next,
     });
   };
-
-  const head = doc.createElement('div');
-  head.className = 'dc-panel-head-row';
-  head.append(
-    checkbox(doc, 'Show advanced settings?', uiState.advanced, (v) => {
-      uiState.advanced = v;
-      ctx.refresh();
-    }),
-  );
 
   const chooser = field(
     doc,
@@ -274,9 +265,9 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
     doc,
     '',
     chooser,
-    // Upstream's ADVANCED setting: the kind is set by the column's
-    // type, and changing it is a deliberate act.
-    ...(uiState.advanced ? [kindField] : []),
+    // Upstream keeps the kind among its ADVANCED settings; here it is always shown (the user,
+    // 2026-09-30): measure or dimension is the first thing a person changes about a column.
+    kindField,
     field(
       doc,
       'Display Name:',
@@ -586,7 +577,7 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
   parts.push(display, colouring);
   if (dataType === undefined || dataType === 'text') parts.push(links);
 
-  return panelShell(doc, 'Column Properties', head, ...parts);
+  return panelShell(doc, 'Column Properties', ...parts);
 };
 
 /** The kind control, with upstream's reason when a pivot locks it. */

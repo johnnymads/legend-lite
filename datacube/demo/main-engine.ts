@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     showColumnZone: true,
     hostStatus: (slot) => slot.append(status),
     hostMenu: () => [
-      { id: 'host.query', label: 'Generated Pure & SQL…' },
+      { id: 'host.query', label: 'Generated Pure & SQL…', section: 'view' as const },
       ...planeMenu(),
     ],
     onHostMenu: (item) => {

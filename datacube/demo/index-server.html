@@ -105,7 +105,8 @@
      Scoped to the bar: the same element is offstage until `boot`
      moves it, and an offstage width cap would be nonsense. */
   .dc-status-host #status {
-    opacity: .75; white-space: nowrap; overflow: hidden;
+    /* the bar's own type: one face and size across it */
+    font: inherit; opacity: .75; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; max-width: 40vw; margin: 0;
   }
 

@@ -86,13 +86,33 @@ async function load() {
   await page.goto(`${URL_BASE}/demo/index.html`);
   await page.waitForSelector('.dc-row', { timeout: 90_000 });
 }
+/**
+ * Pick a hamburger entry by its own label, through its submenus: an entry under View or Insert is
+ * shown only once its parent is hovered (and a parent's text holds its children's labels too).
+ */
+async function pickEntry(label) {
+  const item = page.locator(`.dc-menu-item:has(> .dc-menu-label:text-is(${JSON.stringify(label)}))`).first();
+  if (!(await item.isVisible())) {
+    const parents = await item.evaluate((el) => {
+      const out = [];
+      for (let p = el.parentElement?.closest('.dc-menu-item'); p; p = p.parentElement?.closest('.dc-menu-item')) {
+        out.unshift(p.querySelector(':scope > .dc-menu-label')?.textContent ?? '');
+      }
+      return out;
+    });
+    for (const parent of parents) {
+      await page.locator(`.dc-menu-item:has(> .dc-menu-label:text-is(${JSON.stringify(parent)}))`).first().hover();
+    }
+  }
+  await item.click();
+}
 async function burger(label) {
   await page.click('.dc-titlebar-menu');
-  await page.locator('.dc-menu-item', { hasText: label }).first().click();
+  await pickEntry(label);
 }
 /** A host window shown (its menu entry toggles it), the other ones closed. */
 async function showWin(id, label) {
-  for (const other of ['datawin', 'cubeswin', 'querywin']) {
+  for (const other of ['datawin', 'cubeswin', 'querywin', 'sharewin']) {
     if (other !== id && await page.locator(`#${other}`).isVisible()) {
       await page.click(`#${other} .hostwin-close`);
     }
@@ -116,13 +136,13 @@ async function shape() {
   await landed(before);
 }
 async function saveAs(name) {
-  await showWin('cubeswin', 'Cubes');
+  await showWin('cubeswin', 'Open\u2026');
   await page.fill('#cubelib .dc-lib-name', name);
   await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
   await waitMessage(/saved/);
 }
 async function openSaved(name) {
-  await showWin('cubeswin', 'Cubes');
+  await showWin('cubeswin', 'Open\u2026');
   const row = page.locator('#cubelib .dc-lib-row', { hasText: name });
   await row.waitFor({ timeout: 10_000 });
   const before = await statusNow();
@@ -180,7 +200,7 @@ try {
     if (!/^applied/.test(out)) throw new Error(`the change did not land: ${out}`);
     await page.waitForFunction(() => document.title.startsWith('\u2022'), undefined, { timeout: 10_000 })
       .catch(async () => { throw new Error(`not marked after a change (${out}): ${await title()}`); });
-    await showWin('cubeswin', 'Cubes');
+    await showWin('cubeswin', 'Open\u2026');
     if (await page.locator('#cubelib .dc-lib-unsaved').isHidden()) throw new Error('the window does not say so');
     await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
     await waitMessage(/saved/);
@@ -212,7 +232,7 @@ try {
   });
 
   await check('a cube over a SAMPLE reopens with no question', async () => {
-    await showWin('datawin', 'Data');
+    await showWin('datawin', 'Data\u2026');
     await page.selectOption('#samplepick', 'trades');
     await page.fill('#samplerows', '500');
     let before = await statusNow();
@@ -237,7 +257,7 @@ try {
   });
 
   await check('delete removes it from the list', async () => {
-    await showWin('cubeswin', 'Cubes');
+    await showWin('cubeswin', 'Open\u2026');
     const row = page.locator('#cubelib .dc-lib-row', { hasText: 'Sample trades' });
     await row.locator('.dc-lib-button', { hasText: 'Delete' }).click();
     await page.locator('#cubelib .dc-lib-confirm .dc-lib-button', { hasText: 'Delete' }).click();
@@ -250,9 +270,13 @@ try {
   // THE SHARE LINK (milestone 1b): the page's settings in the address, never its data.
   /** Copy the page's share link through the menu, and read it off the clipboard. */
   async function copyLink() {
-    await burger('Copy Share Link');
-    const said = await waitMessage(/Link copied/);
+    // Share... shows the link in a window of its own and copies it; the window says what it holds
+    await burger('Share\u2026');
+    await page.waitForFunction(() => /^Copied/.test(document.querySelector('#sharenote')?.textContent ?? ''), null, { timeout: 10_000 });
+    const said = await page.locator('#sharenote').textContent();
     const url = await page.evaluate(() => navigator.clipboard.readText());
+    if (url !== await page.locator('#sharelink').inputValue()) throw new Error('the window and the clipboard disagree');
+    await page.click('#sharewin .hostwin-close');
     if (!/#p1\./.test(url)) throw new Error(`not a share link: ${url.slice(0, 80)}`);
     return { url, said };
   }
@@ -285,7 +309,7 @@ try {
 
   await check('a SAMPLE page\'s link opens the same page in a fresh tab, with no question', async () => {
     await load();
-    await showWin('datawin', 'Data');
+    await showWin('datawin', 'Data\u2026');
     await page.selectOption('#samplepick', 'trades');
     await page.fill('#samplerows', '500');
     let before = await statusNow();
@@ -364,7 +388,8 @@ try {
     const here = page.url();
     let asked = '';
     page.once('dialog', (d) => { asked = d.message(); void d.dismiss(); });
-    await page.click('.dc-titlebar-menu');
+    // where the planner runs is chosen from the status bar's readout
+    await page.click('.dc-status-host-pick');
     await page.locator('.dc-menu .dc-menu-item', { hasText: 'Plan remote' }).first().click();
     await page.waitForTimeout(1500);
     if (!asked) throw new Error('it navigated away without asking: the opened file would be lost');

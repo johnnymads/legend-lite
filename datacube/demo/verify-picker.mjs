@@ -103,9 +103,9 @@ try {
   // about itself. The banner is gone, so the requirement moved to
   // the control that replaced it: a picker in the title bar that
   // both states the plane and changes it.
-  // In the title bar MENU: the bar is for what you watch, the menu
-  // for what you do occasionally.
-  await page.click('.dc-titlebar-menu');
+  // FROM THE STATUS BAR'S READOUT, where the plane is read (the user, 2026-09-30): clicking it
+  // offers the planes.
+  await page.click('.dc-status-host-pick');
   await page.waitForSelector('.dc-menu', { timeout: 10_000 });
   const planes = await page.evaluate(() =>
     [...document.querySelectorAll('.dc-menu-item')]

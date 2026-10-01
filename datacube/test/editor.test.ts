@@ -376,16 +376,11 @@ describe('the editor', () => {
     assert.equal(again.value, '140', 'the typed number survived');
   });
 
-  it('hides the column kind until advanced settings are asked for', () => {
-    // Upstream's one advanced setting.
+  it('shows the column kind at once, with no advanced checkbox (the user, 2026-09-30)', () => {
     go('Column Properties');
-    const label = (): Element | null =>
-      [...root.querySelectorAll('.dc-field-label')].find(
-        (l) => l.textContent === 'Column Kind:',
-      ) ?? null;
-    assert.equal(label(), null);
-    (root.querySelector('.dc-panel-head-row input') as HTMLInputElement).click();
-    assert.notEqual(label(), null);
+    const labels = [...root.querySelectorAll('.dc-field-label, .dc-check-label')].map((l) => l.textContent);
+    assert.ok(labels.includes('Column Kind:'), labels.join(', '));
+    assert.ok(!labels.some((l) => /advanced/i.test(l ?? '')), 'no Show advanced settings?');
   });
 
   it('a draft the cube refuses stays open, unapplied', async () => {
@@ -407,8 +402,8 @@ describe('the editor', () => {
       chooser.value = name;
       chooser.dispatchEvent(new dom.window.Event('change'));
     };
-    const advanced = (): void =>
-      (root.querySelector('.dc-panel-head-row input') as HTMLInputElement).click();
+    // the kind is always shown now: nothing to open first
+    const advanced = (): void => {};
     const options = (label: string): string[] =>
       [...(fieldWithLabel(label).querySelector('select') as HTMLSelectElement)
         .options].map((o) => o.value).filter((v) => v !== '');

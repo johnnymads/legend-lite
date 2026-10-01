@@ -218,13 +218,15 @@ function app(options: Partial<ConstructorParameters<typeof CubeApp>[2]> = {}): {
 }
 
 describe('the app', () => {
-  it("offers Settings... in the title bar's menu, after Undo and Redo", async () => {
+  it("offers Undo and Redo first in the title bar's menu, and Settings... last", async () => {
     const { app: cube } = app();
     await cube.open();
     click(root.querySelector('.dc-titlebar-menu'));
-    const labels = [...dom.window.document.querySelectorAll('.dc-menu .dc-menu-label')]
+    // the menu's own entries, not a submenu's
+    const labels = [...dom.window.document.querySelectorAll('.dc-menu > .dc-menu-item > .dc-menu-label, .dc-menu > * > .dc-menu-item > .dc-menu-label')]
       .map((l) => l.textContent);
-    assert.deepEqual(labels.slice(0, 3), ['Undo', 'Redo', 'Settings...']);
+    assert.deepEqual(labels.slice(0, 2), ['Undo', 'Redo']);
+    assert.equal(labels[labels.length - 1], 'Settings...');
   });
 
   it('saved settings reach the host, which may keep them', async () => {
