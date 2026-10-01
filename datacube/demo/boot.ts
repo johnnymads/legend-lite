@@ -132,7 +132,6 @@ export function refusePlanner(what: string, where: string, start: string): never
   const local = document.createElement('a');
   const url = new URL(location.href);
   url.searchParams.delete('planner');
-  url.searchParams.delete('data');
   local.href = url.href;
   local.textContent = 'index.html';
   box.append(strong, rest, local, document.createTextNode('.'));

@@ -336,14 +336,6 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     assert.ok(refuse > 0 && build > refuse, 'main.ts must refuse an absent server planner before building it');
   });
 
-  it("the engine's own data REFUSES to run without the engine", () => {
-    // This path has the least to fall back to -- the data is the engine's -- so an absent engine
-    // must stop startup before the cube exists.
-    const demo = readFileSync(join('demo', 'engine-held.ts'), 'utf8');
-    const refuse = demo.indexOf('refusePlanner(');
-    const build = demo.indexOf('new CubeApp');
-    assert.ok(refuse > 0 && build > refuse, 'engine-held.ts must refuse before the cube is constructed');
-  });
 
   it('the default entry REFUSES to run without its planner module', () => {
     // Same rule, different absence. main.ts plans in the tab, so
@@ -383,7 +375,7 @@ describe('there is exactly one planner, and no way to fall back to another', () 
   });
 
   it('keeps the shim gone from every entry point', () => {
-    for (const f of ['main.ts', 'engine-held.ts', 'boot.ts']) {
+    for (const f of ['main.ts', 'boot.ts']) {
       assert.equal(
         /DemoOnlyPlanner/.test(readFileSync(join('demo', f), 'utf8')),
         false,

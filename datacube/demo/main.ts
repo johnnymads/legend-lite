@@ -11,14 +11,10 @@
 // There is no fallback. A planner that does not answer is SAID (`refusePlanner`) and the page
 // stops: it never quietly plans somewhere else (test/guardrails.test.ts).
 //
-// The engine's own data -- a table only the engine reaches -- is run BY the engine
-// (`?planner=engine&data=engine`, engine-held.ts): where the data is decides where it runs.
-//
 //   bazel build //datacube:site, then open demo/index.html[?planner=remote|engine]
 
 import { boot, chosenPlane, loadModel, refusePlanner, RUNTIME, SNAP_TARGET, SOURCE } from './boot.ts';
 import type { Engine } from './boot.ts';
-import { bootEngineHeld } from './engine-held.ts';
 import { pageConfig } from './page-config.ts';
 import { UpstreamPlanner } from '../src/planner.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
@@ -84,10 +80,6 @@ async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engi
 
 async function start(): Promise<void> {
   const plane = chosenPlane();
-  if (plane === 'engine' && new URLSearchParams(location.search).get('data') === 'engine') {
-    await bootEngineHeld();
-    return;
-  }
   await boot(async () => {
     const model = await loadModel();
     return plane === 'local' ? inTab(model) : onServer(model, plane);

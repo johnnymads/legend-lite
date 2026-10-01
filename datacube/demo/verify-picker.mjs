@@ -145,29 +145,13 @@ try {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(150);
 
-  // THE PAGE THE MENU SENDS YOU TO MUST BE A PAGE.
-  //
-  // `boot` is shared by all three entry points, and the server one
-  // was left on the old document layout while boot moved on: it
-  // threw `missing #offstage` before drawing a row, so the menu
-  // entry led to a blank screen. Nothing noticed, because every
-  // other harness loads index.html.
-  //
-  // A plane whose back end is absent is SUPPOSED to refuse -- there
-  // is one planner per page and it is the real one -- so what is
-  // checked is that it either ran or refused in words, on a page
-  // that rendered either way.
-  // Each non-local plane, in turn. Both are generated from
-  // index.html so the shells cannot drift, and each has its own
-  // refusal element because each has a different thing to be missing:
-  // the server page wants a planner on :8080, the engine page wants
-  // an engine on :6300 and has no local fallback at all.
-  // ONE PAGE NOW (the user, 2026-09-30): each planner is index.html with its `?planner=`, and one
-  // refusal says which planner did not answer. The old addresses redirect there.
+  // EACH PLANNER THE PICKER OFFERS MUST GIVE A PAGE: the one page (index.html) with its
+  // `?planner=` (the user, 2026-09-30). A planner whose server is absent is SUPPOSED to refuse --
+  // in words, naming what was wanted and where, never by planning somewhere else -- so what is
+  // checked is that it either ran or refused, on a page that rendered either way.
   for (const plane of [
     { page: 'index.html?planner=remote', refusal: 'plannermissing', what: 'server' },
     { page: 'index.html?planner=engine', refusal: 'plannermissing', what: 'engine' },
-    { page: 'index-server.html', refusal: 'plannermissing', what: 'server' },
   ]) {
     const other = await ctx.newPage();
     const errors = [];
