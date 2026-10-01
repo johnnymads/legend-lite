@@ -445,10 +445,11 @@ describe('the editor follows the column TYPE', () => {
     editor.setColumn(id(), 'notional');
     assert.ok(!ops().includes('contains'), 'contains offered on a number');
     assert.ok(ops().includes('lessThan'));
-    // a boolean: Pure orders false before true (boolean::lessThan(Boolean, Boolean)), so the
-    // compiler takes the comparisons; the text operators it refuses
+    // a boolean: equality, not ordering against a value -- legend-engine refuses that over a
+    // BIT column (ENGINE DEFECT S23, offers.ts), and upstream DataCube never offered it; the
+    // text operators the compiler refuses
     editor.setColumn(id(), 'settled');
-    assert.ok(ops().includes('lessThan'));
+    assert.ok(!ops().includes('lessThan'));
     assert.ok(!ops().includes('startsWith'));
     assert.ok(ops().includes('equal'));
   });

@@ -336,6 +336,18 @@ synonym `removeDuplicates` at `:1447` does guard).
 
 ### 4a. Operator runs over a possibly-empty operand (2026-09-11, upstream boundary batch 5 leg 5)
 
+> **REVERSED 2026-10-01.** The premise below ("real pure accepts it") is wrong at compile time:
+> legend-pure's `InstanceValueValidator` and legend-engine's `ValueSpecificationBuilder.visit(Collection)`
+> both require every element of a literal of more than one value to be exactly `[1]`, before any
+> overload is matched -- and legend-pure pins the relation-column case (`TestRelationTypeInference`
+> :170-185: `$x.other + 1` over `Integer[0..1]` is refused). Accepting it also typed a possibly-NULL
+> cell `[1]`. `Typer.collection` now refuses it ("Collection element must have a multiplicity [1]");
+> `->toOne()` says what is meant. Found when legend-engine refused DataCube's calculated columns
+> (docs/IN_FLIGHT.md, 2026-10-01). The tests named below were flipped to pin the refusal
+> (`MultiplicityStrictnessTest.optionalIntoArithmeticRefusedLikeRealPure`,
+> `LowerRelationTest.operatorRunOverPossiblyEmptyIsRefused`,
+> `VerdictWorld2ConsistencyTest.literalOfOptionalElementsIsRefused`). The text below is kept as history.
+
 Real pure spells `a + b` as `plus([a, b])` — a collection — and an empty operand
 DROPS out of it (`plus([[], 1])` is `1`). Our binary `plus(T[1], T[1])` rows were an
 invention that REJECTED `$p.middleName + '!'` ("[0..1] into a [1] slot"); they are

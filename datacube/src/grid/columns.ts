@@ -60,6 +60,18 @@ export { PIVOT_SEPARATOR };
  */
 export const ROOT_COLUMN = '__root__';
 
+/**
+ * The constant column a window with no partition is partitioned by (query.ts `extendWindow`):
+ * legend-engine registers no unpartitioned ROWS-framed `over` (docs/SEMANTICS_REGISTER.md S24).
+ * Machinery, like ROOT_COLUMN, never a column a person sees.
+ */
+export const WINDOW_ALL_PREFIX = '__all__';
+
+/** A column the queries add for their own use: never shown. */
+export function isMachinery(name: string): boolean {
+  return name === ROOT_COLUMN || name.startsWith(WINDOW_ALL_PREFIX);
+}
+
 export interface LeafColumn {
   /** Index into the result's columns. Survives reordering and hiding. */
   readonly index: number;
@@ -400,7 +412,7 @@ export function buildColumnModel(
   const visible = leaves.filter(
     (l) => l.name === TREE_COLUMN
       // The grand total's synthetic key is machinery, not a column.
-      || (l.name !== ROOT_COLUMN
+      || (!isMachinery(l.name)
         && !inSet(hidden, l.name)
         && !inTree.has(l.name)),
   );

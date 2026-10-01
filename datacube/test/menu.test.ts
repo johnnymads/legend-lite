@@ -220,10 +220,10 @@ describe('buildMenu', () => {
       ['Add Filter: payload = {"a":1}', 'Add Filter: payload != {"a":1}']);
   });
 
-  it('filters a BOOLEAN by what the compiler takes: equality and Pure\'s order', () => {
-    // a Boolean column -- a source flag or a calculated one -- gets a value
-    // filter; Pure orders false before true (boolean::lessThan(Boolean, Boolean)),
-    // where upstream DataCube offers = and != only (named in offer-facts.test.ts)
+  it('filters a BOOLEAN by equality: no ordering against a value', () => {
+    // a Boolean column -- a source flag or a calculated one -- gets a value filter, = and !=
+    // as upstream DataCube; legend-lite would order false before true, legend-engine refuses
+    // it over a BIT column (ENGINE DEFECT S23, offers.ts)
     const labels = menuItems(
       buildMenu({
         snapshot: CUBE,
@@ -233,8 +233,7 @@ describe('buildMenu', () => {
       }),
     ).filter((i) => i.id === 'filter.add').map((i) => i.label);
     assert.deepEqual(labels, [
-      'Add Filter: flag = true', 'Add Filter: flag != true', 'Add Filter: flag < true',
-      'Add Filter: flag <= true', 'Add Filter: flag > true', 'Add Filter: flag >= true',
+      'Add Filter: flag = true', 'Add Filter: flag != true',
     ]);
   });
 

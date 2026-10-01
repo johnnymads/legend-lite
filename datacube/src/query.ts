@@ -36,7 +36,7 @@ import {
   type WindowSpec,
 } from './snapshot.ts';
 import type { GroupKey, RowPath } from './tree.ts';
-import { ROOT_COLUMN } from './grid/columns.ts';
+import { ROOT_COLUMN, WINDOW_ALL_PREFIX } from './grid/columns.ts';
 import { PIVOT_SEPARATOR } from './generated/lite-facts.ts';
 import { isBoolean, isNumeric, isVariant, plainType } from './types.ts';
 import { columnRef } from './calc.ts';
@@ -249,18 +249,32 @@ export function extendWindow(rel: Relation, name: string, w: WindowSpec): Relati
     return fn('rows', lit.integer(-(n - 1) || 0), lit.integer(0));
   };
   const frame = frameOf();
+  const partitioned = (partition: readonly string[], sortKeys: readonly AppliedFunction[], f?: AppliedFunction): AppliedFunction => {
+    const args: ValueSpecification[] = [{ _type: 'classInstance', type: 'colSpecArray', value: { colSpecs: partition.map((p) => ({ name: p })) } }];
+    if (sortKeys.length > 0) args.push(collection(sortKeys));
+    if (f) args.push(f);
+    return fn('over', ...args);
+  };
+  // ENGINE GAP (docs/SEMANTICS_REGISTER.md S24): legend-engine registers no `over` that takes a
+  // frame with no partition -- `over([], sort, rows(..))` is a function of its over.pure that its
+  // compiler never registers (Handlers.java:1594-1613), so engine refuses it; legend-lite accepts
+  // it. No partition IS one partition of every row: the window is partitioned by a constant
+  // column added here (machinery: the level queries select it away, the grid never shows it,
+  // grid/columns.ts `isMachinery`). Exact on every planner. Delete when engine registers the form.
+  const everyRow = (): string => {
+    const all = `${WINDOW_ALL_PREFIX}${name}`;
+    rel = rel.extend([derive(all, lambda(['x'], lit.string('all')))]);
+    return all;
+  };
   let over: AppliedFunction;
   if (w.partition.length > 0) {
-    const args: ValueSpecification[] = [{ _type: 'classInstance', type: 'colSpecArray', value: { colSpecs: w.partition.map((p) => ({ name: p })) } }];
-    if (sorts.length > 0) args.push(collection(sorts));
-    if (frame) args.push(frame);
-    over = fn('over', ...args);
+    over = partitioned(w.partition, sorts, frame);
   } else if (sorts.length > 0) {
-    over = frame ? fn('over', collection([]), collection(sorts), frame) : fn('over', collection(sorts));
+    over = frame ? partitioned([everyRow()], sorts, frame) : fn('over', collection(sorts));
   } else {
     const key = w.column;
     if (!key) throw new CubeRefusal(`'${name}' needs an order or a partition`);
-    over = fn('over', collection([]), collection([asc(key)]), fn('rows', unbounded(), unbounded()));
+    over = partitioned([everyRow()], [asc(key)], fn('rows', unbounded(), unbounded()));
   }
   if (meta.column && !w.column) throw new CubeRefusal(`'${name}' needs a column to read`);
   if (meta.ordered && sorts.length === 0) throw new CubeRefusal(`'${name}' needs an order`);

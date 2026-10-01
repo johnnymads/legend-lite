@@ -975,11 +975,25 @@ final class Typer {
                         ? "" : " — user elements in a query need a fully qualified name"));
     }
 
+    private static boolean isExactlyOne(Multiplicity m) {
+        return m instanceof Multiplicity.Bounded b && b.lower() == 1 && b.upper() != null && b.upper() == 1;
+    }
+
     /** A collection literal {@code [a,b,c]}: element type = common supertype; multiplicity = exact count. */
     private TypedSpec collection(PureCollection coll, Env env) {
         List<TypedSpec> elements = new ArrayList<>(coll.values().size());
         for (ValueSpecification v : coll.values()) {
             TypedSpec e = synth(TdsNullForms.listElement(v), env);
+            // A literal of MORE than one value takes each element exactly [1] -- legend-engine
+            // (ValueSpecificationBuilder.visit(Collection)) and legend-pure (InstanceValueValidator)
+            // both refuse otherwise, before any overload is matched. So `$x.n * 1.1` over a nullable
+            // column (the parser's run times([$x.n, 1.1])) is refused, as there: `->toOne()` says
+            // what is meant. The 2026-09-11 loosening (MULTIPLICITY_AUDIT §4a) summed the bounds
+            // instead and typed a possibly-NULL cell [1].
+            if (coll.values().size() > 1 && !isExactlyOne(e.info().multiplicity())) {
+                throw new TypeInferenceException("Collection element must have a multiplicity [1], found "
+                        + e.info().multiplicity().text());
+            }
             // pure has NO nested collections: [['a','b'],'c'] IS
             // ['a','b','c'] — a collection-valued element SPLICES into
             // the enclosing literal (real pure value semantics)

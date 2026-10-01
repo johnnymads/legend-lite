@@ -42,6 +42,8 @@ export class UpstreamPlanner implements Planner {
   readonly #useCache: boolean;
   readonly #cache = new Map<string, Plan>();
   readonly #types = new Map<string, PlanColumn[]>();
+  /** The model's BIT columns: engine types them TinyInt (relation-type.ts, ENGINE DEFECT S23). */
+  #bitColumns: ReadonlySet<string> = new Set();
 
   constructor(options: UpstreamPlannerOptions) {
     this.#useCache = options.cache !== false;
@@ -52,8 +54,9 @@ export class UpstreamPlanner implements Planner {
    * Plan against another model from now on (a file opened in this tab joins it). Every request
    * carries the model, so the server holds nothing; what was planned against the old one goes.
    */
-  useModel(model: string, runtime: string): void {
+  useModel(model: string, runtime: string, bitColumns: readonly string[] = []): void {
     this.#client.useModel(model, runtime);
+    this.#bitColumns = new Set(bitColumns);
     this.#cache.clear();
     this.#types.clear();
   }
@@ -66,7 +69,7 @@ export class UpstreamPlanner implements Planner {
     const sql = sqlOf(body);
     if (sql === undefined) throw new PlanError('the plan carries no SQL node', query);
     // the plan's own tdsColumns: the result's type, as the compiler gave it
-    const plan: Plan = { sql, columns: tdsColumns(body) };
+    const plan: Plan = { sql, columns: tdsColumns(body, this.#bitColumns) };
     if (this.#useCache) this.#cache.set(key, plan);
     return plan;
   }
@@ -76,7 +79,7 @@ export class UpstreamPlanner implements Planner {
     const key = toJson(query);
     const hit = this.#useCache ? this.#types.get(key) : undefined;
     if (hit !== undefined) return hit;
-    const columns = relationColumns(await this.#client.lambdaRelationType(query, signal));
+    const columns = relationColumns(await this.#client.lambdaRelationType(query, signal), this.#bitColumns);
     if (this.#useCache) this.#types.set(key, columns);
     return columns;
   }

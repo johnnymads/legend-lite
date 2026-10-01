@@ -52,6 +52,17 @@ included), and the writer cannot drift from the compiler's:
   tables); `datacube/src/catalog-model.ts` is DataCube's writer, tested against the corpus case for case.
   `WasmPlanner.databaseFromCatalog` is kept (its input is now the structured column); DataCube no longer calls it.
 
+**2026-10-01, announced before landing (rule 5): a cross-area edit in `core/`** (the user: "i think we should fix calc
+column"). legend-engine refused 13 DataCube features that legend-lite passes; one cause is legend-lite's own leniency:
+- `core/.../compiler/spec/Typer.java` `collection`: a literal of more than one value requires each element to be exactly
+  `[1]`, as legend-engine (`ValueSpecificationBuilder.visit(Collection)`) and legend-pure (`InstanceValueValidator`) do.
+  `$x.notional * 1.1` over a nullable column is then refused, as on engine (write `->toOne()`). This reverts the
+  2026-09-11 loosening (`MULTIPLICITY_AUDIT_2026_08_20.md` §4a), whose premise "real pure accepts it" legend-pure's
+  source contradicts; `MultiplicityStrictnessTest` flips back to expecting the refusal.
+- NOT changed in `core/` (the user: engine's gaps are compensated in DataCube and recorded, not "fixed" in legend-lite):
+  `over(String[*], SortInfo[*], Frame[0..1])` (in engine's over.pure, never registered by its Handlers.java) and BIT
+  typed Boolean (engine's RelationalCompilerExtension says TinyInt; legend-pure says Boolean). Both get register rows.
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).

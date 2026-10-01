@@ -24,17 +24,17 @@ describe('window columns as Pure', () => {
     '|t->extend(over(~[region, desk], [~year->ascending()], unbounded()->rows(0)), ~[cum:{p, w, r|$r.notional}:y|$y->plus()])');
   });
 
-  it('with no partition, the order alone -- or the general form to carry a frame', () => {
+  it('with no partition, the order alone -- or, to carry a frame, one constant partition (engine has no unpartitioned frame, S24)', () => {
     assert.equal(windowExtend('rn', { ...base, fn: 'rowNumber', order: [{ column: 'pnl', direction: 'desc' }] }),
       '|t->extend(over([~pnl->descending()]), ~[rn:{p, w, r|$p->rowNumber($r)}])');
     assert.equal(windowExtend('m', { ...base, fn: 'average', column: 'pnl',
       order: [{ column: 'year', direction: 'asc' }], frame: { lastRows: 3 } }),
-    '|t->extend(over([], [~year->ascending()], (-2)->rows(0)), ~[m:{p, w, r|$r.pnl}:y|$y->average()])');
+    '|t->extend(~[__all__m:x|\'all\'])->extend(over(~[__all__m], [~year->ascending()], (-2)->rows(0)), ~[m:{p, w, r|$r.pnl}:y|$y->average()])');
   });
 
   it('a whole-table aggregate: every row, whatever the order', () => {
     assert.equal(windowExtend('t', { ...base, fn: 'max', column: 'pnl' }),
-      '|t->extend(over([], [~pnl->ascending()], unbounded()->rows(unbounded())), ~[t:{p, w, r|$r.pnl}:y|$y->max()])');
+      '|t->extend(~[__all__t:x|\'all\'])->extend(over(~[__all__t], [~pnl->ascending()], unbounded()->rows(unbounded())), ~[t:{p, w, r|$r.pnl}:y|$y->max()])');
   });
 
   it('ranking takes no frame; lag reads its column n rows back; last reads the whole partition', () => {
@@ -83,7 +83,7 @@ describe('a group-level window follows the tree', () => {
     const byDesk = { ...CUBE, groupDerived: [{ ...CUBE.groupDerived![0]!, window: {
       ...CUBE.groupDerived![0]!.window!, partition: ['desk'] } }] };
     assert.match(printLevel(byDesk, { level: 1, parent: [] }),
-      /extend\(over\(\[\], \[~region->ascending\(\)\], unbounded\(\)->rows\(0\)\)/);
+      /extend\(~\[__all__running:x\|'all'\]\)->extend\(over\(~\[__all__running\], \[~region->ascending\(\)\], unbounded\(\)->rows\(0\)\)/);
     const q2 = printLevel(CUBE, { level: 2, parent: ['EMEA'] });
     assert.match(q2, /extend\(over\(~\[region\], \[~region->ascending\(\), ~desk->ascending\(\)\], unbounded\(\)->rows\(0\)\)/);
   });
@@ -95,7 +95,7 @@ describe('a group-level window follows the tree', () => {
   });
 
   it('the grand total orders by its one group', () => {
-    assert.match(printLevel(CUBE, { level: 0, parent: [] }), /over\(\[\], \[~__root__->ascending\(\)\], unbounded\(\)->rows\(0\)\)/);
+    assert.match(printLevel(CUBE, { level: 0, parent: [] }), /over\(~\[__all__running\], \[~__root__->ascending\(\)\], unbounded\(\)->rows\(0\)\)/);
   });
 
   it('a row-level window is written as its extend, before the filter', () => {

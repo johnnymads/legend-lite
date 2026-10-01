@@ -106,9 +106,10 @@ class ToOneLaneTest {
     }
 
     @Test
-    @DisplayName("compacted count: a literal of optional elements counts PRESENT")
-    void optionalElementsCountPresent() throws Exception {
-        assertEquals("a", run("{|[[]->first(), 'a']->toOne()}"));
+    @DisplayName("a literal of optional elements is refused, as legend-engine and legend-pure refuse it")
+    void optionalElementsAreRefused() {
+        Exception e = assertThrows(Exception.class, () -> run("{|[[]->first(), 'a']->toOne()}"));
+        assertTrue(e.getMessage().contains("Collection element must have a multiplicity [1]"), e.getMessage());
     }
 
     @Test

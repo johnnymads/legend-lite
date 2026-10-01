@@ -94,58 +94,26 @@ class VerdictWorld2ConsistencyTest {
     }
 
     @Test
-    @DisplayName("egress: the value collection IS the SQL collection (audit §5 seal)")
-    void section5Seal() throws Exception {
-        // the §5 fix's cross-notion consistency, probed at the value
-        // lane: size(), at() and the collection itself must tell ONE
-        // story for a carrier holding empties
-        assertTrue("1".equals(String.valueOf(
-                        world1("[[]->first(), 'a']->size()"))),
-                "size() disagrees with the compacted carrier");
-        assertTrue("a".equals(world1("[[]->first(), 'a']->at(0)")),
-                "at(0) disagrees with the compacted carrier");
-        assertTrue("0".equals(String.valueOf(
-                        world1("[[]->first(), 'a']->indexOf('a')"))),
-                "indexOf disagrees with the compacted carrier");
-        assertTrue("a".equals(world1("[[]->first(), 'a']->toOne()")),
-                "toOne disagrees with the compacted carrier");
-    }
-
-    @Test
-    @DisplayName("an operator run over a possibly-empty PURE value keeps pure's empty rule (audit §4, 2026-09-11)")
-    void operatorRunOverPureEmptyDropsTheEmpty() throws Exception {
-        // plus([[], 1]) is plus([1]) in real pure: the empty element drops —
-        // the run's operands are pure VALUES, never store reads (StoreLane)
-        assertTrue("1".equals(String.valueOf(world1("[]->first() + 1"))),
-                "[] + 1 must be 1 (pure), got " + world1("[]->first() + 1"));
-        assertTrue("a".equals(String.valueOf(world1("[]->first() + 'a'"))),
-                "[] + 'a' must be 'a' (pure), got " + world1("[]->first() + 'a'"));
-        assertTrue("3".equals(String.valueOf(world1("[]->first() + 1 + 2"))),
-                "[] + 1 + 2 must be 3 (pure), got " + world1("[]->first() + 1 + 2"));
-    }
-
-    @Test
-    @DisplayName("egress: the FULL positional battery over a carrier holding empties (audit-of-R1)")
-    void section5FullBattery() throws Exception {
-        // the audit-of-R1 pass found consumer-site compaction was
-        // whack-a-mole — 7 of these were wrong until the compaction
-        // moved to the LITERAL'S CONSTRUCTION and the checker's
-        // element-count multiplicity stamp ([2..2] for [1..2]) was
-        // fixed. Every consumer must tell the same one-element story.
-        String lit = "[[]->first(), 'a']";
-        record P(String op, String want) {
+    @DisplayName("a literal of more than one value takes each element [1]: a possibly-empty one is refused (engine, legend-pure)")
+    void literalOfOptionalElementsIsRefused() {
+        // legend-engine (ValueSpecificationBuilder.visit(Collection)) and legend-pure
+        // (InstanceValueValidator) refuse it before matching any function, so the "carrier
+        // holding empties" this file once probed (audit §5, §4a) cannot be built; an operator
+        // run over a possibly-empty value is the same literal (plus([[]->first(), 1]))
+        for (String expr : java.util.List.of("[[]->first(), 'a']->size()", "[[]->first(), 'a']->toOne()",
+                "[]->first() + 1", "[]->first() + 'a'", "[]->first() + 1 + 2")) {
+            Exception e = org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () -> world1(expr), expr);
+            assertTrue(e.getMessage().contains("Collection element must have a multiplicity [1]"), expr + ": " + e.getMessage());
         }
-        for (P p : java.util.List.of(
-                new P("->head()", "a"), new P("->first()", "a"),
-                new P("->last()", "a"), new P("->tail()", "[]"),
-                new P("->init()", "[]"), new P("->drop(1)", "[]"),
-                new P("->take(1)", "[a]"), new P("->reverse()", "[a]"),
-                new P("->sort()", "[a]"), new P("->isEmpty()", "false"),
-                new P("->makeString(',')", "a"))) {
-            Object got = world1(lit + p.op());
-            assertTrue(p.want().equals(String.valueOf(got)),
-                    lit + p.op() + " => " + got + " (pure: " + p.want()
-                            + ")");
+        // ->toOne() says what is meant
+        assertEquals("2", String.valueOf(world1Unchecked("[1]->first()->toOne() + 1")));
+    }
+
+    private static Object world1Unchecked(String expr) {
+        try {
+            return world1(expr);
+        } catch (Exception e) {
+            throw new AssertionError(expr, e);
         }
     }
 }

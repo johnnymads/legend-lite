@@ -29,5 +29,17 @@ export function takesAggregate(fn: AggregateFn, type: string): boolean {
  * "contains" is `string::contains`), so compiling is the whole answer.
  */
 export function takesOperator(op: FilterOperator, type: string): boolean {
+  if (familyOf(type) === 'boolean' && BOOLEAN_ORDER_AGAINST_A_VALUE.has(op)) return false;
   return factsOf(type)?.operators[op] ?? false;
 }
+
+/**
+ * ENGINE DEFECT (docs/SEMANTICS_REGISTER.md S23) -- delete with relation-type.ts's compensation.
+ * legend-engine types a BIT column TinyInt, and refuses ordering it against a boolean VALUE
+ * (`lessThan(TinyInt[0..1], Boolean[1])`); legend-lite compiles it. Measured 2026-10-01 on
+ * 4.145 (runs/bool-probe.mjs): every other operator lite offers a Boolean -- equal, not equal,
+ * in, not in, empty, not empty, and every comparison with another column -- compiles there
+ * and returns the right rows. So these four are not offered on a boolean, on any planner.
+ */
+const BOOLEAN_ORDER_AGAINST_A_VALUE: ReadonlySet<FilterOperator> = new Set<FilterOperator>(
+  ['lessThan', 'lessThanEqual', 'greaterThan', 'greaterThanEqual']);

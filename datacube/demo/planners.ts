@@ -43,6 +43,7 @@ async function inTab(model: string): Promise<Engine> {
     snapTarget: SNAP_TARGET,
     label: 'local',
     models: {
+      // legend-lite types BIT Boolean itself: no BIT columns to read (relation-type.ts, S23)
       use: (next, runtime) => planner.useModel(next, runtime),
     },
   };
@@ -67,7 +68,7 @@ async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engi
     snapTarget: SNAP_TARGET,
     label: which,
     models: {
-      use: (next, runtime) => planner.useModel(next, runtime),
+      use: (next, runtime, bitColumns) => planner.useModel(next, runtime, bitColumns),
     },
   };
 }

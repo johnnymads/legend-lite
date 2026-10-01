@@ -7,7 +7,7 @@
 // DataCube sends that the hand-written corpus (wasm/corpus) never
 // thought to.
 
-import { accessor, col, lambda, lit, times, type Lambda } from '../../../pure-protocol/src/index.ts';
+import { accessor, col, fn, lambda, lit, times, type Lambda } from '../../../pure-protocol/src/index.ts';
 import {
   childAggregateLambda, detailSnapshot, levelLambda, pivotValuesLambda, type PivotFacts,
 } from '../../src/query.ts';
@@ -219,7 +219,7 @@ export const CASES: {
     name: 'derived',
     snapshot: snap({
       rows: ['region'],
-      derived: [{ name: 'double_qty', lambda: lambda(['x'], times(col('x', 'qty'), lit.integer(2))) }],
+      derived: [{ name: 'double_qty', lambda: lambda(['x'], times(fn('toOne', col('x', 'qty')), lit.integer(2))) }],
       measures: SUM_NOTIONAL,
     }),
   },

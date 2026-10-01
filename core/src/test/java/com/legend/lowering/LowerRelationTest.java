@@ -417,10 +417,10 @@ class LowerRelationTest {
     @Test
     @DisplayName("an operator run over a NULLABLE store column is the SQL chain (engine semantics, StoreLane)")
     void operatorRunOverStoreColumnIsTheChain() throws SQLException {
-        // FIRM is nullable ([0..1]): the engine compiles `FIRM + '!'` verbatim
-        // and the database's concat decides the empty row — never the value
-        // collection's compaction (docs/MULTIPLICITY_AUDIT_2026_08_20.md §4)
-        String sql = sqlOf("#>{test::DB.T_PERSON}#->extend(~tag : r|$r.FIRM + '!')");
+        // FIRM is nullable ([0..1]): `FIRM + '!'` is refused (as on engine), and with
+        // ->toOne() the run is the SQL chain: the database's concat decides the empty row
+        // (docs/MULTIPLICITY_AUDIT_2026_08_20.md §4)
+        String sql = sqlOf("#>{test::DB.T_PERSON}#->extend(~tag : r|$r.FIRM->toOne() + '!')");
         assertEquals("""
                 SELECT t0.*, concat(t0.FIRM, '!') AS tag
                 FROM T_PERSON AS t0""", sql);
@@ -429,16 +429,15 @@ class LowerRelationTest {
     }
 
     @Test
-    @DisplayName("an operator run over a possibly-empty PURE value keeps pure's empty rule (StoreLane)")
-    void operatorRunOverPureEmptyDropsTheEmpty() throws SQLException {
-        // []->first() is a pure value that may be empty, not a store read:
-        // plus([[], 1]) is plus([1]) — the run lowers as the value collection
-        // (drop empties, then sum), never as NULL-propagating SQL arithmetic
-        String sql = sqlOf("#>{test::DB.T_PERSON}#->extend(~n : r|[]->first() + 1)");
-        assertFalse(sql.contains("NULL, 1] AS") || sql.contains("+ 1 AS"),
-                "a pure empty must not ride the SQL chain: " + sql);
-        assertEquals(List.of("Ann|25|ACME|1", "Bob|35|ACME|1", "Cat|45|Widget|1", "Dan|55|null|1"),
-                exec(sql));
+    @DisplayName("an operator run over a possibly-empty value is refused, as legend-engine and legend-pure refuse it")
+    void operatorRunOverPossiblyEmptyIsRefused() {
+        // plus([[]->first(), 1]): a literal of more than one value takes each element [1]
+        Exception e = org.junit.jupiter.api.Assertions.assertThrows(Exception.class,
+                () -> sqlOf("#>{test::DB.T_PERSON}#->extend(~n : r|[]->first() + 1)"));
+        assertTrue(e.getMessage().contains("Collection element must have a multiplicity [1]"), e.getMessage());
+        e = org.junit.jupiter.api.Assertions.assertThrows(Exception.class,
+                () -> sqlOf("#>{test::DB.T_PERSON}#->extend(~tag : r|$r.FIRM + '!')"));
+        assertTrue(e.getMessage().contains("found [0..1]"), e.getMessage());
     }
 
     @Test

@@ -200,7 +200,9 @@ describe('parity with upstream DataCube\'s filter operators', () => {
       // TO REVIEW -- the compiler takes these and upstream DataCube does not offer them:
       // Pure orders text and booleans (boolean::lessThan(String|Boolean, ...)),
       ...ordering.map((op) => `String ${op}: ours only`),
-      ...ordering.map((op) => `Boolean ${op}: ours only`),
+      // a boolean orders against another column only: against a value, legend-engine refuses it
+      // over a BIT column (ENGINE DEFECT S23, offers.ts), so it is not offered -- as upstream
+      ...ordering.filter((op) => op.endsWith('Column')).map((op) => `Boolean ${op}: ours only`),
       // and a boolean or a time compares for membership, equality and presence like any value
       ...['isEmpty', 'isNotEmpty', 'in', 'notIn', 'equalColumn', 'notEqualColumn'].map((op) => `Boolean ${op}: ours only`),
       'DateTime in: ours only', 'DateTime notIn: ours only',

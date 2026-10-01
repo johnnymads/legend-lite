@@ -215,7 +215,7 @@ export interface Engine {
    * offers no file to open -- the capability and the affordance are the same fact.
    */
   readonly models?: {
-    use(model: string, runtime: string): void;
+    use(model: string, runtime: string, bitColumns: readonly string[]): void;
   };
   /**
    * What the status line should say about this planner.
@@ -785,7 +785,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             // converted to be declared cannot be, so it is left out, and named.
             const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
               { table: chosen.name, schema: chosen.schema, convertible: false });
-            local.use(m.model, m.runtime);
+            local.use(m.model, m.runtime, m.bitColumns);
             const columns = await sourceColumns(planner, m.source);
             app.dispose();
             app = makeApp(
@@ -916,7 +916,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           }
           return [];
         }
-        local.use(opened.model, opened.runtime);
+        local.use(opened.model, opened.runtime, opened.bitColumns);
         const columns = await sourceColumns(planner, opened.source);
         const source = await fileSource(file, formatOf(file.name), columns, how.sample);
         if (!newest()) return [];

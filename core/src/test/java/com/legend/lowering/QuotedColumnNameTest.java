@@ -120,7 +120,7 @@ class QuotedColumnNameTest {
     @DisplayName("a derived column over a quoted column")
     void derivedOverQuoted(String engine) throws Exception {
         assertEquals(List.of("p1|20.0", "p2|8.0", "p3|12.0"), run(engine,
-                "|#>{local::DB.t}#->extend(~[d: x|$x.'مبلغ' * 2])->select(~[plain, d])"
+                "|#>{local::DB.t}#->extend(~[d: x|$x.'مبلغ'->toOne() * 2])->select(~[plain, d])"
                         + "->sort([~plain->ascending()])"));
     }
 

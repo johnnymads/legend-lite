@@ -46,16 +46,16 @@ class MultiplicityStrictnessTest {
     }
 
     @Test
-    @DisplayName("real pure: [0..1] into infix plus CONFORMS — plus(String[*]) takes the run")
-    void optionalIntoArithmeticConformsLikeRealPure() {
-        // upstream declares arithmetic VARIADIC only (string::plus(String[*]));
-        // the parser's run ['middleName', '!'] is String[1..2] and conforms —
-        // real pure's MultiplicityMatch accepts it (batch 5 leg 5; the binary
-        // [1]-slot rejection was our own invention's)
-        TypedSpec run = Compiler.compileQuery(MODEL,
-                "m::Person.all()->map(p|$p.middleName + '!')");
-        assertEquals("[*]", run.info().multiplicity().text());
-        // the toOne() spelling compiles too
+    @DisplayName("real pure: [0..1] into infix plus is REFUSED — the run's literal takes each element [1]")
+    void optionalIntoArithmeticRefusedLikeRealPure() {
+        // the parser's run plus([$p.middleName, '!']) is a literal of two values; legend-pure
+        // (InstanceValueValidator) and legend-engine (ValueSpecificationBuilder.visit(Collection))
+        // require each element [1] before any overload is matched. Accepting it (2026-09-11)
+        // rested on "real pure accepts it", which legend-pure's source contradicts.
+        Exception e = rejects("m::Person.all()->map(p|$p.middleName + '!')");
+        assertTrue(e.getMessage().contains("Collection element must have a multiplicity [1], found [0..1]"),
+                e.getMessage());
+        // the toOne() spelling says what is meant
         TypedSpec ok = Compiler.compileQuery(MODEL,
                 "m::Person.all()->map(p|$p.middleName->toOne() + '!')");
         assertEquals("[*]", ok.info().multiplicity().text());

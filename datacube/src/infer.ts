@@ -25,7 +25,7 @@
 // makes it no harder.
 
 import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
-import { databaseFromCatalog, type CatalogColumn, type CatalogDatabase } from './catalog-model.ts';
+import { catalogType, databaseFromCatalog, type CatalogColumn, type CatalogDatabase } from './catalog-model.ts';
 
 export interface InferredModel {
   /** Pure source: database, connection, runtime. */
@@ -36,6 +36,11 @@ export interface InferredModel {
   /** What the source must apply, and what was left out (see `CatalogDatabase`). */
   readonly conversions: CatalogDatabase['conversions'];
   readonly excluded: CatalogDatabase['excluded'];
+  /**
+   * The columns declared BIT (DuckDB's BOOLEAN): legend-engine types them TinyInt, and a planner
+   * on engine reads them Boolean (relation-type.ts, ENGINE DEFECT S23).
+   */
+  readonly bitColumns: readonly string[];
 }
 
 export interface InferOptions {
@@ -98,5 +103,6 @@ Runtime ${pkg}::RT
     source: db.source,
     conversions: db.conversions,
     excluded: db.excluded,
+    bitColumns: columns.filter((c) => !db.excluded.includes(c.name) && catalogType(c).declared === 'BIT').map((c) => c.name),
   };
 }

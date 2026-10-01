@@ -25,7 +25,7 @@ import { sourceColumns } from '../../src/source-columns.ts';
 import { TreeState } from '../../src/tree.ts';
 import { ingestFile, type DuckDbFiles } from '../../src/upload.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
-import { col, lambda, lit, times, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
+import { col, fn, lambda, lit, times, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 
 const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
 
@@ -124,7 +124,7 @@ describe('a saved cube reopens in a fresh app over its file', () => {
     const cube: CubeSnapshot = {
       source: { query: first.relation },
       columns: first.columns,
-      derived: [{ name: 'double', lambda: lambda(['x'], times(col('x', 'notional'), lit.integer(2))) }],
+      derived: [{ name: 'double', lambda: lambda(['x'], times(fn('toOne', col('x', 'notional')), lit.integer(2))) }],
       rows: ['region'],
       pivotOn: [],
       measures: [{ name: 'notional', column: 'notional', fn: 'sum' }, { name: 'double', column: 'double', fn: 'sum' }],

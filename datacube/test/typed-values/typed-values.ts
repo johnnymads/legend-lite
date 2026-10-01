@@ -26,7 +26,7 @@ import { sourceColumns } from '../../src/source-columns.ts';
 import { familyOf } from '../../src/types.ts';
 import { toCsv } from '../../src/export.ts';
 import { selectionStats } from '../../src/selection.ts';
-import { accessor, col, lambda, lit, times, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
+import { accessor, col, fn, lambda, lit, times, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 
 const MODULE_DIR = new URL('../../../wasm/planner/', import.meta.url).href;
 
@@ -176,7 +176,7 @@ describe('step 1: types from the compiler', () => {
     const o = await openCube({
       source: { query: SOURCE },
       columns: COLUMNS,
-      derived: [{ name: 'double_qty', lambda: lambda(['x'], times(col('x', 'qty'), lit.integer(2))) }],
+      derived: [{ name: 'double_qty', lambda: lambda(['x'], times(fn('toOne', col('x', 'qty')), lit.integer(2))) }],
       rows: ['region'],
       pivotOn: [],
       measures: [],

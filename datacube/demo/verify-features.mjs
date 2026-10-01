@@ -2205,10 +2205,11 @@ try {
     if (isMeasure) throw new Error(`the panel still lists ${want} as a measure`);
 
     await menu(['Pivot', /^Vertical Pivot on/], { col: GROUP_COL });
-    const sql = (await state()).sql.replace(/\s+/g, ' ');
-    const summed = new RegExp(`SUM\\(t0\\.${want}\\)`, 'i').test(sql);
-    const unique = new RegExp(
-      `CASE WHEN COUNT\\(DISTINCT t0\\.${want}\\)`, 'i').test(sql);
+    // what DataCube ASKED for, in the query it built -- the same on every planner (each writes
+    // its own SQL for it: legend-lite's CASE WHEN COUNT(DISTINCT ..), engine's own)
+    const pure = (await state()).pure.replace(/\s+/g, ' ');
+    const summed = new RegExp(`${want}:x\\|\\$x\\.${want}:y\\|\\$y->(sum|plus)\\(\\)`).test(pure);
+    const unique = new RegExp(`${want}:x\\|\\$x\\.${want}:y\\|\\$y->uniqueValueOnly\\(\\)`).test(pure);
     if (summed || !unique) {
       throw new Error(`${want} is a dimension but ${summed ? 'still sums' : 'does not take its unique value'}`);
     }
@@ -2655,7 +2656,7 @@ try {
       // GROUPED, set up here: the SUM asserted below is the groupBy's. This check leaned on
       // the grouped cube a saved-view check used to leave behind.
       await menu(['Pivot', /^Vertical Pivot on/], { col: GROUP_COL });
-      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional->toOne() * 1.1');
       await settle();
       await page.keyboard.press('Escape');
       const s2 = await state();
@@ -2703,7 +2704,7 @@ try {
       await menu(['Pivot', 'Clear All Horizontal Pivots'],
         { requery: false }).catch(() => {});
       await settle();
-      await addCalc(1, 'doubled', 'x|$x.notional * 2');
+      await addCalc(1, 'doubled', 'x|$x.notional->toOne() * 2');
       await settle();
       await closeCalc();
       const s2 = await state();
@@ -2746,7 +2747,7 @@ try {
       // The type is the compiler's answer for the extended relation, asked before the
       // column's first query (T1) -- never learned from a result. Untyped, the aggregate
       // default read no type and a numeric column grouped as `unique`: a blank column.
-      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional->toOne() * 1.1');
       await settle();
       try {
       const typed = await page.evaluate(() =>
@@ -2846,7 +2847,7 @@ try {
 
   await check('removing a calculated column takes it out of the query',
     async () => {
-      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional->toOne() * 1.1');
       await settle();
       // From its own window, as upstream: Edit Column uplift... > Delete.
       await menu(['Extended Columns', 'Edit Column uplift...'],
@@ -2878,7 +2879,7 @@ try {
       // named a column that really was not there. With the checks
       // cleaning up after themselves it passes, and the suite said so
       // -- which is what the gap mechanism is for.
-      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional->toOne() * 1.1');
       await settle();
       await closeCalc();
       const s2 = await state();
@@ -2960,13 +2961,13 @@ try {
       // A check that failed earlier cannot leave its columns behind.
       await clearCalcs();
       // C1. Upstream defaults a new column to MEASURE; a dimension
-      // default made `$x.notional * 1.1` render blank under any row
+      // default made `$x.notional->toOne() * 1.1` render blank under any row
       // group -- the query took its uniqueValueOnly() -- which is the
       // first thing anyone trying the feature sees.
       await flatten();
       await menu(['Pivot', /^Vertical Pivot on/],
         { col: await needCol('region') });
-      await addCalc(0, 'uplift', 'x|$x.notional * 1.1', null);
+      await addCalc(0, 'uplift', 'x|$x.notional->toOne() * 1.1', null);
       await settle();
       await closeCalc();
       const s2 = await state();
@@ -3025,7 +3026,7 @@ try {
     // so a calculated measure vanished from a pivoted cube with no
     // error -- the query was the same as with no calculated column.
     await flatten();
-    await addCalc(0, 'uplift', 'x|$x.notional * 1.1', 'measure');
+    await addCalc(0, 'uplift', 'x|$x.notional->toOne() * 1.1', 'measure');
     await settle();
     await closeCalc();
     // across a TEXT dimension (quarter, String by the asserted schema): `year` is an
@@ -3386,18 +3387,18 @@ try {
       const both = await page.locator('.dc-coleditor').count();
       await closeCalc();
       if (both !== 2) throw new Error(`${both} editor windows, expected 2`);
-      await addCalc(0, 'uplift', 'x|$x.notional * 1.1');
+      await addCalc(0, 'uplift', 'x|$x.notional->toOne() * 1.1');
       await settle();
       const edit = async () => menu(['Extended Columns', 'Edit Column uplift...'],
         { col: await needCol('uplift'), requery: false });
       await edit();
-      await page.fill('.dc-coleditor .dc-calc-input-expr', 'x|$x.notional * 9');
+      await page.fill('.dc-coleditor .dc-calc-input-expr', 'x|$x.notional->toOne() * 9');
       // Reset, as upstream's: back to what the column had.
       await page.locator('.dc-coleditor .dc-calc-reset').click();
       const expr = await page.inputValue('.dc-coleditor .dc-calc-input-expr');
       await closeCalc();
       await clearCalcs();
-      if (expr !== 'x|$x.notional * 1.1') throw new Error(`Reset left ${expr}`);
+      if (expr !== 'x|$x.notional->toOne() * 1.1') throw new Error(`Reset left ${expr}`);
       return '2 new windows together; Edit opens the column, Reset restores it';
     });
 
@@ -5004,6 +5005,25 @@ if (pageErrors.length) {
 if (process.env.NO_WASM) {
   if (wasmAsked.length) bad.push({ name: 'the in-tab planner was never needed (NO_WASM)', detail: `asked for ${[...new Set(wasmAsked)].join(', ')} ${wasmAsked.length}x` });
   else console.log(`\nNO_WASM: the in-tab planner's files were never asked for (planner: ${PLANNER || 'local'})`);
+}
+// CANARY, ENGINE DEFECT S23 (docs/SEMANTICS_REGISTER.md): legend-engine types a BIT column TinyInt,
+// and DataCube reads it Boolean (src/relation-type.ts). The day engine answers Boolean itself,
+// this fails: delete the compensation and the register row.
+if (PLANNER === 'engine') {
+  const { readFile } = await import('node:fs/promises');
+  const engineUrl = JSON.parse(await readFile(new URL('./config.json', import.meta.url), 'utf8')).legendEngine;
+  const model = '###Relational\nDatabase c::DB ( Table t ( flag BIT ) )\n';
+  const r = await fetch(`${engineUrl}/api/pure/v1/compilation/lambdaRelationType`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ lambda: { _type: 'lambda', parameters: [], body: [{ _type: 'classInstance', type: '>', value: { path: ['c::DB', 't'] } }] },
+      model: { _type: 'text', code: model } }),
+  });
+  const said = r.ok ? (await r.json()).columns?.[0]?.genericType?.rawType?.fullPath : `HTTP ${r.status}`;
+  if (said === 'meta::pure::precisePrimitives::TinyInt') {
+    console.log('\nCANARY S23: legend-engine still types BIT TinyInt -- DataCube\'s compensation still needed');
+  } else {
+    bad.push({ name: 'CANARY S23: legend-engine types BIT TinyInt', detail: `it now says ${said}: delete DataCube's BIT compensation (src/relation-type.ts) and register row S23` });
+  }
 }
 if (bad.length) {
   console.log(`\nBROKEN (${bad.length}):`);
