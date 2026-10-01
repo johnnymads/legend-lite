@@ -17,7 +17,7 @@ import {
   type ChartMark,
   type ChartSpec,
 } from '../chart-spec.ts';
-import { chartOption, themeOf, type LabelOf, type MarkKey } from '../chart-option.ts';
+import { chartOption, themeOf, treemapOfGrid, type GridShown, type LabelOf, type MarkKey } from '../chart-option.ts';
 // ECharts (about 218 KB gzipped) is loaded the first time a chart draws, never by a grid alone (plan F7)
 import type { ChartPicture, MountedChart } from '../chart-render.ts';
 import type { ResultTable } from '../result.ts';
@@ -45,6 +45,8 @@ export interface ChartPanelOptions {
   readonly onFrozen?: (frozen: boolean) => void;
   /** The user changed the chart (an option in its form). */
   readonly onSpec?: () => void;
+  /** What the grid shows now: a treemap draws exactly that, not a query of its own. */
+  readonly shown?: () => GridShown | null;
 }
 
 export class ChartPanel {
@@ -59,6 +61,8 @@ export class ChartPanel {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #inflight: AbortController | null = null;
   #disposed = false;
+  /** A treemap's rows as last drawn: what a frozen one keeps. */
+  #shownKept: GridShown | null = null;
 
   constructor(root: HTMLElement, options: ChartPanelOptions) {
     this.#root = root;
@@ -186,10 +190,19 @@ export class ChartPanel {
       .filter((a) => a.value !== 'wavg')
       .map((a) => ({ value: a.value, label: a.label }));
 
+    const markField = field(doc, 'Chart:', dropdown<ChartMark>(doc, spec.mark, CHART_MARKS, (v) => {
+      if (v) this.#set({ mark: v }, true);
+    }));
+    if (spec.mark === 'treemap') {
+      // what is on screen decides the rest: nothing else to choose
+      const note = doc.createElement('p');
+      note.className = 'dc-chartpanel-note';
+      note.textContent = 'Draws the grid\'s rows as shown: each a block, sized by the first number column the grid shows. Expand a group to see inside it.';
+      form.append(markField, note);
+      return;
+    }
     form.append(
-      field(doc, 'Chart:', dropdown<ChartMark>(doc, spec.mark, CHART_MARKS, (v) => {
-        if (v) this.#set({ mark: v }, true);
-      })),
+      markField,
       field(doc, scatter ? 'X:' : 'Across:', dropdown<string>(doc, spec.x, across, (v) => {
         if (v) this.#set({ x: v });
       })),
@@ -281,6 +294,25 @@ export class ChartPanel {
     const spec = this.#spec;
     const cube = this.#options.snapshot();
     if (!spec) return;
+    // A TREEMAP DRAWS THE GRID AS SHOWN, with no query of its own (the old treemap's way, the user
+    // 2026-09-30): following, the rows on screen now; frozen, the rows it last drew.
+    if (spec.mark === 'treemap') {
+      const now = this.frozen && this.#shownKept ? this.#shownKept : this.#options.shown?.() ?? this.#shownKept;
+      if (!now) {
+        this.#say('A treemap draws the grid\'s rows; the grid has none to draw yet.', true);
+        return;
+      }
+      this.#shownKept = now;
+      if (!this.#chart) {
+        const { mountChart } = await import('../chart-render.ts');
+        if (this.#disposed) return;
+        this.#chart ??= mountChart(this.#canvas, (key) => this.#options.onPick(key));
+      }
+      const drawing = treemapOfGrid(now, themeOf(this.#canvas), this.#options.label);
+      this.#chart.show(drawing);
+      this.#say(drawing.notes.join(' '));
+      return;
+    }
     const problems = chartProblems(spec, cube);
     if (problems.length > 0) {
       this.#say(problems.join(' '), true);

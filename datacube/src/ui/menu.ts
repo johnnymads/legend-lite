@@ -201,7 +201,6 @@ export type MenuActionId =
   | 'heatmap.remove'
   | 'chart.plot'
   | 'grid.new'
-  | 'chart.treemap'
   | 'view.properties'
   // Upstream's Copy > Selected Rows, Resize > Minimize and Size to Fit,
   // and Pivot > Exclude / Include.
@@ -682,15 +681,16 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
     },
   ]);
 
-  // Plot and treemap sit beside Properties, as theirs do: they are
-  // views OF the cube rather than operations ON a column, so they do
-  // not belong in the column-scoped groups above.
-  push('', [
-    { id: 'chart.plot', label: 'Chart...' },
-    // another grid on the page, starting as this one is (page/cube-page.ts)
-    { id: 'grid.new', label: 'New grid' },
-    { id: 'chart.treemap', label: 'Treemap' },
-  ]);
+  // INSERT sits beside Properties, as plot and treemap did: a chart or another grid is a view OF
+  // the cube rather than an operation ON a column. A treemap is one of the chart's types now
+  // (the user, 2026-09-30); the grid starts as this one is (page/cube-page.ts).
+  push('', [{
+    label: 'Insert',
+    submenu: [
+      { id: 'chart.plot', label: 'Chart' },
+      { id: 'grid.new', label: 'Grid' },
+    ],
+  }]);
 
   push('', [{
     id: 'view.properties',

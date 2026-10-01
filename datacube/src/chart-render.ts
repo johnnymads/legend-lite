@@ -11,7 +11,7 @@
 // and turns a click on a mark into the values behind it.
 
 import * as echarts from 'echarts/core';
-import { BarChart, HeatmapChart, LineChart, PieChart, ScatterChart } from 'echarts/charts';
+import { BarChart, HeatmapChart, LineChart, PieChart, ScatterChart, TreemapChart } from 'echarts/charts';
 import {
   AriaComponent,
   DatasetComponent,
@@ -26,7 +26,7 @@ import type { EChartsOption } from 'echarts';
 import type { ChartDrawing, MarkKey } from './chart-option.ts';
 
 echarts.use([
-  BarChart, LineChart, ScatterChart, PieChart, HeatmapChart,
+  BarChart, LineChart, ScatterChart, PieChart, HeatmapChart, TreemapChart,
   GridComponent, TooltipComponent, LegendComponent, TitleComponent,
   DatasetComponent, VisualMapComponent, AriaComponent,
   CanvasRenderer,
@@ -75,9 +75,9 @@ export function mountChart(el: HTMLElement, onPick?: (key: MarkKey) => void): Mo
   const chart = echarts.init(el, null, { renderer: 'canvas' });
   let drawing: ChartDrawing | null = null;
   chart.on('click', (params: unknown) => {
-    const p = params as { seriesIndex?: number; dataIndex?: number };
+    const p = params as { seriesIndex?: number; dataIndex?: number; data?: unknown };
     if (!drawing || !onPick || p.seriesIndex === undefined || p.dataIndex === undefined) return;
-    const key = drawing.keyAt(p.seriesIndex, p.dataIndex);
+    const key = drawing.keyAt(p.seriesIndex, p.dataIndex, p.data);
     if (key) onPick(key);
   });
   const view = el.ownerDocument.defaultView;

@@ -19,6 +19,8 @@ import type { EChartsOption } from 'echarts';
 import { measureName, type ChartSpec } from './chart-spec.ts';
 import type { ResultTable, Scalar } from './result.ts';
 import { numberOf } from './values.ts';
+import { isNumeric } from './types.ts';
+import { TREE_COLUMN } from './treeview.ts';
 
 /** The colours a chart is drawn in, read from CSS tokens by the renderer. */
 export interface ChartTheme {
@@ -94,8 +96,11 @@ export type MarkKey = Readonly<Record<string, Scalar>>;
 
 export interface ChartDrawing {
   readonly option: EChartsOption;
-  /** The values behind a clicked mark, or null when a mark is not a group (a scatter point). */
-  keyAt(seriesIndex: number, dataIndex: number): MarkKey | null;
+  /**
+   * The values behind a clicked mark, or null when a mark is not a group (a scatter point).
+   * `datum` is the clicked item itself, for a mark whose index is not enough (a treemap's node).
+   */
+  keyAt(seriesIndex: number, dataIndex: number, datum?: unknown): MarkKey | null;
   /** Anything the reader should know that the picture cannot say. */
   readonly notes: readonly string[];
   /** The chart in words, for a screen reader (the container's aria-label). */
@@ -232,6 +237,11 @@ export function chartOption(
       notes,
       description: describe(spec, rows),
     };
+  }
+
+  // a treemap draws the GRID'S rows as shown, not a query of its own (`treemapOfGrid`)
+  if (spec.mark === 'treemap') {
+    throw new Error('a treemap draws the grid\'s rows as shown: treemapOfGrid, not chartOption');
   }
 
   // -- heatmap: x across, split down, the first measure as colour ---------
@@ -399,7 +409,7 @@ export function chartOption(
 
 const MARK_WORDS: Record<ChartSpec['mark'], string> = {
   bar: 'Bar chart', line: 'Line chart', area: 'Area chart', scatter: 'Scatter plot',
-  pie: 'Pie chart', heatmap: 'Heatmap',
+  pie: 'Pie chart', heatmap: 'Heatmap', treemap: 'Treemap',
 };
 
 /** The chart in one sentence: what is plotted against what, and how much of it. */
@@ -422,3 +432,135 @@ function legendOf(spec: ChartSpec, count: number, theme: ChartTheme): EChartsOpt
     ...(at === 'right' ? { right: 0, top: 'middle', orient: 'vertical' } : at === 'bottom' ? { bottom: 0 } : { top: 0 }),
   };
 }
+
+/**
+ * What the grid shows now, as a treemap draws it: its rows, their tree, its visible columns in
+ * order, and the row dimensions (a path's keys, level by level).
+ */
+export interface GridShown {
+  readonly rows: ResultTable;
+  readonly tree: readonly {
+    readonly path: readonly Scalar[];
+    readonly level: number;
+    readonly isGroup: boolean;
+    readonly expanded: boolean;
+    readonly isTotal: boolean;
+    readonly isDetail?: boolean;
+  }[];
+  readonly leaves: readonly { readonly name: string; readonly type: string; readonly label?: string }[];
+  readonly levels: readonly string[];
+}
+
+const TREE = TREE_COLUMN;
+
+/**
+ * A TREEMAP OF THE GRID AS SHOWN (the user, 2026-09-30: the old treemap's way): one block per
+ * row on screen -- a collapsed group is a block, an expanded one a box around its visible
+ * children -- sized by the first numeric column the grid shows, labelled and valued in the grid's
+ * formats. It cannot disagree with the grid beside it: every filter, pivot, sort and expansion is
+ * already in what it is given. The grand total is the whole, not a block.
+ *
+ * NON-POSITIVE VALUES ARE DROPPED, not clamped: a treemap encodes magnitude as AREA, and a
+ * negative area does not exist -- drawing a zero-size box would hide the row silently, and its
+ * absolute value would say the opposite of the truth. How many went is said.
+ */
+export function treemapOfGrid(shown: GridShown, theme: ChartTheme = LIGHT_THEME, label: LabelOf = defaultLabel): ChartDrawing {
+  const notes: string[] = [];
+  const rows = shown.rows;
+  const tree = shown.tree;
+  const value = shown.leaves.find((l) => l.name !== TREE && isNumeric(l.type));
+  const valueCol = value ? column(rows, value.name) : undefined;
+  const treeCol = column(rows, TREE);
+  // a flat cube's label: the first visible column that is not a number
+  const flatLabel = shown.leaves.find((l) => l.name !== TREE && !isNumeric(l.type));
+  const flatCol = flatLabel ? column(rows, flatLabel.name) : undefined;
+  type Node = { name: string; value?: number; text?: string; key: MarkKey; children?: Node[]; level: number };
+  const top: Node[] = [];
+  const open: Node[] = [];
+  let dropped = 0;
+  for (let i = 0; i < rows.rowCount; i++) {
+    const t = tree[i];
+    // the grand total is the whole treemap, not a block of it
+    if (t && t.isTotal && t.level === 0) continue;
+    const level = t ? t.level : 1;
+    const path = t?.path ?? [];
+    const key: MarkKey = Object.fromEntries(path.map((v, j) => [shown.levels[j] ?? `level${j}`, v]));
+    const raw = treeCol?.values[i] ?? null;
+    const last = path.length > 0 ? path[path.length - 1]! : null;
+    const name = t
+      ? (raw !== null && raw !== '' ? String(raw)
+        : label(last, shown.levels[path.length - 1] ?? '', undefined))
+      : label(flatCol?.values[i] ?? null, flatLabel?.name ?? '', flatLabel?.type);
+    while (open.length > 0 && open[open.length - 1]!.level >= level) open.pop();
+    const parent = open[open.length - 1];
+    const into = (n: Node): void => { if (parent) (parent.children ??= []).push(n); else top.push(n); };
+    if (t && t.isGroup && t.expanded) {
+      const box: Node = { name, key, level, children: [] };
+      into(box);
+      open.push(box);
+      continue;
+    }
+    const v = numberOf(valueCol?.values[i] ?? null, valueCol?.type);
+    if (v === null || v <= 0) {
+      dropped += 1;
+      continue;
+    }
+    into({ name, value: v, text: label(valueCol?.values[i] ?? null, value?.name ?? '', value?.type), key, level });
+  }
+  // a box whose children were all dropped is not a box
+  const prune = (nodes: Node[]): Node[] => nodes.flatMap((n) => {
+    if (!n.children) return [n];
+    const kids = prune(n.children);
+    return kids.length > 0 ? [{ ...n, children: kids }] : [];
+  });
+  const data = prune(top);
+  if (dropped > 0) {
+    notes.push(`${dropped} ${dropped === 1 ? 'row' : 'rows'} not shown: zero or negative cannot have an area.`);
+  }
+  if (!value) notes.push('The grid shows no numeric column to size the blocks by.');
+  const depth = (nodes: Node[]): number => nodes.reduce((m, n) => Math.max(m, n.children ? 1 + depth(n.children) : 1), 0);
+  const levels = Math.max(1, depth(data));
+  const text = { fontFamily: 'Roboto, ui-sans-serif, system-ui, sans-serif', fontSize: 11, color: theme.ink };
+  return {
+    option: asOption({
+      backgroundColor: 'transparent',
+      textStyle: text,
+      color: [...theme.series],
+      aria: { enabled: true, label: { enabled: false } },
+      tooltip: {
+        backgroundColor: theme.surface,
+        borderColor: theme.axis,
+        textStyle: { color: theme.ink },
+        confine: true,
+        trigger: 'item',
+        // the value as the grid writes it
+        formatter: (p: { name?: string; data?: { text?: string } }) =>
+          (p.data?.text !== undefined ? `${p.name ?? ''}: ${p.data.text}` : (p.name ?? '')),
+      },
+      series: [{
+        type: 'treemap',
+        roam: false,
+        nodeClick: false,
+        breadcrumb: { show: false },
+        top: 8, left: 8, right: 8, bottom: 8,
+        leafDepth: levels,
+        label: { show: true, color: '#ffffff', overflow: 'truncate' },
+        upperLabel: { show: levels > 1, height: 18, color: theme.ink },
+        itemStyle: { borderColor: theme.surface, borderWidth: 1, gapWidth: 1 },
+        levels: [
+          { itemStyle: { borderColor: theme.surface, borderWidth: 2, gapWidth: 2 } },
+          { colorSaturation: [0.35, 0.6], itemStyle: { gapWidth: 1 } },
+        ],
+        data,
+      }],
+    }),
+    // the clicked block's own row: its path, column by column
+    keyAt: (_s, _i, datum) => {
+      const key = (datum as { key?: MarkKey } | undefined)?.key;
+      return key && Object.keys(key).length > 0 ? key : null;
+    },
+    notes,
+    description: `Treemap of ${value?.label ?? value?.name ?? 'nothing'} by the grid's rows as shown.`,
+  };
+}
+

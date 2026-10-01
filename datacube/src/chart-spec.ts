@@ -24,7 +24,7 @@ import {
 import { isFractional, isNumeric, isTemporal } from './types.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 
-export type ChartMark = 'bar' | 'line' | 'area' | 'scatter' | 'pie' | 'heatmap';
+export type ChartMark = 'bar' | 'line' | 'area' | 'scatter' | 'pie' | 'heatmap' | 'treemap';
 
 /** One measure the chart plots: a column and how its rows are aggregated. */
 export interface ChartMeasure {
@@ -67,6 +67,7 @@ export const CHART_MARKS: readonly { value: ChartMark; label: string }[] = [
   { value: 'scatter', label: 'Scatter' },
   { value: 'pie', label: 'Pie' },
   { value: 'heatmap', label: 'Heatmap' },
+  { value: 'treemap', label: 'Treemap' },
 ];
 
 export const DEFAULT_CHART_LIMIT = 50;

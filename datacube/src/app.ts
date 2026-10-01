@@ -68,7 +68,6 @@ import { toHtml } from './export-rich.ts';
 import { toPdf, toPlainText } from './export-doc.ts';
 import { exportTable, type ExportPage } from './export-model.ts';
 import { toXlsx, XLSX_MIME } from './export-xlsx.ts';
-import { toBarChart, toTreemap } from './chart.ts';
 import { cubeScopeOf, newCubeScope } from './ui/scope.ts';
 import { BOARD_COLUMNS } from './layout/board.ts';
 import { BOARD_ROWS, CubePage, withoutConditions, type ChartSource } from './page/cube-page.ts';
@@ -1955,9 +1954,6 @@ export class CubeApp {
       case 'grid.new':
         this.newGrid();
         return;
-      case 'chart.treemap':
-        this.#chart('treemap');
-        return;
       case 'filter.column':
         this.openFilters();
         return;
@@ -2383,6 +2379,15 @@ export class CubeApp {
         (await this.#controller.runQuery(query, snapshot, undefined, signal)).rows,
       format: (value, column, type) => this.#formatters.format(value, this.#formats[column], type),
       label: (column) => labelFor(this.#config, column),
+      shown: () => {
+        const view = this.#view;
+        return view ? {
+          rows: view.rows,
+          tree: view.treeRows,
+          leaves: view.columns.leaves.map((l) => ({ name: l.name, type: l.type, ...(l.label !== undefined ? { label: l.label } : {}) })),
+          levels: view.snapshot.rows,
+        } : null;
+      },
       refilter: (old, add, label) => {
         void this.#query((s) => {
           const kept = withoutConditions(s.filter, old) ?? undefined;
@@ -2452,34 +2457,7 @@ export class CubeApp {
     this.#ensurePage().restore(page);
   }
 
-  /**
-   * Show the current view as a picture.
-   *
-   * Drawn from the ROWS ON SCREEN rather than from a fresh query, so
-   * the chart cannot disagree with the grid behind it -- every
-   * filter, pivot and sort is already baked into what it is given.
-   */
-  #chart(kind: 'plot' | 'treemap'): void {
-    const view = this.#view;
-    if (!view) return;
-    const title = this.#config.reportTitle ?? 'cube';
-    // what the grid shows, as it shows it: its visible columns, in its formats
-    const options = {
-      title,
-      columns: view.columns.leaves.map((leaf) => leaf.name),
-      formatters: this.#formatters,
-      formats: this.#formats,
-    };
-    const svg = kind === 'plot' ? toBarChart(view.rows, options) : toTreemap(view.rows, options);
-    this.#showOverlay(kind === 'plot' ? 'Plot' : 'Treemap', (host) => {
-      const box = this.#doc.createElement('div');
-      box.className = 'dc-chart';
-      // The SVG is composed here, from values this code escaped, so
-      // there is no untrusted markup in it.
-      box.innerHTML = svg;
-      host.append(box);
-    }, { replace: true });
-  }
+
 
   /**
    * One rendering, shared by download and email, named as upstream

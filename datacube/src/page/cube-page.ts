@@ -15,7 +15,7 @@ import { ChartPanel } from '../ui/chart-panel.ts';
 import { Board, BOARD_COLUMNS } from '../layout/board.ts';
 import { addToRow, below } from '../layout/tile-layout.ts';
 import { followCube, measureName } from '../chart-spec.ts';
-import type { MarkKey } from '../chart-option.ts';
+import type { GridShown, MarkKey } from '../chart-option.ts';
 import type { ExportPage, ExportTile } from '../export-model.ts';
 import { PAGE_CUBE, type ChartView, type PageView, type PageViews } from '../page-document.ts';
 import type { CubeSnapshot, FilterNode, Measure } from '../snapshot.ts';
@@ -42,6 +42,8 @@ export interface ChartSource {
   format(value: Scalar, column: string, type: string | undefined): string;
   /** A column as the grid names it. */
   label(column: string): string;
+  /** What the grid shows now (its rows, their tree, its visible columns): a treemap draws it. */
+  shown(): GridShown | null;
   /** Take `old` off the grid's filter and put `add` on, as one change named `label`. */
   refilter(old: readonly FilterNode[], add: readonly FilterNode[], label: string): void;
   /**
@@ -232,8 +234,9 @@ export class CubePage {
         ? 'Follow the grid\'s pivots again (this chart takes the grid\'s grouping).'
         : 'Keep this chart\'s grouping as it is: pivoting the grid will not change it.';
       edit.hidden = !frozen;
-      // a scatter plots rows, not groups: there is no grouping to open
-      edit.disabled = panel.spec?.mark === 'scatter';
+      // a scatter plots rows, not groups, and a treemap draws the grid as shown: neither has a
+      // grouping of its own to open
+      edit.disabled = panel.spec?.mark === 'scatter' || panel.spec?.mark === 'treemap';
     };
     const panel = new ChartPanel(body, {
       onFrozen: () => {
@@ -245,6 +248,7 @@ export class CubePage {
       snapshot: () => source().snapshot,
       run: (query, snapshot, signal) => source().run(query, snapshot, signal),
       label: (value, column, type) => source().format(value, column, type),
+      shown: () => source().shown(),
       // a detached chart has no grid's filter to put a click on
       onPick: (mark) => { if (link.grid !== null) this.#select(id, mark); },
       formOpen: false,
@@ -431,6 +435,8 @@ export class CubePage {
       run: (query, s, signal) => primary.run(query, s, signal),
       format: (value, column, type) => primary.format(value, column, type),
       label: (column) => primary.label(column),
+      // detached, a treemap keeps the rows it last drew
+      shown: () => null,
       refilter: () => {},
       spawn: (host, s, options) => primary.spawn(host, s, options),
     };
@@ -533,7 +539,7 @@ export class CubePage {
       return;
     }
     const spec = chart.panel.spec;
-    if (!spec || spec.mark === 'scatter' || spec.x === undefined) return;
+    if (!spec || spec.mark === 'scatter' || spec.mark === 'treemap' || spec.x === undefined) return;
     const source = this.#sourceOf(chart.link);
     const tile = `edit-${chartId}`;
     const host = this.#doc.createElement('div');

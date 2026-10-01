@@ -462,15 +462,7 @@ describe('T7: one formatter on compiler types', () => {
     assert.ok(labels.includes('-9007199254740993'), labels.join(' | '));
   });
 
-  it('T7e: a treemap\'s tooltip says what the grid says', async () => {
-    // the region and its P&L alone: a treemap draws the first numeric column on screen
-    const o = await grouped([{ name: 'pnl', column: 'pnl', fn: 'sum' }], 'pnl');
-    o.root.querySelector('.dc-cell')!.dispatchEvent(new o.dom.window.MouseEvent('contextmenu', { bubbles: true }));
-    const item = [...o.dom.window.document.querySelectorAll<HTMLElement>('.dc-menu [role="menuitem"]')]
-      .find((i) => i.querySelector('.dc-menu-label')?.textContent === 'Treemap');
-    assert.ok(item);
-    item.click();
-    const svg = o.root.ownerDocument.querySelector('.dc-chart')?.innerHTML ?? '';
-    assert.match(svg, /<title>AMER: 1,234\.56<\/title>/, svg.slice(0, 400));
-  });
+  // T7e (a treemap's tooltip says what the grid says) moved to chart-echarts.test.ts with the
+  // treemap itself: it is a chart now (the user, 2026-09-30), drawn by ECharts.
+
 });

@@ -1670,22 +1670,6 @@
   color: var(--tw-neutral-400);
 }
 
-/* A chart in the overlay. The SVG carries its own size; this just
-   centres it and lets a wide one scroll rather than overflow the
-   dialog. */
-.dc-chart {
-  overflow: auto;
-  max-width: 100%;
-  display: flex;
-  justify-content: center;
-  padding: 8px;
-}
-
-.dc-chart svg {
-  max-width: 100%;
-  height: auto;
-}
-
 /* ---- the calculated-column editor --------------------------------
    One column per window, as upstream's: the form scrolls, the footer
    (Cancel / Delete / Reset / OK) stays put. */

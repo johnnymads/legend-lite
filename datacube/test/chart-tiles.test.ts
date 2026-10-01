@@ -185,16 +185,18 @@ describe('grids are tiles like charts: + Grid, their own charts, removing one', 
     assert.ok(shown(ofGrid[0]!).includes('Open in grid'), 'it can still be changed');
   });
 
-  it('New grid from an added grid\'s own menu adds to the page, not inside the grid', async () => {
+  it('Insert > Grid from an added grid\'s own menu adds to the page, not inside the grid', async () => {
     app.newGrid();
     await settle();
     const first = added()[0]!;
     const cell = first.querySelector('.dc-row .dc-cell') as HTMLElement;
     cell.dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     await settle();
+    // Insert > Grid, by its own label (Insert's entry holds its submenu's words too)
     const item = [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')]
-      .find((el) => el.textContent?.includes('New grid'));
-    assert.ok(item, 'the added grid\'s menu offers New grid');
+      .find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === 'Grid'
+        && el.parentElement?.closest('.dc-menu-item')?.querySelector(':scope > .dc-menu-label')?.textContent === 'Insert');
+    assert.ok(item, 'the added grid\'s menu offers Insert > Grid');
     item.click();
     await settle();
     assert.equal(added().length, 2, 'a second added grid, on the page');

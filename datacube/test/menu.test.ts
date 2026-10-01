@@ -94,7 +94,7 @@ describe('buildMenu', () => {
     assert.deepEqual(
       withSub.map((i) => i.label),
       ['Export', 'Email', 'Copy', 'Sort', 'Filter', 'Pivot',
-        'Extended Columns', 'Resize', 'Pin', 'Heatmap'],
+        'Extended Columns', 'Resize', 'Pin', 'Heatmap', 'Insert'],
     );
     // A submenu parent does nothing itself.
     assert.ok(withSub.every((i) => i.id === undefined));

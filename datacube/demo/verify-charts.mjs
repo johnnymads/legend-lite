@@ -82,7 +82,9 @@ try {
 
   const addChart = async () => {
     await page.locator('.dc-row').nth(1).locator('.dc-cell').nth(2).click({ button: 'right' });
-    await page.locator('.dc-menu-item:has(> .dc-menu-label:text-is("Chart..."))').first().click();
+    // Insert > Chart: hover Insert, then its Chart
+    await page.locator('.dc-menu-item:has(> .dc-menu-label:text-is("Insert"))').first().hover();
+    await page.locator('.dc-menu-item:has(> .dc-menu-label:text-is("Insert")) .dc-menu-item:has(> .dc-menu-label:text-is("Chart"))').first().click();
     await settle();
     await drawn();
   };
