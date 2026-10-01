@@ -15,6 +15,7 @@ import { renderColumns } from './columns.ts';
 import { Explorer, showPreview } from './explorer.ts';
 import { renderFilter } from './filter.ts';
 import { suggest } from '../app/probe.ts';
+import { renderConstants } from './constants.ts';
 import { renderParameters } from './params.ts';
 import { openQueryDialog, save, saveAs } from './queries.ts';
 import { Results } from './results.ts';
@@ -52,6 +53,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   const results = new Results(app, session);
   const setup = h('div', { class: 'q-setup' });
   const params = h('div');
+  const constants = h('div');
   const columns = h('div', { class: 'q-panel' });
   const filter = h('div', { class: 'q-panel' });
   const header = h('div', { class: 'q-builder__header' });
@@ -162,6 +164,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
       menuButton(['Advanced', icon('caretDown')], () => [
         { label: 'Edit Pure', action: () => void textDialog(app, session) },
         { label: showParams ? 'Hide Parameters' : 'Show Parameters', action: () => { showParams = !showParams; drawSide(); } },
+        { label: showConstants ? 'Hide Constants' : 'Show Constants', action: () => { showConstants = !showConstants; drawSide(); } },
         'separator',
         { label: 'About this query', action: () => infoDialog(app, session) },
         { label: 'History and versions', action: () => void historyDialog(app, session), disabled: !session.saved },
@@ -172,17 +175,21 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
       ], { class: 'q-header-pill' }));
   };
 
-  // the side: properties (the setup) over the explorer, and parameters when there are some or
-  // the person asks (Advanced > Show Parameters), as upstream hides them by default
+  // the side: properties (the setup) over the explorer, then parameters and constants, each when
+  // there are some or the person asks (Advanced > Show ...), as upstream hides them by default
   let showParams = session.query.parameters.length > 0;
-  let paramsShown = false;
+  let showConstants = (session.query.constants ?? []).length > 0;
+  const paramsWanted = (): boolean => showParams || session.query.parameters.length > 0;
+  const constantsWanted = (): boolean => showConstants || (session.query.constants ?? []).length > 0;
+  let shown = { params: false, constants: false };
   const side = h('div', { class: 'q-side' });
   const drawSide = (): void => {
-    paramsShown = showParams || session.query.parameters.length > 0;
+    shown = { params: paramsWanted(), constants: constantsWanted() };
     mount(side,
       h('div', { class: 'q-panel q-panel--fit' }, panelHeader('properties'), h('div', { class: 'q-panel__content' }, setup)),
       h('div', { class: 'q-panel q-panel--grow' }, explorerHead, h('div', { class: 'q-panel__content' }, explorer.element)),
-      paramsShown ? h('div', { class: 'q-panel q-panel--params' }, params) : null);
+      shown.params ? h('div', { class: 'q-panel q-panel--params' }, params) : null,
+      shown.constants ? h('div', { class: 'q-panel q-panel--params' }, constants) : null);
   };
   drawSide();
 
@@ -194,15 +201,17 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   drawWork();
   drawHeader();
   renderParameters(params, session);
+  renderConstants(constants, app, session);
   results.render();
   explorer.render();
 
   const unsubscribe = session.subscribe((c) => {
     if (c === 'query') {
       drawWork();
-      if ((showParams || session.query.parameters.length > 0) !== paramsShown) drawSide();
+      if (paramsWanted() !== shown.params || constantsWanted() !== shown.constants) drawSide();
       explorer.render();
       renderParameters(params, session);
+      renderConstants(constants, app, session);
       drawSetup();
       results.render();
     }

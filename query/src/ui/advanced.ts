@@ -8,7 +8,7 @@ import type { Session } from '../app/session.ts';
 import { resultColumns, type ResultColumn } from '../app/types.ts';
 import { buildLambda } from '../builder/build.ts';
 import {
-  freshId, RANKING, type Condition, type GraphNode, type Group, type Operator, type ProjectionColumn, type PropertyPath,
+  freshId, queryVariables, RANKING, type Condition, type GraphNode, type Group, type Operator, type ProjectionColumn, type PropertyPath,
   type QueryState, type WindowColumn, type WindowOp,
 } from '../builder/state.ts';
 import { humanize, isNumericFamily, primitiveFamily, simpleName } from '../model/graph.ts';
@@ -247,7 +247,7 @@ export function renderPostFilter(container: HTMLElement, app: AppContext, sessio
           },
         }, ops.map((o) => h('option', { value: o, selected: o === c.operator }, OPERATOR_LABELS[o]))),
         c.operator === 'isEmpty' || c.operator === 'isNotEmpty' ? null : valueEditor({
-          graph, type, many: c.operator === 'in' || c.operator === 'notIn', value: c.value, parameters: session.query.parameters,
+          graph, type, many: c.operator === 'in' || c.operator === 'notIn', value: c.value, variables: queryVariables(session.query),
           onChange: (v) => setRoot((g) => mapNode(g, c.id, (n) => ({ ...(n as Condition), value: v }))),
         }),
         h('span', { class: 'q-spacer' }),

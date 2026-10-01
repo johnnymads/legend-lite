@@ -7,7 +7,7 @@ import type {
 } from '../../../pure-protocol/src/index.ts';
 import type { ModelGraph } from '../model/graph.ts';
 import {
-  freshId, type AggregateOp, type ClassSource, type DateFunction, type FilterNode, type GraphFetch, type GraphNode, type Group, type Operator,
+  freshId, type AggregateOp, type ClassSource, type Constant, type DateFunction, type FilterNode, type GraphFetch, type GraphNode, type Group, type Operator,
   type Parameter, type PercentileOptions, type ProjectionColumn, type PropertyPath, type PropertyStep, type QueryState, type SortSpec, type Value,
   type WindowColumn, type WindowOp,
 } from './state.ts';
@@ -78,7 +78,7 @@ export function valueOf(n: Node): Value {
     case 'decimal': return { kind: 'decimal', value: numberText((n as unknown as { value: unknown }).value) };
     case 'strictDate': return { kind: 'strictDate', value: (n as unknown as { value: string }).value };
     case 'dateTime': return { kind: 'dateTime', value: (n as unknown as { value: string }).value };
-    case 'var': return { kind: 'parameter', name: (n as Variable).name };
+    case 'var': return { kind: 'variable', name: (n as Variable).name };
     case 'collection': return { kind: 'list', values: (n as unknown as { values: Node[] }).values.map(valueOf) };
     case 'enumValue': {
       const e = n as unknown as { fullPath: string; value: string };
@@ -236,6 +236,45 @@ export function parametersOf(lambda: Lambda): Parameter[] {
  * The lambda as form state. `context` supplies mapping and runtime when the lambda carries no
  * `->from()` (a saved query keeps them in its execution context).
  */
+/** `let name = value;`: a simple constant when the form can edit its value, else a calculated one. */
+function constantOf(n: Node): Constant {
+  if (!isFunc(n) || funcName(n) !== 'letFunction') return fail(`a statement other than let, ahead of the query`);
+  const [left, right] = n.parameters as Node[];
+  if (n.parameters.length !== 2 || left?._type !== 'string' || !right) return fail('a let of other than a name and a value');
+  const name = (left as unknown as { value: string }).value;
+  try {
+    const value = valueOf(right);
+    const type = valueType(value);
+    if (type !== undefined) return { name, type, value };
+  } catch (e) {
+    if (!(e instanceof Unsupported)) throw e;
+  }
+  return { name, calculated: right };
+}
+
+/** A simple value's type; undefined when it has none of its own (a variable, an empty or mixed list). */
+function valueType(v: Value): string | undefined {
+  switch (v.kind) {
+    case 'string': return 'String';
+    case 'boolean': return 'Boolean';
+    case 'integer': return 'Integer';
+    case 'float': return 'Float';
+    case 'decimal': return 'Decimal';
+    case 'strictDate': return 'StrictDate';
+    case 'dateTime': return 'DateTime';
+    case 'enum': return v.enumeration;
+    case 'dateFunction': {
+      const d = v.function;
+      return d.kind === 'now' || (d.kind === 'adjust' && d.from === 'now') ? 'DateTime' : 'StrictDate';
+    }
+    case 'list': {
+      const types = new Set(v.values.map(valueType));
+      return types.size === 1 ? [...types][0] : undefined;
+    }
+    case 'variable': return undefined;
+  }
+}
+
 export function loadLambda(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; runtime: string; dataSpace?: ClassSource['dataSpace'] }): Loaded {
   try {
     return { ok: true, query: load(graph, lambda, context) };
@@ -246,15 +285,17 @@ export function loadLambda(graph: ModelGraph, lambda: Lambda, context?: { mappin
 }
 
 function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; runtime: string; dataSpace?: ClassSource['dataSpace'] }): QueryState {
-  if (lambda.body.length !== 1) fail('a query of several statements (let)');
+  if (lambda.body.length === 0) fail('an empty query');
   const parameters: Parameter[] = lambda.parameters.map((p) => {
     const raw = p.genericType?.rawType;
     if (!raw || raw._type !== 'packageableType' || !p.multiplicity) return fail(`the parameter ${p.name} has no simple type`);
     return { name: p.name, type: raw.fullPath, multiplicity: p.multiplicity };
   });
+  // every statement but the last is a constant, `let name = value;` (upstream's constants panel)
+  const constants = (lambda.body.slice(0, -1) as Node[]).map(constantOf);
 
   // walk the chain from the outside in: from, slice, limit, sort, distinct, groupBy, project, filter, getAll
-  let n = lambda.body[0] as Node;
+  let n = lambda.body[lambda.body.length - 1] as Node;
   let mapping = context?.mapping;
   let runtime = context?.runtime;
   if (isFunc(n, 'from') || (isFunc(n) && funcName(n) === 'from')) {
@@ -390,6 +431,7 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
   };
   return {
     source, columns, parameters,
+    ...(constants.length > 0 ? { constants } : {}),
     ...(filter ? { filter } : {}),
     ...(windows.length > 0 ? { windows } : {}),
     ...(postFilter ? { postFilter } : {}),

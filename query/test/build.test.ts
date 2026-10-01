@@ -43,17 +43,15 @@ describe('build', () => {
       filter: {
         kind: 'group', id: 'g', op: 'and', children: [
           { kind: 'condition', id: 'c1', path: [{ property: 'side' }], operator: 'equal', value: { kind: 'enum', enumeration: 'demo::trading::Side', value: 'BUY' } },
-          { kind: 'condition', id: 'c2', path: [{ property: 'quantity' }], operator: 'greaterThan', value: { kind: 'parameter', name: 'minQty' } },
+          { kind: 'condition', id: 'c2', path: [{ property: 'quantity' }], operator: 'greaterThan', value: { kind: 'variable', name: 'minQty' } },
           { kind: 'condition', id: 'c3', path: [{ property: 'trader' }, { property: 'trades' }, { property: 'status' }], operator: 'in', value: { kind: 'list', values: [{ kind: 'string', value: 'EXECUTED' }, { kind: 'string', value: 'SETTLED' }] } },
         ],
       },
     });
     assert.equal(await text(q, true),
       "minQty: Integer[1]|demo::trading::Trade.all()->filter(x|(($x.side == demo::trading::Side.BUY) && ($x.quantity > $minQty)) && $x.trader.trades->exists(x_1|$x_1.status->in(['EXECUTED', 'SETTLED'])))->project(~[id:x|$x.tradeId])->from(demo::trading::TradingMapping, demo::trading::Runtime)");
-    // typed without its parameter: legend-lite types a PARAMETERIZED lambda as the lambda itself
-    // (a function type) where legend-engine types its result -- recorded in docs/IN_FLIGHT.md for
-    // the compiler's owners; the query app does not depend on it
-    assert.deepEqual(await columns({ source: q.source, columns: q.columns, parameters: [], options: q.options }), ['id:Integer']);
+    // a parameterized lambda types as its body, as legend-engine types it
+    assert.deepEqual(await columns(q), ['id:Integer']);
   });
 
   it('groups by the columns with no aggregate, then distinct, sort, limit and slice', async () => {
@@ -64,6 +62,24 @@ describe('build', () => {
     assert.equal(await text(q),
       '|demo::trading::Trade.all()->project(~[ticker:x|$x.product.ticker, qty:x|$x.quantity])->groupBy(~[ticker], ~[qty:x|$x.qty:y|$y->sum()])->distinct()->sort([~qty->descending()])->limit(10)->slice(0, 5)');
     assert.deepEqual(await columns(q), ['ticker:String', 'qty:Integer']);
+  });
+
+  it('writes constants as lets ahead of the query, used as variables', async () => {
+    const q = trades({
+      columns: [col('id', 'tradeId'), { id: 'big', name: 'big', path: [], derivation: await grammar.lambdaJson('x|$x.quantity > $threshold') }],
+      constants: [
+        { name: 'threshold', type: 'Integer', value: { kind: 'integer', value: '1000000' } },
+        { name: 'side', type: 'demo::trading::Side', value: { kind: 'enum', enumeration: 'demo::trading::Side', value: 'BUY' } },
+        { name: 'cutoff', calculated: (await grammar.lambdaJson('|adjust(today(), -1, DurationUnit.YEARS)')).body[0]! },
+      ],
+      filter: { kind: 'group', id: 'g', op: 'and', children: [
+        { kind: 'condition', id: 'c1', path: [{ property: 'side' }], operator: 'equal', value: { kind: 'variable', name: 'side' } },
+        { kind: 'condition', id: 'c2', path: [{ property: 'tradeDate' }], operator: 'greaterThan', value: { kind: 'variable', name: 'cutoff' } },
+      ] },
+    });
+    assert.equal(await text(q),
+      "{|\nlet threshold = 1000000;\nlet side = demo::trading::Side.BUY;\nlet cutoff = today()->adjust(-1, DurationUnit.YEARS);\ndemo::trading::Trade.all()->filter(x|($x.side == $side) && ($x.tradeDate > $cutoff))->project(~[id:x|$x.tradeId, big:x|$x.quantity > $threshold]);\n}");
+    assert.deepEqual(await columns(q), ['id:Integer', 'big:Boolean']);
   });
 
   it("writes percentile and wavg as upstream's query builder does, the weight consumed", async () => {

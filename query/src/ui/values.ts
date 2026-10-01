@@ -3,7 +3,7 @@
 // first day of this month...), lists (Enter or comma adds, pasted CSV splits), or a parameter.
 
 import { isNumericFamily, primitiveFamily, simpleName, standardPrimitive, type ModelGraph } from '../model/graph.ts';
-import type { DateFunction, Parameter, Value } from '../builder/state.ts';
+import type { DateFunction, QueryVariable, Value } from '../builder/state.ts';
 import { h, mount, showMenu, type Child } from './dom.ts';
 
 /** A value's short text, as a chip shows it. */
@@ -18,7 +18,7 @@ export function valueLabel(v: Value | undefined): string {
     case 'enum': return v.value;
     case 'dateFunction': return dateFunctionLabel(v.function);
     case 'list': return v.values.map(valueLabel).join(', ');
-    case 'parameter': return `$${v.name}`;
+    case 'variable': return `$${v.name}`;
   }
 }
 
@@ -73,8 +73,8 @@ export interface ValueEditorOptions {
   readonly type: string;
   readonly many: boolean;
   readonly value: Value | undefined;
-  /** Parameters whose type fits, offered as values. */
-  readonly parameters: readonly Parameter[];
+  /** Parameters and constants; those whose type fits are offered as values. */
+  readonly variables: readonly QueryVariable[];
   readonly onChange: (v: Value) => void;
   /** Values that start with what was typed (a string property's typeahead); none when absent. */
   readonly suggest?: (prefix: string) => Promise<string[]>;
@@ -115,21 +115,21 @@ export function valueEditor(o: ValueEditorOptions): HTMLElement {
 
 function editorParts(o: ValueEditorOptions): Child[] {
   const v = o.value;
-  const fitting = o.parameters.filter((p) => p.type === o.type || standardPrimitive(p.type) === standardPrimitive(o.type));
+  const fitting = o.variables.filter((p) => p.type === undefined || p.type === o.type || standardPrimitive(p.type) === standardPrimitive(o.type));
   const family = o.graph.enumerations.has(o.type) ? 'enum' : primitiveFamily(o.type);
   const extras = (): void => {
     const b = extrasButton.getBoundingClientRect();
     const items = [
-      ...fitting.map((p) => ({ label: `Use parameter $${p.name}`, action: () => o.onChange({ kind: 'parameter', name: p.name }) })),
+      ...fitting.map((p) => ({ label: `Use ${p.kind} $${p.name}`, action: () => o.onChange({ kind: 'variable', name: p.name }) })),
       ...(family === 'date' && !o.many ? DATE_CHOICES.map((d) => ({ label: dateFunctionLabel(d), action: () => o.onChange({ kind: 'dateFunction', function: d }) })) : []),
-      ...(v?.kind === 'parameter' || v?.kind === 'dateFunction' ? [{ label: 'Enter a value', action: () => o.onChange(defaultLiteral(o)) }] : []),
+      ...(v?.kind === 'variable' || v?.kind === 'dateFunction' ? [{ label: 'Enter a value', action: () => o.onChange(defaultLiteral(o)) }] : []),
     ];
     if (items.length > 0) showMenu(b.left, b.bottom + 4, items);
   };
   const extrasButton = h('button', { class: 'q-icon-btn', title: 'Parameters and relative values', onclick: extras }, '⋯');
-  const showExtras = fitting.length > 0 || family === 'date' || v?.kind === 'parameter';
+  const showExtras = fitting.length > 0 || family === 'date' || v?.kind === 'variable';
 
-  if (v?.kind === 'parameter') return [h('span', { class: 'q-chip accent' }, `$${v.name}`), extrasButton];
+  if (v?.kind === 'variable') return [h('span', { class: 'q-chip accent' }, `$${v.name}`), extrasButton];
   if (v?.kind === 'dateFunction') {
     return [h('span', { class: 'q-chip accent' }, dateFunctionLabel(v.function)), customDate(v.function, o), extrasButton];
   }

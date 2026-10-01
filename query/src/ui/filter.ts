@@ -4,7 +4,7 @@
 
 import { addCondition, mapGroup, mapNode, newCondition, propertyAt, prune } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
-import { freshId, type Condition, type FilterNode, type Group, type Operator, type PropertyPath, type QueryState } from '../builder/state.ts';
+import { freshId, queryVariables, type Condition, type FilterNode, type Group, type Operator, type PropertyPath, type QueryState } from '../builder/state.ts';
 import { probeable } from '../app/probe.ts';
 import type { AppContext } from '../app/context.ts';
 import { renderPostFilter } from './advanced.ts';
@@ -85,7 +85,7 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
           const wasList = cur.value?.kind === 'list';
           let value = cur.value;
           if (op === 'isEmpty' || op === 'isNotEmpty') value = undefined;
-          else if (list && !wasList) value = { kind: 'list', values: cur.value && cur.value.kind !== 'parameter' && cur.value.kind !== 'dateFunction' ? [cur.value] : [] };
+          else if (list && !wasList) value = { kind: 'list', values: cur.value && cur.value.kind !== 'variable' && cur.value.kind !== 'dateFunction' ? [cur.value] : [] };
           else if (!list && cur.value?.kind === 'list') value = cur.value.values[0] ?? defaultValue(graph, type, false);
           else if (value === undefined) value = defaultValue(graph, type, false);
           const { value: _v, ...rest } = cur;
@@ -101,7 +101,7 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
       h('span', { class: 'q-cond__op' }, opSelect),
       many ? h('span', { class: 'q-chip', title: 'A to-many property: the condition holds when any value matches' }, 'any') : null,
       needsValue ? valueEditor({
-        graph, type, many: c.operator === 'in' || c.operator === 'notIn', value: c.value, parameters: q.parameters,
+        graph, type, many: c.operator === 'in' || c.operator === 'notIn', value: c.value, variables: queryVariables(q),
         onChange: (v) => setRoot((g) => mapNode(g, c.id, (n) => ({ ...(n as Condition), value: v }))),
         ...(suggestions && probeable(session, c.path) ? { suggest: (prefix: string) => suggestions(c.path, prefix) } : {}),
       }) : null,

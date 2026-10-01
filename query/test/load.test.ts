@@ -49,7 +49,7 @@ describe('load', () => {
           { kind: 'condition', id: 'a', path: [{ property: 'side' }], operator: 'notEqual', value: { kind: 'enum', enumeration: 'demo::trading::Side', value: 'SELL' } },
           {
             kind: 'group', id: 'g2', op: 'and', children: [
-              { kind: 'condition', id: 'b', path: [{ property: 'quantity' }], operator: 'greaterThanEqual', value: { kind: 'parameter', name: 'minQty' } },
+              { kind: 'condition', id: 'b', path: [{ property: 'quantity' }], operator: 'greaterThanEqual', value: { kind: 'variable', name: 'minQty' } },
               { kind: 'condition', id: 'c', path: [{ property: 'trader' }, { property: 'trades' }, { property: 'status' }], operator: 'notIn', value: { kind: 'list', values: [{ kind: 'string', value: 'REJECTED' }] } },
               { kind: 'condition', id: 'd', path: [{ property: 'tradeDate' }], operator: 'lessThan', value: { kind: 'dateFunction', function: { kind: 'adjust', from: 'today', amount: -7, unit: 'DAYS' } } },
               { kind: 'condition', id: 'e', path: [{ property: 'trader' }, { property: 'title' }], operator: 'isNotEmpty' },
@@ -98,6 +98,24 @@ describe('load', () => {
     });
   });
 
+  it('reads back constants: simple ones as values, any other expression as calculated', async () => {
+    await roundTrip({
+      ...emptyQuery(SOURCE),
+      columns: [col('id', 'tradeId')],
+      parameters: [{ name: 'min', type: 'Integer', multiplicity: { lowerBound: 1, upperBound: 1 } }],
+      constants: [
+        { name: 'tickers', type: 'String', value: { kind: 'list', values: [{ kind: 'string', value: 'AAPL' }, { kind: 'string', value: 'MSFT' }] } },
+        { name: 'from', type: 'StrictDate', value: { kind: 'dateFunction', function: { kind: 'adjust', from: 'today', amount: -10, unit: 'YEARS' } } },
+        { name: 'twice', calculated: (await grammar.lambdaJson('|$min * 2')).body[0]! },
+      ],
+      filter: { kind: 'group', id: '', op: 'and', children: [
+        { kind: 'condition', id: '', path: [{ property: 'product' }, { property: 'ticker' }], operator: 'in', value: { kind: 'variable', name: 'tickers' } },
+        { kind: 'condition', id: '', path: [{ property: 'tradeDate' }], operator: 'greaterThan', value: { kind: 'variable', name: 'from' } },
+        { kind: 'condition', id: '', path: [{ property: 'quantity' }], operator: 'greaterThan', value: { kind: 'variable', name: 'twice' } },
+      ] },
+    });
+  });
+
   it('reads back percentile settings and a weighted average with its weight', async () => {
     await roundTrip({
       ...emptyQuery(SOURCE),
@@ -137,7 +155,7 @@ describe('load', () => {
   it('keeps what it cannot show as text, saying why', async () => {
     for (const [text, why] of [
       ['|demo::trading::Trade.all()->project([x|$x.tradeId], [\'id\'])', /project\(~\[/],
-      ['{|let a = 1; demo::trading::Trade.all()->project(~[id:x|$x.tradeId]);}', /several statements/],
+      ['{|1; demo::trading::Trade.all()->project(~[id:x|$x.tradeId]);}', /a statement other than let/],
       ['|demo::trading::Trade.all()->project(~[id:x|$x.tradeId])->extend(~b:x|$x.id + 1)', /extend\(\)/],
     ] as const) {
       const r = loadLambda(graph, await grammar.lambdaJson(text), { mapping: 'm', runtime: 'r' });

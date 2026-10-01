@@ -2,7 +2,7 @@
 // options. build.ts turns it into the lambda (protocol JSON, never text -- design D5); load.ts
 // reads a lambda back into it, or says why it cannot (the query then stays in text mode).
 
-import type { Lambda, Multiplicity } from '../../../pure-protocol/src/index.ts';
+import type { Lambda, Multiplicity, ValueSpecification } from '../../../pure-protocol/src/index.ts';
 
 /** Where rows come from: a class, through a mapping, on a runtime -- optionally chosen via a data space. */
 export interface ClassSource {
@@ -93,7 +93,8 @@ export type Value =
   | { readonly kind: 'enum'; readonly enumeration: string; readonly value: string }
   | { readonly kind: 'dateFunction'; readonly function: DateFunction }
   | { readonly kind: 'list'; readonly values: readonly Value[] }
-  | { readonly kind: 'parameter'; readonly name: string };
+  /** `$name`: a parameter or a constant (upstream's VariableExpression either way). */
+  | { readonly kind: 'variable'; readonly name: string };
 
 /** The relative dates upstream's date picker offers (census §5.4). */
 export type DateFunction =
@@ -134,6 +135,29 @@ export interface Parameter {
   readonly multiplicity: Multiplicity;
 }
 
+/**
+ * A constant (upstream's constants panel): `let name = value;` ahead of the query, used as `$name`.
+ * A simple one is a typed value the form edits; a calculated one is any Pure expression, kept as
+ * its protocol (edited as text, typed by the compiler when the query runs).
+ */
+export type Constant =
+  | { readonly name: string; readonly type: ParameterType; readonly value: Value }
+  | { readonly name: string; readonly calculated: ValueSpecification };
+
+/** A name a value may use as `$name`: a parameter, or a constant (a calculated one's type is the compiler's). */
+export interface QueryVariable {
+  readonly name: string;
+  readonly kind: 'parameter' | 'constant';
+  readonly type?: ParameterType;
+}
+
+export function queryVariables(q: QueryState): QueryVariable[] {
+  return [
+    ...q.parameters.map((p): QueryVariable => ({ name: p.name, kind: 'parameter', type: p.type })),
+    ...(q.constants ?? []).map((c): QueryVariable => ({ name: c.name, kind: 'constant', ...('type' in c ? { type: c.type } : {}) })),
+  ];
+}
+
 export interface SortSpec {
   readonly column: string;
   readonly direction: 'asc' | 'desc';
@@ -160,6 +184,7 @@ export interface QueryState {
   readonly postFilter?: Group;
   readonly graph?: GraphFetch;
   readonly parameters: readonly Parameter[];
+  readonly constants?: readonly Constant[];
   readonly options: ResultOptions;
 }
 

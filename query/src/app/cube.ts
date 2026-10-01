@@ -7,7 +7,7 @@
 // A query that is not one relation -- a graph fetch's objects -- is not a cube source; the
 // results panel shows those as JSON.
 
-import { findAll, functionsCalled, isLambda, transform, type Lambda, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
+import { findAll, functionsCalled, isFunction, isLambda, transform, type Lambda, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 import { CubeApp, type CubeAppOptions } from '../../../datacube/src/app.ts';
 import type { CubeView } from '../../../datacube/src/cube.ts';
 import { LegendEngineExecutor } from '../../../datacube/src/engine-remote.ts';
@@ -22,16 +22,26 @@ import { executionLambda, parameterValues } from './run.ts';
 import type { Session } from './session.ts';
 
 /**
- * The relation a cube reads: the query's one expression, each parameter replaced by its value (a
- * cube's source takes no parameters). Undefined when the query is not one expression (it has
- * `let`s) or an inner lambda reuses a parameter's name -- such a query is not rewritten here.
+ * The relation a cube reads: the query's last expression with each parameter replaced by its value
+ * and each constant (`let name = value;` ahead of it) by its value, in order -- a cube's source
+ * is one expression. Undefined when a statement ahead is not a `let`, or an inner lambda reuses a
+ * parameter's or constant's name -- such a query is not rewritten here.
  */
 export function cubeSource(l: Lambda, values: readonly ParameterValue[]): ValueSpecification | undefined {
-  if (l.body.length !== 1) return undefined;
-  const names = new Set(l.parameters.map((p) => p.name));
-  if (findAll(l.body[0]!, isLambda).some((inner) => inner.parameters.some((p) => names.has(p.name)))) return undefined;
+  const lets = l.body.slice(0, -1).map(letBinding);
+  if (lets.some((b) => b === undefined)) return undefined;
+  const names = new Set([...l.parameters.map((p) => p.name), ...lets.map((b) => b!.name)]);
+  if (l.body.some((s) => findAll(s, isLambda).some((inner) => inner.parameters.some((p) => names.has(p.name))))) return undefined;
   const byName = new Map(values.map((v) => [v.name, v.value]));
-  return transform(l.body[0]!, (n) => (n._type === 'var' && byName.has(n.name) ? byName.get(n.name)! : n));
+  const bind = (s: ValueSpecification): ValueSpecification => transform(s, (n) => (n._type === 'var' && byName.has(n.name) ? byName.get(n.name)! : n));
+  for (const b of lets) byName.set(b!.name, bind(b!.value));
+  return bind(l.body[l.body.length - 1]!);
+}
+
+function letBinding(s: ValueSpecification): { name: string; value: ValueSpecification } | undefined {
+  if (!isFunction(s, 'letFunction') || s.parameters.length !== 2) return undefined;
+  const [left, value] = s.parameters;
+  return left?._type === 'string' && value ? { name: left.value, value } : undefined;
 }
 
 /** Functions whose answer is objects, not rows: such a query is not a cube source. */

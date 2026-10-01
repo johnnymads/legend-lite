@@ -3,14 +3,14 @@
 // and settable from the URL with `?p:name=value`). A parameter still in use cannot be deleted.
 
 import type { Session } from '../app/session.ts';
-import { referencedParameters } from '../builder/build.ts';
+import { referencedVariables } from '../builder/build.ts';
 import type { Parameter } from '../builder/state.ts';
 import type { Multiplicity } from '../../../pure-protocol/src/index.ts';
 import { simpleName } from '../model/graph.ts';
 import { dialog, h, mount, panelAction, panelHeader, type Child } from './dom.ts';
 import { valueEditor, valueLabel } from './values.ts';
 
-const PRIMITIVES = ['String', 'Integer', 'Float', 'Decimal', 'Boolean', 'StrictDate', 'DateTime'];
+export const PRIMITIVES = ['String', 'Integer', 'Float', 'Decimal', 'Boolean', 'StrictDate', 'DateTime'];
 const MULTIPLICITIES: readonly { label: string; m: Multiplicity }[] = [
   { label: '[1] exactly one', m: { lowerBound: 1, upperBound: 1 } },
   { label: '[0..1] optional', m: { lowerBound: 0, upperBound: 1 } },
@@ -21,7 +21,7 @@ const multLabel = (p: Parameter): string => (p.multiplicity.upperBound === undef
 
 export function renderParameters(container: HTMLElement, session: Session): void {
   const q = session.query;
-  const used = referencedParameters(q);
+  const used = referencedVariables(q);
   mount(container,
     panelHeader('parameters', [], [panelAction('plus', 'Add a parameter', () => parameterDialog(session))]),
     h('div', { class: 'q-panel__content', style: 'padding:6px 10px; display:flex; flex-direction:column; gap:6px' },
@@ -38,7 +38,7 @@ export function renderParameters(container: HTMLElement, session: Session): void
           }, '✕')),
         valueEditor({
           graph: session.project.graph, type: p.type, many: p.multiplicity.upperBound === undefined,
-          value: session.paramValues.get(p.name), parameters: [],
+          value: session.paramValues.get(p.name), variables: [],
           onChange: (v) => { session.setParam(p.name, v); renderParameters(container, session); },
         })))));
 }

@@ -7,13 +7,13 @@
 // and for execution `->from(mapping, runtime)` is appended, as upstream does in typed mode.
 
 import {
-  and, collection, element, enumValue, fn, lambda, lit, not, or, parameter, property, type, variable,
-  type AppliedFunction, type ColSpec, type Lambda, type ValueSpecification,
+  and, collection, element, enumValue, findAll, fn, lambda, lit, not, or, parameter, property, type, variable,
+  type AppliedFunction, type ColSpec, type Lambda, type ValueSpecification, type Variable,
 } from '../../../pure-protocol/src/index.ts';
 import { agg, asc, colSpecs, derive, desc, from, over } from '../../../pure-protocol/src/index.ts';
 import { isToMany, type ModelGraph } from '../model/graph.ts';
 import type {
-  AggregateOp, Condition, DateFunction, FilterNode, GraphNode, Group, ProjectionColumn, PropertyPath, QueryState, Value, WindowColumn,
+  AggregateOp, Condition, Constant, DateFunction, FilterNode, GraphNode, Group, ProjectionColumn, PropertyPath, QueryState, Value, WindowColumn,
   WindowOp,
 } from './state.ts';
 
@@ -66,7 +66,7 @@ export function valueSpec(v: Value): ValueSpecification {
     case 'enum': return enumValue(v.enumeration, v.value);
     case 'dateFunction': return dateFunction(v.function);
     case 'list': return collection(v.values.map(valueSpec));
-    case 'parameter': return variable(v.name);
+    case 'variable': return variable(v.name);
   }
 }
 
@@ -261,7 +261,12 @@ export function buildLambda(graph: ModelGraph, q: QueryState, options: BuildOpti
     body = r.node;
   }
   if (options.withFrom) body = fn('from', body, element(q.source.mapping), element(q.source.runtime));
-  return lambda(q.parameters.map((p) => parameter(p.name, type(p.type), p.multiplicity)), body);
+  return lambda(q.parameters.map((p) => parameter(p.name, type(p.type), p.multiplicity)), ...(q.constants ?? []).map(letOf), body);
+}
+
+/** A constant as upstream writes it: `let name = value;`, ahead of the query. */
+function letOf(c: Constant): ValueSpecification {
+  return fn('letFunction', lit.string(c.name) as ValueSpecification, 'calculated' in c ? c.calculated : valueSpec(c.value));
 }
 
 /** A post-filter on the result's columns: each condition names a column as its one-step path, `$r.column`. */
@@ -275,14 +280,18 @@ function postFilterNode(n: FilterNode): ValueSpecification {
   return n.op === 'and' ? and(...terms) : or(...terms);
 }
 
-/** Every parameter a query references, by name. */
-export function referencedParameters(q: QueryState): Set<string> {
+/** Every variable (parameter or constant) a query references, by name -- constants' values included. */
+export function referencedVariables(q: QueryState): Set<string> {
   const out = new Set<string>();
   const visitValue = (v: Value | undefined): void => {
     if (v === undefined) return;
-    if (v.kind === 'parameter') out.add(v.name);
+    if (v.kind === 'variable') out.add(v.name);
     if (v.kind === 'list') v.values.forEach(visitValue);
   };
+  for (const c of q.constants ?? []) {
+    if ('calculated' in c) findAll(c.calculated, (n): n is Variable => n._type === 'var').forEach((v) => out.add(v.name));
+    else visitValue(c.value);
+  }
   const visit = (n: FilterNode): void => {
     if (n.kind === 'condition') {
       visitValue(n.value);

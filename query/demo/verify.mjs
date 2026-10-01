@@ -215,6 +215,40 @@ async function suite(title, query) {
     assert.equal((await gridRows(page)).length, 6);
   });
 
+  await step('a constant: made in its panel, used in a filter, saved, reopened, and run as a cube', async (page) => {
+    await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Trade')}`));
+    await page.waitForSelector('.q-node', { timeout: 60000 });
+    await page.dblclick(".q-node:has-text('Trade Id')");
+    await page.click('.q-header-pill:has-text("Advanced")');
+    await page.click(".q-menu button:has-text('Show Constants')");
+    await page.click('button[title="Add a constant"]');
+    await page.fill('.q-dialog input[aria-label="Constant name"]', 'minQty');
+    await page.selectOption('.q-dialog select[aria-label="Constant type"]', 'Integer');
+    await page.fill('.q-dialog input[aria-label=Value]', '1000000');
+    await page.press('.q-dialog input[aria-label=Value]', 'Tab');
+    await page.click('.q-dialog button.primary');
+    await page.waitForSelector('.q-constant:has-text("$minQty")');
+    await page.click(".q-node:has-text('Quantity')", { button: 'right' });
+    await page.click(".q-menu button:has-text('Add as filter condition')");
+    await page.selectOption('.q-cond select[aria-label=Operator]', 'greaterThan');
+    await page.click(".q-cond button[title='Parameters and relative values']");
+    await page.click(".q-menu button:has-text('Use constant $minQty')");
+    await run(page);
+    assert.equal((await gridRows(page)).length, 6);
+    await page.click('button[title="Save (Ctrl+S)"]');
+    await page.fill('.q-dialog input.q-input', 'Big trades');
+    await page.click('.q-dialog button.primary');
+    await page.waitForFunction(() => location.hash.startsWith('#/edit/'));
+    await page.reload();
+    await page.waitForSelector('.q-constant:has-text("$minQty")', { timeout: 60000 });
+    assert.match(await page.textContent('.q-cond'), /\$minQty/);
+    await run(page);
+    assert.equal((await gridRows(page)).length, 6);
+    await page.click('.q-results-bar button.q-mode:text-is("DataCube")');
+    await page.waitForFunction(() => document.querySelectorAll('.q-cube .dc-row').length === 6, undefined, { timeout: 30000 });
+    await page.click('.q-results-bar button.q-mode:text-is("Grid")');
+  });
+
   await step('a percentile and a weighted average agree with the rows they summarise', async (page) => {
     await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Trade')}`));
     await page.waitForSelector('.q-node', { timeout: 60000 });
