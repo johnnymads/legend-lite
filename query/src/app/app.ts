@@ -7,6 +7,7 @@ import { renderDataSpace } from '../ui/dataspace.ts';
 import { h, icon, menuButton, mount, confirmDialog } from '../ui/dom.ts';
 import { renderEditor, type EditorHandle } from '../ui/editor.ts';
 import { renderLanding } from '../ui/landing.ts';
+import { renderStart } from '../ui/start.ts';
 import { openQueryDialog } from '../ui/queries.ts';
 import { recent, type AppContext, type LoadedProject } from './context.ts';
 import { openQuery } from './persist.ts';
@@ -71,8 +72,7 @@ export class App {
     const dark = theme() === 'dark';
     mount(this.#header,
       menuButton(icon('menu'), () => [
-        // the setup page (phase D moves it to upstream's /setup)
-        { label: 'Back to query setup', action: () => { location.hash = '#/'; } },
+        { label: 'Back to query setup', action: () => { location.hash = '#/setup'; } },
         { label: 'Load a query', action: () => openQueryDialog(this.#ctx) },
       ], { class: 'q-appbar__menu', title: 'Menu', 'aria-label': 'Menu' }),
       h('div', { class: 'q-appbar__name', onclick: () => { location.hash = '#/'; } }, 'Legend Query'),
@@ -91,7 +91,9 @@ export class App {
   async #render(r: Route): Promise<void> {
     const app = this.#ctx;
     switch (r.kind) {
-      case 'home': renderLanding(this.#main, app); return;
+      // as upstream: / opens the query builder; the setup page (every way to start) is /setup
+      case 'home': renderStart(this.#main, app); return;
+      case 'setup': renderLanding(this.#main, app); return;
       case 'notFound': mount(this.#main, h('div', { class: 'q-landing' }, h('h1', null, 'Nothing here'), h('a', { href: '#/' }, 'Back to the start'))); return;
       case 'dataSpaceViewer': renderDataSpace(this.#main, app, app.project(r.gav), r.path); return;
       case 'dataSpace': {

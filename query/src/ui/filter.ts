@@ -9,7 +9,7 @@ import { probeable } from '../app/probe.ts';
 import type { AppContext } from '../app/context.ts';
 import { renderPostFilter } from './advanced.ts';
 import { humanize, isNumericFamily, isOptional, isToMany, primitiveFamily, type ModelGraph } from '../model/graph.ts';
-import { h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
+import { blankPlaceholder, h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
 import { propertyDropZone } from './columns.ts';
 import { defaultValue, valueEditor } from './values.ts';
 
@@ -143,7 +143,7 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
 
   const body = h('div', { class: 'q-drop' },
     root.children.length === 0
-      ? h('div', { class: 'q-hint' }, 'Drag properties here to filter rows.')
+      ? blankPlaceholder('Add a filter condition')
       : groupBlock(root, true));
   propertyDropZone(body, (path) => update((s) => (s.filter
     ? { ...s, filter: mapGroup(s.filter, s.filter.id, (g) => ({ ...g, children: [...g.children, newCondition(graph, s.source.class, path)] })) }

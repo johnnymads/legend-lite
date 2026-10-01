@@ -6,7 +6,7 @@ import { addColumn, PROPERTY_DRAG, propertyAt } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
 import type { AggregateOp, GraphNode, ProjectionColumn, PropertyPath, QueryState, SortSpec } from '../builder/state.ts';
 import { isNumericFamily, primitiveFamily, simpleName } from '../model/graph.ts';
-import { dialog, h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
+import { blankPlaceholder, dialog, h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
 import type { AppContext } from '../app/context.ts';
 import { addToTree, calculatedDialog, renderGraph, renderWindows, windowDialog } from './advanced.ts';
 
@@ -144,7 +144,7 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
 
   const body = h('div', { class: 'q-drop' },
     q.columns.length === 0
-      ? h('div', { class: 'q-hint' }, 'Drag properties here, or double-click them in the explorer.')
+      ? blankPlaceholder('Add a projection column', 'Drag and drop properties here, or double-click them in the explorer')
       : q.columns.map(row),
     renderWindows(app, session));
   propertyDropZone(body, (path) => update((s) => addColumn(s, path, humanized())));

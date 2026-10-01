@@ -28,9 +28,14 @@ last and deferred.
   is the query the form built; its own operations are Pure on top, planned by the same worker). DataCube opens
   with its controls hidden (its own mode; "Show Controls" is its right-click menu's last entry) and follows
   Query's light/dark (DataCube's dark theme, opt-in by the page).
-- **Proof:** `bazel run //query:verify` -- 8 steps in the browser plane and on the server, in CI's browser lane;
+- **Proof:** `bazel run //query:verify` -- its steps in the browser plane and on the server, in CI's browser lane;
   `//query:tests`, `//query:typecheck_test`; core's `PureV1ApiTest`, `SavedQueriesTest`, `ProtocolReaderTest`.
-- **Next:** upstream's look, feel and layout; then the gaps below (constants, milestoning, percentile/wavg,
+- **Upstream's look, feel and layout** (2026-10-01, after v1): legend-art's tokens (default-dark,
+  legacy-light behind the switch), Roboto/Roboto Mono/Raleway, the same icons (react-icons 5.5.0
+  paths, `query/tools/icons.mjs`), the app bar and builder header, the resizable four-panel
+  workspace with upstream's panel chrome, the explorer/fetch-structure/filter/results interiors,
+  `/` as the builder and `/setup` as the setup page. Measured from legend-studio 821c74c.
+- **Next:** the gaps below (constants, milestoning, percentile/wavg,
   relation-accessor sources, coverage, Depot) and the two compiler findings in `docs/IN_FLIGHT.md`.
 
 ---

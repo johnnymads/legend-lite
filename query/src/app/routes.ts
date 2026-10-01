@@ -3,6 +3,7 @@
 
 export type Route =
   | { readonly kind: 'home' }
+  | { readonly kind: 'setup' }
   | { readonly kind: 'dataSpaceViewer'; readonly gav: string; readonly path: string }
   | { readonly kind: 'dataSpace'; readonly gav: string; readonly path: string; readonly context?: string; readonly runtime?: string; readonly class?: string }
   | { readonly kind: 'dataSpaceTemplate'; readonly gav: string; readonly path: string; readonly template: string }
@@ -16,6 +17,7 @@ const enc = encodeURIComponent;
 export function formatRoute(r: Route): string {
   switch (r.kind) {
     case 'home': return '#/';
+    case 'setup': return '#/setup';
     case 'dataSpaceViewer': return `#/dataspace/${enc(r.gav)}/${enc(r.path)}`;
     case 'dataSpace': {
       const q = new URLSearchParams();
@@ -45,6 +47,7 @@ export function parseRoute(hash: string): Route {
     return v === null ? {} : { [k]: v };
   };
   if (seg.length === 0) return { kind: 'home' };
+  if (seg.length === 1 && seg[0] === 'setup') return { kind: 'setup' };
   if (seg[0] === 'dataspace' && seg.length === 3) return { kind: 'dataSpaceViewer', gav: seg[1]!, path: seg[2]! };
   if (seg[0] === 'extensions' && seg[1] === 'dataspace' && seg.length === 6 && seg[4] === 'template') {
     return { kind: 'dataSpaceTemplate', gav: seg[2]!, path: seg[3]!, template: seg[5]! };

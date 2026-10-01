@@ -74,9 +74,9 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
     const rows: Child[] = [];
     if (src.dataSpace) {
       const ds = graph.dataSpaces.get(src.dataSpace.path);
-      rows.push(h('div', { class: 'q-field' }, h('label', null, 'Data space'),
+      rows.push(h('div', { class: 'q-field' }, h('label', null, 'Data Space'),
         h('a', { href: formatRoute({ kind: 'dataSpaceViewer', gav: session.project.gav, path: src.dataSpace.path }), title: src.dataSpace.path }, ds?.title ?? simpleName(src.dataSpace.path))));
-      if (ds && ds.executionContexts.length > 1) {
+      if (ds) {
         rows.push(h('div', { class: 'q-field' }, h('label', null, 'Context'),
           select(src.dataSpace.context, ds.executionContexts.map((c) => ({ value: c.name, label: c.title ?? c.name })), (v) => {
             const ec = ds.executionContexts.find((c) => c.name === v)!;
@@ -85,14 +85,14 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
       }
     }
     const classes = offeredClasses(session);
-    rows.push(h('div', { class: 'q-field' }, h('label', null, 'Class'),
+    rows.push(h('div', { class: 'q-field' }, h('label', null, 'Entity'),
       select(src.class, (classes.includes(src.class) ? classes : [src.class, ...classes]).map((c) => ({ value: c, label: simpleName(c) })), (cls) => {
         if (src.dataSpace) { void changeSource({ ...src, class: cls }); return; }
         const mappings = graph.mappingsFor(cls);
         const mapping = mappings.includes(src.mapping) ? src.mapping : mappings[0]!;
         const runtimes = graph.runtimesFor(mapping);
         void changeSource({ kind: 'class', class: cls, mapping, runtime: runtimes.includes(src.runtime) ? src.runtime : runtimes[0]! });
-      }, { 'aria-label': 'Class' })));
+      }, { 'aria-label': 'Entity' })));
     if (!src.dataSpace) {
       rows.push(h('div', { class: 'q-field' }, h('label', null, 'Mapping'),
         select(src.mapping, graph.mappingsFor(src.class).map((m) => ({ value: m, label: simpleName(m) })), (mapping) => {

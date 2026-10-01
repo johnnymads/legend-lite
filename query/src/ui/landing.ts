@@ -34,7 +34,7 @@ export function renderLanding(root: HTMLElement, app: AppContext): void {
   };
 
   mount(root, h('div', { class: 'q-landing' },
-    h('h1', null, 'What do you want to query?'),
+    h('h1', null, 'What do you want to do today'),
     h('div', { class: 'q-muted' }, `${app.projects.length} project${app.projects.length === 1 ? '' : 's'} · signed in as ${app.user}`),
     search,
     results));

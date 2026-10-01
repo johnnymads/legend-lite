@@ -118,8 +118,17 @@ async function suite(title, query) {
     }
   };
 
-  await step('the landing page lists the data space, classes and services', async (page) => {
+  await step('/ opens the query builder: a data space chosen, the editor opens on it', async (page) => {
     await page.goto(app());
+    await page.waitForSelector('.q-builder select[aria-label="Data Space"]', { timeout: 60000 });
+    assert.match(await page.textContent('.q-builder'), /Specify the class, mapping, and runtime/);
+    await page.selectOption('select[aria-label="Data Space"]', { label: 'Trading' });
+    await page.waitForSelector('.q-node', { timeout: 60000 });
+    assert.equal(await page.inputValue('select[aria-label="Entity"]').then(Boolean), true);
+  });
+
+  await step('the setup page lists the data space, classes and services', async (page) => {
+    await page.goto(app('#/setup'));
     await page.waitForSelector('.q-card', { timeout: 60000 });
     assert.match(await page.textContent('.q-landing'), /Trading[\s\S]*Firm[\s\S]*Trade[\s\S]*ExecutedEquityTrades/);
   });
@@ -170,7 +179,7 @@ async function suite(title, query) {
     await page.click(".q-menu button:has-text('History and versions')");
     await page.waitForSelector('.q-dialog :text("Compare")');
     assert.match(await page.textContent('.q-dialog pre'), /- .*'Trade Id'[\s\S]*\+ .*Id:/);
-    await page.goto(app());
+    await page.goto(app("#/setup"));
     await page.waitForSelector('.q-list-row:has-text("Sells")', { timeout: 60000 });
   });
 

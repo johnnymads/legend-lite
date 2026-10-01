@@ -78,7 +78,7 @@ design doc's v1 status. A cross-area edit from here on is announced here first, 
 
 In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new). **Touches, one line each:**
 - `.github/workflows/gates-run.yml` (2026-10-01): the browser lane runs every `browser-ci` target in `//query` as
-  well as `//datacube` -- `//query:verify` (the 8 end-to-end steps, both planes), its server on Bazel's JDK.
+  well as `//datacube` -- `//query:verify` (the end-to-end steps, both planes), its server on Bazel's JDK.
 - `core/src/main/java/com/legend/server/PureV1Api.java` + `LegendHttpServer.java` routes (+ `PureV1ApiTest`):
   the upstream `pure/v1` endpoints the Query app needs and lite lacks, each in legend-engine's shape, measured
   against 4.145.0 -- `execute` with `parameterValues`, `compilation/compile`, `compilation/lambdaReturnType`,

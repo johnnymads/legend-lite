@@ -255,3 +255,13 @@ export function panelHeader(title: string, lead: readonly Child[] = [], actions:
 export function panelAction(name: IconName, title: string, onclick: () => void, disabled = false): HTMLElement {
   return h('button', { class: 'q-panel__action', type: 'button', title, 'aria-label': title, disabled, onclick }, icon(name));
 }
+
+/**
+ * An empty panel's placeholder, as upstream's (legend-art BlankPanelPlaceholder): what to do, in
+ * bold, over a dashed drop box with the "drop here" icon.
+ */
+export function blankPlaceholder(text: string, tooltip = 'Drag and drop properties here'): HTMLElement {
+  return h('div', { class: 'q-blank', title: tooltip },
+    h('div', { class: 'q-blank__text' }, text),
+    h('div', { class: 'q-blank__box' }, icon('dropHere')));
+}

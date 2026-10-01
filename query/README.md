@@ -20,6 +20,11 @@ Where queries run is the page's config (`?config=<file>`, default `config.json`)
 | `config-warehouse.json` | the warehouse's DuckDB, as the user you sign in as (DataCube's Live plane) | this browser |
 | `config-server.json` | **legend-lite's server** (`bazel run //core:server -- 8090 --query-store DIR`): it plans and executes | the server's store |
 
+It looks and lays out as upstream Legend Query does (legend-studio's tokens, type, icons and
+panels; dark by default, its legacy-light behind the sun/moon switch): `/` opens the query builder
+-- pick a data space, a context, an entity -- and `/setup` holds every other way to start (a
+mapping's classes, a service, a saved query).
+
 The demo model is `demo/models/trading.pure` (classes, enumerations, a mapping, a service, a data
 space) with a runtime per plane (`runtime-duckdb.pure`, `runtime-h2.pure`).
 
@@ -34,7 +39,7 @@ right-click the grid, **Show Controls**. An Objects (graph fetch) query shows JS
 
 ```sh
 bazel test //query:tests //query:typecheck_test   # builder round-trips, loader, types
-bazel run //query:verify                          # end to end, in Chromium: 8 steps, in the browser AND on the server
+bazel run //query:verify                          # end to end, in Chromium: every step in the browser AND on the server
 ```
 
 `verify` needs Playwright's Chromium once (`bazel run //datacube:install_browser`); it starts
