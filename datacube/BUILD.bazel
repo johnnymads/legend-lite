@@ -47,6 +47,13 @@ js_library(
     ],
 )
 
+# the cube's stylesheets, for the Query app, which shows its results in a CubeApp
+filegroup(
+    name = "styles",
+    srcs = glob(["src/**/*.css"]),
+    visibility = ["//query:__pkg__"],
+)
+
 _TESTS = glob(["test/*.test.ts"])
 
 # What a test reads from disk beyond src/: the guardrails scan the demo

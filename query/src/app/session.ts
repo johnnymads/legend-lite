@@ -18,6 +18,8 @@ export type RunState =
   | { readonly status: 'idle' }
   | { readonly status: 'running'; readonly started: number; readonly abort: AbortController }
   | { readonly status: 'done'; readonly result: ExecutionResult; readonly ms: number; readonly limit: number | undefined; readonly queryHash: string }
+  /** The results are a DataCube over the query (`app/cube.ts`); it runs its own queries. */
+  | { readonly status: 'cube'; readonly queryHash: string }
   | { readonly status: 'error'; readonly message: string };
 
 export type Change = 'query' | 'run' | 'saved' | 'params';
@@ -130,7 +132,7 @@ export class Session {
 
   /** Is the shown result from an earlier version of the query? */
   get stale(): boolean {
-    return this.#run.status === 'done' && this.#run.queryHash !== this.hash();
+    return (this.#run.status === 'done' || this.#run.status === 'cube') && this.#run.queryHash !== this.hash();
   }
 }
 

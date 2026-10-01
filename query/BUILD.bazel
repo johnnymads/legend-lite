@@ -65,6 +65,14 @@ copy_to_directory(
     },
 )
 
+# DataCube's stylesheets, as ./cube/: the results grid is a CubeApp (theme.css, grid/grid.css, app.css).
+copy_to_directory(
+    name = "cube_styles",
+    srcs = ["//datacube:styles"],
+    out = "demo/cube",
+    root_paths = ["datacube/src"],
+)
+
 # Everything a browser fetches.
 filegroup(
     name = "site",
@@ -74,7 +82,7 @@ filegroup(
         "demo/models/*.pure",
         "demo/models/*.sql",
         "src/**/*.css",
-    ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [":vendor"],
+    ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [":vendor", ":cube_styles"],
 )
 
 # `bazel run //query:serve [-- --port 8100]`: the site, on loopback.

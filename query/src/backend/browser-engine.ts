@@ -30,7 +30,7 @@ export function bindParameters(lambda: Lambda, values: readonly ParameterValue[]
 }
 
 /** The runtime a query runs on: the last argument of its `->from(...)`. */
-function runtimeOf(lambda: Lambda): string {
+export function runtimeOf(lambda: Lambda): string {
   const from = findAll(lambda, isFunction).find((f) => f.function === 'from' || f.function.endsWith('::from'));
   const last = from?.parameters[from.parameters.length - 1];
   if (last?._type !== 'packageableElementPtr') throw new EngineError('the query names no runtime (->from(mapping, runtime))', 400);

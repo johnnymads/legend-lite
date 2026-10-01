@@ -74,15 +74,17 @@ const enc = encodeURIComponent;
 let browser;
 let failures = 0;
 
+/** Run, and wait for what it shows: the rows (a DataCube over the query), objects (JSON), or an error. */
 async function run(page) {
   await page.click('text=▶ Run');
-  await page.waitForSelector('.q-results-bar :text("rows in"), .q-error-box', { timeout: 20000 });
+  await page.waitForSelector('.q-cube .dc-row, .q-json, .q-error-box', { timeout: 30000 });
   const error = await page.$('.q-error-box');
   if (error) throw new Error(`the run failed: ${await error.textContent()}`);
 }
 
+/** The rows the results cube shows, each its cells' text. */
 async function gridRows(page) {
-  return page.$$eval('.q-grid tbody tr', (trs) => trs.map((tr) => [...tr.querySelectorAll('td')].map((td) => td.textContent)));
+  return page.$$eval('.q-cube .dc-row', (rows) => rows.map((r) => [...r.querySelectorAll('.dc-cell')].map((c) => c.textContent)));
 }
 
 /** Every step, on the page `query` configures (`''`: in the browser; `?config=...`: elsewhere). */

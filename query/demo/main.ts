@@ -12,7 +12,7 @@ import * as duckdb from '@duckdb/duckdb-wasm';
 import { DuckDbEngine, type ArrowishConnection } from '../../datacube/src/duckdb.ts';
 import type { QueryEngine } from '../../datacube/src/engine.ts';
 import { signIn, WarehouseEngine } from '../../datacube/src/warehouse.ts';
-import { AppContext, gavOf, type AppConfig, type LoadedProject } from '../src/app/context.ts';
+import { AppContext, gavOf, type AppConfig, type CubeRows, type LoadedProject } from '../src/app/context.ts';
 import { App } from '../src/app/app.ts';
 import { BrowserEngine } from '../src/backend/browser-engine.ts';
 import { HttpEngine, RoutedEngine, type Engine, type Grammar, type QueryStore } from '../src/backend/engine.ts';
@@ -85,10 +85,13 @@ async function boot(): Promise<void> {
   const isEnumeration = (t: string): boolean => projects.some((p) => p.graph.enumerations.has(t));
 
   let engine: Engine;
+  let cubeRows: CubeRows;
   let store: QueryStore;
   let user: string;
   if (exec.kind === 'server') {
     engine = planner ? new RoutedEngine(planner, http!) : http!;
+    // the server answers pure/v1 at its root; the config names its /api
+    cubeRows = { kind: 'server', baseUrl: exec.engine.replace(/\/api\/?$/, '') };
     store = http!;
     user = await http!.currentUser();
   } else {
@@ -109,9 +112,10 @@ async function boot(): Promise<void> {
       await seed(runner, exec.seed);
     }
     engine = new BrowserEngine(planner!, runner, isEnumeration, user);
+    cubeRows = { kind: 'sql', engine: runner };
     store = new LocalQueryStore(new BrowserRecords(), user);
   }
-  const ctx = new AppContext(config, engine, store, planner, projects, user);
+  const ctx = new AppContext(config, engine, store, planner, projects, user, cubeRows);
   // warm the planner on the first model while the person looks at the landing page
   if (planner && projects[0]) void planner.warm(projects[0].context).catch(() => undefined);
   new App(ctx, root).start();

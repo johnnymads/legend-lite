@@ -99,7 +99,10 @@ In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new
   `RootGraphFetchTree<T>`); lineage does not trace inside subtype views; `prop()` vs `prop` is not on the wire.
 - `wasm/src/main/java/planner/Wasm.java`: `modelJsonOrError` (E2's twin, byte-identical to the server's).
 - `datacube/BUILD.bazel`: ONE line, `visibility = ["//query:__pkg__"]` on `:src` (2026-09-30), so the Query app runs
-  its planned SQL on DataCube's engines (`engine.ts`, `duckdb.ts`, `warehouse.ts`). No other DataCube change.
+  its planned SQL on DataCube's engines (`engine.ts`, `duckdb.ts`, `warehouse.ts`). And (2026-10-01, user-approved) a
+  `styles` filegroup (`src/**/*.css`, visible to `//query`): Query's results grid is a `CubeApp` over the query, so
+  its page loads DataCube's stylesheets. No DataCube source changes; Query uses `CubeApp`, `Planner`,
+  `sourceColumns`, `RemoteRun`/`LegendEngineExecutor`, `relationColumns` as they are.
 - `MODULE.bazel`: a second `npm_translate_lock` (`npm_query`, `//query:pnpm-lock.yaml`), so `datacube/`'s lock
   is not touched.
 

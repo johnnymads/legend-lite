@@ -1,8 +1,11 @@
-// Results (census §7): run with a preview limit (an overflow says so), stop, see how long it took
-// and whether the query changed since; a grid that sorts by column, selects and copies cells,
-// and filters by (or out) a cell's value; the SQL; CSV export of every row. A graph fetch's
-// answer is shown as JSON.
+// Results (census §7): run, stop, see whether the query changed since; the SQL; CSV export of
+// every row. A relation's rows are a DataCube over the query (app/cube.ts) -- its grid, paging,
+// sorting, grouping, pivots and formats. A graph fetch's objects show as JSON, with a preview
+// limit (an overflow says so). A query the cube cannot take as its source (one with `let`s) runs
+// on the engine into a plain grid that sorts, copies, and filters by (or out) a cell's value.
 
+import type { CubeApp } from '../../../datacube/src/app.ts';
+import { openCube } from '../app/cube.ts';
 import { DEFAULT_PREVIEW, executeInput, executionLambda, run, sqlOf } from '../app/run.ts';
 import type { AppContext } from '../app/context.ts';
 import type { Session } from '../app/session.ts';
@@ -22,12 +25,22 @@ export class Results {
   #limit = DEFAULT_PREVIEW;
   #sort: { column: number; dir: 1 | -1 } | undefined;
   #selected: { row: number; col: number } | undefined;
+  /** The results as a DataCube (a relation's rows), in the element it draws into. */
+  #cube: { readonly app: CubeApp; readonly host: HTMLElement } | undefined;
+  /** Which run is the latest: an older cube still opening is dropped when it lands. */
+  #runs = 0;
+  /** The element a cube is opening into, shown while it types its source. */
+  #opening: HTMLElement | undefined;
 
   constructor(app: AppContext, session: Session) {
     this.#app = app;
     this.#session = session;
   }
 
+  /**
+   * Run the query. A relation opens as a DataCube over it, which runs (and re-runs) its own
+   * queries; anything else -- a graph fetch's objects -- runs on the engine and shows as JSON.
+   */
   run(): void {
     const missing = missingValues(this.#session);
     if (missing.length > 0) {
@@ -36,7 +49,43 @@ export class Results {
     }
     this.#sort = undefined;
     this.#selected = undefined;
-    void run(this.#app, this.#session, this.#limit);
+    this.#closeCube();
+    const mine = (this.#runs += 1);
+    const session = this.#session;
+    const abort = new AbortController();
+    const queryHash = session.hash();
+    // the cube measures its grid as it draws, so it opens in the page: render places the host
+    const host = h('div', { class: 'q-cube' });
+    this.#opening = host;
+    session.setRun({ status: 'running', started: performance.now(), abort });
+    openCube(this.#app, session, host, {
+      onView: () => undefined,
+      onStatus: () => undefined,
+    }).then((cube) => {
+      if (mine !== this.#runs) { cube?.dispose(); return; }
+      this.#opening = undefined;
+      if (!cube) { void run(this.#app, session, this.#limit); return; }
+      this.#cube = { app: cube, host };
+      session.setRun({ status: 'cube', queryHash });
+      // the first query: the cube runs (and re-runs) the rest itself
+      void cube.open();
+    }, (e: unknown) => {
+      if (mine !== this.#runs) return;
+      this.#opening = undefined;
+      session.setRun({ status: 'error', message: e instanceof Error ? e.message : String(e) });
+    });
+  }
+
+  /** Let go of the cube: its document listeners and any query in flight. */
+  dispose(): void {
+    this.#runs += 1;
+    this.#closeCube();
+  }
+
+  #closeCube(): void {
+    this.#cube?.app.dispose();
+    this.#cube = undefined;
+    this.#opening = undefined;
   }
 
   render(): void {
@@ -51,22 +100,34 @@ export class Results {
     else if (r.status === 'done') {
       const n = isTds(r.result) ? r.result.result.rows.length : jsonCount(r.result);
       const over = isTds(r.result) && r.limit !== undefined && n > r.limit;
-      status.push(h('span', null, `${plural(over ? r.limit! : n, 'row')} in ${r.ms} ms`));
+      status.push(h('span', null, `${plural(over ? r.limit! : n, isTds(r.result) ? 'row' : 'object')} in ${r.ms} ms`));
       if (over) status.push(h('span', { class: 'q-chip', style: 'color:var(--warn)' }, `showing the first ${r.limit} — more exist`));
-      if (this.#session.stale) status.push(h('span', { class: 'q-chip', style: 'color:var(--warn)' }, 'the query changed since — run again'));
     }
+    if (this.#session.stale) status.push(h('span', { class: 'q-chip', style: 'color:var(--warn)' }, 'the query changed since — run again'));
+    const stop = (): void => {
+      if (this.#opening) {
+        this.dispose();
+        this.#session.setRun({ status: 'error', message: 'Stopped.' });
+      } else if (r.status === 'running') r.abort.abort();
+    };
+    // a relation's rows are a DataCube, which pages them itself; the preview limit is for objects
+    const preview = this.#session.query.graph && !this.#session.text
+      ? [h('span', { class: 'q-faint' }, 'Preview'), limitInput, h('span', { class: 'q-faint' }, 'objects')]
+      : [];
     const bar = h('div', { class: 'q-results-bar' },
       running
-        ? h('button', { class: 'q-btn', onclick: () => { if (r.status === 'running') r.abort.abort(); } }, '■ Stop')
+        ? h('button', { class: 'q-btn', onclick: stop }, '■ Stop')
         : h('button', { class: 'q-btn primary', title: 'Run (Ctrl+Enter)', onclick: () => this.run() }, '▶ Run'),
-      h('span', { class: 'q-faint' }, 'Preview'), limitInput, h('span', { class: 'q-faint' }, 'rows'),
+      ...preview,
       h('span', { class: 'q-muted', style: 'display:inline-flex; gap:6px; align-items:center' }, status),
       h('span', { class: 'q-spacer' }),
       h('button', { class: 'q-btn small', onclick: () => void this.#showSql() }, 'SQL'),
       h('button', { class: 'q-btn small', onclick: () => void this.#exportCsv() }, 'Export CSV'));
     let body: Node;
     if (r.status === 'error') body = h('div', { style: 'padding:12px' }, h('div', { class: 'q-error-box' }, r.message));
+    else if (r.status === 'cube' && this.#cube) body = this.#cube.host;
     else if (r.status === 'done') body = isTds(r.result) ? this.#grid(r.result, r.limit) : h('pre', { class: 'q-json' }, JSON.stringify(r.result.values, null, 2));
+    else if (running && this.#opening) body = this.#opening;
     else if (running) body = h('div', { class: 'q-hint' }, 'Running…');
     else body = h('div', { class: 'q-hint' }, 'Run the query to see its rows (Ctrl+Enter).');
     mount(this.element, bar, h('div', { class: 'q-results-body' }, body));

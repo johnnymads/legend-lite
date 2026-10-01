@@ -1,6 +1,7 @@
 // What every screen of the app shares: the engine and query store, the loaded project and its
 // model graph, the current user, recently viewed things.
 
+import type { QueryEngine } from '../../../datacube/src/engine.ts';
 import type { Engine, QueryStore } from '../backend/engine.ts';
 import type { WasmGrammar } from '../backend/wasm-grammar.ts';
 import type { PureModelContextText } from '../backend/wire.ts';
@@ -25,6 +26,15 @@ export type ExecutionConfig =
   | { readonly kind: 'duckdb-wasm'; readonly seed?: readonly string[]; readonly user: string }
   | { readonly kind: 'warehouse'; readonly url: string; readonly catalog?: string; readonly seed?: readonly string[] }
   | { readonly kind: 'server'; readonly engine: string };
+
+/**
+ * Where the results grid -- a DataCube over the query -- reads its rows: in a browser plane, the
+ * SQL engine there (DuckDB-WASM, the warehouse), planned by the tab's planner; on a server, its
+ * `pure/v1` execute (the server plans and runs).
+ */
+export type CubeRows =
+  | { readonly kind: 'sql'; readonly engine: QueryEngine }
+  | { readonly kind: 'server'; readonly baseUrl: string };
 
 export interface AppConfig {
   readonly execution: ExecutionConfig;
@@ -92,15 +102,18 @@ export class AppContext {
   readonly planner: WasmGrammar | undefined;
   readonly projects: readonly LoadedProject[];
   readonly user: string;
+  /** Where the results grid (a DataCube) reads rows. */
+  readonly cubeRows: CubeRows;
 
   constructor(config: AppConfig, engine: Engine, store: QueryStore, planner: WasmGrammar | undefined,
-    projects: readonly LoadedProject[], user: string) {
+    projects: readonly LoadedProject[], user: string, cubeRows: CubeRows) {
     this.config = config;
     this.engine = engine;
     this.store = store;
     this.planner = planner;
     this.projects = projects;
     this.user = user;
+    this.cubeRows = cubeRows;
   }
 
   project(gav: string): LoadedProject {

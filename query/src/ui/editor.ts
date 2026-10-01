@@ -178,7 +178,9 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
 
   const onKey = (e: KeyboardEvent): void => {
     const mod = e.metaKey || e.ctrlKey;
-    const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement;
+    const inField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement
+      // the results cube has its own undo and redo
+      || (e.target instanceof Element && e.target.closest('.dc-app') !== null);
     if (mod && e.key === 'Enter') { e.preventDefault(); results.run(); }
     else if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); void save(app, session); }
     else if (mod && !inField && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) session.redo(); else session.undo(); }
@@ -192,6 +194,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
       unsubscribe();
       document.removeEventListener('keydown', onKey);
       if (session.run.status === 'running') session.run.abort.abort();
+      results.dispose();
     },
   };
 }

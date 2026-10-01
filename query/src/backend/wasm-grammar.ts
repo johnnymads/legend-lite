@@ -3,7 +3,7 @@
 // answer is the server's (docs/QUERY_APP_DESIGN_2026_09_30.md D3).
 
 import type { Lambda } from '../../../pure-protocol/src/index.ts';
-import { toJson } from '../../../pure-protocol/src/index.ts';
+import { readLambda, toJson } from '../../../pure-protocol/src/index.ts';
 import type { PureModelContextData } from '../model/pmcd.ts';
 import { EngineError, type Grammar } from './engine.ts';
 import type { PlannerRequest, PlannerResponse } from './planner-worker.ts';
@@ -78,6 +78,11 @@ export class WasmGrammar implements Grammar {
 
   async lambdaJson(text: string): Promise<Lambda> {
     return JSON.parse(unfold(await this.#port.ask({ kind: 'lambdaJson', text }))) as Lambda;
+  }
+
+  /** As `lambdaJson`, read by the protocol library: numbers exact (DataCube's `Planner.parse`). */
+  async lambda(text: string): Promise<Lambda> {
+    return readLambda(unfold(await this.#port.ask({ kind: 'lambdaJson', text })));
   }
 
   async lambdaText(lambda: Lambda, style: 'PRETTY' | 'STANDARD'): Promise<string> {
