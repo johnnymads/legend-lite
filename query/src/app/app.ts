@@ -4,7 +4,7 @@
 import { loadLambda, parametersOf } from '../builder/load.ts';
 import { emptyQuery, type ClassSource } from '../builder/state.ts';
 import { renderDataSpace } from '../ui/dataspace.ts';
-import { h, mount, confirmDialog } from '../ui/dom.ts';
+import { h, icon, menuButton, mount, confirmDialog } from '../ui/dom.ts';
 import { renderEditor, type EditorHandle } from '../ui/editor.ts';
 import { renderLanding } from '../ui/landing.ts';
 import { openQueryDialog } from '../ui/queries.ts';
@@ -13,11 +13,11 @@ import { openQuery } from './persist.ts';
 import { formatRoute, parseRoute, type Route } from './routes.ts';
 import { Session } from './session.ts';
 import { findAll, isFunction, type Lambda } from '../../../pure-protocol/src/index.ts';
-import { followTheme, toggleTheme } from '../ui/theme.ts';
+import { followTheme, theme, toggleTheme } from '../ui/theme.ts';
 
 export class App {
   readonly #ctx: AppContext;
-  readonly #header = h('div', { class: 'q-header' });
+  readonly #header = h('div', { class: 'q-appbar' });
   readonly #main = h('div', { class: 'q-main' });
   #editor: EditorHandle | undefined;
   #session: Session | undefined;
@@ -51,7 +51,7 @@ export class App {
     this.#editor = undefined;
     this.#session = undefined;
     const route = parseRoute(hash);
-    this.#drawHeader(undefined);
+    this.#drawHeader();
     try {
       await this.#render(route);
     } catch (e) {
@@ -66,22 +66,26 @@ export class App {
     return r.kind === 'edit' && this.#session?.saved?.id === r.id;
   }
 
-  #drawHeader(editor: EditorHandle | undefined): void {
+  /** The app bar, as upstream Legend Query's: its menu and name at the left, the theme switch at the right. */
+  #drawHeader(): void {
+    const dark = theme() === 'dark';
     mount(this.#header,
-      h('div', { class: 'q-brand', onclick: () => { location.hash = '#/'; } }, 'Legend ', h('span', null, 'Query')),
-      editor ? editor.header : h('span', { class: 'q-spacer' }),
-      editor ? null : h('button', { class: 'q-btn', onclick: () => openQueryDialog(this.#ctx) }, 'Open a query'),
+      menuButton(icon('menu'), () => [
+        // the setup page (phase D moves it to upstream's /setup)
+        { label: 'Back to query setup', action: () => { location.hash = '#/'; } },
+        { label: 'Load a query', action: () => openQueryDialog(this.#ctx) },
+      ], { class: 'q-appbar__menu', title: 'Menu', 'aria-label': 'Menu' }),
+      h('div', { class: 'q-appbar__name', onclick: () => { location.hash = '#/'; } }, 'Legend Query'),
+      h('span', { class: 'q-spacer' }),
       h('button', {
-        class: 'q-icon-btn', title: 'Light / dark',
-        onclick: toggleTheme,
-      }, '◐'));
+        class: 'q-appbar__action', title: 'Toggle light/dark mode', 'aria-label': 'Toggle light/dark mode',
+        onclick: () => { toggleTheme(); this.#drawHeader(); },
+      }, icon(dark ? 'moon' : 'sun')));
   }
 
   #edit(session: Session): void {
     this.#session = session;
     this.#editor = renderEditor(this.#main, this.#ctx, session);
-    this.#drawHeader(this.#editor);
-    this.#editor.header.style.flex = '1';
   }
 
   async #render(r: Route): Promise<void> {

@@ -9,7 +9,7 @@ import { probeable } from '../app/probe.ts';
 import type { AppContext } from '../app/context.ts';
 import { renderPostFilter } from './advanced.ts';
 import { humanize, isNumericFamily, isOptional, isToMany, primitiveFamily, type ModelGraph } from '../model/graph.ts';
-import { h, mount, showMenu, type Child } from './dom.ts';
+import { h, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
 import { propertyDropZone } from './columns.ts';
 import { defaultValue, valueEditor } from './values.ts';
 
@@ -48,7 +48,7 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
       'Results', session.query.postFilter ? ` (${session.query.postFilter.children.length})` : '')) : null;
   if (tableMode && app && showResults) {
     const body = h('div', { class: 'q-drop' });
-    mount(container, h('div', { class: 'q-panel-title' }, 'Filter', tabs), body);
+    mount(container, panelHeader('filter', [tabs]), h('div', { class: 'q-panel__content' }, body));
     renderPostFilter(body, app, session);
     return;
   }
@@ -146,17 +146,10 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
     : addCondition(graph, s, path))));
 
   mount(container,
-    h('div', { class: 'q-panel-title' }, 'Filter', tabs, h('span', { class: 'q-chip' }, String(countConditions(root))),
-      h('span', { class: 'q-spacer' }),
-      root.children.length > 0
-        ? h('button', { class: 'q-icon-btn', title: 'Add a group', onclick: () => setRoot((r) => ({ ...r, children: [...r.children, { kind: 'group', id: freshId('g'), op: r.op === 'and' ? 'or' : 'and', children: [] }] }), false) }, '+ Group')
-        : null,
-      root.children.length > 0 ? h('button', { class: 'q-icon-btn', title: 'Remove every condition', onclick: () => setRoot(() => ({ ...root, children: [] })) }, 'Clear') : null),
-    body);
-}
-
-function countConditions(g: Group): number {
-  return g.children.reduce((n, c) => n + (c.kind === 'condition' ? 1 : countConditions(c)), 0);
+    panelHeader('filter', [tabs], [
+      panelAction('plusCircle', 'Add a group', () => setRoot((r) => ({ ...r, children: [...r.children, { kind: 'group', id: freshId('g'), op: r.op === 'and' ? 'or' : 'and', children: [] }] }), false), root.children.length === 0),
+      panelAction('trash', 'Remove every condition', () => setRoot(() => ({ ...root, children: [] })), root.children.length === 0)]),
+    h('div', { class: 'q-panel__content' }, body));
 }
 
 function insertAfter(g: Group, id: string, node: FilterNode): Group {

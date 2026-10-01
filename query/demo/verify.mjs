@@ -146,7 +146,7 @@ async function suite(title, query) {
     const rows = await gridRows(page);
     assert.equal(rows.length, 5);
     assert.ok(rows.every((r) => r[1] === 'SELL'));
-    await page.click('.q-header button.primary:text-is("Save")');
+    await page.click('button[title="Save (Ctrl+S)"]');
     await page.fill('.q-dialog input.q-input', 'Sells');
     await page.click('.q-dialog button.primary');
     await page.waitForFunction(() => location.hash.startsWith('#/edit/'));
@@ -164,9 +164,9 @@ async function suite(title, query) {
     await page.waitForSelector('.q-cond', { timeout: 60000 });
     await page.fill('.q-col input', 'Id');
     await page.press('.q-col input', 'Tab');
-    await page.click('.q-header button.primary:text-is("Save")');
+    await page.click('button[title="Save (Ctrl+S)"]');
     await page.waitForSelector('.q-toast:has-text("version 2")');
-    await page.click('text=More ▾');
+    await page.click('.q-header-pill:has-text("Advanced")');
     await page.click(".q-menu button:has-text('History and versions')");
     await page.waitForSelector('.q-dialog :text("Compare")');
     assert.match(await page.textContent('.q-dialog pre'), /- .*'Trade Id'[\s\S]*\+ .*Id:/);
@@ -189,7 +189,10 @@ async function suite(title, query) {
     await page.click(".q-node:has-text('Quantity')", { button: 'right' });
     await page.click(".q-menu button:has-text('Add as filter condition')");
     await page.selectOption('.q-cond select[aria-label=Operator]', 'greaterThan');
-    await page.click('text=+ Add');
+    // parameters show on request, as upstream (Advanced > Show Parameters)
+    await page.click('.q-header-pill:has-text("Advanced")');
+    await page.click(".q-menu button:has-text('Show Parameters')");
+    await page.click('button[title="Add a parameter"]');
     await page.fill('.q-dialog input.q-input', 'minQty');
     await page.selectOption('.q-dialog select.q-select >> nth=0', 'Integer');
     await page.click('.q-dialog button.primary');
@@ -236,7 +239,7 @@ async function suite(title, query) {
     await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Firm')}`));
     await page.waitForSelector('.q-node', { timeout: 60000 });
     await page.dblclick(".q-node:has-text('Legal Name')");
-    await page.click('.q-panel-title button:has-text("Objects")');
+    await page.click('.q-panel__header button:has-text("Objects")');
     await run(page);
     const json = JSON.parse(await page.textContent('.q-json'));
     assert.equal(json.length, 4);

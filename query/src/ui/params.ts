@@ -7,7 +7,7 @@ import { referencedParameters } from '../builder/build.ts';
 import type { Parameter } from '../builder/state.ts';
 import type { Multiplicity } from '../../../pure-protocol/src/index.ts';
 import { simpleName } from '../model/graph.ts';
-import { dialog, h, mount, type Child } from './dom.ts';
+import { dialog, h, mount, panelAction, panelHeader, type Child } from './dom.ts';
 import { valueEditor, valueLabel } from './values.ts';
 
 const PRIMITIVES = ['String', 'Integer', 'Float', 'Decimal', 'Boolean', 'StrictDate', 'DateTime'];
@@ -23,10 +23,8 @@ export function renderParameters(container: HTMLElement, session: Session): void
   const q = session.query;
   const used = referencedParameters(q);
   mount(container,
-    h('div', { class: 'q-panel-title' }, 'Parameters', h('span', { class: 'q-chip' }, String(q.parameters.length)),
-      h('span', { class: 'q-spacer' }),
-      h('button', { class: 'q-icon-btn', title: 'Add a parameter', onclick: () => parameterDialog(session) }, '+ Add')),
-    h('div', { style: 'padding:6px 10px; display:flex; flex-direction:column; gap:6px' },
+    panelHeader('parameters', [], [panelAction('plus', 'Add a parameter', () => parameterDialog(session))]),
+    h('div', { class: 'q-panel__content', style: 'padding:6px 10px; display:flex; flex-direction:column; gap:6px' },
       q.parameters.length === 0 ? h('div', { class: 'q-faint', style: 'font-size:12px' }, 'None. Add one to make the query take an input.') : null,
       q.parameters.map((p): Child => h('div', { style: 'display:flex; flex-direction:column; gap:3px; border:1px solid var(--border); border-radius:6px; padding:5px 7px' },
         h('div', { style: 'display:flex; align-items:center; gap:6px' },

@@ -126,13 +126,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 code, .mono { font-family: var(--mono); font-size: 12px; }
 a { color: var(--accent); }
 
-/* ---- shell */
-.q-app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
-.q-header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--surface); border-bottom: 1px solid var(--border); min-height: 46px; }
-.q-brand { font-weight: 650; letter-spacing: .2px; cursor: pointer; white-space: nowrap; }
-.q-brand span { color: var(--accent); }
-.q-crumbs { display: flex; gap: 6px; align-items: center; color: var(--text-2); min-width: 0; overflow: hidden; }
-.q-crumbs b { color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ---- shell: upstream's app bar (legend-application-query _query-editor.scss): 34px, #252525 */
+.q-app { display: grid; grid-template-rows: 34px 1fr; height: 100vh; }
+.q-appbar { display: flex; align-items: center; height: 34px; background: var(--color-bg-elevated); }
+.q-appbar__menu { width: 50px; height: 34px; display: flex; align-items: center; justify-content: center; background: var(--color-bg-panel); border: 0; border-right: 1px solid var(--color-border-default); color: #9a9a9a; font-size: 23px; cursor: pointer; }
+.q-appbar__menu:hover { color: var(--color-text-primary); }
+.q-appbar__name { font-size: 20px; font-weight: 700; color: #9a9a9a; margin: 0 10px; cursor: pointer; white-space: nowrap; }
+.q-appbar__action { height: 28px; padding: 0 10px; margin-right: 8px; border-radius: 2px; border: 1px solid #404040; background: transparent; color: #9a9a9a; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; }
+.q-appbar__action:hover { color: var(--color-text-primary); }
 .q-spacer { flex: 1; }
 .q-main { min-height: 0; overflow: hidden; }
 
@@ -185,18 +186,59 @@ a { color: var(--accent); }
 .q-table th, .q-table td { text-align: left; padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: top; }
 .q-table th { background: var(--surface-2); font-weight: 600; border-top: 0; font-size: 12px; color: var(--text-2); }
 
-/* ---- editor */
-.q-editor { display: grid; grid-template-columns: 300px 1fr; height: 100%; min-height: 0; }
-.q-side { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
-.q-panel-title { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .5px; color: var(--text-2); border-bottom: 1px solid var(--border); background: var(--surface); }
-.q-setup { padding: 10px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--border); }
-.q-field { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 6px; }
-.q-field > label { color: var(--text-2); font-size: 12px; }
+/* ---- the query builder, as upstream's (legend-query-builder _query-builder.scss, legend-art _panel.scss) */
+.q-builder { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.q-builder__header { display: flex; align-items: center; gap: 3px; height: 32px; flex: none; padding-right: 5px; background: var(--color-bg-panel); }
+.q-builder__status { display: inline-flex; align-items: center; gap: 6px; height: 22px; margin-left: 5px; padding-right: 6px; background: var(--color-bg-panel-header); border-radius: 2px; min-width: 0; }
+.q-builder__title { font-size: 15px; font-weight: 500; color: var(--color-text-muted); padding: 6px 5px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+.q-chip--status { font-size: 11px; height: 16px; line-height: 16px; padding: 0 5px; background: var(--color-bg-tag); color: var(--color-text-secondary); border-radius: 2px; }
+.q-undo { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 32px; padding: 0 6px; border: 0; background: transparent; color: #6391d0; cursor: pointer; font-size: 11px; }
+.q-undo span { font-size: 12px; font-weight: 700; }
+.q-undo:disabled { color: var(--color-text-disabled); cursor: default; }
+.q-header-action { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border: 0; border-radius: 2px; background: var(--color-accent); color: var(--color-text-on-accent); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.q-header-action:hover { background: var(--color-accent-hover); }
+.q-header-action .q-icon { font-size: 15px; }
+.q-header-combo { display: inline-flex; }
+.q-header-combo > .q-header-action:first-child { border-radius: 2px 0 0 2px; }
+.q-header-combo__caret { width: 20px; padding: 0; justify-content: center; border-radius: 0 2px 2px 0 !important; border-left: 1px solid #0000004f !important; }
+.q-header-pill { display: inline-flex; align-items: center; gap: 10px; height: 28px; padding: 0 10px; border: 0; border-radius: 2px; background: var(--color-accent); color: #dcdcdc; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.q-header-pill:hover { background: var(--color-accent-hover); }
+.q-builder__main { flex: 1; min-height: 0; padding: 3px; }
+
+/* the workspace (split.ts): left 450px, centre and right equal, results 300px; 4px gutters */
+.q-ws { display: grid; grid-template-rows: minmax(120px, 1fr) 4px var(--ws-bottom, 300px); height: 100%; min-height: 0; }
+.q-ws__top { display: grid; grid-template-columns: var(--ws-left, 450px) 4px minmax(300px, 1fr) 4px var(--ws-right, minmax(300px, 1fr)); min-height: 0; }
+.q-ws__pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.q-ws__pane > *, .q-slot > * { flex: 1; min-height: 0; }
+.q-slot { display: flex; flex-direction: column; min-height: 0; }
+.q-gutter { background: transparent; z-index: 2; }
+.q-gutter--x { cursor: col-resize; }
+.q-gutter--y { cursor: row-resize; }
+.q-gutter:hover, .q-gutter--active { background: var(--color-border-strong); }
+
+/* a panel: a 45px header, the content under it (padding 3px around both) */
+.q-panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; padding: 3px; }
+.q-panel__header { display: flex; align-items: center; gap: 6px; height: 45px; min-height: 45px; padding: 5px 5px 5px 10px; flex: none; background: var(--color-bg-panel); color: var(--color-text-muted); font-weight: 700; border-top: 1px solid var(--color-border-default); border-radius: 2px 2px 0 0; box-shadow: var(--shadow); }
+.q-panel__title { display: inline-flex; align-items: center; height: 22px; padding: 0 7px; margin-right: 5px; border-radius: 1px; background: var(--color-bg-hover); color: var(--color-text-disabled); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.q-panel__actions { display: inline-flex; align-items: center; }
+.q-panel__action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 28px; height: 28px; border: 0; background: transparent; color: var(--color-text-muted); cursor: pointer; font-size: 13px; font-weight: 400; }
+.q-panel__action--text { padding: 0 6px; font-size: 12px; }
+.q-panel__action:hover { color: var(--color-text-primary); }
+.q-panel__action:disabled { color: var(--color-border-strong); cursor: default; }
+.q-panel__content { flex: 1; min-height: 0; overflow: auto; background: var(--color-bg-elevated); border-bottom: 1px solid var(--color-border-subtle); border-radius: 0 0 2px 2px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.q-panel--fit { flex: none !important; }
+.q-panel--fit > .q-panel__content { overflow: visible; }
+.q-panel--grow { flex: 1; }
+.q-panel--params { flex: none !important; max-height: 34%; }
+.q-side { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.q-explorer__search { flex: 1; min-width: 0; height: 28px; font-size: 13px; padding: 0 10px; border-radius: 2px; }
+
+/* the setup ("properties"): a label 80px wide, right-aligned, bold, then the control */
+.q-setup { padding: 5px; display: flex; flex-direction: column; gap: 5px; }
+.q-field { display: flex; align-items: center; }
+.q-field > label { flex: none; width: 80px; margin-right: 10px; text-align: right; font-weight: 700; font-size: 12px; color: var(--color-text-muted); }
+.q-field > :not(label) { flex: 1; min-width: 0; }
 .q-explorer { flex: 1; overflow: auto; padding: 4px 0 12px; min-height: 0; }
-.q-work { display: grid; grid-template-rows: minmax(160px, auto) 1fr; min-height: 0; min-width: 0; }
-.q-build { display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: 0; max-height: 46vh; border-bottom: 1px solid var(--border); background: var(--surface); }
-.q-build > div { display: flex; flex-direction: column; min-height: 0; }
-.q-build > div + div { border-left: 1px solid var(--border); }
 .q-drop { flex: 1; overflow: auto; padding: 8px; min-height: 80px; }
 .q-drop.over { background: var(--accent-soft); outline: 2px dashed var(--accent); outline-offset: -4px; }
 .q-hint { color: var(--text-3); padding: 18px 8px; text-align: center; }
@@ -225,9 +267,9 @@ a { color: var(--accent); }
 .q-cond .q-select, .q-cond .q-input { padding: 2px 6px; font-size: 12px; }
 
 /* results */
-.q-results { display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
-.q-results-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.q-results-body { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.q-results { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.q-results-bar { display: flex; align-items: center; gap: 8px; height: 45px; min-height: 45px; padding: 5px 5px 5px 10px; flex: none; background: var(--color-bg-panel); color: var(--color-text-muted); border-top: 1px solid var(--color-border-default); border-radius: 2px 2px 0 0; box-shadow: var(--shadow); }
+.q-results-body { flex: 1; min-height: 0; overflow: auto; position: relative; background: var(--color-bg-elevated); border-radius: 0 0 2px 2px; box-shadow: var(--shadow); }
 /* the DataCube over the query fills the results area; its grid scrolls itself */
 .q-results-body:has(> .q-cube) { overflow: hidden; }
 .q-cube { position: absolute; inset: 0; display: flex; flex-direction: column; }

@@ -238,3 +238,20 @@ export function icon(name: IconName, title?: string): HTMLElement {
   span.innerHTML = ICONS[name];
   return span;
 }
+
+/**
+ * A panel's header, as upstream's query builder draws one (legend-art Panel.tsx, PanelHeader):
+ * its title as a lowercase chip, then the panel's own controls, then its actions at the right.
+ */
+export function panelHeader(title: string, lead: readonly Child[] = [], actions: readonly Child[] = []): HTMLElement {
+  return h('div', { class: 'q-panel__header' },
+    h('span', { class: 'q-panel__title' }, title.toLowerCase()),
+    lead,
+    h('span', { class: 'q-spacer' }),
+    actions.length > 0 ? h('span', { class: 'q-panel__actions' }, actions) : null);
+}
+
+/** A header action: one of upstream's icons in a 28px button, named for a reader. */
+export function panelAction(name: IconName, title: string, onclick: () => void, disabled = false): HTMLElement {
+  return h('button', { class: 'q-panel__action', type: 'button', title, 'aria-label': title, disabled, onclick }, icon(name));
+}

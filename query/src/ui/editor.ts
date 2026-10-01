@@ -1,12 +1,15 @@
-// The query editor: setup and explorer on the left (with parameters), columns and filter above,
-// results below; the header carries undo/redo, the Pure text, save / save as / open.
+// The query editor, laid out as upstream's query builder: its header (the query's name; undo/redo,
+// load, new, save, advanced, help), then properties and the explorer on the left (parameters
+// when wanted), the fetch structure in the centre, the filter at the right, the results below --
+// every boundary draggable (split.ts).
 
 import type { AppContext } from '../app/context.ts';
 import { formatRoute } from '../app/routes.ts';
 import type { Session } from '../app/session.ts';
 import { emptyQuery, type ClassSource } from '../builder/state.ts';
 import { simpleName } from '../model/graph.ts';
-import { confirmDialog, h, menuButton, mount, select, toast, type Child } from './dom.ts';
+import { confirmDialog, h, icon, menuButton, mount, panelAction, panelHeader, select, toast, type Child } from './dom.ts';
+import { workspace } from './split.ts';
 import { historyDialog, infoDialog } from './history.ts';
 import { renderColumns } from './columns.ts';
 import { Explorer, showPreview } from './explorer.ts';
@@ -18,7 +21,6 @@ import { Results } from './results.ts';
 import { textDialog } from './text.ts';
 
 export interface EditorHandle {
-  readonly header: HTMLElement;
   dispose(): void;
 }
 
@@ -50,9 +52,9 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   const results = new Results(app, session);
   const setup = h('div', { class: 'q-setup' });
   const params = h('div');
-  const columns = h('div');
-  const filter = h('div');
-  const header = h('div', { style: 'display:flex; gap:6px; align-items:center' });
+  const columns = h('div', { class: 'q-panel' });
+  const filter = h('div', { class: 'q-panel' });
+  const header = h('div', { class: 'q-builder__header' });
 
   const changeSource = async (next: ClassSource): Promise<void> => {
     const q = session.query;
@@ -102,60 +104,92 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
     mount(setup, rows);
   };
 
-  const search = h('input', { class: 'q-input', type: 'search', placeholder: 'Search properties…', style: 'flex:1; min-width:0; padding:3px 7px', oninput: () => explorer.setSearch(search.value) });
-  const explorerHead = h('div', { class: 'q-panel-title', style: 'gap:6px; text-transform:none; letter-spacing:0' },
-    search,
-    h('button', {
-      class: 'q-icon-btn', title: 'Humanize names',
-      onclick: () => { explorer.options.humanized = !explorer.options.humanized; explorer.render(); },
-    }, 'Aa'),
-    h('button', { class: 'q-icon-btn', title: 'Collapse all', onclick: () => explorer.collapseAll() }, '⊟'));
+  // the explorer's header, as upstream's: its title, the search, collapse, and a menu of view toggles
+  const search = h('input', { class: 'q-input q-explorer__search', type: 'search', placeholder: 'Search properties…', 'aria-label': 'Search properties', oninput: () => explorer.setSearch(search.value) });
+  const explorerHead = panelHeader('explorer', [search], [
+    panelAction('compress', 'Collapse all', () => explorer.collapseAll()),
+    menuButton(icon('more'), () => [
+      { label: `${explorer.options.humanized ? '✓ ' : ''}Humanize Property Name`, action: () => { explorer.options.humanized = !explorer.options.humanized; explorer.render(); } },
+    ], { class: 'q-panel__action', title: 'Explorer options', 'aria-label': 'Explorer options' })]);
 
-  const textOnly = h('div');
+  // the centre and the right: the fetch structure and the filter -- or, for a query the form
+  // cannot show, the text-mode notice
+  const center = h('div', { class: 'q-slot' });
+  const right = h('div', { class: 'q-slot' });
+  const textOnly = h('div', { class: 'q-panel' });
   const drawWork = (): void => {
     if (session.text) {
-      mount(textOnly, h('div', { style: 'padding:14px; display:flex; flex-direction:column; gap:10px' },
+      mount(textOnly, panelHeader('fetch structure'), h('div', { class: 'q-panel__content', style: 'padding:14px; display:flex; flex-direction:column; gap:10px' },
         h('div', { class: 'q-chip', style: 'color:var(--warn); white-space:normal; align-self:flex-start' }, `The form cannot show this query (${session.text.reason}). It still runs and saves.`),
         h('div', null, h('button', { class: 'q-btn', onclick: () => void textDialog(app, session) }, 'Edit in text mode'))));
-      buildArea.replaceChildren(textOnly);
+      center.replaceChildren(textOnly);
+      right.replaceChildren();
     } else {
-      buildArea.replaceChildren(columns, filter);
+      center.replaceChildren(columns);
+      right.replaceChildren(filter);
       renderColumns(columns, app, session, () => explorer.options.humanized);
       renderFilter(filter, session, (path, prefix) => suggest(app, session, path, prefix), app);
     }
   };
-  const buildArea = h('div', { class: 'q-build' });
 
+
+  // the builder's header, as upstream's (QueryBuilder.tsx; Core_LegendQueryApplicationPlugin
+  // header actions): the query's name at the left; undo/redo, load, new, save, advanced, help
+  const newQuery = (): void => {
+    const src = session.query.source;
+    location.hash = formatRoute(src.dataSpace
+      ? { kind: 'dataSpace', gav: session.project.gav, path: src.dataSpace.path, context: src.dataSpace.context, class: src.class }
+      : { kind: 'manual', gav: session.project.gav, mapping: src.mapping, runtime: src.runtime, class: src.class });
+  };
+  const stacked = (name: 'undo' | 'redo', label: string, title: string, enabled: boolean, onclick: () => void): HTMLElement =>
+    h('button', { class: 'q-undo', title, disabled: !enabled, onclick }, icon(name), h('span', null, label));
   const drawHeader = (): void => {
     const saved = session.saved;
-    const src = session.query.source;
     mount(header,
-      h('span', { class: 'q-crumbs' },
-        h('b', { title: saved?.id ?? '' }, saved?.name ?? 'New query'),
-        session.changed ? h('span', { class: 'q-chip', title: 'Unsaved changes' }, '● unsaved') : null,
-        saved && saved.owner && saved.owner !== app.user ? h('span', { class: 'q-chip' }, `owned by ${saved.owner}`) : null),
-      h('button', { class: 'q-icon-btn', title: 'Undo (Ctrl+Z)', disabled: !session.canUndo, onclick: () => session.undo() }, '↶'),
-      h('button', { class: 'q-icon-btn', title: 'Redo (Ctrl+Shift+Z)', disabled: !session.canRedo, onclick: () => session.redo() }, '↷'),
-      h('button', { class: 'q-btn', onclick: () => void textDialog(app, session) }, 'Pure'),
-      menuButton('More ▾', () => [
+      h('div', { class: 'q-builder__status' },
+        h('span', { class: 'q-builder__title', title: saved?.id ?? '' }, saved?.name ?? 'Unsaved Query'),
+        session.changed ? h('span', { class: 'q-chip q-chip--status', title: 'Unsaved changes' }, 'unsaved') : null,
+        saved && saved.owner && saved.owner !== app.user ? h('span', { class: 'q-chip q-chip--status' }, `owned by ${saved.owner}`) : null),
+      h('span', { class: 'q-spacer' }),
+      stacked('undo', 'Undo', 'Undo (Ctrl+Z)', session.canUndo, () => session.undo()),
+      stacked('redo', 'Redo', 'Redo (Ctrl+Shift+Z)', session.canRedo, () => session.redo()),
+      h('button', { class: 'q-header-action', title: 'Load a saved query', onclick: () => openQueryDialog(app) }, icon('load'), h('span', null, 'Load Query')),
+      h('button', { class: 'q-header-action', title: 'A new query on this source', onclick: newQuery }, icon('save'), h('span', null, 'New Query')),
+      h('span', { class: 'q-header-combo' },
+        h('button', { class: 'q-header-action', title: 'Save (Ctrl+S)', onclick: () => void save(app, session) }, icon('save'), h('span', null, 'Save')),
+        menuButton(icon('caretDown'), () => [{ label: 'Save As New Query', action: () => saveAs(app, session) }],
+          { class: 'q-header-action q-header-combo__caret', title: 'More ways to save', 'aria-label': 'More ways to save' })),
+      menuButton(['Advanced', icon('caretDown')], () => [
+        { label: 'Edit Pure', action: () => void textDialog(app, session) },
+        { label: showParams ? 'Hide Parameters' : 'Show Parameters', action: () => { showParams = !showParams; drawSide(); } },
+        'separator',
         { label: 'About this query', action: () => infoDialog(app, session) },
         { label: 'History and versions', action: () => void historyDialog(app, session), disabled: !session.saved },
         { label: 'Copy link', action: () => void navigator.clipboard?.writeText(location.href).then(() => toast('Link copied')) },
-        'separator',
-        { label: 'New query on this source', action: () => { location.hash = formatRoute(src.dataSpace ? { kind: 'dataSpace', gav: session.project.gav, path: src.dataSpace.path, context: src.dataSpace.context, class: src.class } : { kind: 'manual', gav: session.project.gav, mapping: src.mapping, runtime: src.runtime, class: src.class }); } },
-      ]),
-      h('button', { class: 'q-btn', onclick: () => openQueryDialog(app) }, 'Open'),
-      h('button', { class: 'q-btn', onclick: () => saveAs(app, session) }, 'Save as'),
-      h('button', { class: 'q-btn primary', title: 'Save (Ctrl+S)', onclick: () => void save(app, session) }, 'Save'));
+      ], { class: 'q-header-pill' }),
+      menuButton(['Help...', icon('caretDown')], () => [
+        { label: 'Keyboard shortcuts', action: () => toast('Ctrl+Enter run · Ctrl+S save · Ctrl+Z undo · Ctrl+Shift+Z redo', 6000) },
+      ], { class: 'q-header-pill' }));
   };
 
-  mount(root, h('div', { class: 'q-editor' },
-    h('div', { class: 'q-side' },
-      h('div', { class: 'q-panel-title' }, 'Source'), setup,
-      explorerHead, explorer.element,
-      h('div', { style: 'border-top:1px solid var(--border); max-height:34%; overflow:auto' }, params)),
-    h('div', { class: 'q-work' }, buildArea, results.element)));
+  // the side: properties (the setup) over the explorer, and parameters when there are some or
+  // the person asks (Advanced > Show Parameters), as upstream hides them by default
+  let showParams = session.query.parameters.length > 0;
+  let paramsShown = false;
+  const side = h('div', { class: 'q-side' });
+  const drawSide = (): void => {
+    paramsShown = showParams || session.query.parameters.length > 0;
+    mount(side,
+      h('div', { class: 'q-panel q-panel--fit' }, panelHeader('properties'), h('div', { class: 'q-panel__content' }, setup)),
+      h('div', { class: 'q-panel q-panel--grow' }, explorerHead, h('div', { class: 'q-panel__content' }, explorer.element)),
+      paramsShown ? h('div', { class: 'q-panel q-panel--params' }, params) : null);
+  };
+  drawSide();
 
+  mount(root, h('div', { class: 'q-builder' },
+    header,
+    h('div', { class: 'q-builder__main' },
+      workspace(side, center, right, h('div', { class: 'q-panel q-panel--results' }, results.element)))));
   drawSetup();
   drawWork();
   drawHeader();
@@ -166,6 +200,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   const unsubscribe = session.subscribe((c) => {
     if (c === 'query') {
       drawWork();
+      if ((showParams || session.query.parameters.length > 0) !== paramsShown) drawSide();
       explorer.render();
       renderParameters(params, session);
       drawSetup();
@@ -189,7 +224,6 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   document.addEventListener('keydown', onKey);
 
   return {
-    header,
     dispose() {
       unsubscribe();
       document.removeEventListener('keydown', onKey);

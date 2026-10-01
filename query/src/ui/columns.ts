@@ -6,7 +6,7 @@ import { addColumn, PROPERTY_DRAG, propertyAt } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
 import type { AggregateOp, GraphNode, ProjectionColumn, PropertyPath, QueryState, SortSpec } from '../builder/state.ts';
 import { isNumericFamily, primitiveFamily, simpleName } from '../model/graph.ts';
-import { dialog, h, mount, showMenu, type Child } from './dom.ts';
+import { dialog, h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
 import type { AppContext } from '../app/context.ts';
 import { addToTree, calculatedDialog, renderGraph, renderWindows, windowDialog } from './advanced.ts';
 
@@ -48,8 +48,8 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
   const q = session.query;
   if (q.graph) {
     mount(container,
-      h('div', { class: 'q-panel-title' }, modeToggle(session, humanized), h('span', { class: 'q-spacer' })),
-      renderGraph(session, propertyDropZone));
+      panelHeader('fetch structure', [modeToggle(session, humanized)]),
+      h('div', { class: 'q-panel__content' }, renderGraph(session, propertyDropZone)));
     return;
   }
   const graph = session.project.graph;
@@ -149,13 +149,11 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
   propertyDropZone(body, (path) => update((s) => addColumn(s, path, humanized())));
 
   mount(container,
-    h('div', { class: 'q-panel-title' }, modeToggle(session, humanized), h('span', { class: 'q-chip' }, String(q.columns.length)),
-      h('span', { class: 'q-spacer' }),
-      h('button', { class: 'q-icon-btn', title: 'Add a calculated column', onclick: () => void calculatedDialog(app, session) }, '+ ƒx'),
-      h('button', { class: 'q-icon-btn', title: 'Add a window column (rank, running total…)', onclick: () => void windowDialog(app, session) }, '+ Window'),
-      optionChips(session),
-      q.columns.length > 0 ? h('button', { class: 'q-icon-btn', title: 'Remove every column', onclick: () => update((s) => ({ ...s, columns: [], options: { ...s.options, sort: [] } })) }, 'Clear') : null),
-    body);
+    panelHeader('fetch structure', [modeToggle(session, humanized)], [
+      h('button', { class: 'q-panel__action q-panel__action--text', title: 'Add a calculated column', onclick: () => void calculatedDialog(app, session) }, icon('calculator'), ' ƒx'),
+      h('button', { class: 'q-panel__action q-panel__action--text', title: 'Add a window column (rank, running total…)', onclick: () => void windowDialog(app, session) }, icon('sigma'), ' Window'),
+      panelAction('trash', 'Remove every column', () => update((s) => ({ ...s, columns: [], options: { ...s.options, sort: [] } })), q.columns.length === 0)]),
+    h('div', { class: 'q-panel__content' }, h('div', { class: 'q-tds-toolbar' }, optionChips(session)), body));
 }
 
 /** The result options as chips; clicking opens their dialog. */
