@@ -550,6 +550,23 @@ const headerNames = () => page.evaluate(() =>
  * meets the state the others leave.
  */
 let pageLoaded = false;
+/** A file opened in place of the cube, as a person does: Data… opens the source picker (src/ui/source-picker.ts). */
+async function openThroughPicker(file) {
+  // a check that hid the title bar took the menu with it: a person turns it back on first
+  if (!(await page.locator('.dc-titlebar-menu').isVisible())) {
+    await page.evaluate(() => window.__dataCube.change((s) => ({ ...s, configuration: { ...s.configuration, showTitleBar: true } })));
+    await page.locator('.dc-titlebar-menu').waitFor({ timeout: 10_000 });
+  }
+  // in place of the page: New ▸ Blank Page, then "Add a data source"
+  await page.click('.dc-titlebar-menu');
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await page.locator('.dc-blank').waitFor({ timeout: 10_000 });
+  await page.click('.dc-blank .dc-primary');
+  await page.locator('.dc-picker').waitFor({ timeout: 10_000 });
+  await page.locator('.dc-picker-tab[data-section="files"]').click();
+  await page.setInputFiles('.dc-picker-file', file);
+}
 async function freshCube() {
   // AFTER THE FIRST, A FRESH CUBE, NOT A FRESH PAGE: the file opened again, as a person would,
   // gives a new cube with the default configuration -- what a check that asks for a clean one
@@ -562,9 +579,7 @@ async function freshCube() {
     const accept = (d) => { if (/unsaved changes/.test(d.message())) void d.accept(); };
     page.on('dialog', accept);
     try {
-      // emptied first: the SAME file set again changes nothing, so the input fires no change
-      await page.setInputFiles('input[type=file]', []);
-      await page.setInputFiles('input[type=file]', DATA);
+      await openThroughPicker(DATA);
       // a NEW cube on the page: the status line may read the same as before, so not that
       await page.waitForFunction(
         () => (window.__dataCube !== window.__freshFrom
@@ -589,7 +604,7 @@ async function freshCube() {
   // a page that was fine (2026-09-25). Wait for the line to CHANGE,
   // and for rows to be on screen.
   const before = await statusNow();
-  await page.setInputFiles('input[type=file]', DATA);
+  await openThroughPicker(DATA);
   await page.waitForFunction(
     (was) => {
       const line = document.querySelector('.dc-status-timing')?.textContent ?? '';
@@ -4976,6 +4991,28 @@ try {
       return `unindented, ${rows} cube rows back`;
     });
   }
+
+  // LAST: it turns the page into a board, which every check above assumes it is not.
+  await check('New > Source: an example opens as a grid of its own, at the row limit, said "the first 1,000 of N"', async () => {
+    await page.click('.dc-titlebar-menu');
+    await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+    await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("Data Source\u2026")') }).click();
+    await page.locator('.dc-picker').waitFor({ timeout: 5000 });
+    await page.locator('.dc-picker-tab[data-section="examples"]').click();
+    await page.locator('.dc-picker-card[data-example="trades"]').click();
+    await page.fill('.dc-picker-rows', '1500');
+    await page.click('.dc-picker-choice .dc-primary');
+    await page.locator('.dc-picker').waitFor({ state: 'detached', timeout: 60_000 });
+    const tile = page.locator('[data-tile^="grid-"]').first();
+    await tile.locator('.dc-row').first().waitFor({ timeout: 60_000 });
+    const head = (await tile.locator('.dc-tile-cube').textContent()) ?? '';
+    if (!/sample-trades\.csv/.test(head)) throw new Error(`its header says "${head}"`);
+    await page.waitForFunction(() => /first 1,000 of 1,500 rows/.test(
+      document.querySelector('[data-tile^="grid-"] .dc-status-warning')?.textContent ?? ''), null, { timeout: 30_000 });
+    const main = await page.locator('[data-tile="grid"] .dc-row').count();
+    if (!main) throw new Error('the cube\'s own grid lost its rows');
+    return `"${head.trim()}": the first 1,000 of 1,500 rows; the cube's grid still shows ${main} rows`;
+  });
 } catch (e) {
   record('the run itself', false, String(e.message ?? e).split('\n')[0]);
 } finally {

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
 import type { ChartView } from '../src/page-document.ts';
-import { app, dom, remount, root, settle, setUp } from './cube-fixture.ts';
+import { app, dom, GateEngine, remount, root, settle, setUp, SNAPSHOT, StubPlanner } from './cube-fixture.ts';
 
 // The fixture's cube is grouped by region, then desk: a following chart is region across, split
 // by desk; taking desk out of the row groups is a pivot it follows.
@@ -63,7 +63,7 @@ const chartOf = async (gridTile: string): Promise<void> => {
     .dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
   await settle();
   const item = [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')]
-    .find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === 'Chart'
+    .find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === 'Visualization'
       && el.parentElement?.closest('.dc-menu-item')?.querySelector(':scope > .dc-menu-label')?.textContent === 'Insert');
   assert.ok(item, 'Insert > Chart');
   item.click();
@@ -230,7 +230,7 @@ describe('grids are tiles like charts: + Grid, their own charts, removing one', 
     await settle();
     // Insert > Grid, by its own label (Insert's entry holds its submenu's words too)
     const item = [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')]
-      .find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === 'Grid'
+      .find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === 'Copy of Grid'
         && el.parentElement?.closest('.dc-menu-item')?.querySelector(':scope > .dc-menu-label')?.textContent === 'Insert');
     assert.ok(item, 'the added grid\'s menu offers Insert > Grid');
     item.click();
@@ -260,3 +260,77 @@ describe('each grid\'s header says its source and its plane', () => {
   });
 });
 
+
+describe('New > Source: a grid over another source, with its own planner and engine', () => {
+  /** The other source's planner: counts what it was asked, so a query's planner can be told apart. */
+  class Counting extends StubPlanner {
+    plans = 0;
+    override async plan(): ReturnType<StubPlanner['plan']> {
+      this.plans += 1;
+      return super.plan();
+    }
+  }
+  let other: { planner: Counting; engine: GateEngine };
+  const ORDERS = { ...SNAPSHOT, rows: ['region'] };
+  beforeEach(async () => {
+    other = { planner: new Counting(), engine: new GateEngine() };
+    await remount({ showColumnZone: true, openSource: async () => ({ snapshot: ORDERS, place: other, label: 'orders.csv' }) });
+  });
+
+  it('a new grid has the same drop zones as this one: Column Labels too, by either way in', async () => {
+    await app.newSource();
+    await settle();
+    app.newGrid();
+    await settle();
+    const tiles = added();
+    assert.equal(tiles.length, 2, 'one over the other source, one over this one');
+    for (const t of tiles) {
+      assert.ok(t.querySelector('.dc-zone-rows'), `${t.dataset['tile']} has Row Groups`);
+      assert.ok(t.querySelector('.dc-zone-columns'), `${t.dataset['tile']} has Column Labels`);
+    }
+  });
+  const added = (): HTMLElement[] => [...root.querySelectorAll<HTMLElement>('[data-tile^="grid-"]')];
+
+  it('joins the page as a grid tile, says its source, and runs on its own planner and engine', async () => {
+    await app.newSource();
+    await settle();
+    const [g] = added();
+    assert.ok(g, 'a grid tile over the other source');
+    assert.match(g.querySelector('.dc-tile-cube')?.textContent ?? '', /orders\.csv/);
+    assert.ok(other.planner.plans > 0, 'planned by its own planner');
+    assert.ok(other.engine.queries > 0, 'run on its own engine');
+  });
+
+  /** A menu entry by its label, under a parent entry's label. */
+  const entry = (label: string, under: string): HTMLElement | undefined =>
+    [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')]
+      .find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === label
+        && el.parentElement?.closest('.dc-menu-item')?.querySelector(':scope > .dc-menu-label')?.textContent === under);
+
+  it('its own Insert > Grid is over ITS source, on the page', async () => {
+    await app.newSource();
+    await settle();
+    const plansBefore = other.planner.plans;
+    const first = added()[0]!;
+    (first.querySelector('.dc-row .dc-cell') as HTMLElement)
+      .dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await settle();
+    const item = entry('Copy of Grid', 'Insert');
+    assert.ok(item, 'the added grid offers Insert > Grid');
+    item.click();
+    await settle();
+    assert.equal(added().length, 2, 'a further grid, on the page');
+    assert.ok(other.planner.plans > plansBefore, 'over the other source, planned by its planner');
+  });
+
+  it('the hamburger offers New > Source… only when the host can open one', async () => {
+    (root.querySelector('.dc-titlebar-menu') as HTMLButtonElement).click();
+    await settle();
+    assert.ok(entry('Data Source\u2026', 'New'), 'New > Data Source…');
+    assert.ok(entry('Visualization', 'New') && entry('Copy of Grid', 'New'), 'New > Visualization and Copy of Grid');
+    await remount({});
+    (root.querySelector('.dc-titlebar-menu') as HTMLButtonElement).click();
+    await settle();
+    assert.equal(entry('Data Source\u2026', 'New'), undefined);
+  });
+});

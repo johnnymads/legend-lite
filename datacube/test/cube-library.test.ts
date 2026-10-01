@@ -1,5 +1,5 @@
-// The Cubes window (src/ui/cube-library.ts): "changed since saved" -- the marker, opening
-// another cube over unsaved changes, and saving over a copy the file could not fully show.
+// The Cubes window (src/ui/cube-library.ts): opening a saved cube -- asked first over unsaved
+// changes -- and the cube on screen marked. Saving is its own window (save-dialog.test.ts).
 
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
@@ -13,7 +13,7 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 describe('the Cubes window', () => {
   let root: HTMLElement;
   let calls: string[];
-  let state: { dirty: boolean; warning?: string; id?: string };
+  let state: { dirty: boolean; id?: string };
   let library: CubeLibrary;
 
   beforeEach(async () => {
@@ -25,14 +25,11 @@ describe('the Cubes window', () => {
     await store.create({ id: 'a', name: 'Alpha', content: { kind: 'datacube.cube' } });
     await store.create({ id: 'b', name: 'Beta', content: { kind: 'datacube.cube' } });
     const host: CubeLibraryHost = {
-      saveName: () => 'Alpha',
       currentId: () => state.id,
-      save: async (name, asNew) => { calls.push(`save ${name} ${asNew ? 'new' : 'over'}`); },
       open: async (id) => { calls.push(`open ${id}`); },
       openText: async () => {},
       forget: async () => {},
       dirty: () => state.dirty,
-      saveWarning: () => state.warning,
     };
     library = new CubeLibrary(root, store, host);
     await library.refresh();
@@ -45,12 +42,12 @@ describe('the Cubes window', () => {
     [...root.querySelectorAll<HTMLElement>('.dc-lib-row')].find((r) => r.textContent?.includes(name))
       ?? assert.fail(`no row ${name}`);
 
-  it('marks unsaved changes, and clears the mark when there are none', () => {
-    const mark = root.querySelector('.dc-lib-unsaved') as HTMLElement;
-    assert.equal(mark.hidden, true);
-    state.dirty = true;
+  it('marks the cube on screen', () => {
+    assert.ok(row('Alpha').classList.contains('dc-lib-current'));
+    assert.ok(!row('Beta').classList.contains('dc-lib-current'));
+    state.id = 'b';
     library.sync();
-    assert.equal(mark.hidden, false);
+    assert.ok(row('Beta').classList.contains('dc-lib-current'));
   });
 
   it('opens straight away with nothing unsaved', async () => {
@@ -70,21 +67,4 @@ describe('the Cubes window', () => {
     assert.deepEqual(calls, ['open b']);
   });
 
-  it('says what saving over the saved copy drops, and offers save as new', async () => {
-    state.warning = 'The saved "Alpha" has parts this file cannot show';
-    button('Save').click();
-    await tick();
-    assert.deepEqual(calls, [], 'nothing saved before the user decides');
-    const ask = root.querySelector('.dc-lib-ask') as HTMLElement;
-    assert.equal(ask.hidden, false);
-    assert.match(ask.textContent ?? '', /parts this file cannot show/);
-    button('Save as new', ask).click();
-    await tick();
-    assert.deepEqual(calls, ['save Alpha new']);
-    button('Save').click();
-    await tick();
-    button('Save anyway', root.querySelector('.dc-lib-ask') as HTMLElement).click();
-    await tick();
-    assert.deepEqual(calls, ['save Alpha new', 'save Alpha over']);
-  });
 });

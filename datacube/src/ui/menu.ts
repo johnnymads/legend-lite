@@ -205,6 +205,8 @@ export type MenuActionId =
   | 'heatmap.remove'
   | 'chart.plot'
   | 'grid.new'
+  | 'source.new'
+  | 'page.blank'
   | 'view.properties'
   // the cube's controls hidden or shown, the grid alone (setControlsHidden)
   | 'view.controls'
@@ -280,6 +282,8 @@ export interface MenuItem {
     readonly selected?: readonly MemberPath[];
   };
   readonly submenu?: readonly MenuItem[];
+  /** A line above it: what follows is apart from what precedes (New ▸ Blank Page, which replaces everything). */
+  readonly separated?: boolean;
 }
 
 export interface MenuGroup {
@@ -693,8 +697,8 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
   push('', [{
     label: 'Insert',
     submenu: [
-      { id: 'chart.plot', label: 'Chart' },
-      { id: 'grid.new', label: 'Grid' },
+      { id: 'chart.plot', label: 'Visualization' },
+      { id: 'grid.new', label: 'Copy of Grid' },
     ],
   }]);
 

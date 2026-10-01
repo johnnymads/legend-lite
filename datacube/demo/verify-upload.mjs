@@ -64,6 +64,8 @@ const server = createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const { port } = server.address();
 
+/** "50,000 rows × 12 cols": the opened cube's own status line, read as soon as it opened. */
+let countsAfterOpen = '';
 const browser = await chromium.launch();
 const page = await browser.newPage();
 const errs = [];
@@ -78,20 +80,24 @@ try {
   await page.waitForFunction(
     () => document.querySelectorAll('.dc-row').length > 0, { timeout: 120_000 });
 
-  // OPEN THE DATA PANEL. The page is nothing but the grid now and the
-  // upload control lives in a window the title bar menu opens, so
-  // reaching it is the first thing a person does and the first thing
+  // OPEN THE SOURCE PICKER. The page is nothing but the grid now and the
+  // picker is a window the title bar menu opens (src/ui/source-picker.ts),
+  // so reaching it is the first thing a person does and the first thing
   // this does.
   await page.click('.dc-titlebar-menu');
   await page.waitForSelector('.dc-menu', { timeout: 10_000 });
-  await page.locator('.dc-menu-item', { hasText: 'Data' }).first().click();
+  // in place of the page: New ▸ Blank Page, then "Add a data source"
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await page.locator('.dc-blank').waitFor({ timeout: 10_000 });
+  await page.click('.dc-blank .dc-primary');
   await page.waitForTimeout(400);
 
-  // The control must be VISIBLE, not merely present: an upload
+  // The picker must be VISIBLE, not merely present: an upload
   // feature nobody can reach is not a feature.
-  const visible = await page.isVisible('#uploadbar');
+  const visible = await page.isVisible('.dc-picker .dc-picker-drop');
   if (!visible) {
-    console.log('FAIL: the upload bar is not visible');
+    console.log('FAIL: the source picker\'s file section is not visible');
     failed = true;
   }
 
@@ -99,16 +105,19 @@ try {
     els.map((el) => el.querySelector('.dc-cell')?.textContent?.trim() ?? ''));
   console.log(`before: ${JSON.stringify(before)}`);
 
-  await page.setInputFiles('#uploadfile', DATA);
+  await page.setInputFiles('.dc-picker-file', DATA);
   // Wait for an OUTCOME, not for the filename: the in-progress
-  // message ("reading trades.csv…") contains it too, so matching on
-  // the name reports success while the work is still running.
+  // message ("Reading trades.csv…") contains it too, so matching on
+  // the name reports success while the work is still running. The
+  // picker closes when the file is open, and says a refusal itself.
   await page.waitForFunction(
-    () => /rows,|could not open/.test(
-      document.getElementById('uploadnote')?.textContent ?? ''),
+    () => !document.querySelector('.dc-picker')
+      || document.querySelector('.dc-picker-status.dc-failed'),
     undefined, { timeout: 120_000 });
 
-  const note = (await page.textContent('#uploadnote')) ?? '';
+  const refusal = page.locator('.dc-picker-status.dc-failed');
+  const failedText = (await refusal.count()) > 0 ? await refusal.textContent() : null;
+  const note = failedText ?? '';
   console.log(`note: ${note}`);
   if (/could not open/.test(note)) {
     console.log('FAIL: opening the file errored');
@@ -125,8 +134,9 @@ try {
     ).catch(() => { console.log('FAIL: the cube never re-queried'); failed = true; });
   }
 
-  console.log('status after opening: '
-    + `${await page.textContent('.dc-status-timing')}`);
+  // the counts as the opened cube says them, BEFORE any check below regroups it
+  countsAfterOpen = (await page.textContent('.dc-status-timing')) ?? '';
+  console.log(`status after opening: ${countsAfterOpen}`);
   console.log(`#app children: ${await page.$$eval('#app > *',
     (els) => els.map((e) => e.className || e.tagName).join(', '))}`);
   const rows = await page.$$eval('.dc-row', (els) =>
@@ -419,8 +429,10 @@ try {
       + `${shut.midTop}, height ${open.midH} -> ${shut.midH}`);
   }
 
+  // the counts, as the opened cube's own status line says them: "5,000 rows × 12 cols"
+  const counts = countsAfterOpen;
   if (EXPECT_ROWS) {
-    const m = /([\d,]+) rows/.exec(note);
+    const m = /([\d,]+) rows/.exec(counts);
     const got = m ? Number(m[1].replace(/,/g, '')) : -1;
     const ok = got === EXPECT_ROWS;
     console.log(`  ${ok ? 'MATCH ' : 'DIFFER'} row count: `
@@ -428,7 +440,7 @@ try {
     if (!ok) failed = true;
   }
   if (EXPECT_COLS) {
-    const m = /(\d+) columns/.exec(note);
+    const m = /(\d+) cols/.exec(counts);
     const got = m ? Number(m[1]) : -1;
     const ok = got === EXPECT_COLS;
     console.log(`  ${ok ? 'MATCH ' : 'DIFFER'} column count: `

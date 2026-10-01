@@ -143,3 +143,15 @@ describe('UpstreamPlanner: legend-engine\'s own API, the same client for lite an
     await assert.rejects(() => p.plan(Q), /could not reach the server at http:\/\/x/);
   });
 });
+
+describe('UpstreamPlanner.withModel: another source on the page, the same server', () => {
+  it('plans over its own model and runtime; the first planner keeps its own', async () => {
+    const seen: Seen[] = [];
+    const first = new UpstreamPlanner({ baseUrl: 'http://x', model: 'model A', runtime: 'a::RT', fetch: fakeServer(seen, ok) });
+    const second = first.withModel('model B', 'b::RT');
+    await second.plan(Q);
+    await first.plan(Q);
+    const bodies = seen.filter((s) => s.url.endsWith('/generatePlan')).map((s) => JSON.parse(s.body) as { model: { code: string } });
+    assert.deepEqual(bodies.map((b) => b.model.code), ['model B', 'model A']);
+  });
+});

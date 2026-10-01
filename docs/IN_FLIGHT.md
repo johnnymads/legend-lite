@@ -146,6 +146,13 @@ without the change. (2) NOT fixed here: a derived property `{$this.quantity *
 $this.price}: Float[1]` (Integer * Float) compiles in lite; legend-engine refuses it ("'Number' is not a subtype of
 'Float'").
 
+**2026-10-01, the DataCube line: several sources on a page, and the source picker** (the user: "New is fine; Picker
+should offer everything"). In `datacube/` (the Query line also edits it; ping before landing either way):
+`src/app.ts`, `src/ui/menu.ts` (Insert becomes **New ▸ Source… / Grid / Chart**), `src/page/cube-page.ts` (a grid over
+another source), `src/planner.ts` + `src/wasm-planner.ts` (`withModel`: a planner over another model sharing the same
+worker or server), a new `src/ui/source-picker.ts` and `src/saved-queries.ts` (upstream `/pure/v1/query`, read only),
+`demo/boot.ts` (the Data window becomes the picker). Nothing in `core/`.
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).

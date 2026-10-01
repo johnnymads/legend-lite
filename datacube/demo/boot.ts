@@ -7,15 +7,17 @@
 
 import * as duckdb from '@duckdb/duckdb-wasm';
 
-import { CubeApp, type HeldCopy } from '../src/app.ts';
+import { CubeApp, type GridSource, type HeldCopy } from '../src/app.ts';
 import {
   DEFAULT_CONFIGURATION,
   type CubeConfiguration,
 } from '../src/config.ts';
 import type { Planner } from '../src/cube.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
-import { mountRemote } from '../src/remote.ts';
-import { forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
+import { inferFormat, mountRemote, type S3Credentials } from '../src/remote.ts';
+import { catalogColumns, forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
+import { pickSource, type DatabaseSession, type PickerSections } from '../src/ui/source-picker.ts';
+import { saveDialog } from '../src/ui/save-dialog.ts';
 import { Latest, TabWork, mayLeave } from '../src/host.ts';
 import { isPageFragment, readPageFragment, shareLink } from '../src/share/link.ts';
 import {
@@ -216,6 +218,8 @@ export interface Engine {
    */
   readonly models?: {
     use(model: string, runtime: string, bitColumns: readonly string[]): void;
+    /** ANOTHER source on the page: a planner over its model, on the same worker or server. */
+    another(model: string, runtime: string, bitColumns: readonly string[]): Planner;
   };
   /**
    * What the status line should say about this planner.
@@ -455,6 +459,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   const harnessSignal = { changes: 0, printing: 0 };
   (window as unknown as { __dataCubeSignal?: typeof harnessSignal }).__dataCubeSignal = harnessSignal;
 
+  /** A source's rows as they are: grouped by nothing, up to the row cap (a person builds the cube up). */
+  function rawRows(query: ValueSpecification, columns: CubeSnapshot['columns']): CubeSnapshot {
+    return { source: { query }, columns, derived: [], rows: [], pivotOn: [], measures: [], sorts: [], epoch: 1 };
+  }
+
   function makeApp(
     snap: CubeSnapshot,
     config: CubeConfiguration,
@@ -511,6 +520,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         onCubeView?.();
       },
       showColumnZone: true,
+      // New ▸ Source…: a grid over another source, through the picker
+      ...(models ? {
+        openSource: () => picker?.('add') ?? Promise.resolve(undefined),
+        onBlankPage: () => blankPage?.(),
+      } : {}),
       // THE HOST'S TEXT, IN THE STATUS BAR. Planner progress during
       // boot and errors afterwards -- the cube states its own row,
       // column and timing figures there itself now, so this no
@@ -524,7 +538,6 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         // controls is the dead-button fault one layer up.
         ...(models
           ? [
-            { id: 'host.data' as const, label: 'Data\u2026', section: 'data' as const },
             // saved cubes: in this browser, over the files they were built on
             { id: 'host.save' as const, label: 'Save', section: 'file' as const },
             { id: 'host.saveAs' as const, label: 'Save As\u2026', section: 'file' as const },
@@ -541,7 +554,6 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         ...planeMenu(),
       ],
       onHostMenu: (item) => {
-        if (item.id === 'host.data') toggleHostWindow('datawin');
         if (item.id === 'host.open') showCubes?.();
         if (item.id === 'host.save') saveCube?.(false);
         if (item.id === 'host.saveAs') saveCube?.(true);
@@ -635,12 +647,18 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
   /** Opens the saved cubes' window; set once the page can open files. */
   let showCubes: (() => void) | undefined;
+  /** Close the Open… window, when it is open. */
+  let closeCubes: (() => void) | undefined;
   /** Save the cube (over the one it was opened from), or Save As a new one. */
   let saveCube: ((asNew: boolean) => void) | undefined;
   /** Copies the page's share link; set once the page can open files. */
   let copyShareLink: (() => Promise<void>) | undefined;
   /** Told when a view lands: "changed since saved" is re-read then. */
   let onCubeView: (() => void) | undefined;
+  /** The source picker, once the page can open sources: New ▸ Data Source… adds a grid over one; a blank page opens one. */
+  let picker: ((purpose: 'add' | 'open') => Promise<GridSource | undefined>) | undefined;
+  /** New ▸ Blank Page: everything goes, for a first data source. */
+  let blankPage: (() => void) | undefined;
   let app = makeApp(snapshot, configuration, DEMO_DIMENSIONS, generated ? { heldCopy: generated } : {});
 
   await app.open();
@@ -653,173 +671,49 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   // compiles an ordinary model over an ordinary table, which is why
   // the SQL panel, the tree and the snap plane all keep working
   // without a second code path.
-  const uploadBar = document.getElementById('uploadbar');
-  if (uploadBar) uploadBar.hidden = true;
   if (models) {
-    const bar = must('uploadbar');
-    const note = must('uploadnote');
-    const input = must('uploadfile') as HTMLInputElement;
-    bar.hidden = false;
-
-    // Something to open, and a choice of awkwardness.
-    //
-    // These are the same generators `bazel run //datacube:run_stress` runs every cube
-    // operation against, so an option that stopped working fails the
-    // suite rather than disappointing whoever picked it. Each one is
-    // hard in a different way: a quote inside a header, 60 columns,
-    // 250 pivot values, hostile values, numbers at the int64 edges.
-    const pick = must('samplepick') as HTMLSelectElement;
-    const rowsInput = must('samplerows') as HTMLInputElement;
-    for (const s of SAMPLES) {
-      const opt = document.createElement('option');
-      opt.value = s.id;
-      opt.textContent = s.label;
-      opt.title = s.about;
-      pick.append(opt);
-    }
-    const showPick = () => {
-      const s = sampleById(pick.value);
-      if (!s) return;
-      rowsInput.value = String(s.defaultRows);
-            note.classList.remove('bad');
-      note.textContent = s.about;
-    };
-    pick.addEventListener('change', showPick);
-    showPick();
 
     // Narrowed once: the check above does not reach into a function.
     const local = models;
 
-    // A WAREHOUSE. Sign in (the development sign-in: the warehouse's own
-    // users), list what this user may read, and open one: the model comes
-    // from the catalog's columns exactly as an uploaded file's comes from
-    // DESCRIBE. Live runs there, as the user; Snap copies the user's rows
-    // into this tab's DuckDB under the same name, so one model reads both.
-    const whBar = document.getElementById('warehousebar');
-    if (whBar) {
-      const whUrl = must('whurl') as HTMLInputElement;
-      const whUser = must('whuser') as HTMLInputElement;
-      const whPass = must('whpass') as HTMLInputElement;
-      const whTable = must('whtable') as HTMLSelectElement;
-      const whOpen = must('whopen');
-      const whNote = must('whnote');
-      let session: WarehouseSession | undefined;
-      /** The open cube's warehouse engine, renewed on a sign-in as the same user. */
-      let liveEngine: WarehouseEngine | undefined;
-      let objects: CatalogObject[] = [];
-      // Which warehouse to offer: the deployment's (config.json, ?warehouse=),
-      // else the last one this browser signed in to. A convenience kept in this
-      // browser only; storage may be refused (private windows), so never relied on.
-      const REMEMBERED = 'datacube.warehouse.url';
-      void pageConfig().then((config) => {
-        let remembered = '';
-        try {
-          remembered = window.localStorage.getItem(REMEMBERED) ?? '';
-        } catch {
-          // storage refused: nothing remembered
-        }
-        if (!whUrl.value) whUrl.value = config.warehouse || remembered;
-      });
-      const say = (text: string, bad = false): void => {
-        whNote.classList.toggle('bad', bad);
-        whNote.textContent = text;
-      };
-      work.add(() => (session ? `the warehouse session (${session.principal})` : undefined));
-      const whConnect = must('whconnect') as HTMLButtonElement;
-      whConnect.addEventListener('click', () => {
-        void (async () => {
-          say('signing in…');
-          // NOTHING of the previous sign-in stays on offer while this one runs, and nothing is
-          // taken from it until its table list has loaded: one user's tables were left beside
-          // another's session when the listing failed (P2-334).
-          objects = [];
-          whTable.replaceChildren();
-          whTable.hidden = true;
-          whOpen.hidden = true;
-          whConnect.disabled = true;
-          try {
-            const connected = await connect(whUrl.value.trim(), whUser.value.trim(), whPass.value);
-            session = connected.session;
-            whPass.value = ''; // the token is what is kept, in memory, never the password
-            try {
-              window.localStorage.setItem(REMEMBERED, session.baseUrl);
-            } catch {
-              // storage refused: not remembered, nothing else changes
-            }
-            // THE OPEN CUBE goes on with the renewed token when it is the same user: it kept the
-            // old one, and signing in again as the error asked never reached it (P2-297)
-            let renewed = '';
-            if (liveEngine) {
-              try {
-                liveEngine.renew(session);
-                renewed = '; the open cube goes on with the new sign-in';
-              } catch (e) {
-                renewed = ` — ${e instanceof Error ? e.message : String(e)}`;
-              }
-            }
-            objects = connected.objects;
-            whTable.replaceChildren(...objects.map((o, i) => {
-              const opt = document.createElement('option');
-              opt.value = String(i);
-              opt.textContent = `${o.schema}.${o.name}`;
-              return opt;
-            }));
-            whTable.hidden = objects.length === 0;
-            whOpen.hidden = objects.length === 0;
-            say((objects.length === 0
-              ? `signed in as ${session.principal}: nothing is granted to you yet`
-              : `signed in as ${session.principal}: ${objects.length} table(s) you may read`) + renewed);
-          } catch (e) {
-            say(e instanceof Error ? e.message : String(e), true);
-          } finally {
-            whConnect.disabled = false;
-          }
-        })();
-      });
-      whOpen.addEventListener('click', () => {
-        const chosen = objects[Number(whTable.value)];
-        if (!chosen || !session) return;
-        void (async () => {
-          try {
-            // A warehouse table is read-only: a column the compiler says must be
-            // converted to be declared cannot be, so it is left out, and named.
-            const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
-              { table: chosen.name, schema: chosen.schema, convertible: false });
-            local.use(m.model, m.runtime, m.bitColumns);
-            const columns = await sourceColumns(planner, m.source);
-            app.dispose();
-            app = makeApp(
-              {
-                source: { query: m.source },
-                columns,
-                derived: [],
-                rows: [],
-                pivotOn: [],
-                measures: [],
-                sorts: [],
-                epoch: 1,
-              },
-              {
-                ...DEFAULT_CONFIGURATION,
-                reportTitle: `${chosen.schema}.${chosen.name}`,
-                  },
-              [],
-              {
-                live: (liveEngine = new WarehouseEngine(session as WarehouseSession)),
-                snapTarget: { schema: chosen.schema, table: chosen.name, source: m.source },
-              },
-            );
-            status.textContent = `live on the warehouse as ${(session as WarehouseSession).principal}`;
-            await app.open();
-            say(`${chosen.schema}.${chosen.name}: live on the warehouse as ${(session as WarehouseSession).principal}`
-              + (m.excluded.length === 0 ? ''
-                : ` — left out, as this tab cannot convert them on a read-only table: ${m.excluded.join(', ')}`));
-          } catch (e) {
-            say(e instanceof Error ? e.message : String(e), true);
-          }
-        })();
-      });
+    // A WAREHOUSE (the picker's Database section): the development sign-in, the warehouse's own users.
+    /** The cubes live on a warehouse: renewed when the same user signs in again (P2-297). */
+    const liveEngines = new Set<WarehouseEngine>();
+    const track = (live: WarehouseEngine): WarehouseEngine => {
+      liveEngines.add(live);
+      return live;
+    };
+    work.add(() => (signedIn ? `the warehouse session (${signedIn.session.principal})` : undefined));
+    // Which warehouse to offer: the deployment's (config.json, ?warehouse=), else the last one this
+    // browser signed in to -- a convenience kept in this browser only; storage may be refused.
+    const REMEMBERED = 'datacube.warehouse.url';
+    const rememberedWarehouse = (): string => {
+      try {
+        return window.localStorage.getItem(REMEMBERED) ?? '';
+      } catch {
+        return '';
+      }
+    };
+
+    /** A warehouse table IN PLACE of the cube: Live there as the user, Snap into this tab. */
+    async function openTable(signedIn: WarehouseSession, chosen: CatalogObject): Promise<{
+      readonly live: WarehouseEngine; readonly excluded: readonly string[];
+    }> {
+      // A warehouse table is read-only: a column the compiler says must be
+      // converted to be declared cannot be, so it is left out, and named.
+      const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
+        { table: chosen.name, schema: chosen.schema, convertible: false });
+      local.use(m.model, m.runtime, m.bitColumns);
+      const columns = await sourceColumns(planner, m.source);
+      const live = track(new WarehouseEngine(signedIn));
+      app.dispose();
+      app = makeApp(rawRows(m.source, columns), { ...DEFAULT_CONFIGURATION, reportTitle: `${chosen.schema}.${chosen.name}` }, [],
+        { live, snapTarget: { schema: chosen.schema, table: chosen.name, source: m.source } });
+      status.textContent = `live on the warehouse as ${signedIn.principal}`;
+      await app.open();
+      return { live, excluded: m.excluded };
     }
+
     // THE CUBE ON SCREEN, as a saved cube sees it: the file it reads (by identity, and the
     // File itself so a cube saved over the same file reopens without asking), the handle the
     // browser gave for it (to reopen it from where it was picked), and the saved cube it
@@ -902,8 +796,6 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       // newer open stops at its next wait, before it touches the model or the cube (P2-330).
       const newest = opens.start();
       latestTable = tableNameOf(file.name);
-      note.classList.remove('bad');
-      note.textContent = `reading ${file.name}…`;
       try {
         const opened = await ingestFile(engine, db, file);
         const loadedAt = new Date();
@@ -985,18 +877,12 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           lost: notes.filter((n) => n.startsWith('left out')),
         };
         onCubeView?.();
-        note.textContent = `${opened.fileName}: `
-          + `${opened.rowCount.toLocaleString()} rows, `
-          + `${columns.length} columns`;
         library?.sync();
         return notes;
       } catch (e) {
-        // Say what failed and about which file. An uploaded file is
-        // the one input the user can actually fix.
-        note.classList.add('bad');
-        note.textContent = `could not open ${file.name}: `
-          + (e instanceof Error ? e.message : String(e));
-        throw e;
+        // Say what failed and about which file -- the one input the user can actually fix. Shown
+        // where the open was asked: the source picker's window, or the saved cubes'.
+        throw new Error(`could not open ${file.name}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
       }
     }
 
@@ -1005,6 +891,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     let store: CubeStore;
     let handles: FileHandles | undefined;
     let persistent = false;
+    /** The browser gave no database: saved cubes last only as long as this visit. */
+    let memoryOnly = false;
     try {
       const database = openCubeDatabase();
       await database;
@@ -1012,6 +900,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       handles = new FileHandles(database);
     } catch {
       store = new RuleStore(new MemoryRecords(), 'this browser');
+      memoryOnly = true;
     }
 
     /**
@@ -1124,30 +1013,30 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         ? `opened "${doc.name}"`
         : `opened "${doc.name}", with changes since it was saved:\n${notes.map((n) => `- ${n}`).join('\n')}`,
       notes.length === 0 ? 'ok' : 'warn');
+      // opened cleanly: the window goes, the cube is what the person wanted to see
+      if (notes.length === 0) closeCubes?.();
+    }
+
+    /** Save the cube on screen: over its saved copy, or as a new one (the Save window's act). */
+    async function saveTo(name: string, asNew: boolean): Promise<void> {
+      const refused = app.saveRefusal();
+      if (refused) throw new Error(refused);
+      const form = savedForm(name);
+      if (!form) throw new Error('This cube cannot be saved yet: only cubes over a file are.');
+      const id = !asNew && current.cubeId !== undefined ? current.cubeId : crypto.randomUUID();
+      const record = { id, name, content: form.content };
+      if (id === current.cubeId) await store.update(id, record);
+      else await store.create(record);
+      if (current.handle) await handles?.put(id, current.handle);
+      current = { ...current, cubeId: id, name, baseline: form.definition, lost: [] };
+      onCubeView?.();
+      if (!persistent) persistent = await persistStorage();
+      library?.sync();
     }
 
     library = new CubeLibrary(must('cubelib'), store, {
-      saveName: () => (current.source ? current.name ?? app.configuration.reportTitle ?? current.source.name : undefined),
       currentId: () => current.cubeId,
       dirty,
-      saveWarning: () => (current.lost?.length
-        ? `The saved "${current.name ?? 'cube'}" has parts this file cannot show; saving over it drops them:\n`
-          + current.lost.map((n) => `- ${n}`).join('\n')
-        : undefined),
-      save: async (name, asNew) => {
-        const refused = app.saveRefusal();
-        if (refused) throw new Error(refused);
-        const form = savedForm(name);
-        if (!form) throw new Error('this cube cannot be saved yet: only cubes over a file are');
-        const id = !asNew && current.cubeId !== undefined ? current.cubeId : crypto.randomUUID();
-        const record = { id, name, content: form.content };
-        if (id === current.cubeId) await store.update(id, record);
-        else await store.create(record);
-        if (current.handle) await handles?.put(id, current.handle);
-        current = { ...current, cubeId: id, name, baseline: form.definition, lost: [] };
-        onCubeView?.();
-        if (!persistent) persistent = await persistStorage();
-      },
       open: async (id) => openSaved(readSaved((await store.get(id)).content), id),
       openText: async (text) => openSaved(readSaved(text), undefined),
       forget: async (id) => {
@@ -1158,16 +1047,101 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         }
       },
     });
+    // OPEN… (the user, 2026-10-01: "fix the Open dialog now too"): the saved cubes in a window of
+    // their own, as the source picker and Save are -- searched, sorted, opened, deleted, or a cube
+    // file opened. It closes once a cube opens cleanly; what an open has to say (a file to choose,
+    // changes since it was saved) keeps it open.
     showCubes = () => {
-      showHostWindow('cubeswin');
+      if (!closeCubes) {
+        const backdrop = document.createElement('div');
+        backdrop.id = 'cubeswin';
+        backdrop.className = 'dc-picker-backdrop';
+        const win = document.createElement('div');
+        win.className = 'dc-picker dc-open dc-app-floating';
+        win.setAttribute('role', 'dialog');
+        win.setAttribute('aria-modal', 'true');
+        win.setAttribute('aria-labelledby', 'dc-open-title');
+        const head = document.createElement('div');
+        head.className = 'dc-picker-head';
+        const titles = document.createElement('div');
+        titles.className = 'dc-picker-titles';
+        const title = document.createElement('h2');
+        title.className = 'dc-picker-title';
+        title.id = 'dc-open-title';
+        title.textContent = 'Open a saved cube';
+        const sub = document.createElement('p');
+        sub.className = 'dc-picker-subtitle';
+        sub.textContent = memoryOnly
+          ? 'Kept for this visit only (this browser refused storage). Each reopens over its own file, or regenerates its example.'
+          : 'Saved in this browser. Each reopens over its own file (asked for when needed), or regenerates its example.';
+        titles.append(title, sub);
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'dc-picker-close';
+        close.setAttribute('aria-label', 'Close');
+        close.textContent = '\u00d7';
+        head.append(titles, close);
+        const body = document.createElement('div');
+        body.className = 'dc-open-body';
+        body.append(must('cubelib'));
+        win.append(head, body);
+        backdrop.append(win);
+        document.body.append(backdrop);
+        const onKey = (e: KeyboardEvent): void => {
+          if (e.key === 'Escape') { e.preventDefault(); closeCubes?.(); }
+        };
+        document.addEventListener('keydown', onKey, true);
+        closeCubes = () => {
+          must('cubeholder').append(must('cubelib'));
+          document.removeEventListener('keydown', onKey, true);
+          backdrop.remove();
+          closeCubes = undefined;
+        };
+        close.addEventListener('click', () => closeCubes?.());
+        backdrop.addEventListener('mousedown', (e) => { if (e.target === backdrop) closeCubes?.(); });
+      }
       library?.sync();
       void library?.refresh();
+      (document.querySelector('#cubelib .dc-lib-search') as HTMLElement | null)?.focus();
     };
-    // the menu's Save and Save As: the saved-cubes window's own actions, said in it
+    // THE MENU'S SAVE AND SAVE AS: a window of their own (src/ui/save-dialog.ts) -- the name, where
+    // it is kept, what is saved and what is not (the rows), and what saving over would drop
     saveCube = (asNew) => {
-      showCubes?.();
-      if (asNew) library?.saveAs();
-      else library?.save();
+      void (async () => {
+        const refused = app.saveRefusal();
+        const offered = current.name ?? app.configuration.reportTitle ?? current.source?.name ?? 'cube';
+        const savedAt = current.cubeId !== undefined ? (await store.get(current.cubeId).catch(() => undefined))?.lastUpdatedAt : undefined;
+        const s = app.snapshot;
+        const charts = app.pageViews().views.filter((v) => v.kind === 'chart').length;
+        const keeps = [
+          s.rows.length > 0 ? `Grouped by ${s.rows.join(', ')}` : 'Its rows as they are, grouped by nothing',
+          ...(s.pivotOn.length > 0 ? [`Pivoted on ${s.pivotOn.join(', ')}`] : []),
+          ...(s.filter ? ['Its filter'] : []),
+          ...(s.derived.length + (s.groupDerived?.length ?? 0) > 0
+            ? [`${s.derived.length + (s.groupDerived?.length ?? 0)} calculated column${s.derived.length + (s.groupDerived?.length ?? 0) === 1 ? '' : 's'}`] : []),
+          ...(charts > 0 ? [`${charts} visualization${charts === 1 ? '' : 's'}, and the page's layout`] : []),
+          'Its formats, widths, colours and settings',
+        ];
+        const src = current.source;
+        const leaves = src?.sample
+          ? `Not the rows: the example (${src.sample.rows.toLocaleString()} rows) is generated again when it opens.`
+          : `Not the rows: opening it reads ${src?.name ?? 'its file'} again, from your computer.`;
+        await saveDialog(document, {
+          purpose: asNew ? 'saveAs' : 'save',
+          name: offered,
+          ...(current.cubeId !== undefined
+            ? { over: { name: current.name ?? offered, ...(savedAt !== undefined ? { savedAt } : {}) } } : {}),
+          where: memoryOnly ? 'for this visit only (this browser refused storage)' : 'in this browser',
+          keeps,
+          leaves,
+          ...(current.lost?.length
+            ? { warning: `The saved “${current.name ?? 'cube'}” has parts this file cannot show: ${current.lost.join('; ')}.` } : {}),
+          save: async (name, saveAsNew) => {
+            if (refused) throw new Error(refused);
+            await saveTo(name, saveAsNew);
+          },
+        });
+      })();
     };
 
     // THE SHARE LINK: the page's settings, never its data. It is said HOW LONG it is, and a long
@@ -1218,87 +1192,235 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       await put();
     };
 
-    // Build the chosen sample. No row cap: the one hard limit is the
-    // browser's longest string (about 512M characters, some millions
-    // of rows), and past it the build throws a RangeError -- said in
-    // plain words below rather than guessed at with a ceiling here.
-    const buildSample = (): { s: Sample; text: string; name: string;
-      rows: number } | undefined => {
-      const s = sampleById(pick.value);
-      if (!s) return undefined;
-      const rows = Math.max(1, Math.floor(Number(rowsInput.value))
-        || s.defaultRows);
-      return { s, text: s.build(rows), name: sampleFileName(s), rows };
-    };
-    const tooBig = (e: unknown): string =>
+    // A sample is built without a row cap: the one hard limit is the browser's longest string
+    // (about 512M characters, some millions of rows), and past it the build throws a RangeError --
+    // said in plain words rather than guessed at with a ceiling here.
+    const tooBig = (e: unknown, rows: number): string =>
       e instanceof RangeError
-        ? `${Number(rowsInput.value).toLocaleString()} rows is more than `
-          + 'this tab can hold as one file -- try fewer'
+        ? `${rows.toLocaleString()} rows is more than this tab can hold as one file -- try fewer`
         : e instanceof Error ? e.message : String(e);
     const mimeOf = (s: Sample): string =>
       s.format === 'jsonl' ? 'application/x-ndjson' : 'text/csv';
 
-    // Open: generate and load it, the same path a picked file takes.
-    must('sampleopen').addEventListener('click', () => {
-      note.classList.remove('bad');
-      note.textContent = `building ${Number(rowsInput.value)
-        .toLocaleString()} rows…`;
-      // Generating 200k rows is a second of synchronous string
-      // building; let the note paint before starting.
-      setTimeout(() => {
-        let built;
-        try {
-          built = buildSample();
-        } catch (e) {
-          note.classList.add('bad');
-          note.textContent = tooBig(e);
-          return;
-        }
-        if (!built) return;
-        void openFile(new File([built.text], built.name,
-          { type: mimeOf(built.s) }), { sample: { id: built.s.id, rows: built.rows } }).catch(() => {});
-      }, 0);
+    // THE SOURCE PICKER (src/ui/source-picker.ts; the user, 2026-10-01): where the rows come from,
+    // one window for every kind -- a file, an example, a warehouse table, a remote file. Each
+    // choice is read INSIDE the window, so a refusal is shown there. "add" makes a grid over it
+    // with ITS OWN planner over ITS OWN model (`another`), on this tab's DuckDB; "open" puts it
+    // in place of the cube, as the Data window did.
+    type Chosen =
+      | { readonly kind: 'file'; readonly file: File; readonly handle?: FileHandle; readonly sample?: { readonly id: string; readonly rows: number } }
+      | { readonly kind: 'table'; readonly session: WarehouseSession; readonly object: CatalogObject }
+      | { readonly kind: 'remote'; readonly url: string; readonly s3?: S3Credentials };
+    /** The picker's warehouse sign-in, kept between openings of the window. */
+    let signedIn: { readonly session: WarehouseSession; readonly objects: readonly CatalogObject[] } | undefined;
+    /** Tables this page's added sources read: none may replace another's, or the cube's. */
+    const taken = new Set<string>();
+    const freshTable = (base: string): string => {
+      const busy = (t: string): boolean => taken.has(t) || (current.source !== undefined && tableNameOf(current.source.name) === t);
+      let name = base;
+      for (let n = 2; busy(name); n += 1) name = `${base}_${n}`;
+      taken.add(name);
+      return name;
+    };
+    const sampleFile = (id: string, rows: number): { file: File; sample: { id: string; rows: number } } => {
+      const s = sampleById(id);
+      if (!s) throw new Error(`no example '${id}'`);
+      let text: string;
+      try {
+        text = s.build(rows);
+      } catch (e) {
+        throw new Error(tooBig(e, rows));
+      }
+      return { file: new File([text], sampleFileName(s), { type: mimeOf(s) }), sample: { id: s.id, rows } };
+    };
+    const asSession = (s: { readonly session: WarehouseSession; readonly objects: readonly CatalogObject[] }): DatabaseSession => ({
+      principal: s.session.principal,
+      where: new URL(s.session.baseUrl).host,
+      objects: s.objects.map((o) => ({ schema: o.schema, name: o.name, kind: o.kind, columns: o.columns.length })),
     });
+    const lastSegment = (url: string): string => url.replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop() || url;
 
-    // Or keep it: the same file, saved, for sharing or reopening.
-    must('sampledownload').addEventListener('click', (ev) => {
-      ev.preventDefault();
-      note.classList.remove('bad');
-      setTimeout(() => {
-        let built;
-        try {
-          built = buildSample();
-        } catch (e) {
-          note.classList.add('bad');
-          note.textContent = tooBig(e);
-          return;
-        }
-        if (!built) return;
-        const url = URL.createObjectURL(
-          new Blob([built.text], { type: mimeOf(built.s) }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = built.name;
-        a.click();
-        URL.revokeObjectURL(url);
-        note.textContent = `${built.name} saved `
-          + `(${built.rows.toLocaleString()} rows)`;
-      }, 0);
-    });
+    /** A remote file as a view of this tab's DuckDB, and the model written from its catalog. */
+    async function mountedRemote(url: string, s3: S3Credentials | undefined, name: string) {
+      await mountRemote(engine, { sources: [{ name, url }], ...(s3 ? { s3 } : {}) });
+      // a view of a remote file cannot be rewritten: a column that needs a conversion is left out
+      return inferModel(await catalogColumns(engine, name), { table: name, convertible: false });
+    }
 
-    input.addEventListener('change', () => {
-      const file = input.files?.[0];
-      if (file) void openFile(file).catch(() => {});
-    });
-    // Where the browser can keep a handle to the picked file, pick THROUGH it: a saved cube
-    // then reopens its file from where it was picked (file-handles.ts).
-    input.addEventListener('click', (event) => {
-      if (!canKeepHandles()) return;
-      event.preventDefault();
-      void pickDataFile().then((picked) => {
-        if (picked) void openFile(picked.file, { handle: picked.handle }).catch(() => {});
-      });
-    });
+    /** A grid over the chosen source, beside the others: its own planner over its own model. */
+    async function gridOver(chosen: Chosen): Promise<GridSource> {
+      if (chosen.kind === 'file') {
+        const opened = await ingestFile(engine, db, chosen.file, { table: freshTable(tableNameOf(chosen.file.name)) });
+        const own = local.another(opened.model, opened.runtime, opened.bitColumns);
+        return {
+          snapshot: rawRows(opened.source, await sourceColumns(own, opened.source)),
+          place: { engine, planner: own },
+          heldCopy: { label: opened.fileName, takenAt: new Date(), rowCount: opened.rowCount },
+          label: opened.fileName,
+        };
+      }
+      if (chosen.kind === 'table') {
+        const o = chosen.object;
+        const m = inferModel(o.columns.map((c) => ({ ...c, dataType: c.type })), { table: o.name, schema: o.schema, convertible: false });
+        const own = local.another(m.model, m.runtime, m.bitColumns);
+        return {
+          snapshot: rawRows(m.source, await sourceColumns(own, m.source)),
+          place: { engine, planner: own, live: track(new WarehouseEngine(chosen.session)) },
+          snapTarget: { schema: o.schema, table: o.name, source: m.source },
+          label: `${o.schema}.${o.name}`,
+        };
+      }
+      const m = await mountedRemote(chosen.url, chosen.s3, freshTable('remote'));
+      const own = local.another(m.model, m.runtime, m.bitColumns);
+      return {
+        snapshot: rawRows(m.source, await sourceColumns(own, m.source)),
+        place: { engine, planner: own },
+        label: lastSegment(chosen.url),
+      };
+    }
+
+    /** The chosen source IN PLACE of the cube. */
+    async function openInPlace(chosen: Chosen): Promise<void> {
+      if (chosen.kind === 'file') {
+        await openFile(chosen.file, {
+          ...(chosen.sample ? { sample: chosen.sample } : {}),
+          ...(chosen.handle ? { handle: chosen.handle } : {}),
+        });
+        return;
+      }
+      if (chosen.kind === 'table') {
+        await openTable(chosen.session, chosen.object);
+        return;
+      }
+      const m = await mountedRemote(chosen.url, chosen.s3, freshTable('remote'));
+      local.use(m.model, m.runtime, m.bitColumns);
+      const columns = await sourceColumns(planner, m.source);
+      app.dispose();
+      app = makeApp(rawRows(m.source, columns), { ...DEFAULT_CONFIGURATION, reportTitle: lastSegment(chosen.url) }, []);
+      await app.open();
+    }
+
+    picker = async (purpose: 'add' | 'open'): Promise<GridSource | undefined> => {
+      const config = await pageConfig();
+      const act = async (chosen: Chosen): Promise<GridSource | null> => {
+        if (purpose === 'add') return gridOver(chosen);
+        await openInPlace(chosen);
+        return null;
+      };
+      const sections: PickerSections<GridSource | null> = {
+        files: {
+          accept: '.csv,.parquet,.json,.jsonl,.ndjson,text/csv,application/json',
+          formats: ['CSV', 'Parquet', 'JSON', 'JSON Lines'],
+          // where the browser can keep a handle to the file, pick THROUGH it: a saved cube then
+          // reopens its file from where it was picked (file-handles.ts)
+          ...(canKeepHandles() ? { pick: () => pickDataFile() } : {}),
+          open: (file, handle) => act({ kind: 'file', file, ...(handle ? { handle: handle as FileHandle } : {}) }),
+        },
+        examples: {
+          list: SAMPLES.map((s) => ({
+            id: s.id, name: s.label, description: s.about, rows: s.defaultRows,
+            tags: [s.format === 'jsonl' ? 'JSON Lines' : 'CSV'],
+          })),
+          open: (id, rows) => act({ kind: 'file', ...sampleFile(id, rows) }),
+          // the generated file itself, for sharing or reopening
+          download: (id, rows) => {
+            const { file } = sampleFile(id, rows);
+            const url = URL.createObjectURL(file);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            a.click();
+            URL.revokeObjectURL(url);
+          },
+        },
+        database: {
+          ...((config.warehouse || rememberedWarehouse()) ? { url: config.warehouse || rememberedWarehouse() } : {}),
+          ...(signedIn ? { session: asSession(signedIn) } : {}),
+          signIn: async (url, user, password) => {
+            // nothing of a previous sign-in stays on offer until this one has listed its tables (P2-334)
+            signedIn = undefined;
+            const connected = await connect(url, user, password);
+            signedIn = { session: connected.session, objects: connected.objects };
+            try {
+              window.localStorage.setItem(REMEMBERED, connected.session.baseUrl);
+            } catch {
+              // storage refused: not remembered, nothing else changes
+            }
+            // THE CUBES LIVE THERE go on with the new token when it is the same user (P2-297)
+            for (const live of liveEngines) {
+              try {
+                live.renew(connected.session);
+              } catch {
+                // another user: that cube keeps its own sign-in
+              }
+            }
+            return asSession(signedIn);
+          },
+          open: (object) => {
+            const s = signedIn;
+            const found = s?.objects.find((o) => o.schema === object.schema && o.name === object.name);
+            if (!s || !found) return Promise.reject(new Error(`${object.schema}.${object.name} is no longer offered: sign in again`));
+            return act({ kind: 'table', session: s.session, object: found });
+          },
+        },
+        remote: {
+          detect: (url) => ({ parquet: 'Parquet', csv: 'CSV', iceberg: 'Iceberg' })[inferFormat(url)],
+          open: (url, credentials) => act({
+            kind: 'remote',
+            url,
+            ...(credentials ? {
+              s3: {
+                ...(credentials.region ? { region: credentials.region } : {}),
+                ...(credentials.keyId ? { accessKeyId: credentials.keyId } : {}),
+                ...(credentials.secret ? { secretAccessKey: credentials.secret } : {}),
+                ...(credentials.endpoint ? { endpoint: credentials.endpoint } : {}),
+              },
+            } : {}),
+          }),
+        },
+      };
+      const made = await pickSource(document, { purpose, sections });
+      return made ?? undefined;
+    };
+
+    // A BLANK PAGE (New ▸ Blank Page; the user, 2026-10-01): every grid and chart goes, and the page
+    // says what to do first -- a data source (the picker, opening in place) or a saved cube. Asked
+    // first when there are unsaved changes; the old cube stays until the person agrees.
+    blankPage = () => {
+      if (dirty() && !window.confirm('The page has unsaved changes. Start a blank page anyway?')) return;
+      app.dispose();
+      must('offstage').append(status);
+      current = {};
+      const doc = document;
+      const blank = doc.createElement('div');
+      blank.className = 'dc-blank dc-app-floating';
+      const card = doc.createElement('div');
+      card.className = 'dc-blank-card';
+      const title = doc.createElement('h2');
+      title.className = 'dc-blank-title';
+      title.textContent = 'A blank page';
+      const lead = doc.createElement('p');
+      lead.className = 'dc-blank-lead';
+      lead.textContent = 'Start with a data source: a file from your computer, an example, a table in a warehouse, or a remote Parquet, CSV or Iceberg file.';
+      const actions = doc.createElement('div');
+      actions.className = 'dc-blank-actions';
+      const add = doc.createElement('button');
+      add.type = 'button';
+      add.className = 'dc-picker-button dc-primary';
+      add.textContent = 'Add a data source';
+      add.addEventListener('click', () => void picker?.('open'));
+      const saved = doc.createElement('button');
+      saved.type = 'button';
+      saved.className = 'dc-picker-button dc-quiet';
+      saved.textContent = 'Open a saved cube';
+      saved.addEventListener('click', () => showCubes?.());
+      actions.append(add, saved);
+      card.append(title, lead, actions);
+      blank.append(card);
+      host.replaceChildren(blank);
+      document.title = 'New page';
+      add.focus();
+    };
 
     // A SHARE LINK in the address opens its page, found the way a saved one is (a sample rebuilt,
     // a file asked for). Then the link is taken out of the address: a reload never reopens it over

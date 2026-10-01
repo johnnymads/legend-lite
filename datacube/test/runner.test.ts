@@ -9,6 +9,7 @@ import type { CubeSnapshot } from '../src/snapshot.ts';
 import { TreeState } from '../src/tree.ts';
 import type { RemoteExecutor, RemoteResult } from '../src/engine-remote.ts';
 import { isStale } from '../src/epoch.ts';
+import { TOTAL_ROWS_COLUMN } from '../src/query.ts';
 import { FakeEngine } from './fake-engine.ts';
 import { fakeParse, fakePrint, limitsOf } from './fake-planner.ts';
 import { fromElement, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
@@ -170,6 +171,13 @@ describe('Row Limit on a FLAT cube', () => {
     async execute(query: Lambda, snapshot: CubeSnapshot): Promise<RemoteResult> {
       this.queries.push(query);
       const n = 5;
+      // the flat cube's count, asked when the cap cut it (query.ts countLambda)
+      if (JSON.stringify(query).includes(TOTAL_ROWS_COLUMN)) {
+        return {
+          rows: { columns: [{ name: TOTAL_ROWS_COLUMN, type: 'Integer', values: [n] }], rowCount: 1, epoch: snapshot.epoch, elapsedMs: 0 },
+          sql: 'select count',
+        };
+      }
       return {
         rows: {
           columns: [
@@ -196,9 +204,13 @@ describe('Row Limit on a FLAT cube', () => {
     const controller = new CubeController(new RemoteRun(executor));
     const v = await controller.run(at({ ...SNAPSHOT, maxRows: 3 }));
     if (isStale(v)) throw new Error('stale');
-    assert.deepEqual(limitsOf(executor.queries.at(-1)!), [4]);
+    const level = executor.queries.find((q) => !JSON.stringify(q).includes(TOTAL_ROWS_COLUMN))!;
+    assert.deepEqual(limitsOf(level), [4]);
     assert.equal(v.rows.rowCount, 3);
     assert.equal(v.truncated.length, 1);
+    // cut: one count says how many there are in all ("the first 3 of 5")
+    assert.equal(v.totalRows, 5);
+    assert.equal(executor.queries.filter((q) => JSON.stringify(q).includes(TOTAL_ROWS_COLUMN)).length, 1);
   });
 
   it('UNSET means no limit, as upstream', async () => {

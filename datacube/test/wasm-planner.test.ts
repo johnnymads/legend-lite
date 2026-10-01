@@ -379,3 +379,23 @@ describe('pathToFileUrl', () => {
     });
   }
 });
+
+describe('WasmPlanner.withModel: another source on the page, the same module', () => {
+  it('plans over its own model and runtime, loading the module once', async () => {
+    let loads = 0;
+    const asked: string[] = [];
+    const first = planner((m, _q, r) => { asked.push(`${m}|${r}`); return ok('SELECT 1'); }, { onLoad: () => { loads += 1; } });
+    const second = first.withModel('model B', 'b::RT');
+    await second.planText('g');
+    await first.planText('g');
+    assert.equal(loads, 1, 'one module for both');
+    assert.deepEqual(asked.map((a) => a.split('|')[1]), ['b::RT', 'trades::RT']);
+    assert.equal(asked[0]!.split('|')[0], 'model B');
+  });
+
+  it('a borrowed planner\'s dispose leaves its maker working', async () => {
+    const first = planner(() => ok('SELECT 1'));
+    first.withModel('model B', 'b::RT').dispose();
+    assert.equal((await first.planText('g')).sql, 'SELECT 1');
+  });
+});

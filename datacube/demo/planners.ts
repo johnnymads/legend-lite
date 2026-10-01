@@ -45,6 +45,7 @@ async function inTab(model: string): Promise<Engine> {
     models: {
       // legend-lite types BIT Boolean itself: no BIT columns to read (relation-type.ts, S23)
       use: (next, runtime) => planner.useModel(next, runtime),
+      another: (next, runtime) => planner.withModel(next, runtime),
     },
   };
 }
@@ -69,6 +70,7 @@ async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engi
     label: which,
     models: {
       use: (next, runtime, bitColumns) => planner.useModel(next, runtime, bitColumns),
+      another: (next, runtime, bitColumns) => planner.withModel(next, runtime, bitColumns),
     },
   };
 }

@@ -315,6 +315,21 @@ export function sourceWithDerived(s: CubeSnapshot): Relation {
   return rel;
 }
 
+/** The column `countLambda` answers in. */
+export const TOTAL_ROWS_COLUMN = '__rows__';
+
+/**
+ * How many rows a FLAT cube has, its filter applied: asked only when the row cap cut it, so the
+ * status can say "the first 1,000 of 48,213" rather than only that it was cut.
+ */
+export function countLambda(s: CubeSnapshot): Lambda {
+  let rel = sourceWithDerived(s);
+  if (s.filter) rel = rel.filter(lambda(['x'], filterNode(s.filter, 'x', (c) => columnType(s, c))));
+  return rel.extend([derive(ROOT_COLUMN, lambda(['x'], lit.string(ROOT_VALUE)))])
+    .groupBy([ROOT_COLUMN], [agg(TOTAL_ROWS_COLUMN, lambda(['x'], lit.integer(1)), lambda(['y'], fn('count', variable('y'))))])
+    .lambda();
+}
+
 /** Step 1 of a pivot: its value combinations, in the pivot's order, one past the cap. */
 export function pivotValuesLambda(s: CubeSnapshot): Lambda | null {
   const on = s.pivotOn;

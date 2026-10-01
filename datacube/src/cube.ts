@@ -26,7 +26,9 @@ import {
   type PivotColumn,
   type PivotFacts,
   childAggregateLambda,
+  countLambda,
   levelLambda,
+  TOTAL_ROWS_COLUMN,
   pivotValuesLambda,
 } from './query.ts';
 import { planPivot, typeColumns, type PivotPlan, type SchemaChange } from './plan.ts';
@@ -99,6 +101,8 @@ export interface CubeView {
    * infer it from a suspiciously round row count.
    */
   readonly truncated: readonly LevelRequest[];
+  /** A flat cube the row cap cut: how many rows it has in all (one count, asked only then). */
+  readonly totalRows?: number;
   /**
    * The query, for the "show me the query" panel.
    *
@@ -515,6 +519,8 @@ export class CubeController {
       );
       const cut = maxRows !== undefined && full.rowCount > maxRows;
       const rows = cut ? takeRows(full, maxRows) : full;
+      // cut: how many there are in all, so the status can say "the first 1,000 of 48,213"
+      const totalRows = cut ? await this.#countRows(withEpoch, runner, signal) : undefined;
       const columns = buildColumnModel(
         rows,
         withEpoch.rows,
@@ -529,6 +535,7 @@ export class CubeController {
         rows,
         treeRows: [],
         truncated: cut ? [{ level: 1, parent: [] }] : [],
+        ...(totalRows !== undefined ? { totalRows } : {}),
         query,
         sql,
         receipts,
@@ -538,6 +545,14 @@ export class CubeController {
     });
   }
 
+
+  /** A flat cube's rows in all: the same source and filter as the query that was just cut. */
+  async #countRows(s: CubeSnapshot, runner: QueryRunner, signal?: AbortSignal): Promise<number> {
+    const { rows } = await runner.run(countLambda(s), s, undefined, signal);
+    const n = rows.columns.find((c) => c.name === TOTAL_ROWS_COLUMN)?.values[0];
+    if (n === undefined || n === null) throw new Error('the row count came back without its count');
+    return Number(n);
+  }
 
   /** Stop the run in flight: it resolves STALE (the owner cancelled the change). */
   cancel(): void {

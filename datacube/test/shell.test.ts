@@ -218,14 +218,14 @@ function app(options: Partial<ConstructorParameters<typeof CubeApp>[2]> = {}): {
 }
 
 describe('the app', () => {
-  it("offers Undo and Redo first in the title bar's menu, and Settings... last", async () => {
+  it("offers New first in the title bar's menu (the user, 2026-10-01), then Undo and Redo, and Settings... last", async () => {
     const { app: cube } = app();
     await cube.open();
     click(root.querySelector('.dc-titlebar-menu'));
     // the menu's own entries, not a submenu's
     const labels = [...dom.window.document.querySelectorAll('.dc-menu > .dc-menu-item > .dc-menu-label, .dc-menu > * > .dc-menu-item > .dc-menu-label')]
       .map((l) => l.textContent);
-    assert.deepEqual(labels.slice(0, 2), ['Undo', 'Redo']);
+    assert.deepEqual(labels.slice(0, 3), ['New', 'Undo', 'Redo']);
     assert.equal(labels[labels.length - 1], 'Settings...');
   });
 

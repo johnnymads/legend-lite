@@ -35,6 +35,7 @@ import {
   toColumnLayout,
   renderFormats,
   leafFormats,
+  DEFAULT_CONFIGURATION,
   DEFAULT_MAX_ROWS,
   renameColumnConfig,
   withColumn,
@@ -70,7 +71,7 @@ import { exportTable, type ExportPage } from './export-model.ts';
 import { toXlsx, XLSX_MIME } from './export-xlsx.ts';
 import { cubeScopeOf, newCubeScope } from './ui/scope.ts';
 import { BOARD_COLUMNS } from './layout/board.ts';
-import { BOARD_ROWS, CubePage, withoutConditions, type ChartSource } from './page/cube-page.ts';
+import { BOARD_ROWS, CubePage, withoutConditions, type ChartSource, type SpawnedGrid, type SpawnOptions } from './page/cube-page.ts';
 import { PAGE_CUBE, pageToJson, writePage, type ChartView, type PageDocument, type PageViews } from './page-document.ts';
 import { FormatterCache, type ColumnFormat } from './format.ts';
 import { DataGrid } from './grid/grid.ts';
@@ -148,6 +149,22 @@ const JSON_ROWS = '__json_rows';
  * are visible in the type rather than enforced by a comment, and so
  * a caller cannot pass half of each.
  */
+/**
+ * A grid over another source (New ▸ Source…): what it shows first, and what runs it -- its own
+ * engine and its own planner over its own model (a planner's `withModel`), so no two sources'
+ * models meet.
+ */
+export interface GridSource {
+  readonly snapshot: CubeSnapshot;
+  readonly configuration?: CubeConfiguration;
+  readonly place: CubeAppQuerySource;
+  readonly snapTarget?: SnapTarget;
+  readonly heldCopy?: HeldCopy;
+  readonly cubeSource?: CubeSource;
+  /** What its header says it reads: a file's name, `sales.orders`, a saved query's name. */
+  readonly label: string;
+}
+
 export type CubeAppQuerySource =
   | {
     readonly engine: QueryEngine;
@@ -231,6 +248,15 @@ export interface CubeAppBaseOptions {
    */
   readonly onChart?: () => void;
   readonly onNewGrid?: () => void;
+  /**
+   * ANOTHER SOURCE, for New ▸ Source…: the host asks the person which (its source picker) and
+   * answers what reads it, or undefined when they chose nothing. Absent: no New ▸ Source….
+   */
+  readonly openSource?: () => Promise<GridSource | undefined>;
+  /** New ▸ Blank Page: the host clears the page -- every grid and chart -- for a first data source. */
+  readonly onBlankPage?: () => void;
+  /** A grid on a page: its New ▸ Data Source… goes to the page, as `onNewGrid` does. */
+  readonly onNewSource?: (make: (host: HTMLElement, options: SpawnOptions) => SpawnedGrid) => void;
   readonly writeClipboard?: (text: string) => void | Promise<void>;
   /**
    * Hand a file to the user.
@@ -1242,9 +1268,11 @@ export class CubeApp {
       right.append(this.#statusSeparator());
       const warn = doc.createElement('div');
       warn.className = 'dc-status-warning';
-      warn.textContent =
-        `⚠ Results truncated to fit within row limit ` +
-        `(${(this.#config.maxRows ?? DEFAULT_MAX_ROWS).toLocaleString()})`;
+      const cap = (this.#config.maxRows ?? DEFAULT_MAX_ROWS).toLocaleString();
+      // a flat cube says how many there are in all (cube.ts `totalRows`): the first 1,000 of 48,213
+      warn.textContent = view.totalRows !== undefined
+        ? `⚠ Showing the first ${cap} of ${view.totalRows.toLocaleString()} rows (row limit)`
+        : `⚠ Results truncated to fit within row limit (${cap})`;
       right.append(warn);
     }
 
@@ -1987,6 +2015,12 @@ export class CubeApp {
       case 'chart.plot':
         this.openChart();
         return;
+      case 'source.new':
+        void this.newSource();
+        return;
+      case 'page.blank':
+        this.#options.onBlankPage?.();
+        return;
       case 'grid.new':
         this.newGrid();
         return;
@@ -2372,6 +2406,43 @@ export class CubeApp {
   }
 
   /**
+   * New ▸ Source…: the host's picker chooses one, and a grid over it joins the page -- this
+   * cube's board, or the page this grid is on.
+   */
+  async newSource(): Promise<void> {
+    const source = await this.#options.openSource?.();
+    if (source === undefined) return;
+    const make = this.#gridOver(source);
+    if (this.#options.onNewSource) {
+      this.#options.onNewSource(make);
+      return;
+    }
+    this.#ensurePage().addGridOver(make);
+  }
+
+  /** A cube over `source`, made by the page in a tile: a grid like any other on it. */
+  #gridOver(source: GridSource): (host: HTMLElement, options: SpawnOptions) => SpawnedGrid {
+    return (host, spawned) => new CubeApp(host, source.snapshot, {
+      ...source.place,
+      ...(source.snapTarget ? { snapTarget: source.snapTarget } : {}),
+      ...(source.heldCopy ? { heldCopy: source.heldCopy } : {}),
+      ...(source.cubeSource ? { cubeSource: source.cubeSource } : {}),
+      sourceLabel: source.label,
+      // a new source starts as its rows, up to the row limit (the user, 2026-10-01: "showing the max
+      // rows configured (1000 default)"); Properties changes it
+      configuration: source.configuration ?? { ...DEFAULT_CONFIGURATION, reportTitle: source.label, maxRows: DEFAULT_MAX_ROWS },
+      windowHost: this.#options.windowHost ?? this.#els.root,
+      compact: true,
+      // its drop zones are this grid's: Column Labels too, where this one shows it
+      ...(this.#options.showColumnZone !== undefined ? { showColumnZone: this.#options.showColumnZone } : {}),
+      ...(this.#options.openSource ? { openSource: this.#options.openSource } : {}),
+      ...(spawned.onChart ? { onChart: spawned.onChart } : {}),
+      ...(spawned.onNewGrid ? { onNewGrid: spawned.onNewGrid } : {}),
+      ...(spawned.onNewSource ? { onNewSource: spawned.onNewSource } : {}),
+    });
+  }
+
+  /**
    * The board, made on first use: the grid moves into its first tile, charts below it. The last
    * chart gone, the grid goes back where it was and the board with it.
    */
@@ -2454,8 +2525,12 @@ export class CubeApp {
           // its windows float where this cube's do, not inside the small tile
           windowHost: o.windowHost ?? this.#els.root,
           compact: true,
+          // its drop zones are this grid's: Column Labels too, where this one shows it
+          ...(o.showColumnZone !== undefined ? { showColumnZone: o.showColumnZone } : {}),
+          ...(o.openSource ? { openSource: o.openSource } : {}),
           ...(spawned?.onChart ? { onChart: spawned.onChart } : {}),
           ...(spawned?.onNewGrid ? { onNewGrid: spawned.onNewGrid } : {}),
+          ...(spawned?.onNewSource ? { onNewSource: spawned.onNewSource } : {}),
         });
       },
     };
@@ -3606,7 +3681,15 @@ export class CubeApp {
     const submenu = (label: string, items: MenuItem[]): MenuItem[] =>
       (items.length > 0 ? [{ label, submenu: items }] : []);
     const groups: MenuGroup[] = [
-      // the data first (the user, 2026-09-30): where the rows come from
+      // NEW, first (the user, 2026-10-01): a data source -- through the host's picker -- a
+      // visualization or a copy of this grid, all beside what is there; or a blank page, apart,
+      // which replaces everything
+      { label: '', items: submenu('New', [
+        ...(this.#options.openSource ? [{ id: 'source.new' as const, label: 'Data Source\u2026', ...cubeOnly }] : []),
+        { id: 'chart.plot', label: 'Visualization', ...cubeOnly },
+        { id: 'grid.new', label: 'Copy of Grid', ...cubeOnly },
+        ...(this.#options.onBlankPage ? [{ id: 'page.blank' as const, label: 'Blank Page', separated: true }] : []),
+      ]) },
       { label: '', items: host('data') },
       { label: '', items: [
         // WHAT UNDO ACTS ON: Ad Hoc's session while it is on, never the hidden cube's history
@@ -3630,10 +3713,7 @@ export class CubeApp {
           ...submenu('Dimensions', dimensions),
           ...host('view'),
         ]),
-        ...submenu('Insert', [
-          { id: 'chart.plot', label: 'Chart', ...cubeOnly },
-          { id: 'grid.new', label: 'Grid', ...cubeOnly },
-        ]),
+
       ] },
       { label: '', items: [{ id: 'view.settings', label: 'Settings...' }] },
     ];

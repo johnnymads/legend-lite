@@ -35,7 +35,7 @@ try {
     const probe = await ctx.newPage();
     await probe.goto(entry, { waitUntil: 'load', timeout: 60_000 });
     await probe.waitForFunction(
-      () => document.querySelectorAll('#samplepick option').length > 0,
+      () => document.querySelectorAll('.dc-row').length > 0,
       undefined, { timeout: 60_000 },
     ).catch(() => bad(`${entry} renders a shell with no working script`));
     await probe.close();
@@ -46,54 +46,92 @@ try {
   await page.waitForFunction(
     () => document.querySelectorAll('.dc-row').length > 0, { timeout: 120_000 });
 
-  // OPEN THE DATA PANEL. The page is nothing but the grid now, and
-  // the picker lives in a window the title bar menu opens -- so the
-  // first thing a person does to reach it is the first thing this
-  // does too.
-  await page.click('.dc-titlebar-menu');
-  await page.waitForSelector('.dc-menu', { timeout: 10_000 });
-  await page.locator('.dc-menu-item', { hasText: 'Data' }).first().click();
-  await page.waitForTimeout(400);
-  if (await page.evaluate(() => document.getElementById('datawin')?.hidden)) {
-    bad('the Data panel did not open from the title bar menu');
-  }
+  // OPEN THE SOURCE PICKER (src/ui/source-picker.ts). The page is nothing but the grid, and
+  // the picker is a window the title bar menu opens -- so the first thing a person does to
+  // reach it is the first thing this does too.
+  const openPicker = async () => {
+    await page.click('.dc-titlebar-menu');
+    await page.waitForSelector('.dc-menu', { timeout: 10_000 });
+    // in place of the page: New ▸ Blank Page, then "Add a data source"
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await page.locator('.dc-blank').waitFor({ timeout: 10_000 });
+  await page.click('.dc-blank .dc-primary');
+    await page.waitForSelector('.dc-picker', { timeout: 10_000 }).catch(() => bad('the source picker did not open from the title bar menu'));
+    await page.locator('.dc-picker-tab[data-section="examples"]').click();
+  };
+  await openPicker();
 
-  // The dropdown must have OPTIONS, not merely exist.
-  const options = await page.$$eval('#samplepick option',
-    (els) => els.map((e) => e.textContent ?? ''));
-  console.log(`options: ${options.length}`);
-  if (options.length < 10) bad(`only ${options.length} options`);
-  if (options.some((o) => !o.trim())) bad('an option has no label');
+  // The examples must be THERE, each with a name and a word about it.
+  const cards = await page.$$eval('.dc-picker-card', (els) => els.map((e) => ({
+    id: e.dataset.example ?? '',
+    name: e.querySelector('.dc-picker-card-name')?.textContent ?? '',
+    text: e.querySelector('.dc-picker-card-text')?.textContent ?? '',
+  })));
+  console.log(`examples: ${cards.length}`);
+  if (cards.length < 10) bad(`only ${cards.length} examples`);
+  if (cards.some((c) => !c.name.trim() || !c.text.trim())) bad('an example has no name or no description');
 
-  // The row box must be seeded from the choice, not sit at its min.
-  const rows0 = await page.inputValue('#samplerows');
-  console.log(`default rows: ${rows0}`);
-  if (Number(rows0) < 2) bad(`row count is ${rows0} — showPick did not run`);
+  // Choosing one shows it at the foot, with its own row count to start.
+  await page.click('.dc-picker-card[data-example="wide"]');
+  const rows1 = await page.inputValue('.dc-picker-rows');
+  const chosen1 = await page.textContent('.dc-picker-choice-name');
+  console.log(`after choosing 'wide': "${chosen1}", rows=${rows1}`);
+  if (Number(rows1) < 2) bad(`row count is ${rows1}: the choice did not seed it`);
 
-  // Changing the choice must change both the rows and the note.
-  await page.selectOption('#samplepick', 'wide');
-  const rows1 = await page.inputValue('#samplerows');
-  const note1 = await page.textContent('#uploadnote');
-  console.log(`after choosing 'wide': rows=${rows1}, note="${
-    (note1 ?? '').slice(0, 50)}…"`);
-  if (rows1 === rows0 && note1 === '') bad('choosing did nothing');
-
-  // The download link must still produce a file.
+  // The download must still produce a file.
   const [dl] = await Promise.all([
     page.waitForEvent('download', { timeout: 60_000 }),
-    page.click('#sampledownload'),
+    page.click('.dc-picker-choice .dc-quiet'),
   ]);
   console.log(`downloaded: ${dl.suggestedFilename()}`);
   if (!/\.csv$/.test(dl.suggestedFilename())) bad('not a csv');
 
+  // Readability, while the window is up: its text needs real contrast, since a page that only
+  // half-declares its colours renders dark-on-dark under a forced theme.
+  const contrast = await page.evaluate(() => {
+    const lum = (c) => {
+      const [r, g, b] = (c.match(/\d+/g) ?? ['0', '0', '0']).map(Number);
+      const f = (v) => {
+        const x = v / 255;
+        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+      };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const onto = (el) => {
+      let n = el;
+      while (n) {
+        const bg = getComputedStyle(n).backgroundColor;
+        if (bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) return bg;
+        n = n.parentElement;
+      }
+      return 'rgb(255,255,255)';
+    };
+    const out = {};
+    for (const sel of ['.dc-picker-title', '.dc-picker-tab-label', '.dc-picker-card-name', '.dc-picker-card-text',
+      '.dc-picker-rows', '.dc-picker-choice .dc-primary']) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const a = lum(getComputedStyle(el).color);
+      const b = lum(onto(el));
+      out[sel] = Math.round(((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)) * 10) / 10;
+    }
+    return out;
+  });
+  console.log(`contrast ratios: ${JSON.stringify(contrast)}`);
+  for (const [sel, ratio] of Object.entries(contrast)) {
+    // 4.5:1 is the ordinary readable-text bar.
+    if (ratio < 4.5) bad(`${sel} contrast is ${ratio}:1, under 4.5:1`);
+  }
+
   // And Open must load it straight into the cube, no file step.
-  await page.selectOption('#samplepick', 'orders-json');
-  await page.fill('#samplerows', '300');
-  await page.click('#sampleopen');
-  await page.waitForFunction(() => /300 rows, 8 columns/.test(
-    document.getElementById('uploadnote')?.textContent ?? ''),
+  await page.click('.dc-picker-card[data-example="orders-json"]');
+  await page.fill('.dc-picker-rows', '300');
+  await page.click('.dc-picker-choice .dc-primary');
+  await page.waitForFunction(() => /^300 rows \u00d7 8 cols/.test(
+    document.querySelector('.dc-status-timing')?.textContent ?? ''),
   null, { timeout: 60_000 });
-  console.log(`opened: ${await page.textContent('#uploadnote')}`);
+  console.log(`opened: ${await page.textContent('.dc-status-timing')}`);
 
   // THE PAGE MUST STILL SAY WHERE PLANNING HAPPENS.
   //
@@ -200,43 +238,6 @@ try {
     await other.close();
   }
 
-  // Readability: every control needs real contrast, since a page
-  // that only half-declares its colours renders dark-on-dark under a
-  // forced theme.
-  const contrast = await page.evaluate(() => {
-    const lum = (c) => {
-      const [r, g, b] = (c.match(/\d+/g) ?? ['0', '0', '0']).map(Number);
-      const f = (v) => {
-        const x = v / 255;
-        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
-      };
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-    };
-    const onto = (el) => {
-      let n = el;
-      while (n) {
-        const bg = getComputedStyle(n).backgroundColor;
-        if (bg && !/rgba\(0, 0, 0, 0\)|transparent/.test(bg)) return bg;
-        n = n.parentElement;
-      }
-      return 'rgb(255,255,255)';
-    };
-    const out = {};
-    for (const id of ['samplepick', 'samplerows', 'uploadnote', 'sampleopen']) {
-      const el = document.getElementById(id);
-      if (!el) continue;
-      const a = lum(getComputedStyle(el).color);
-      const b = lum(onto(el));
-      out[id] = Math.round(((Math.max(a, b) + 0.05)
-        / (Math.min(a, b) + 0.05)) * 10) / 10;
-    }
-    return out;
-  });
-  console.log(`contrast ratios: ${JSON.stringify(contrast)}`);
-  for (const [id, ratio] of Object.entries(contrast)) {
-    // 4.5:1 is the ordinary readable-text bar.
-    if (ratio < 4.5) bad(`#${id} contrast is ${ratio}:1, under 4.5:1`);
-  }
 } catch (e) {
   bad(e.message.split('\n')[0]);
 } finally {

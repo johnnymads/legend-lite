@@ -112,13 +112,41 @@ async function burger(label) {
 }
 /** A host window shown (its menu entry toggles it), the other ones closed. */
 async function showWin(id, label) {
-  for (const other of ['datawin', 'cubeswin', 'querywin', 'sharewin']) {
+  for (const other of ['cubeswin', 'querywin', 'sharewin']) {
     if (other !== id && await page.locator(`#${other}`).isVisible()) {
-      await page.click(`#${other} .hostwin-close`);
+      // the host windows' close, or Open…'s (a window of its own, as the picker is)
+      await page.click(`#${other} .hostwin-close, #${other} .dc-picker-close`);
     }
   }
   if (!(await page.locator(`#${id}`).isVisible())) await burger(label);
   await page.locator(`#${id}`).waitFor({ state: 'visible' });
+}
+/**
+ * The source picker (src/ui/source-picker.ts), to open IN PLACE of the page, as a person does:
+ * New ▸ Blank Page, then "Add a data source".
+ */
+async function openPicker() {
+  for (const other of ['cubeswin', 'querywin', 'sharewin']) {
+    if (await page.locator(`#${other}`).isVisible()) await page.click(`#${other} .hostwin-close, #${other} .dc-picker-close`);
+  }
+  await burger('Blank Page');
+  await page.locator('.dc-blank').waitFor({ state: 'visible' });
+  await page.click('.dc-blank .dc-primary');
+  await page.locator('.dc-picker').waitFor({ state: 'visible' });
+}
+/** A file, through the picker's Files section. */
+async function pickFile(file) {
+  await openPicker();
+  await page.locator('.dc-picker-tab[data-section="files"]').click();
+  await page.setInputFiles('.dc-picker-file', file);
+}
+/** A sample at `rows` rows, through the picker's Examples section. */
+async function pickSample(id, rows) {
+  await openPicker();
+  await page.locator('.dc-picker-tab[data-section="examples"]').click();
+  await page.locator(`.dc-picker-card[data-example="${id}"]`).click();
+  await page.fill('.dc-picker-rows', String(rows));
+  await page.click('.dc-picker-choice .dc-primary');
 }
 const libMessage = () => page.locator('#cubelib .dc-lib-message').textContent();
 async function waitMessage(re) {
@@ -135,11 +163,13 @@ async function shape() {
   });
   await landed(before);
 }
+/** The menu's Save As: its own window (src/ui/save-dialog.ts), the name, Save -- closed once it is saved. */
 async function saveAs(name) {
-  await showWin('cubeswin', 'Open\u2026');
-  await page.fill('#cubelib .dc-lib-name', name);
-  await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
-  await waitMessage(/saved/);
+  await burger('Save As\u2026');
+  await page.locator('.dc-save').waitFor({ timeout: 10_000 });
+  await page.fill('.dc-save-input', name);
+  await page.locator('.dc-save-foot .dc-primary').click();
+  await page.locator('.dc-save').waitFor({ state: 'detached', timeout: 30_000 });
 }
 async function openSaved(name) {
   await showWin('cubeswin', 'Open\u2026');
@@ -155,10 +185,13 @@ try {
   await check('a cube over a file is saved, and the list shows it', async () => {
     await load();
     const before = await statusNow();
-    await page.setInputFiles('#uploadfile', csv);
+    await pickFile(csv);
     await landed(before);
     await shape();
     await saveAs('Trades by region');
+    // the saved cubes are listed where they are opened from: Open…
+    await showWin('cubeswin', 'Open\u2026');
+    await page.locator('#cubelib .dc-lib-row').first().waitFor({ timeout: 10_000 });
     const rows = await page.locator('#cubelib .dc-lib-row').allTextContents();
     if (!rows.some((r) => r.includes('Trades by region'))) throw new Error(`list: ${rows.join(' | ')}`);
     return rows.length + ' saved';
@@ -200,10 +233,13 @@ try {
     if (!/^applied/.test(out)) throw new Error(`the change did not land: ${out}`);
     await page.waitForFunction(() => document.title.startsWith('\u2022'), undefined, { timeout: 10_000 })
       .catch(async () => { throw new Error(`not marked after a change (${out}): ${await title()}`); });
-    await showWin('cubeswin', 'Open\u2026');
-    if (await page.locator('#cubelib .dc-lib-unsaved').isHidden()) throw new Error('the window does not say so');
-    await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
-    await waitMessage(/saved/);
+    // Save, over the copy it was opened from: the window says so, and closes once it is saved
+    await burger('Save');
+    await page.locator('.dc-save').waitFor({ timeout: 10_000 });
+    const where = (await page.locator('.dc-save-where').textContent()) ?? '';
+    if (!/Saves over/.test(where)) throw new Error(`the Save window says "${where}"`);
+    await page.locator('.dc-save-foot .dc-primary').click();
+    await page.locator('.dc-save').waitFor({ state: 'detached', timeout: 30_000 });
     if ((await title()).startsWith('\u2022')) throw new Error(`still marked after saving: ${await title()}`);
     // A PRESENTATION change runs no query (Leg B): it is a change all the same
     const pinned = await page.evaluate(async () => (await window.__dataCube.change((s) => ({ ...s,
@@ -223,24 +259,29 @@ try {
     const message = await waitMessage(/changes since it was saved/);
     if (!/notional/.test(message)) throw new Error(`the changes do not name notional: ${message}`);
     if (!(await page.title()).startsWith('\u2022')) throw new Error('not marked as changed');
-    await page.locator('#cubelib .dc-lib-button', { hasText: /^Save$/ }).click();
-    await page.waitForSelector('#cubelib .dc-lib-ask:not([hidden])', { timeout: 5_000 });
-    const warning = await page.locator('#cubelib .dc-lib-ask').textContent();
+    await page.click('#cubeswin .dc-picker-close');
+    // Save, over the copy it was opened from: the window says what that drops BEFORE writing
+    await burger('Save');
+    await page.locator('.dc-save').waitFor({ timeout: 10_000 });
+    await page.locator('.dc-save-foot .dc-primary').click();
+    await page.locator('.dc-save-warning:not([hidden])').waitFor({ timeout: 5_000 });
+    const warning = await page.locator('.dc-save-warning').textContent();
     if (!/cannot show/.test(warning ?? '')) throw new Error(`no warning: ${warning}`);
-    await page.locator('#cubelib .dc-lib-ask .dc-lib-button', { hasText: 'Cancel' }).click();
+    if ((await page.locator('.dc-save-foot .dc-primary').textContent()) !== 'Save over it anyway') {
+      throw new Error('the window does not ask again before saving over');
+    }
+    await page.locator('.dc-save-foot button', { hasText: 'Cancel' }).click();
+    await page.locator('.dc-save').waitFor({ state: 'detached', timeout: 5_000 });
     return 'warned before saving over it';
   });
 
   await check('a cube over a SAMPLE reopens with no question', async () => {
-    await showWin('datawin', 'Data\u2026');
-    await page.selectOption('#samplepick', 'trades');
-    await page.fill('#samplerows', '500');
     let before = await statusNow();
     // the cube on screen has unsaved changes (the check above cancelled its save): opening a
     // sample over it asks first -- answered yes here, and the question checked
     let asked = '';
     page.once('dialog', (d) => { asked = d.message(); void d.accept(); });
-    await page.click('#sampleopen');
+    await pickSample('trades', 500);
     await landed(before);
     if (!/unsaved changes/.test(asked)) throw new Error(`it did not ask before replacing: "${asked}"`);
     await shape();
@@ -309,12 +350,9 @@ try {
 
   await check('a SAMPLE page\'s link opens the same page in a fresh tab, with no question', async () => {
     await load();
-    await showWin('datawin', 'Data\u2026');
-    await page.selectOption('#samplepick', 'trades');
-    await page.fill('#samplerows', '500');
     let before = await statusNow();
     page.once('dialog', (d) => { void d.accept(); });
-    await page.click('#sampleopen');
+    await pickSample('trades', 500);
     await landed(before);
     await shape();
     const want = await typed();
@@ -335,7 +373,7 @@ try {
   await check('a FILE page\'s link asks the opener for the file, then shows the same values', async () => {
     await load();
     const before = await statusNow();
-    await page.setInputFiles('#uploadfile', csv);
+    await pickFile(csv);
     await landed(before);
     await shape();
     const want = await typed();
@@ -365,23 +403,25 @@ try {
     }
   });
 
-  await check('the LAST file picked wins, however long the first takes to read (P2-330)', async () => {
+  await check('a second file picked while the first is still reading is not taken: the window says it is busy (P2-330)', async () => {
+    // The source picker reads a choice INSIDE its window and takes no other until that one lands,
+    // so two opens cannot race (the race P2-330 fixed came through the old file bar).
     await load();
     const answer = (d) => { void d.accept(); };
-    page.on('dialog', answer); // "open anyway?" -- yes, both times
+    page.on('dialog', answer); // "open anyway?" -- yes
     try {
-      await page.setInputFiles('#uploadfile', big);
-      await page.setInputFiles('#uploadfile', small);
-      // both reads finish: the note stops saying "reading", then a moment for a late one to land
-      await page.waitForFunction(() => !/reading/.test(document.querySelector('#note')?.textContent ?? ''),
-        undefined, { timeout: 120_000 });
-      await page.waitForTimeout(4000);
+      await pickFile(big);
+      const said = (await page.locator('.dc-picker-status').textContent()) ?? '';
+      if (!/Reading big-trades/.test(said)) throw new Error(`while reading, the window says "${said}"`);
+      await page.setInputFiles('.dc-picker-file', small);
+      await page.locator('.dc-picker').waitFor({ state: 'detached', timeout: 120_000 });
+      await page.waitForTimeout(1000);
     } finally {
       page.off('dialog', answer);
     }
     const title = await page.evaluate(() => window.__dataCube.configuration.reportTitle ?? '');
-    if (!/small-trades/.test(title)) throw new Error(`the cube on screen is "${title}", not the file picked last`);
-    return `on screen: ${title}`;
+    if (!/big-trades/.test(title)) throw new Error(`the cube on screen is "${title}", not the file whose read was under way`);
+    return `on screen: ${title}; the second pick was not taken`;
   });
 
   await check('choosing another plane with a file open asks first; No stays (P2-337)', async () => {

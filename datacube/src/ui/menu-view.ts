@@ -127,7 +127,7 @@ export class MenuView {
   #item(item: MenuItem): HTMLElement {
     const doc = this.#doc;
     const el = doc.createElement('div');
-    el.className = 'dc-menu-item';
+    el.className = item.separated ? 'dc-menu-item dc-menu-separated' : 'dc-menu-item';
     el.setAttribute('role', 'menuitem');
     el.tabIndex = -1;
 

@@ -45,9 +45,22 @@ export class UpstreamPlanner implements Planner {
   /** The model's BIT columns: engine types them TinyInt (relation-type.ts, ENGINE DEFECT S23). */
   #bitColumns: ReadonlySet<string> = new Set();
 
+  readonly #options: UpstreamPlannerOptions;
+
   constructor(options: UpstreamPlannerOptions) {
+    this.#options = options;
     this.#useCache = options.cache !== false;
     this.#client = new PureV1Client(options, (m, subject) => new PlanError(m, subject));
+  }
+
+  /**
+   * A planner over ANOTHER model -- another source on the page -- on the same server, with caches
+   * of its own. Every request carries its model, so the server holds nothing for either.
+   */
+  withModel(model: string, runtime: string, bitColumns: readonly string[] = []): UpstreamPlanner {
+    const other = new UpstreamPlanner({ ...this.#options, model, runtime });
+    other.useModel(model, runtime, bitColumns);
+    return other;
   }
 
   /**

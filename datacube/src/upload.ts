@@ -87,9 +87,16 @@ export async function ingestFile(
   db: DuckDbFiles,
   file: { name: string; text(): Promise<string>;
     arrayBuffer(): Promise<ArrayBuffer> },
+  options: {
+    /**
+     * The table to read it into, when not the file's own name: a SECOND source on the page
+     * (New ▸ Source…) must not replace the table another grid reads.
+     */
+    readonly table?: string;
+  } = {},
 ): Promise<UploadResult> {
   const format = formatOf(file.name);
-  const table = tableNameOf(file.name);
+  const table = options.table ?? tableNameOf(file.name);
   // A fixed virtual filename per table: re-picking a file replaces
   // the registration rather than accumulating them.
   const virtualName = `upload_${table}.${format}`;

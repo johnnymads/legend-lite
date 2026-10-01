@@ -72,7 +72,8 @@ export function catalogColumnsSql(schema: string, table: string): string {
 export function catalogType(column: CatalogColumn): CatalogType {
   const alias = CATALOG_ALIASES[column.dataType.trim().toUpperCase()];
   if (alias) return alias;
-  const logical = column.logicalType === null ? null : column.logicalType.toUpperCase();
+  // absent (a catalog older than the structured listing) reads as null: no canonical type named
+  const logical = column.logicalType == null ? null : column.logicalType.toUpperCase();
   if (logical === 'DECIMAL') {
     if (column.precision === null || column.scale === null) {
       throw new CatalogRefusal(`a DECIMAL column whose catalog gives no precision and scale ('${column.dataType}') cannot be declared`);

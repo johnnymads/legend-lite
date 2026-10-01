@@ -127,38 +127,6 @@
     text-overflow: ellipsis; max-width: 40vw; margin: 0;
   }
 
-  .dc-uploadbar {
-    /* WRAPS. Without this the bar's controls -- a file input, a
-       picker, a row count, a button and a note -- need about 790px in
-       a row, so any window narrower than that made the whole PAGE
-       scroll sideways and carried the grid and its header off with
-       it. The grid has its own scroller for wide data; the chrome
-       around it must never need one. */
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-    padding: 6px 10px; font: 12px/1.4 Roboto, system-ui, sans-serif;
-    border-top: 1px solid rgba(128,128,128,.25);
-  }
-  .dc-uploadbar label { font-weight: 500; }
-  #uploadnote { color: #555; }
-  .dc-sep { color: #666; }
-  /* Explicit, not inherited: a control with only half its colours set
-     is what renders dark-on-dark under a forced theme. */
-  #samplepick, #samplerows, #whurl, #whuser, #whpass, #whtable {
-    font: inherit; color: #000; background: #fff;
-    border: 1px solid rgba(0,0,0,.35); border-radius: 3px;
-    padding: 2px 4px;
-  }
-  #samplepick { min-width: 20em; max-width: 30em; }
-  #samplerows { width: 7em; }
-  #sampledownload { font-size: 12px; opacity: .75; }
-  #sampleopen, #whconnect, #whopen {
-    font: inherit; cursor: pointer; padding: 2px 8px;
-    border: 1px solid rgba(128,128,128,.4); border-radius: 3px;
-    background: transparent; color: inherit;
-  }
-  #sampleopen:hover, #whconnect:hover, #whopen:hover { border-color: rgba(128,128,128,.8); }
-  #uploadnote.bad, #whnote.bad { color: #b00020; }
-  #whnote { color: #555; }
 </style>
 </head>
 <body>
@@ -188,47 +156,8 @@
             border-color: color-mix(in srgb, crimson 45%, transparent);"></p>
 
   <!-- The panels, in windows of their own. Hidden until asked for. -->
-  <div id="datawin" class="hostwin" hidden>
-    <div class="hostwin-head"><span>Data</span>
-      <button type="button" class="hostwin-close" data-win="datawin"
-              aria-label="Close">&times;</button></div>
-    <div class="hostwin-body">
-      <div id="uploadbar" class="dc-uploadbar">
-        <label for="uploadfile">Open a file</label>
-        <input id="uploadfile" type="file" accept=".csv,.parquet,.json,.jsonl,.ndjson,text/csv,application/json">
-        <span class="dc-sep">or</span>
-        <label for="samplepick">try</label>
-        <select id="samplepick"></select>
-        <input id="samplerows" type="number" min="1"
-               step="1000" title="rows">
-        <button id="sampleopen" type="button">Open</button>
-        <a id="sampledownload" href="#" title="save the generated file instead">download</a>
-        <span id="uploadnote">CSV, Parquet or JSON. It stays in this tab.</span>
-      </div>
-      <!-- A WAREHOUSE: Live runs there, as you; Snap copies the rows you may
-           read into this tab. The development sign-in (the warehouse's own
-           users); single sign-on replaces it without changing the rest. -->
-      <div id="warehousebar" class="dc-uploadbar">
-        <label for="whurl">Or a warehouse</label>
-        <input id="whurl" type="url" placeholder="warehouse URL" size="24" aria-label="warehouse URL">
-        <input id="whuser" type="text" placeholder="user" size="10" autocomplete="username">
-        <input id="whpass" type="password" placeholder="password" size="10" autocomplete="current-password">
-        <button id="whconnect" type="button">Connect</button>
-        <select id="whtable" hidden></select>
-        <button id="whopen" type="button" hidden>Open</button>
-        <span id="whnote">Live runs on the warehouse as you; Snap copies your rows into this tab.</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- The saved cubes: saved in THIS browser (the cube's definition and its file's identity,
-       never the data); opening one reopens its file. -->
-  <div id="cubeswin" class="hostwin" hidden>
-    <div class="hostwin-head"><span>Cubes</span>
-      <button type="button" class="hostwin-close" data-win="cubeswin"
-              aria-label="Close">&times;</button></div>
-    <div class="hostwin-body"><div id="cubelib"></div></div>
-  </div>
+  <!-- The saved cubes' list lives here between showings; Open… shows it in a window of its own. -->
+  <div id="cubeholder" hidden><div id="cubelib"></div></div>
 
   <div id="sharewin" class="hostwin" hidden>
     <div class="hostwin-head"><span>Share</span>

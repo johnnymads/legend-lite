@@ -1,30 +1,21 @@
-// The saved cubes, as a window: save the cube on screen, find one, open it, delete it, or
-// open a cube file someone handed you. The STORE decides what a save is (upstream's rules,
+// The saved cubes, as a window: find one, open it, delete it, or open a cube file someone handed
+// you. Saving is its own window (ui/save-dialog.ts, the menu's Save and Save As). The STORE decides what a save is (upstream's rules,
 // `cube-store.ts`); the HOST decides what opening one means (it owns the data: re-reading the
 // file, rebuilding the cube) -- this window only asks.
 
 import type { CubeStore, LightDataCubeQuery, QuerySearchSortBy } from '../cube-store.ts';
 
 export interface CubeLibraryHost {
-  /** The name to offer when saving; undefined when the cube on screen cannot be saved. */
-  saveName(): string | undefined;
-  /** The id of the saved cube on screen, when it came from the store. */
+  /** The id of the saved cube on screen, when it came from the store: its row is marked. */
   currentId(): string | undefined;
-  /** Save the cube on screen: over its saved copy, or as a new one. */
-  save(name: string, asNew: boolean): Promise<void>;
   /** Open a saved cube. The host may come back through `ask` for the file. */
   open(id: string): Promise<void>;
   /** Open a cube file (the document's JSON text). */
   openText(text: string, fileName: string): Promise<void>;
   /** Forget what the host keeps for a deleted cube (its file handle). */
   forget(id: string): Promise<void>;
-  /** Whether the cube on screen differs from what was saved (or first opened). */
+  /** Whether the cube on screen differs from what was saved (or first opened): opening another asks first. */
   dirty?(): boolean;
-  /**
-   * Why saving over the saved copy loses something (a cube opened over a file that changed:
-   * the parts left out); undefined when it does not.
-   */
-  saveWarning?(): string | undefined;
 }
 
 const SORTS: readonly [QuerySearchSortBy, string][] = [
@@ -38,15 +29,11 @@ export class CubeLibrary {
   readonly #doc: Document;
   readonly #store: CubeStore;
   readonly #host: CubeLibraryHost;
-  readonly #name: HTMLInputElement;
-  readonly #saveButton: HTMLButtonElement;
-  readonly #saveNew: HTMLButtonElement;
   readonly #search: HTMLInputElement;
   readonly #sort: HTMLSelectElement;
   readonly #list: HTMLElement;
   readonly #message: HTMLElement;
   readonly #ask: HTMLElement;
-  readonly #unsaved: HTMLElement;
   #searching = 0;
 
   constructor(root: HTMLElement, store: CubeStore, host: CubeLibraryHost) {
@@ -56,22 +43,6 @@ export class CubeLibrary {
     this.#host = host;
     root.replaceChildren();
     root.classList.add('dc-lib');
-
-    // -- save
-    const saveRow = this.#el('div', 'dc-lib-save');
-    this.#name = this.#el('input', 'dc-lib-name');
-    this.#name.type = 'text';
-    this.#name.placeholder = 'Name';
-    this.#name.setAttribute('aria-label', 'Name to save the cube under');
-    this.#saveButton = this.#button('Save', () => void this.#save(false));
-    this.#saveNew = this.#button('Save as new', () => void this.#save(true));
-    this.#name.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') void this.#save(this.#host.currentId() === undefined);
-    });
-    this.#unsaved = this.#el('span', 'dc-lib-unsaved');
-    this.#unsaved.textContent = 'unsaved changes';
-    this.#unsaved.hidden = true;
-    saveRow.append(this.#name, this.#saveButton, this.#saveNew, this.#unsaved);
 
     // -- the ask for a file (the host's, when opening needs one)
     this.#ask = this.#el('div', 'dc-lib-ask');
@@ -106,7 +77,7 @@ export class CubeLibrary {
       importInput.value = '';
       if (file) void this.#run(`opening ${file.name}`, async () => this.#host.openText(await file.text(), file.name));
     });
-    const importButton = this.#button('Open file…', () => importInput.click());
+    const importButton = this.#button('Open a cube file…', () => importInput.click());
     importButton.title = 'Open a cube file (JSON) exported from DataCube';
     findRow.append(this.#search, this.#sort, importButton, importInput);
 
@@ -114,40 +85,19 @@ export class CubeLibrary {
     this.#message.setAttribute('role', 'status');
     this.#list = this.#el('div', 'dc-lib-list');
     this.#list.setAttribute('role', 'list');
-    root.append(saveRow, this.#ask, findRow, this.#message, this.#list);
+    root.append(this.#ask, findRow, this.#message, this.#list);
     this.sync();
   }
 
-  /** Bring the save row in line with the cube on screen. */
+  /** Bring the list in line with the cube on screen: its row is marked. */
   sync(): void {
-    const name = this.#host.saveName();
-    const can = name !== undefined;
-    if (can && this.#doc.activeElement !== this.#name) this.#name.value = name;
-    this.#name.disabled = !can;
-    this.#saveButton.disabled = !can;
-    this.#saveNew.disabled = !can || this.#host.currentId() === undefined;
-    this.#unsaved.hidden = !can || this.#host.dirty?.() !== true;
-    this.#saveButton.title = !can
-      ? 'This cube cannot be saved yet: only cubes over a file are (a model-backed cube waits for the model home)'
-      : this.#host.currentId() === undefined ? 'Save as a new cube' : 'Save over the cube this was opened from';
+    const current = this.#host.currentId();
+    for (const row of this.#list.querySelectorAll<HTMLElement>('.dc-lib-row')) {
+      row.classList.toggle('dc-lib-current', row.dataset['id'] === current);
+    }
   }
 
   /** Say something in the window (what opening found, or what failed). */
-  /**
-   * SAVE, as the menu's Save does it: over the cube this was opened from, or -- never saved -- as
-   * a new one, asking for its name in the window when it has none.
-   */
-  save(): void {
-    void this.#save(this.#host.currentId() === undefined);
-  }
-
-  /** SAVE AS: a new cube, under a name the person gives -- the name field, ready for it. */
-  saveAs(): void {
-    this.say('a name for the new cube, then Save as new');
-    this.#name.focus();
-    this.#name.select();
-  }
-
   say(text: string, kind: 'ok' | 'warn' | 'error' = 'ok'): void {
     this.#message.textContent = text;
     this.#message.dataset['kind'] = kind;
@@ -232,29 +182,6 @@ export class CubeLibrary {
     const no = this.#button('Keep', () => void this.refresh());
     ask.append(yes, no);
     row.replaceChildren(ask);
-  }
-
-  async #save(asNew: boolean, confirmed = false): Promise<void> {
-    const name = this.#name.value.trim();
-    if (!name) {
-      this.say('give the cube a name', 'warn');
-      this.#name.focus();
-      return;
-    }
-    // Saving over a copy this file cannot fully show replaces what it held: say what first.
-    const warning = asNew || confirmed ? undefined : this.#host.saveWarning?.();
-    if (warning !== undefined && this.#host.currentId() !== undefined) {
-      const saveAnyway = this.#button('Save anyway', () => { this.ask(undefined); void this.#save(false, true); });
-      const saveNew = this.#button('Save as new', () => { this.ask(undefined); void this.#save(true); });
-      const cancel = this.#button('Cancel', () => this.ask(undefined));
-      this.ask([warning, saveAnyway, saveNew, cancel]);
-      return;
-    }
-    await this.#run(`saving ${name}`, async () => {
-      await this.#host.save(name, asNew);
-      this.say(`saved "${name}"`);
-      await this.refresh();
-    });
   }
 
   /** One action at a time, its failure said in the window, never thrown past the user. */

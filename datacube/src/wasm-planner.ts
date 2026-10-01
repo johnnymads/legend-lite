@@ -106,20 +106,39 @@ export class PlannerUnavailableError extends Error {
   }
 }
 
+/** What a planner and the planners `withModel` made from it share. */
+interface Transport {
+  module: Promise<TeavmModule> | undefined;
+  worker: Worker | undefined;
+  readonly pending: Map<number, { resolve(answer: string): void; reject(e: unknown): void }>;
+  nextId: number;
+}
+
 export class WasmPlanner implements Planner {
   #options: WasmPlannerOptions;
   readonly #cache = new Map<string, Plan>();
   readonly #types = new Map<string, PlanColumn[]>();
-  #module: Promise<TeavmModule> | undefined;
-  #worker: Worker | undefined;
-  readonly #pending = new Map<number, {
-    resolve(answer: string): void;
-    reject(e: unknown): void;
-  }>();
-  #nextId = 1;
+  /**
+   * The module and its worker: SHARED by every planner `withModel` made from this one, since
+   * each request carries its own model (planner-worker.ts). One worker, one boot layer.
+   */
+  #t: Transport = { module: undefined, worker: undefined, pending: new Map(), nextId: 1 };
+  /** Made by `withModel`: the worker is its maker's, and `dispose` leaves it running. */
+  #borrowed = false;
 
   constructor(options: WasmPlannerOptions) {
     this.#options = options;
+  }
+
+  /**
+   * A planner over ANOTHER model -- another source on the page (page/cube-page.ts) -- on the
+   * same module and worker as this one, with caches of its own. Nothing is loaded twice.
+   */
+  withModel(model: string, runtime: string): WasmPlanner {
+    const other = new WasmPlanner({ ...this.#options, model, runtime });
+    other.#t = this.#t;
+    other.#borrowed = true;
+    return other;
   }
 
   /** True when the module should run off the main thread. */
@@ -129,14 +148,14 @@ export class WasmPlanner implements Planner {
   }
 
   #ensureWorker(): Worker {
-    if (this.#worker) return this.#worker;
+    if (this.#t.worker) return this.#t.worker;
     const w = new Worker(this.#options.workerUrl!, { type: 'module' });
     w.onmessage = (e: MessageEvent<{
       id: number; ok: boolean; answer?: string; error?: string;
     }>) => {
-      const waiting = this.#pending.get(e.data.id);
+      const waiting = this.#t.pending.get(e.data.id);
       if (!waiting) return;
-      this.#pending.delete(e.data.id);
+      this.#t.pending.delete(e.data.id);
       if (e.data.ok) waiting.resolve(e.data.answer ?? '');
       else {
         waiting.reject(new PlannerUnavailableError(
@@ -148,19 +167,19 @@ export class WasmPlanner implements Planner {
       // leaving them pending would hang the grid rather than fail it.
       const dead = new PlannerUnavailableError(
         `the planner worker died: ${e.message}`);
-      for (const waiting of this.#pending.values()) waiting.reject(dead);
-      this.#pending.clear();
-      this.#worker = undefined;
+      for (const waiting of this.#t.pending.values()) waiting.reject(dead);
+      this.#t.pending.clear();
+      this.#t.worker = undefined;
     };
-    this.#worker = w;
+    this.#t.worker = w;
     return w;
   }
 
   #ask(request: Record<string, unknown>): Promise<string> {
     const w = this.#ensureWorker();
-    const id = this.#nextId++;
+    const id = this.#t.nextId++;
     return new Promise<string>((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      this.#t.pending.set(id, { resolve, reject });
       w.postMessage({ ...request, id, base: this.#base() });
     });
   }
@@ -168,9 +187,12 @@ export class WasmPlanner implements Planner {
   /** Release the worker. The grid owns one planner for its lifetime,
    *  so this is for tests and for a host that tears a cube down. */
   dispose(): void {
-    this.#worker?.terminate();
-    this.#worker = undefined;
-    this.#pending.clear();
+    this.#cache.clear();
+    this.#types.clear();
+    if (this.#borrowed) return;
+    this.#t.worker?.terminate();
+    this.#t.worker = undefined;
+    this.#t.pending.clear();
   }
 
   /**
@@ -212,7 +234,7 @@ export class WasmPlanner implements Planner {
    * produces -- share one 4 MB fetch instead of racing several.
    */
   #load(): Promise<TeavmModule> {
-    if (this.#module) return this.#module;
+    if (this.#t.module) return this.#t.module;
     const base = this.#base();
     const runtimeUrl = `${base}wasm-gc-module-runtime.js`;
     // TeaVM's loader branches on the host: in a browser it fetches the
@@ -227,7 +249,7 @@ export class WasmPlanner implements Planner {
     const importRuntime = this.#options.loadRuntime
       ?? ((url: string) => import(/* @vite-ignore */ url) as Promise<TeavmRuntime>);
 
-    this.#module = (async () => {
+    this.#t.module = (async () => {
       let runtime: TeavmRuntime;
       try {
         runtime = await importRuntime(runtimeUrl);
@@ -274,10 +296,10 @@ export class WasmPlanner implements Planner {
     })();
     // A failed load must not be cached as a permanent verdict: a
     // retry after a transient network fault should be allowed to work.
-    this.#module.catch(() => {
-      this.#module = undefined;
+    this.#t.module.catch(() => {
+      this.#t.module = undefined;
     });
-    return this.#module;
+    return this.#t.module;
   }
 
   /**

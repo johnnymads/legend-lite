@@ -59,6 +59,8 @@ export interface ChartSource {
 export interface SpawnOptions {
   readonly onChart?: () => void;
   readonly onNewGrid?: () => void;
+  /** Its New ▸ Source…: a grid over another source, made by `make`, on this page. */
+  readonly onNewSource?: (make: (host: HTMLElement, options: SpawnOptions) => SpawnedGrid) => void;
 }
 
 /** Another grid, over the same source (a CubeApp). */
@@ -177,6 +179,15 @@ export class CubePage {
    */
   addGrid(from: string = GRID): string {
     const source = this.#grids.get(from)?.source ?? this.#options.grid.source;
+    return this.addGridOver((host, options) => source.spawn(host, source.snapshot, options));
+  }
+
+  /**
+   * A grid over ANOTHER SOURCE (New ▸ Source…): `make` builds it -- its own engine and planner,
+   * over its own model -- in the tile's element. Then it is a grid like any other: its own charts,
+   * its own New ▸ Grid (over its source), moved and removed the same way.
+   */
+  addGridOver(make: (host: HTMLElement, options: SpawnOptions) => SpawnedGrid): string {
     this.#gridCount += 1;
     let n = this.#gridCount;
     while (this.#grids.has(`grid-${n}`) || this.#board.title(`grid-${n}`) !== undefined) n += 1;
@@ -184,9 +195,10 @@ export class CubePage {
     const id = `grid-${n}`;
     const host = this.#doc.createElement('div');
     host.className = 'dc-grid-tile';
-    const cube = source.spawn(host, source.snapshot, {
+    const cube = make(host, {
       onChart: () => this.openChart(undefined, id),
       onNewGrid: () => this.addGrid(id),
+      onNewSource: (other) => this.addGridOver(other),
     });
     const stop = cube.on('view', () => {
       this.#refreshGrid(id);

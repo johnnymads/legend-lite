@@ -30,10 +30,12 @@ const MODE = read('src/adhoc/mode.ts');
 const MENU = read('src/ui/menu.ts') + MODE;
 const APP = read('src/app.ts') + MODE;
 
-/** Ids the menu builder can put on an item. */
-const emitted = new Set(
-  [...MENU.matchAll(/id: '([a-zA-Z][\w.]*)'/g)].map((m) => m[1] as string),
-);
+/** Ids the menu builder can put on an item -- and the title bar's menu, built in app.ts (New ▸ Source…). */
+const emitted = new Set([
+  ...[...MENU.matchAll(/id: '([a-zA-Z][\w.]*)'/g)].map((m) => m[1] as string),
+  // app.ts also names views (`id: 'grid'`): only a menu id is dotted
+  ...[...APP.matchAll(/id: '([a-zA-Z]\w*\.[\w.]+)'/g)].map((m) => m[1] as string),
+]);
 
 /**
  * Ids that are switched on AND act.
