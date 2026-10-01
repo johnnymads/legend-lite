@@ -136,10 +136,13 @@ In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new
 
 Nothing in `datacube/`, the compiler packages, `warehouse/`.
 
-**Found for the compiler's owners (not fixed on this line):** (1) `Compiler.resultType` on a lambda WITH parameters
-types the lambda itself (`LambdaFunction<{Integer[1] -> Relation<...>}>`), so `lambdaRelationType`/`lambdaReturnType`
-answer a function type where legend-engine 4.145.0 types the result with the parameters in scope
-(`SpecCompiler.typeQueryBody` handles only zero-parameter lambdas). (2) A derived property `{$this.quantity *
+**Found for the compiler's owners:** (1) FIXED on this line 2026-10-01 (the user: "def fix the lambda bug"):
+`Compiler.resultType` on a lambda WITH parameters typed the lambda itself (`LambdaFunction<{Integer[1] -> Relation<...>}>`),
+so `lambdaRelationType`/`lambdaReturnType` answered a function type where legend-engine types the result with the
+parameters in scope. `SpecCompiler.typeQueryBody` now binds a lambda's declared parameters (`Typer.declaredType`, shared
+with the annotated-lambda fold) and types the body; undeclared parameters stay refused. Test: `PureV1ApiTest`
+`e5e6_aQueryWithParameters_typesAsItsBody`; the relational corpus (duckdb, h2) per-test lists identical with and
+without the change. (2) NOT fixed here: a derived property `{$this.quantity *
 $this.price}: Float[1]` (Integer * Float) compiles in lite; legend-engine refuses it ("'Number' is not a subtype of
 'Float'").
 

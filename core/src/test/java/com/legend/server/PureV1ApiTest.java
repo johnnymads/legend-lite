@@ -277,6 +277,32 @@ class PureV1ApiTest {
         assertEquals("COMPILATION", Json.parseObject(refused.json()).getString("errorType"));
     }
 
+    /**
+     * A query WITH parameters types as its body, the parameters in scope at their declared types --
+     * as the engine answers (and as upstream's Query asks while a query is edited, before any value
+     * exists). Before 2026-10-01 lite answered the lambda's own function type
+     * ({@code LambdaFunction<{Integer[1] -> Relation<...>[1]}>}) and a one-"column" relation type.
+     */
+    @Test
+    void e5e6_aQueryWithParameters_typesAsItsBody() {
+        String select = "#>{trades::h2::DB.TRADES_SCHEMA.TRADES}#->select(~[region])";
+        Map<String, String> expected = new LinkedHashMap<>();
+        expected.put("{n: Integer[1]|$n + 2}", "Integer");
+        expected.put("{r: String[1]|" + select + "->filter(x|$x.region == $r)}", "meta::pure::metamodel::relation::Relation");
+        for (Map.Entry<String, String> e : expected.entrySet()) {
+            String lam = PureV1Api.grammarToJsonLambda(e.getKey(), false).json();
+            PureV1Api.Answer a = PureV1Api.lambdaReturnType("{\"model\":" + textModel() + ",\"lambda\":" + lam + "}");
+            assertEquals(200, a.status(), a.json());
+            assertEquals(e.getValue(), Json.parseObject(a.json()).getString("returnType"), e.getKey());
+        }
+        String withParameter = PureV1Api.grammarToJsonLambda("{r: String[1]|" + select + "->filter(x|$x.region == $r)}", false).json();
+        String without = PureV1Api.grammarToJsonLambda("|" + select, false).json();
+        PureV1Api.Answer typed = PureV1Api.lambdaRelationType("{\"model\":" + textModel() + ",\"lambda\":" + withParameter + "}");
+        assertEquals(200, typed.status(), typed.json());
+        assertEquals(PureV1Api.lambdaRelationType("{\"model\":" + textModel() + ",\"lambda\":" + without + "}").json(), typed.json(),
+                "the same columns as the query without its parameter");
+    }
+
     // ---------------------------------------------------------------------
 
     /** The result's text with the per-run trace id, the SQL, the values and the type names

@@ -272,14 +272,10 @@ final class Typer {
                     List<String> names = new ArrayList<>();
                     List<Type.Param> params = new ArrayList<>();
                     for (Variable pv : lf.parameters()) {
-                        Type pt = namedType(java.util.Objects.requireNonNull(pv.type(),
-                                "lambda parameter without a declared type"));
-                        Multiplicity pm = pv.multiplicity() == null
-                                ? Multiplicity.Bounded.ONE
-                                : Multiplicity.from(pv.multiplicity());
+                        ExprType declared = declaredType(pv);
                         names.add(pv.name());
-                        params.add(new Type.Param(pt, pm));
-                        scope = scope.with(pv.name(), new ExprType(pt, pm));
+                        params.add(new Type.Param(declared.type(), declared.multiplicity()));
+                        scope = scope.with(pv.name(), declared);
                     }
                     List<TypedSpec> stmts = new ArrayList<>();
                     for (int si = 0; si < lf.body().size() - 1; si++) {
@@ -1612,6 +1608,14 @@ final class Typer {
                 .map(cd -> cd.derivedProperties().stream()
                         .anyMatch(dp -> dp.name().equals(name) && dp.parameters().size() == arity))
                 .orElse(false);
+    }
+
+    /** A lambda parameter's declared type and multiplicity ({@code minQty: Integer[1]}; [1] when unstated). */
+    ExprType declaredType(Variable parameter) {
+        Type type = namedType(java.util.Objects.requireNonNull(parameter.type(),
+                "lambda parameter without a declared type"));
+        return new ExprType(type, parameter.multiplicity() == null
+                ? Multiplicity.Bounded.ONE : Multiplicity.from(parameter.multiplicity()));
     }
 
     Type namedType(TypeExpression te) {

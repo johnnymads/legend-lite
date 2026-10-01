@@ -274,15 +274,21 @@ public final class SpecCompiler {
 
     /**
      * Type a standalone query as a STATEMENT SEQUENCE (the corpus/engine
-     * convention: queries arrive as zero-param lambdas — "|let a = ...; $a;"
-     * — with lets binding forward). The full typed sequence is returned so
+     * convention: queries arrive as lambdas -- "|let a = ...; $a;" -- with lets
+     * binding forward, and any declared parameters in scope). The full typed sequence is returned so
      * the lowering can thread let bindings; the query's value is the last
      * statement.
      */
     public List<TypedSpec> typeQueryBody(ValueSpecification query) {
+        // A query's PARAMETERS ({minQty: Integer[1]|...}) are in scope at their declared types:
+        // the query's value is its BODY's, as legend-engine types it (lambdaReturnType,
+        // lambdaRelationType) -- not the lambda's own function type. Undeclared parameters stay loud.
         if (query instanceof com.legend.protocol.spec.LambdaFunction lf
-                && lf.parameters().isEmpty()) {
+                && lf.parameters().stream().allMatch(p -> p.type() != null)) {
             Env scope = Env.empty();
+            for (com.legend.protocol.spec.Variable p : lf.parameters()) {
+                scope = scope.with(p.name(), typer.declaredType(p));
+            }
             List<TypedSpec> body = new ArrayList<>();
             int lastStmt = lf.body().size() - 1;
             for (int si = 0; si < lf.body().size(); si++) {
