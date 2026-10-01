@@ -208,8 +208,14 @@ async function suite(title, query) {
     assert.equal((await gridRows(page)).length, 12);
     await page.click('.q-results-bar button.q-tab:text-is("DataCube")');
     await page.waitForFunction(() => document.querySelectorAll('.q-cube .dc-row').length === 12, undefined, { timeout: 30000 });
-    // Side (an enumeration) into Row Groups: the cube's own groupBy, planned on the query
-    await page.locator('.dc-th.dc-draggable', { hasText: 'Side' }).first().dragTo(page.locator('.dc-zone-bar .dc-zone-rows'));
+    // the grid alone: no title bar, drag zones, columns panel or status bar
+    assert.equal(await page.locator('.q-cube .dc-titlebar:visible, .q-cube .dc-zone-bar:visible, .q-cube .dc-app-side:visible, .q-cube .dc-app-stats:visible').count(), 0);
+    assert.match(await page.textContent('.q-results-bar'), /12 rows in \d+ ms/);
+    // group by Side (an enumeration) from the grid's right-click menu: the cube's own groupBy,
+    // planned on the query
+    await page.click('.q-cube .dc-row >> nth=0 >> .dc-cell >> nth=1', { button: 'right' });
+    await page.hover('.dc-menu > .dc-menu-item:has(> .dc-menu-label:text-is("Pivot"))');
+    await page.click('.dc-submenu .dc-menu-item:has(> .dc-menu-label:text-is("Vertical Pivot on Side"))');
     await page.waitForFunction(() => document.querySelectorAll('.q-cube .dc-row').length === 2, undefined, { timeout: 30000 });
     // a group's first cell carries the tree's expander (▸) before its label
     const groups = (await cubeRows(page)).map((r) => [r[0].replace(/^[▸▾]\s*/, ''), r[r.length - 1]]);

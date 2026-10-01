@@ -33,6 +33,8 @@ export class Results {
   #opening: HTMLElement | undefined;
   /** How a relation's rows show: the plain grid (the default) or a DataCube over the query. */
   #view: 'grid' | 'cube' = 'grid';
+  /** The cube's row count and time, in the bar; each view the cube lands updates it in place. */
+  readonly #cubeStatus = h('span', null);
 
   constructor(app: AppContext, session: Session) {
     this.#app = app;
@@ -65,7 +67,11 @@ export class Results {
     const host = h('div', { class: 'q-cube' });
     this.#opening = host;
     session.setRun({ status: 'running', started: performance.now(), abort });
-    openCube(this.#app, session, host).then((cube) => {
+    this.#cubeStatus.textContent = '';
+    openCube(this.#app, session, host, (view) => {
+      if (mine !== this.#runs) return;
+      this.#cubeStatus.textContent = `${plural(view.rows.rowCount, 'row')} in ${Math.round(view.rows.elapsedMs)} ms`;
+    }).then((cube) => {
       if (mine !== this.#runs) { cube?.dispose(); return; }
       this.#opening = undefined;
       if (!cube) { void run(this.#app, session, this.#limit); return; }
@@ -121,6 +127,7 @@ export class Results {
       status.push(h('span', null, `${plural(over ? r.limit! : n, isTds(r.result) ? 'row' : 'object')} in ${r.ms} ms`));
       if (over) status.push(h('span', { class: 'q-chip', style: 'color:var(--warn)' }, `showing the first ${r.limit} — more exist`));
     }
+    else if (r.status === 'cube') status.push(this.#cubeStatus);
     if (this.#session.stale) status.push(h('span', { class: 'q-chip', style: 'color:var(--warn)' }, 'the query changed since — run again'));
     const stop = (): void => {
       if (this.#opening) {
@@ -156,6 +163,12 @@ export class Results {
     else if (running && this.#opening) body = this.#opening;
     else if (running) body = h('div', { class: 'q-hint' }, 'Running…');
     else body = h('div', { class: 'q-hint' }, 'Run the query to see its rows (Ctrl+Enter).');
+    // a cube already on screen stays put (its scroll, its open groups): only the bar is redrawn
+    const shown = this.element.firstElementChild;
+    if (body === this.#cube?.host && shown && body.parentElement?.parentElement === this.element) {
+      shown.replaceWith(bar);
+      return;
+    }
     mount(this.element, bar, h('div', { class: 'q-results-body' }, body));
   }
 

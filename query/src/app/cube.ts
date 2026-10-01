@@ -9,6 +9,8 @@
 
 import { findAll, functionsCalled, isLambda, transform, type Lambda, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 import { CubeApp, type CubeAppOptions } from '../../../datacube/src/app.ts';
+import { DEFAULT_CONFIGURATION, type CubeConfiguration } from '../../../datacube/src/config.ts';
+import type { CubeView } from '../../../datacube/src/cube.ts';
 import { LegendEngineExecutor } from '../../../datacube/src/engine-remote.ts';
 import { RemoteRun } from '../../../datacube/src/runner.ts';
 import type { CubeSnapshot } from '../../../datacube/src/snapshot.ts';
@@ -41,7 +43,31 @@ const OBJECT_ANSWERS = new Set(['graphFetch', 'graphFetchChecked', 'serialize'])
  * graph fetch (objects), or one `cubeSource` does not rewrite. Its columns are typed by the
  * compiler before it opens; a query that does not compile refuses here, with the compiler's error.
  */
-export async function openCube(app: AppContext, session: Session, host: HTMLElement): Promise<CubeApp | undefined> {
+/**
+ * The cube as a results grid: no title bar, no drag zones, its columns panel folded away -- the
+ * grid alone, in Query's look (lines between rows and columns, no banding, the page's font). All
+ * the cube does stays on the grid's right-click menu (sort, filter, pivot, new columns, charts,
+ * export, properties). The status bar is hidden by Query's stylesheet (`.q-cube`); the row
+ * count and time show in Query's results bar, as the plain grid's do.
+ */
+const RESULTS_GRID: CubeConfiguration = {
+  ...DEFAULT_CONFIGURATION,
+  showTitleBar: false,
+  showDragZones: false,
+  appearance: {
+    ...DEFAULT_CONFIGURATION.appearance,
+    showHorizontalGridLines: true,
+    showVerticalGridLines: true,
+    gridLineColor: '#dde1e7',
+    alternateRowsStandardMode: false,
+    alternateRows: false,
+    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    fontSize: 12,
+  },
+};
+
+export async function openCube(app: AppContext, session: Session, host: HTMLElement,
+  onView: (view: CubeView) => void): Promise<CubeApp | undefined> {
   if (session.query.graph && !session.text) return undefined;
   const l = executionLambda(session, undefined);
   if ([...functionsCalled(l)].some((f) => OBJECT_ANSWERS.has(f.slice(f.lastIndexOf(':') + 1)))) return undefined;
@@ -75,6 +101,9 @@ export async function openCube(app: AppContext, session: Session, host: HTMLElem
   };
   return new CubeApp(host, snapshot, {
     ...rows,
+    configuration: RESULTS_GRID,
+    compact: true,
+    onView,
     writeClipboard: (text) => navigator.clipboard?.writeText(text),
     // an export is text (CSV, HTML) or bytes (Excel, PDF)
     download: (name, mime, content) => {
