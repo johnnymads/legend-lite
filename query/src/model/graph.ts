@@ -14,6 +14,23 @@ import {
 } from './pmcd.ts';
 
 export const DOC_PROFILE = 'meta::pure::profiles::doc';
+const TEMPORAL_PROFILE = 'meta::pure::profiles::temporal';
+
+/**
+ * A profile's path as written: a simple name (`doc`, `temporal`) resolves through Pure's
+ * auto-imported `meta::pure::profiles` package -- the model's JSON keeps the name as written.
+ */
+export function profilePath(name: string): string {
+  return name.includes('::') ? name : `meta::pure::profiles::${name}`;
+}
+
+/** A class's milestoning (its `temporal` stereotype): the dates its `all()` takes. */
+export type Temporal = 'businesstemporal' | 'processingtemporal' | 'bitemporal';
+
+/** The dates a temporal class's `all()` (or a property into it) takes, in order: processing first. */
+export function milestoningDates(t: Temporal): readonly ('processingDate' | 'businessDate')[] {
+  return t === 'bitemporal' ? ['processingDate', 'businessDate'] : t === 'businesstemporal' ? ['businessDate'] : ['processingDate'];
+}
 
 /** The primitive types, by the name the grammar writes. */
 const PRIMITIVES = new Set([
@@ -35,6 +52,15 @@ export type PrimitiveFamily = 'string' | 'boolean' | 'integer' | 'float' | 'deci
 /** The standard primitive for a type name (`Varchar` is `String`), or the name itself. */
 export function standardPrimitive(name: string): string {
   return PRECISE[name] ?? name;
+}
+
+/** May a value of type `from` go where `to` is expected? Pure's primitive subtyping: StrictDate and DateTime are Dates; Integer, Float and Decimal are Numbers. */
+export function assignable(from: string, to: string): boolean {
+  const f = standardPrimitive(from), t = standardPrimitive(to);
+  if (f === t) return true;
+  if (t === 'Date') return f === 'StrictDate' || f === 'DateTime';
+  if (t === 'Number') return f === 'Integer' || f === 'Float' || f === 'Decimal';
+  return false;
 }
 
 export function isPrimitive(name: string): boolean {
@@ -106,12 +132,12 @@ export function humanize(name: string): string {
 }
 
 export function docOf(a: Annotated | undefined): string | undefined {
-  const docs = (a?.taggedValues ?? []).filter((t) => t.tag.profile === DOC_PROFILE && t.tag.value === 'doc');
+  const docs = (a?.taggedValues ?? []).filter((t) => profilePath(t.tag.profile) === DOC_PROFILE && t.tag.value === 'doc');
   return docs.length === 0 ? undefined : docs.map((d) => d.value).join('\n');
 }
 
 export function otherTaggedValues(a: Annotated | undefined): readonly TaggedValue[] {
-  return (a?.taggedValues ?? []).filter((t) => !(t.tag.profile === DOC_PROFILE && t.tag.value === 'doc'));
+  return (a?.taggedValues ?? []).filter((t) => !(profilePath(t.tag.profile) === DOC_PROFILE && t.tag.value === 'doc'));
 }
 
 export type TypeKind = 'primitive' | 'enumeration' | 'class' | 'unknown';
@@ -231,6 +257,25 @@ export class ModelGraph {
       }
     }
     return out;
+  }
+
+  /** A class's milestoning, from its own `temporal` stereotype (or an ancestor's); undefined when it has none. */
+  temporalOf(path: string): Temporal | undefined {
+    for (const c of [path, ...this.ancestors(path)]) {
+      const s = (this.classes.get(c)?.stereotypes ?? []).find((t) => profilePath(t.profile) === TEMPORAL_PROFILE);
+      if (s && (s.value === 'businesstemporal' || s.value === 'processingtemporal' || s.value === 'bitemporal')) return s.value;
+    }
+    return undefined;
+  }
+
+  /**
+   * What a property takes when written with arguments: a derived property its parameters; a
+   * property into a temporal class its dates (Date[1] each, processing first); any other nothing.
+   */
+  parametersOf(p: PropertyInfo): PropertyInfo['parameters'] {
+    if (p.derived) return p.parameters;
+    const t = p.kind === 'class' ? this.temporalOf(p.type) : undefined;
+    return t === undefined ? [] : milestoningDates(t).map((name) => ({ name, type: 'Date', multiplicity: { lowerBound: 1, upperBound: 1 } }));
   }
 
   /** The direct subclasses of a class. */

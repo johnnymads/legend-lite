@@ -2,6 +2,7 @@
 // on a new, curated, service or saved query. Leaving a query with unsaved changes asks first.
 
 import { loadLambda, parametersOf } from '../builder/load.ts';
+import { queryOn } from '../builder/milestoning.ts';
 import { emptyQuery, type ClassSource } from '../builder/state.ts';
 import { renderDataSpace } from '../ui/dataspace.ts';
 import { h, icon, menuButton, mount, confirmDialog } from '../ui/dom.ts';
@@ -110,7 +111,7 @@ export class App {
           kind: 'class', class: cls, mapping: ec.mapping.path, runtime: r.runtime ?? ec.defaultRuntime.path,
           dataSpace: { path: r.path, context: ctxName },
         };
-        this.#edit(new Session(p, emptyQuery(source)));
+        this.#edit(new Session(p, queryOn(p.graph, source)));
         return;
       }
       case 'dataSpaceTemplate': {
@@ -128,7 +129,7 @@ export class App {
         const p = app.project(r.gav);
         const cls = r.class ?? p.graph.mappedClasses(r.mapping)[0];
         if (!cls) throw new Error(`the mapping ${r.mapping} maps no class`);
-        this.#edit(new Session(p, emptyQuery({ kind: 'class', class: cls, mapping: r.mapping, runtime: r.runtime })));
+        this.#edit(new Session(p, queryOn(p.graph, { kind: 'class', class: cls, mapping: r.mapping, runtime: r.runtime })));
         return;
       }
       case 'service': {

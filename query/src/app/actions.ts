@@ -3,6 +3,7 @@
 
 import { humanize, isToMany, type ModelGraph, type PropertyInfo } from '../model/graph.ts';
 import { freshId, type Condition, type FilterNode, type Group, type Operator, type PropertyPath, type QueryState } from '../builder/state.ts';
+import { withDateParameters } from '../builder/milestoning.ts';
 import { defaultValue } from '../ui/values.ts';
 
 /** What the explorer drags: a property path from the source class. */
@@ -35,7 +36,7 @@ export function propertyAt(graph: ModelGraph, root: string, path: PropertyPath):
 
 export function addColumn(q: QueryState, path: PropertyPath, humanized: boolean): QueryState {
   const taken = new Set(q.columns.map((c) => c.name));
-  return { ...q, columns: [...q.columns, { id: freshId('col'), name: unique(columnName(path, humanized), taken), path }] };
+  return withDateParameters({ ...q, columns: [...q.columns, { id: freshId('col'), name: unique(columnName(path, humanized), taken), path }] });
 }
 
 /** A condition on a path, typed by its property: its default operator and value. */
@@ -51,7 +52,7 @@ export function addCondition(graph: ModelGraph, q: QueryState, path: PropertyPat
   const c = newCondition(graph, q.source.class, path);
   const root: Group = q.filter ?? { kind: 'group', id: freshId('g'), op: 'and', children: [] };
   const target = groupId ?? root.id;
-  return { ...q, filter: mapGroup(root, target, (g) => ({ ...g, children: [...g.children, c] })) };
+  return withDateParameters({ ...q, filter: mapGroup(root, target, (g) => ({ ...g, children: [...g.children, c] })) });
 }
 
 export function mapGroup(g: Group, id: string, f: (g: Group) => Group): Group {

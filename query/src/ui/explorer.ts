@@ -85,7 +85,7 @@ export class Explorer {
     });
     const out: Child[] = [];
     for (const p of props) {
-      const path: PropertyPath = [...prefix, stepOf(this.#graph, p)];
+      const path: PropertyPath = [...prefix, stepOf(this.#session, owner, prefix, p)];
       out.push(this.#node(owner, p, path, depth, used));
       if (p.kind === 'class' && this.#open.has(key(path))) {
         out.push(...this.#children(p.type, path, depth + 1, used));
@@ -149,7 +149,7 @@ export class Explorer {
     while (queue.length > 0 && out.length < 100) {
       const { owner, prefix, depth } = queue.shift()!;
       for (const p of this.#graph.properties(owner)) {
-        const path: PropertyPath = [...prefix, stepOf(this.#graph, p)];
+        const path: PropertyPath = [...prefix, stepOf(this.#session, owner, prefix, p)];
         const text = `${p.name} ${humanize(p.name)} ${p.doc ?? ''}`.toLowerCase();
         if (text.includes(this.#search)) {
           const n = this.#node(owner, p, path, 0, used);

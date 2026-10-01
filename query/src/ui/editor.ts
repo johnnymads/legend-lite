@@ -6,7 +6,8 @@
 import type { AppContext } from '../app/context.ts';
 import { formatRoute } from '../app/routes.ts';
 import type { Session } from '../app/session.ts';
-import { emptyQuery, type ClassSource } from '../builder/state.ts';
+import { queryOn, withSource } from '../builder/milestoning.ts';
+import { type ClassSource } from '../builder/state.ts';
 import { simpleName } from '../model/graph.ts';
 import { confirmDialog, h, icon, menuButton, mount, panelAction, panelHeader, select, toast, type Child } from './dom.ts';
 import { workspace } from './split.ts';
@@ -65,9 +66,9 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
         drawSetup();
         return;
       }
-      session.update(() => ({ ...emptyQuery(next), parameters: q.parameters }));
+      session.update(() => queryOn(session.project.graph, next, q.parameters));
     } else {
-      session.update((s) => ({ ...s, source: next }));
+      session.update((s) => withSource(session.project.graph, s, next));
     }
   };
 

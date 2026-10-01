@@ -11,7 +11,7 @@ import {
   type AppliedFunction, type ColSpec, type Lambda, type ValueSpecification, type Variable,
 } from '../../../pure-protocol/src/index.ts';
 import { agg, asc, colSpecs, derive, desc, from, over } from '../../../pure-protocol/src/index.ts';
-import { isToMany, type ModelGraph } from '../model/graph.ts';
+import { isToMany, milestoningDates, simpleName, type ModelGraph } from '../model/graph.ts';
 import type {
   AggregateOp, Condition, Constant, DateFunction, FilterNode, GraphNode, Group, ProjectionColumn, PropertyPath, QueryState, Value, WindowColumn,
   WindowOp,
@@ -216,7 +216,7 @@ export function graphTree(root: string, tree: readonly GraphNode[]): ValueSpecif
 /** The query as its lambda. */
 export function buildLambda(graph: ModelGraph, q: QueryState, options: BuildOptions): Lambda {
   const root = q.source.class;
-  let rel: ValueSpecification = fn('getAll', element(root));
+  let rel: ValueSpecification = classSource(graph, q);
   if (hasConditions(q.filter)) {
     rel = fn('filter', rel, lambda(['x'], filterNode(graph, root, q.filter!, 'x')));
   }
@@ -264,6 +264,27 @@ export function buildLambda(graph: ModelGraph, q: QueryState, options: BuildOpti
   return lambda(q.parameters.map((p) => parameter(p.name, type(p.type), p.multiplicity)), ...(q.constants ?? []).map(letOf), body);
 }
 
+/**
+ * The source's instances: `Class.all()`; a temporal class as of its dates (processing first:
+ * `all($processingDate, $businessDate)`), or every version, `allVersions()`.
+ */
+function classSource(graph: ModelGraph, q: QueryState): ValueSpecification {
+  const cls = element(q.source.class);
+  const t = graph.temporalOf(q.source.class);
+  if (t === undefined) return fn('getAll', cls);
+  const m = q.milestoning;
+  if (m === undefined) throw new BuildError(`${simpleName(q.source.class)} is milestoned: choose its dates in the query options`);
+  if (m.kind === 'allVersions') return fn('getAllVersions', cls);
+  return fn('getAll', cls, ...milestoningDates(t).map((d) => {
+    const v = m.dates[d];
+    if (v === undefined) throw new BuildError(`${simpleName(q.source.class)} is milestoned: set its ${d === 'businessDate' ? 'business' : 'processing'} date in the query options`);
+    // Pure's grammar reads `Class.all(today())` as a call of all(), not getAll: a function goes
+    // through a constant (`let d = today(); Class.all($d)`), as legend-engine 4.145.0 requires too
+    if (v.kind === 'dateFunction') throw new BuildError(`a class's ${d === 'businessDate' ? 'business' : 'processing'} date is a parameter, a constant or a date: make a constant for a relative date`);
+    return valueSpec(v);
+  }));
+}
+
 /** A constant as upstream writes it: `let name = value;`, ahead of the query. */
 function letOf(c: Constant): ValueSpecification {
   return fn('letFunction', lit.string(c.name) as ValueSpecification, 'calculated' in c ? c.calculated : valueSpec(c.value));
@@ -288,6 +309,7 @@ export function referencedVariables(q: QueryState): Set<string> {
     if (v.kind === 'variable') out.add(v.name);
     if (v.kind === 'list') v.values.forEach(visitValue);
   };
+  if (q.milestoning?.kind === 'asOf') Object.values(q.milestoning.dates).forEach(visitValue);
   for (const c of q.constants ?? []) {
     if ('calculated' in c) findAll(c.calculated, (n): n is Variable => n._type === 'var').forEach((v) => out.add(v.name));
     else visitValue(c.value);

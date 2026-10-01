@@ -185,8 +185,18 @@ export interface QueryState {
   readonly graph?: GraphFetch;
   readonly parameters: readonly Parameter[];
   readonly constants?: readonly Constant[];
+  /** A temporal source class's dates (upstream's milestoning options); absent for any other class. */
+  readonly milestoning?: Milestoning;
   readonly options: ResultOptions;
 }
+
+/**
+ * A temporal class's `all()`: as of its dates -- `all($businessDate)`, `all($processingDate)`,
+ * `all($processingDate, $businessDate)` -- or every version, `allVersions()`.
+ */
+export type Milestoning =
+  | { readonly kind: 'asOf'; readonly dates: { readonly processingDate?: Value; readonly businessDate?: Value } }
+  | { readonly kind: 'allVersions' };
 
 export function emptyQuery(source: Source): QueryState {
   return { source, columns: [], parameters: [], options: { sort: [], distinct: false } };

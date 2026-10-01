@@ -271,6 +271,46 @@ async function suite(title, query) {
     assert.equal(rows[0][1], 9825000);
   });
 
+  await step('milestoning: a temporal class as of $businessDate, then every version', async (page) => {
+    const manual = (cls) => app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc(`demo::trading::${cls}`)}`);
+    const setDate = async (value) => {
+      await page.fill('.q-side input[aria-label=Value]', value);
+      await page.press('.q-side input[aria-label=Value]', 'Tab');
+    };
+    // the rows legend-engine 4.145.0 answers for the same queries
+    await page.goto(manual('FirmRating'));
+    await page.waitForSelector('.q-node', { timeout: 60000 });
+    assert.match(await page.textContent('.q-side'), /\$businessDate/);
+    assert.match(await page.textContent('.q-options'), /as of \$businessDate/);
+    await page.dblclick(".q-node:has-text('Grade')");
+    await setDate('2024-01-15');
+    await run(page);
+    assert.deepEqual((await gridRows(page)).map((r) => r[0]).sort(), ['A', 'A3', 'BBB+']);
+    await page.click('.q-options button.q-editable');
+    await page.check('#q-opt-allversions');
+    await page.click('.q-dialog button.primary');
+    await run(page);
+    assert.deepEqual((await gridRows(page)).map((r) => r[0]).sort(), ['A', 'A3', 'AA', 'BBB', 'BBB+']);
+  });
+
+  await step('milestoning: a property into a temporal class writes $businessDate, which the query gains', async (page) => {
+    const manual = (cls) => app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc(`demo::trading::${cls}`)}`);
+    const setDate = async (value) => {
+      await page.fill('.q-side input[aria-label=Value]', value);
+      await page.press('.q-side input[aria-label=Value]', 'Tab');
+    };
+    await page.goto(manual('Firm'));
+    await page.waitForSelector('.q-node', { timeout: 60000 });
+    await page.dblclick(".q-node:has-text('Legal Name')");
+    await page.fill('.q-side input[aria-label="Search properties"]', 'grade');
+    await page.dblclick(".q-node:has-text('Grade')");
+    assert.match(await page.textContent('.q-side'), /\$businessDate/);
+    await setDate('2024-01-15');
+    await run(page);
+    assert.deepEqual((await gridRows(page)).sort(), [
+      ['Halberd Securities', 'BBB+'], ['Kestrel Partners', 'null'], ['Meridian Capital', 'A'], ['Northgate Asset Management', 'A3']]);
+  });
+
   await step('a percentile and a weighted average agree with the rows they summarise', async (page) => {
     await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Trade')}`));
     await page.waitForSelector('.q-node', { timeout: 60000 });

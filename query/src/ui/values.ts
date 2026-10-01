@@ -2,7 +2,7 @@
 // toggle, an enumeration's values, dates with the relative choices (today, now, N days ago,
 // first day of this month...), lists (Enter or comma adds, pasted CSV splits), or a parameter.
 
-import { isNumericFamily, primitiveFamily, simpleName, standardPrimitive, type ModelGraph } from '../model/graph.ts';
+import { assignable, isNumericFamily, primitiveFamily, simpleName, standardPrimitive, type ModelGraph } from '../model/graph.ts';
 import type { DateFunction, QueryVariable, Value } from '../builder/state.ts';
 import { h, mount, showMenu, type Child } from './dom.ts';
 
@@ -78,6 +78,8 @@ export interface ValueEditorOptions {
   readonly onChange: (v: Value) => void;
   /** Values that start with what was typed (a string property's typeahead); none when absent. */
   readonly suggest?: (prefix: string) => Promise<string[]>;
+  /** Whether relative dates (today(), adjust(...)) are offered; not where Pure's grammar takes only a value (a class's milestoning date). */
+  readonly relativeDates?: boolean;
 }
 
 let listIds = 0;
@@ -115,19 +117,19 @@ export function valueEditor(o: ValueEditorOptions): HTMLElement {
 
 function editorParts(o: ValueEditorOptions): Child[] {
   const v = o.value;
-  const fitting = o.variables.filter((p) => p.type === undefined || p.type === o.type || standardPrimitive(p.type) === standardPrimitive(o.type));
+  const fitting = o.variables.filter((p) => p.type === undefined || p.type === o.type || assignable(p.type, o.type));
   const family = o.graph.enumerations.has(o.type) ? 'enum' : primitiveFamily(o.type);
   const extras = (): void => {
     const b = extrasButton.getBoundingClientRect();
     const items = [
       ...fitting.map((p) => ({ label: `Use ${p.kind} $${p.name}`, action: () => o.onChange({ kind: 'variable', name: p.name }) })),
-      ...(family === 'date' && !o.many ? DATE_CHOICES.map((d) => ({ label: dateFunctionLabel(d), action: () => o.onChange({ kind: 'dateFunction', function: d }) })) : []),
+      ...(family === 'date' && !o.many && o.relativeDates !== false ? DATE_CHOICES.map((d) => ({ label: dateFunctionLabel(d), action: () => o.onChange({ kind: 'dateFunction', function: d }) })) : []),
       ...(v?.kind === 'variable' || v?.kind === 'dateFunction' ? [{ label: 'Enter a value', action: () => o.onChange(defaultLiteral(o)) }] : []),
     ];
     if (items.length > 0) showMenu(b.left, b.bottom + 4, items);
   };
   const extrasButton = h('button', { class: 'q-icon-btn', title: 'Parameters and relative values', onclick: extras }, '⋯');
-  const showExtras = fitting.length > 0 || family === 'date' || v?.kind === 'variable';
+  const showExtras = fitting.length > 0 || (family === 'date' && o.relativeDates !== false) || v?.kind === 'variable';
 
   if (v?.kind === 'variable') return [h('span', { class: 'q-chip accent' }, `$${v.name}`), extrasButton];
   if (v?.kind === 'dateFunction') {

@@ -1,19 +1,19 @@
-// A derived property's arguments (upstream's derived property editor): a path through a derived
-// property with parameters carries one value per parameter -- a literal, a relative date, or a
-// parameter or constant of the query. Added with typed defaults, so the query compiles at once.
+// A path step's arguments: a derived property's (upstream's derived property editor) and a
+// property into a temporal class whose dates do not propagate (upstream's milestoned property
+// dates) -- each a literal, a relative date, or a parameter or constant of the query.
 
 import { propertyAt } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
 import { queryVariables, type PropertyPath, type Value } from '../builder/state.ts';
-import { humanize, isToMany, simpleName, type ModelGraph, type PropertyInfo } from '../model/graph.ts';
+import { stepFor } from '../builder/milestoning.ts';
+import { humanize, isToMany, simpleName, type PropertyInfo } from '../model/graph.ts';
 import { dialog, h, mount } from './dom.ts';
 import { defaultValue, valueEditor, valueLabel } from './values.ts';
 
-/** A property as a path step: a derived property with parameters carries default arguments. */
-export function stepOf(graph: ModelGraph, p: PropertyInfo): PropertyPath[number] {
-  return p.parameters.length > 0
-    ? { property: p.name, args: p.parameters.map((x) => defaultValue(graph, x.type, isToMany(x.multiplicity))) }
-    : { property: p.name };
+/** A property as a path step from `owner` after `prefix`: with default arguments, or milestoning dates, when it takes any. */
+export function stepOf(session: Session, owner: string, prefix: PropertyPath, p: PropertyInfo): PropertyPath[number] {
+  const graph = session.project.graph;
+  return stepFor(graph, session.query, owner, prefix, p, (type, many) => defaultValue(graph, type, many));
 }
 
 /** The button that edits a path's arguments; null when no step takes any. */
@@ -35,9 +35,10 @@ export function argumentsDialog(session: Session, path: PropertyPath, apply: (pa
     mount(body, draft.flatMap((s, i) => {
       if (s.args === undefined || s.args.length === 0) return [];
       const { prop } = propertyAt(graph, root, draft.slice(0, i + 1));
+      const params = graph.parametersOf(prop);
       return [
-        h('div', { class: 'q-args__title mono' }, `${humanize(prop.name)}  ${prop.name}(${prop.parameters.map((p) => p.name).join(', ')})`),
-        prop.parameters.map((p, j) => h('div', { class: 'q-field', style: 'grid-template-columns:150px 1fr' },
+        h('div', { class: 'q-args__title mono' }, `${humanize(prop.name)}  ${prop.name}(${params.map((p) => p.name).join(', ')})`),
+        params.map((p, j) => h('div', { class: 'q-field', style: 'grid-template-columns:150px 1fr' },
           h('label', { title: `${p.name}: ${p.type}` }, `${p.name}: ${simpleName(p.type)}`),
           valueEditor({
             graph, type: p.type, many: isToMany(p.multiplicity), value: s.args![j], variables,

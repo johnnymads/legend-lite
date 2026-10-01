@@ -10,7 +10,7 @@ import { simpleName } from '../model/graph.ts';
 import { dialog, h, mount, panelAction, panelHeader, type Child } from './dom.ts';
 import { valueEditor, valueLabel } from './values.ts';
 
-export const PRIMITIVES = ['String', 'Integer', 'Float', 'Decimal', 'Boolean', 'StrictDate', 'DateTime'];
+export const PRIMITIVES = ['String', 'Integer', 'Float', 'Decimal', 'Boolean', 'Date', 'StrictDate', 'DateTime'];
 const MULTIPLICITIES: readonly { label: string; m: Multiplicity }[] = [
   { label: '[1] exactly one', m: { lowerBound: 1, upperBound: 1 } },
   { label: '[0..1] optional', m: { lowerBound: 0, upperBound: 1 } },

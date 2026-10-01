@@ -39,6 +39,19 @@ Class <<demo::trading::Governance.certified>> {meta::pure::profiles::doc.doc = '
   {meta::pure::profiles::doc.doc = 'Registered legal name.'} legalName: String[1];
   {meta::pure::profiles::doc.doc = 'Headquarters region.'} region: demo::trading::Region[1];
   {meta::pure::profiles::doc.doc = 'Date of incorporation, when known.'} founded: StrictDate[0..1];
+  {meta::pure::profiles::doc.doc = 'The firm\'s credit rating, as it stood on a date.'} rating: demo::trading::FirmRating[0..1];
+}
+
+Class <<temporal.businesstemporal>> {meta::pure::profiles::doc.doc = 'A credit rating: each version holds from one business date to the next.'} demo::trading::FirmRating
+{
+  agency: String[1];
+  grade: String[1];
+}
+
+Class <<temporal.bitemporal>> {meta::pure::profiles::doc.doc = 'A trading limit per product, by business date and as recorded (processing date).'} demo::trading::ProductLimit
+{
+  ticker: String[1];
+  maxQuantity: Integer[1];
 }
 
 Class {meta::pure::profiles::doc.doc = 'A person employed by a firm; traders book trades.'} demo::trading::Person
@@ -111,9 +124,24 @@ Database demo::trading::DB
     Table FIRM (FIRM_ID INTEGER PRIMARY KEY, LEGAL_NAME VARCHAR(128), REGION VARCHAR(8), FOUNDED DATE)
     Table PERSON (PERSON_ID INTEGER PRIMARY KEY, FIRST_NAME VARCHAR(64), LAST_NAME VARCHAR(64), TITLE VARCHAR(64), AGE INTEGER, FIRM_ID INTEGER)
     Table PRODUCT (TICKER VARCHAR(16) PRIMARY KEY, NAME VARCHAR(128), ASSET_CLASS VARCHAR(16))
+    Table FIRM_RATING
+    (
+      milestoning(business(BUS_FROM = FROM_Z, BUS_THRU = THRU_Z, INFINITY_DATE = %9999-12-31))
+      FIRM_ID INTEGER PRIMARY KEY, FROM_Z DATE PRIMARY KEY, THRU_Z DATE, AGENCY VARCHAR(16), GRADE VARCHAR(8)
+    )
+    Table PRODUCT_LIMIT
+    (
+      milestoning
+      (
+        business(BUS_FROM = FROM_Z, BUS_THRU = THRU_Z, INFINITY_DATE = %9999-12-31),
+        processing(PROCESSING_IN = IN_Z, PROCESSING_OUT = OUT_Z, INFINITY_DATE = %9999-12-31)
+      )
+      TICKER VARCHAR(16) PRIMARY KEY, FROM_Z DATE PRIMARY KEY, IN_Z DATE PRIMARY KEY, THRU_Z DATE, OUT_Z DATE, MAX_QTY INTEGER
+    )
     Table TRADE (TRADE_ID INTEGER PRIMARY KEY, TRADE_DATE DATE, SIDE VARCHAR(4), QUANTITY INTEGER, PRICE DOUBLE, STATUS VARCHAR(16), TICKER VARCHAR(16), TRADER_ID INTEGER)
   )
 
+  Join FirmRatingFirm(TRADING.FIRM_RATING.FIRM_ID = TRADING.FIRM.FIRM_ID)
   Join PersonFirm(TRADING.PERSON.FIRM_ID = TRADING.FIRM.FIRM_ID)
   Join TradeTrader(TRADING.TRADE.TRADER_ID = TRADING.PERSON.PERSON_ID)
   Join TradeProduct(TRADING.TRADE.TICKER = TRADING.PRODUCT.TICKER)
@@ -149,7 +177,22 @@ Mapping demo::trading::TradingMapping
     legalName: [demo::trading::DB] TRADING.FIRM.LEGAL_NAME,
     region: EnumerationMapping RegionMapping: [demo::trading::DB] TRADING.FIRM.REGION,
     founded: [demo::trading::DB] TRADING.FIRM.FOUNDED,
-    employees: [demo::trading::DB] @PersonFirm
+    employees: [demo::trading::DB] @PersonFirm,
+    rating: [demo::trading::DB] @FirmRatingFirm
+  }
+
+  *demo::trading::FirmRating: Relational
+  {
+    ~mainTable [demo::trading::DB] TRADING.FIRM_RATING
+    agency: [demo::trading::DB] TRADING.FIRM_RATING.AGENCY,
+    grade: [demo::trading::DB] TRADING.FIRM_RATING.GRADE
+  }
+
+  *demo::trading::ProductLimit: Relational
+  {
+    ~mainTable [demo::trading::DB] TRADING.PRODUCT_LIMIT
+    ticker: [demo::trading::DB] TRADING.PRODUCT_LIMIT.TICKER,
+    maxQuantity: [demo::trading::DB] TRADING.PRODUCT_LIMIT.MAX_QTY
   }
 
   *demo::trading::Person: Relational

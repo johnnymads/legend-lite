@@ -116,6 +116,27 @@ describe('load', () => {
     });
   });
 
+  it('reads back milestoning: dates on the class (a parameter or a literal), every version, dates on a property', async () => {
+    const date = { name: 'businessDate', type: 'Date', multiplicity: { lowerBound: 1, upperBound: 1 } } as const;
+    const ratings = { ...emptyQuery({ ...SOURCE, class: 'demo::trading::FirmRating' }), columns: [col('grade', 'grade')], parameters: [date] };
+    await roundTrip({ ...ratings, milestoning: { kind: 'asOf', dates: { businessDate: { kind: 'variable', name: 'businessDate' } } } });
+    await roundTrip({ ...ratings, parameters: [], milestoning: { kind: 'asOf', dates: { businessDate: { kind: 'strictDate', value: '2024-01-15' } } } });
+    await roundTrip({ ...ratings, parameters: [], milestoning: { kind: 'allVersions' } });
+    await roundTrip({
+      ...emptyQuery({ ...SOURCE, class: 'demo::trading::ProductLimit' }), columns: [col('max', 'maxQuantity')],
+      milestoning: { kind: 'asOf', dates: { processingDate: { kind: 'variable', name: 'asOf' }, businessDate: { kind: 'strictDate', value: '2024-06-01' } } },
+      constants: [{ name: 'asOf', type: 'StrictDate', value: { kind: 'dateFunction', function: { kind: 'today' } } }],
+    });
+    await roundTrip({
+      ...emptyQuery({ ...SOURCE, class: 'demo::trading::Firm' }), parameters: [date],
+      columns: [{ id: '', name: 'grade', path: [{ property: 'rating', args: [{ kind: 'variable', name: 'businessDate' }] }, { property: 'grade' }] }],
+    });
+    // a temporal class's all() takes its dates
+    const r = loadLambda(graph, await grammar.lambdaJson('|demo::trading::FirmRating.all()->project(~[g:x|$x.grade])'), { mapping: 'm', runtime: 'r' });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.reason, /0 date\(s\) where its milestoning takes 1/);
+  });
+
   it("reads back a derived property's arguments, in a column and a condition", async () => {
     await roundTrip({
       ...emptyQuery(SOURCE),

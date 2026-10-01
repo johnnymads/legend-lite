@@ -4,6 +4,8 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { buildLambda, BuildError } from '../src/builder/build.ts';
+import { addColumn } from '../src/app/actions.ts';
+import { queryOn, stepFor } from '../src/builder/milestoning.ts';
 import { emptyQuery, type QueryState } from '../src/builder/state.ts';
 import { demoModel, grammar } from './lite.ts';
 
@@ -62,6 +64,27 @@ describe('build', () => {
     assert.equal(await text(q),
       '|demo::trading::Trade.all()->project(~[ticker:x|$x.product.ticker, qty:x|$x.quantity])->groupBy(~[ticker], ~[qty:x|$x.qty:y|$y->sum()])->distinct()->sort([~qty->descending()])->limit(10)->slice(0, 5)');
     assert.deepEqual(await columns(q), ['ticker:String', 'qty:Integer']);
+  });
+
+  it('milestoning: a temporal class as of its date parameters, every version, and dates written on a property into one', async () => {
+    const on = (cls: string) => queryOn(graph, { ...SOURCE, class: `demo::trading::${cls}` });
+    const rating = on('FirmRating');
+    assert.deepEqual(rating.parameters, [{ name: 'businessDate', type: 'Date', multiplicity: { lowerBound: 1, upperBound: 1 } }]);
+    const graded = { ...rating, columns: [col('grade', 'grade')] };
+    assert.equal(await text(graded), 'businessDate: Date[1]|demo::trading::FirmRating.all($businessDate)->project(~[grade:x|$x.grade])');
+    assert.deepEqual(await columns(graded), ['grade:String']);
+    assert.equal(await text({ ...graded, milestoning: { kind: 'allVersions' } }), 'businessDate: Date[1]|demo::trading::FirmRating.allVersions()->project(~[grade:x|$x.grade])');
+    const limits = { ...on('ProductLimit'), columns: [col('max', 'maxQuantity')] };
+    assert.equal(await text(limits), '{processingDate: Date[1], businessDate: Date[1]|demo::trading::ProductLimit.all($processingDate, $businessDate)->project(~[max:x|$x.maxQuantity])}');
+    // Firm has no dates: a property into FirmRating writes them, and the query gains the parameter
+    const firms = on('Firm');
+    const step = stepFor(graph, firms, 'demo::trading::Firm', [], graph.property('demo::trading::Firm', 'rating')!, () => assert.fail('no derived defaults'));
+    assert.deepEqual(step, { property: 'rating', args: [{ kind: 'variable', name: 'businessDate' }] });
+    const q = addColumn(firms, [step, { property: 'grade' }], false);
+    assert.equal(await text(q), 'businessDate: Date[1]|demo::trading::Firm.all()->project(~[rating_grade:x|$x.rating($businessDate).grade])');
+    assert.deepEqual(await columns(q), ['rating_grade:String']);
+    assert.throws(() => buildLambda(graph, { ...graded, milestoning: { kind: 'asOf', dates: {} } }, { withFrom: false }), /business date/);
+    assert.throws(() => buildLambda(graph, { ...graded, milestoning: { kind: 'asOf', dates: { businessDate: { kind: 'dateFunction', function: { kind: 'today' } } } } }, { withFrom: false }), /make a constant/);
   });
 
   it("passes a derived property's arguments: literals, a parameter and a constant", async () => {

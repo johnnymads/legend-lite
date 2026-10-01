@@ -4,12 +4,14 @@
 
 import { addColumn, PROPERTY_DRAG, propertyAt } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
-import type { AggregateOp, GraphNode, PercentileOptions, ProjectionColumn, PropertyPath, QueryState, SortSpec } from '../builder/state.ts';
-import { isNumericFamily, primitiveFamily, simpleName } from '../model/graph.ts';
+import { withDateParameters } from '../builder/milestoning.ts';
+import { queryVariables, type AggregateOp, type GraphNode, type PercentileOptions, type ProjectionColumn, type PropertyPath, type QueryState, type SortSpec, type Value } from '../builder/state.ts';
+import { isNumericFamily, milestoningDates, primitiveFamily, simpleName } from '../model/graph.ts';
 import { blankPlaceholder, dialog, h, icon, mount, panelAction, panelHeader, select, showMenu, type Child } from './dom.ts';
 import type { AppContext } from '../app/context.ts';
 import { addToTree, calculatedDialog, renderGraph, renderWindows, windowDialog } from './advanced.ts';
 import { argumentsButton } from './arguments.ts';
+import { valueEditor, valueLabel } from './values.ts';
 
 const AGGREGATES: readonly { op: AggregateOp; label: string; fits: (family: string, isEnum: boolean) => boolean }[] = [
   { op: 'count', label: 'count', fits: () => true },
@@ -216,6 +218,11 @@ function optionChips(session: Session): Child {
   for (const s of o.sort) chips.push(h('span', { class: 'q-chip accent' }, `${s.column} ${s.direction === 'asc' ? '↑' : '↓'}`));
   if (o.limit !== undefined) chips.push(h('span', { class: 'q-chip accent' }, `limit ${o.limit}`));
   if (o.slice) chips.push(h('span', { class: 'q-chip accent' }, `rows ${o.slice.start}–${o.slice.end}`));
+  const m = session.query.milestoning;
+  if (m) {
+    chips.push(h('span', { class: 'q-chip accent', title: 'Milestoning: the versions of the class the query reads' },
+      m.kind === 'allVersions' ? 'all versions' : `as of ${Object.values(m.dates).map(valueLabel).join(', ')}`));
+  }
   return h('span', { class: 'q-options' },
     h('button', { class: 'q-editable', onclick: () => optionsDialog(session) }, icon('cog'), ' Set Query Options'), chips);
 }
@@ -241,8 +248,36 @@ export function optionsDialog(session: Session): void {
         : h('span', { class: 'q-faint' }, 'Add columns to sort by them.'));
   };
   drawSort();
+  // milestoning (upstream's section of the same dialog): the class's dates, or every version
+  const graph = session.project.graph;
+  const temporal = graph.temporalOf(q.source.class);
+  let milestoning = q.milestoning;
+  const milestoningBox = h('div');
+  const drawMilestoning = (): void => {
+    if (temporal === undefined || milestoning === undefined) return;
+    const all = h('input', {
+      type: 'checkbox', id: 'q-opt-allversions', checked: milestoning.kind === 'allVersions',
+      onchange: () => {
+        milestoning = all.checked ? { kind: 'allVersions' }
+          : { kind: 'asOf', dates: Object.fromEntries(milestoningDates(temporal).map((d): [string, Value] => [d, { kind: 'variable', name: d }])) };
+        drawMilestoning();
+      },
+    });
+    const current = milestoning;
+    mount(milestoningBox,
+      h('b', null, 'Milestoning'),
+      h('label', { style: 'display:flex; gap:6px; align-items:center' }, all, 'Query all milestoned versions of the root class'),
+      current.kind === 'asOf' ? milestoningDates(temporal).map((d) => h('div', { class: 'q-field', style: 'grid-template-columns:130px 1fr' },
+        h('label', null, d === 'businessDate' ? 'Business date' : 'Processing date'),
+        valueEditor({
+          graph, type: 'Date', many: false, value: current.dates[d], variables: queryVariables(q), relativeDates: false,
+          onChange: (v) => { milestoning = { kind: 'asOf', dates: { ...current.dates, [d]: v } }; drawMilestoning(); },
+        }))) : null);
+  };
+  drawMilestoning();
   dialog('Query options', (d) => ({
     body: [
+      temporal !== undefined ? milestoningBox : null,
       h('div', null, h('b', null, 'Sort'), sortList),
       h('label', { style: 'display:flex; gap:6px; align-items:center' }, distinct, 'Eliminate duplicate rows (distinct)'),
       h('div', { class: 'q-field', style: 'grid-template-columns:120px 1fr' }, h('label', null, 'Limit results'), limit),
@@ -259,8 +294,9 @@ export function optionsDialog(session: Session): void {
           const start = Number(sliceStart.value || 0), end = Number(sliceEnd.value || 0);
           if (lim !== undefined && (!Number.isInteger(lim) || lim < 1)) { error.textContent = 'The limit is a whole number of rows, at least 1.'; return; }
           if (hasSlice && !(Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start)) { error.textContent = 'A slice runs from a row to a later row.'; return; }
-          session.update((s) => ({
+          session.update((s) => withDateParameters({
             ...s,
+            ...(milestoning ? { milestoning } : {}),
             options: {
               sort, distinct: distinct.checked,
               ...(lim !== undefined ? { limit: lim } : {}),

@@ -5,10 +5,10 @@
 import type {
   AppliedFunction, AppliedProperty, ColSpec, Lambda, ValueSpecification, Variable,
 } from '../../../pure-protocol/src/index.ts';
-import type { ModelGraph } from '../model/graph.ts';
+import { milestoningDates, type ModelGraph } from '../model/graph.ts';
 import {
   freshId, type AggregateOp, type ClassSource, type Constant, type DateFunction, type FilterNode, type GraphFetch, type GraphNode, type Group, type Operator,
-  type Parameter, type PercentileOptions, type ProjectionColumn, type PropertyPath, type PropertyStep, type QueryState, type SortSpec, type Value,
+  type Milestoning, type Parameter, type PercentileOptions, type ProjectionColumn, type PropertyPath, type PropertyStep, type QueryState, type SortSpec, type Value,
   type WindowColumn, type WindowOp,
 } from './state.ts';
 
@@ -366,10 +366,22 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
     filter = f.kind === 'group' ? f : { kind: 'group', id: freshId('g'), op: 'and', children: [f] };
     n = a[0]!;
   }
-  a = step('getAll');
-  if (!a || a.length !== 1 || a[0]!._type !== 'packageableElementPtr') return fail('a source other than Class.all()');
+  // the source: Class.all(), a temporal class's all(dates) (processing first), or allVersions()
+  const allVersions = step('getAllVersions');
+  a = allVersions ?? step('getAll');
+  if (!a || a.length === 0 || a[0]!._type !== 'packageableElementPtr') return fail('a source other than Class.all()');
   const cls = (a[0] as unknown as { fullPath: string }).fullPath;
   if (!graph.classes.has(cls)) fail(`the class ${cls}, which the model does not have`);
+  const temporal = graph.temporalOf(cls);
+  let milestoning: Milestoning | undefined;
+  if (allVersions) {
+    if (temporal === undefined || a.length !== 1) return fail(`allVersions() of ${cls}, which is not milestoned, or with arguments`);
+    milestoning = { kind: 'allVersions' };
+  } else {
+    const names = temporal === undefined ? [] : milestoningDates(temporal);
+    if (a.length !== 1 + names.length) return fail(`${cls}.all() with ${a.length - 1} date(s) where its milestoning takes ${names.length}`);
+    if (temporal !== undefined) milestoning = { kind: 'asOf', dates: Object.fromEntries(names.map((d, i) => [d, valueOf(a![i + 1]!)])) };
+  }
   if (mapping === undefined || runtime === undefined) return fail('no mapping and runtime (neither from() nor an execution context)');
 
   const columns: ProjectionColumn[] = specs.map((s) => {
@@ -432,6 +444,7 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
   return {
     source, columns, parameters,
     ...(constants.length > 0 ? { constants } : {}),
+    ...(milestoning ? { milestoning } : {}),
     ...(filter ? { filter } : {}),
     ...(windows.length > 0 ? { windows } : {}),
     ...(postFilter ? { postFilter } : {}),
