@@ -2239,70 +2239,135 @@
   padding: 2px 0;
 }
 
-/* A JSON column's fields, in the column editor (ui/json-fields.ts). */
-.dc-calc-json { margin-bottom: 6px; }
-
-.dc-calc-json-fields {
-  max-height: 220px;
-  overflow: auto;
-  border: 1px solid var(--dc-line);
-  border-radius: var(--dc-radius-sm);
+/* A JSON column's fields, in the column editor (ui/json-fields.ts): the fields as a tree on the
+   left, what can be taken of the chosen one on the right -- angular, as the editor is. */
+.dc-calc-json { margin-bottom: 10px; }
+.dc-calc-json > .dc-field { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.dc-calc-json > .dc-field .dc-field-label {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tw-neutral-500);
 }
-
 .dc-calc-json-fields:empty { display: none; }
 
-.dc-jsonfields {
-  display: flex;
-  flex-direction: column;
-}
-
+.dc-jsonfields { display: flex; flex-direction: column; border: 1px solid var(--tw-neutral-200); border-radius: 2px; }
 .dc-jsonfields-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--tw-neutral-200);
+  background: var(--tw-neutral-50);
+  color: var(--tw-neutral-500);
+  font-size: 11px;
+}
+.dc-jsonfields-said { flex: 1; min-width: 0; }
+.dc-jsonfields-note.dc-jsonfields-bad { color: var(--tw-red-600); }
+.dc-jsonfields-all {
   flex: none;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--dc-line);
-  color: var(--dc-muted);
-  font-size: var(--dc-text-sm-size);
-}
-
-.dc-jsonfields-note.dc-jsonfields-bad { color: var(--tw-red-500, #ef4444); }
-
-.dc-jsonfields-tree { padding: 4px 8px 8px; }
-
-.dc-jsonfields-field [role='group'] { margin-left: 14px; }
-
-.dc-jsonfields-head {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  padding: 4px 0 2px;
-}
-
-.dc-jsonfields-name { font-family: var(--dc-mono); font-weight: 600; }
-.dc-jsonfields-what { color: var(--dc-muted); font-size: var(--dc-text-sm-size); }
-
-.dc-jsonfields-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 0 0 4px;
-}
-
-.dc-jsonfields-add {
-  font: inherit;
-  font-size: var(--dc-text-sm-size);
   padding: 1px 8px;
-  border: 1px solid var(--dc-line);
-  border-radius: var(--dc-radius-sm);
-  background: transparent;
-  color: inherit;
+  border: 1px solid var(--tw-neutral-300);
+  border-radius: 2px;
+  background: var(--tw-white);
+  color: var(--tw-sky-700);
+  font: inherit;
   cursor: pointer;
 }
-
-.dc-jsonfields-add:hover { background: var(--dc-row-hover); }
-.dc-jsonfields-add.dc-jsonfields-picked {
-  border-color: var(--dc-active);
-  color: var(--dc-active);
+.dc-jsonfields-panes { display: flex; height: 230px; }
+.dc-jsonfields-panes[hidden] { display: none; }
+.dc-jsonfields-left {
+  flex: 0 0 46%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--tw-neutral-200);
 }
+.dc-jsonfields-search {
+  flex: none;
+  padding: 5px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--tw-neutral-200);
+  border-radius: 0;
+  outline: none;
+  font: inherit;
+  background: var(--tw-white);
+  color: var(--tw-neutral-700);
+}
+.dc-jsonfields-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+.dc-jsonfields-item[hidden] { display: none; }
+.dc-jsonfields-kids[hidden] { display: none; }
+.dc-jsonfields-node {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px 3px 6px;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dc-jsonfields-node:hover { background: var(--tw-neutral-100); }
+.dc-jsonfields-node.dc-on { border-left-color: var(--tw-sky-700); background: var(--tw-sky-50); }
+.dc-jsonfields-node:focus-visible { outline: 1px solid var(--tw-sky-600); outline-offset: -1px; }
+.dc-jsonfields-caret { flex: none; width: 10px; color: var(--tw-neutral-400); font-size: 10px; text-align: center; }
+.dc-jsonfields-name { font: 12px/16px var(--dc-font-mono, ui-monospace, monospace); color: var(--tw-neutral-700); overflow: hidden; text-overflow: ellipsis; }
+.dc-jsonfields-node.dc-on .dc-jsonfields-name { font-weight: 600; }
+.dc-jsonfields-what { color: var(--tw-neutral-400); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.dc-jsonfields-share {
+  margin-left: auto;
+  padding: 0 4px;
+  border: 1px solid var(--tw-neutral-200);
+  border-radius: 2px;
+  color: var(--tw-neutral-500);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.dc-jsonfields-detail { flex: 1; min-width: 0; overflow-y: auto; }
+.dc-jsonfields-options { padding: 8px 12px; }
+.dc-jsonfields-options[hidden] { display: none; }
+.dc-jsonfields-crumb { font: 600 12px/16px var(--dc-font-mono, ui-monospace, monospace); color: var(--tw-neutral-700); word-break: break-all; }
+.dc-jsonfields-sub { margin: 1px 0 8px; color: var(--tw-neutral-500); font-size: 11px; }
+.dc-jsonfields-none { margin: 4px 0; color: var(--tw-neutral-400); }
+.dc-jsonfields-actions { display: flex; flex-direction: column; border-top: 1px solid var(--tw-neutral-100); }
+.dc-jsonfields-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--tw-neutral-100);
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+.dc-jsonfields-option:hover { background: var(--tw-neutral-50); }
+.dc-jsonfields-option.dc-jsonfields-picked { border-left-color: var(--tw-sky-700); background: var(--tw-sky-50); }
+.dc-jsonfields-add {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--tw-neutral-700);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dc-jsonfields-add.dc-jsonfields-picked { font-weight: 600; }
+.dc-jsonfields-type {
+  flex: none;
+  margin-right: 8px;
+  font: 11px/16px var(--dc-font-mono, ui-monospace, monospace);
+  color: var(--tw-neutral-500);
+}
+
+/* every control in the column editor in the editor's own type: a <select> does not inherit it */
+.dc-xc select, .dc-xc input, .dc-xc textarea, .dc-xc button { font-family: inherit; }
+.dc-xc select, .dc-xc input[type=number] {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--tw-neutral-300);
+  border-radius: 2px;
+  background: var(--tw-white);
+  color: var(--tw-neutral-700);
+  font-size: 12px;
+}
+.dc-xc select:focus, .dc-xc input[type=number]:focus { border-color: var(--tw-sky-600); outline: none; }
+.dc-xc .dc-button { font-size: 12px; }
 
 /* ---- the saved cubes window (src/ui/cube-library.ts) ------------------- */
 .dc-lib { display: flex; flex-direction: column; gap: 6px; font: var(--dc-text-base-size)/var(--dc-text-base-line) var(--dc-font); }
@@ -3246,3 +3311,116 @@
 .dc-xc-builder .dc-xc-over .dc-xc-label { margin: 0; width: 96px; text-align: right; }
 
 .dc-xc-kind:disabled { cursor: default; opacity: 0.45; background: transparent; }
+
+/* ---- ONE STYLE for every dialog (the user, 2026-10-01: "i like the style a lot"): the column
+   editor's -- square corners, hairlines, dense type, one blue accent, the rail's left-accent
+   selection -- over the source picker, Save, Open and the blank page. ---- */
+.dc-picker-backdrop { background: rgb(15 23 42 / 0.28); backdrop-filter: none; }
+.dc-picker {
+  border-radius: 2px;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.18);
+  font-size: 12px;
+  line-height: 16px;
+}
+.dc-picker :is(button, input, select, textarea, .dc-picker-drop, .dc-picker-card, .dc-picker-list,
+  .dc-picker-chip, .dc-picker-badge, .dc-picker-note, .dc-save-card, .dc-save-warning, .dc-lib-list,
+  .dc-lib-ask, .dc-lib-message, .dc-picker-close) { border-radius: 2px; }
+.dc-picker :is(input, select, textarea, button) { font-family: inherit; }
+.dc-picker-head { padding: 12px 18px 10px; }
+.dc-picker-title { font-size: 15px; line-height: 20px; }
+.dc-picker-subtitle { font-size: 12px; }
+.dc-picker-close { width: 24px; height: 24px; line-height: 24px; font-size: 18px; }
+
+/* the sections: the rail's look */
+.dc-picker-nav { width: 220px; padding: 10px 0; gap: 0; }
+.dc-picker-tab {
+  padding: 7px 14px 7px 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  gap: 10px;
+}
+.dc-picker-tab:hover { background: var(--tw-neutral-100); }
+.dc-picker-tab[aria-selected="true"] {
+  border-left-color: var(--tw-sky-700);
+  background: var(--tw-white);
+  box-shadow: none;
+}
+.dc-picker-tab:focus-visible { outline: 1px solid var(--tw-sky-600); outline-offset: -1px; }
+.dc-picker-icon { width: 16px; height: 16px; stroke-width: 1.5; }
+.dc-picker-tab[aria-selected="true"] .dc-picker-icon { stroke: var(--tw-sky-700); }
+.dc-picker-tab-label { font-size: 12px; }
+.dc-picker-tab-hint { font-size: 11px; line-height: 14px; }
+
+.dc-picker-panel { padding: 16px 20px; }
+.dc-picker-heading {
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tw-neutral-500);
+}
+.dc-picker-lead { margin: 2px 0 14px; font-size: 12px; }
+.dc-picker-input { padding: 5px 8px; font-size: 12px; }
+.dc-picker-input:focus { border-color: var(--tw-sky-600); outline: none; }
+.dc-picker-button { padding: 5px 12px; font-size: 12px; }
+.dc-picker-field-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tw-neutral-500);
+}
+.dc-picker-drop { min-height: 200px; border: 1px dashed var(--tw-neutral-300); }
+.dc-picker-drop-main { font-size: 13px; }
+.dc-picker-chip, .dc-picker-badge {
+  padding: 0 6px;
+  border: 1px solid var(--tw-neutral-200);
+  background: var(--tw-white);
+  font: 11px/16px var(--dc-font-mono, ui-monospace, monospace);
+  text-transform: none;
+}
+.dc-picker-badge.dc-view, .dc-picker-badge.dc-known { border-color: var(--tw-sky-200); background: var(--tw-sky-50); }
+.dc-picker-cards { gap: 0; border-top: 1px solid var(--tw-neutral-200); border-left: 1px solid var(--tw-neutral-200); }
+.dc-picker-card {
+  border: 0;
+  border-right: 1px solid var(--tw-neutral-200);
+  border-bottom: 1px solid var(--tw-neutral-200);
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  padding: 10px 12px;
+}
+.dc-picker-card:hover, .dc-picker-card:focus-visible { box-shadow: none; background: var(--tw-neutral-50); border-left-color: var(--tw-neutral-300); }
+.dc-picker-card.dc-chosen { box-shadow: none; border-left-color: var(--tw-sky-700); background: var(--tw-sky-50); }
+.dc-picker-card-name { font-size: 12px; }
+.dc-picker-card-text { font-size: 11px; line-height: 15px; }
+.dc-picker-row { padding: 7px 12px; border-left: 2px solid transparent; }
+.dc-picker-row:hover:not(:disabled), .dc-picker-row:focus-visible { background: var(--tw-neutral-50); border-left-color: var(--tw-sky-700); }
+.dc-picker-choice { padding: 10px 20px; margin: 14px -20px -16px; }
+.dc-picker-status.dc-working, .dc-picker-status.dc-failed { padding: 8px 18px; }
+
+/* Save */
+.dc-save-body { padding: 14px 18px 4px; }
+.dc-save-input { font: 13px/18px var(--dc-font-mono, ui-monospace, monospace); padding: 6px 8px; }
+.dc-save-card { padding: 10px 12px; }
+.dc-save-card-title { font-size: 10px; letter-spacing: 0.06em; }
+.dc-save-foot { padding: 10px 18px; }
+
+/* Open */
+.dc-open-body { padding: 14px 18px 18px; }
+.dc-open .dc-lib { font-size: 12px; line-height: 16px; }
+.dc-open .dc-lib-search, .dc-open .dc-lib-sort, .dc-open .dc-lib-button { border-radius: 2px; padding-top: 4px; padding-bottom: 4px; font-size: 12px; }
+.dc-open .dc-lib-row { padding: 7px 12px; border-left: 2px solid transparent; }
+.dc-open .dc-lib-row:hover { background: var(--tw-neutral-50); border-left-color: var(--tw-sky-700); }
+.dc-open .dc-lib-row.dc-lib-current .dc-lib-row-name::after {
+  border-radius: 2px;
+  border: 1px solid var(--tw-sky-200);
+  font: 10px/14px var(--dc-font);
+}
+
+/* the blank page */
+.dc-blank-card { border-radius: 2px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.06); padding: 28px 34px; }
+.dc-blank-title { font-size: 16px; line-height: 22px; }
+.dc-blank-lead { font-size: 12px; line-height: 17px; }
+.dc-picker-field-label { text-align: left; align-self: stretch; }
