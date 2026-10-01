@@ -11,6 +11,15 @@ importers:
       '@duckdb/duckdb-wasm':
         specifier: 1.33.1-dev57.0
         version: 1.33.1-dev57.0
+      '@fontsource/raleway':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/roboto':
+        specifier: 5.3.0
+        version: 5.3.0
+      '@fontsource/roboto-mono':
+        specifier: 5.3.0
+        version: 5.3.0
     devDependencies:
       '@types/jsdom':
         specifier: 30.0.0
@@ -255,6 +264,15 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource/raleway@5.3.0':
+    resolution: {integrity: sha512-BTWr1I14Ji0DWpS/KCIq/CXcvxXWgMO73gynWpbYv7A5wlPhLevozgRmdPJvZmUf0fhH+Lju+F4nigJ6Ums24A==}
+
+  '@fontsource/roboto-mono@5.3.0':
+    resolution: {integrity: sha512-yhwplHMHW9dCk+1pZuERfcJe+K3rosGVZEoK0XktkxRSqQ9qsipSwwiuW2/8Qmtp9lzu3Ixa/ie4BMH3i8CkZQ==}
+
+  '@fontsource/roboto@5.3.0':
+    resolution: {integrity: sha512-BapRJOWYP+LZ21zp+wBQjfpPYKRoxc4LspJ/RLuI+HSMBD5u/X4O+ESDrSvEqDSy0rAl7GwBJ+09mdc16cVQ1Q==}
 
   '@swc/helpers@0.5.23':
     resolution: {integrity: sha512-5lSsMOTXURePglDfvuAQUqkGek9Hg2kksOYay2m0+XR++b2NWYL/4sWyuvVBIs8oKnJaxkdi9whaL/sqN13afw==}
@@ -820,6 +838,12 @@ snapshots:
     optional: true
 
   '@exodus/bytes@1.16.0': {}
+
+  '@fontsource/raleway@5.3.0': {}
+
+  '@fontsource/roboto-mono@5.3.0': {}
+
+  '@fontsource/roboto@5.3.0': {}
 
   '@swc/helpers@0.5.23':
     dependencies:

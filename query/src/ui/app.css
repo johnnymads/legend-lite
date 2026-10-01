@@ -1,44 +1,127 @@
-/* Legend Query: one stylesheet, tokens first. Light by default, dark on request or by system. */
+/* Legend Query: one stylesheet, tokens first -- UPSTREAM's (finos/legend-studio, legend-art):
+   dark by default, as Legend Query is; the light theme is the one its sun/moon switch picks,
+   legacy-light. Values from legend-art style/base/_variables.scss, themes/_theme-default-dark.scss
+   and themes/_theme-legacy-light.scss (studio 821c74c). Type: Roboto, Roboto Mono, Raleway 900
+   (fonts.css). Query's own short names below point at them. */
 :root {
-  --bg: #f7f8fa;
-  --surface: #ffffff;
-  --surface-2: #f1f3f6;
-  --border: #dde1e7;
-  --border-strong: #c3c9d2;
-  --text: #1c2330;
-  --text-2: #5a6474;
-  --text-3: #8a93a1;
-  --accent: #2f6fdd;
-  --accent-soft: #e6eefc;
-  --accent-text: #ffffff;
-  --ok: #1f8a4c;
-  --warn: #a86b00;
-  --error: #c2352b;
-  --error-soft: #fcebea;
-  --chip: #eef1f5;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --radius: 6px;
-  --shadow: 0 6px 24px rgba(20, 30, 50, 0.14);
-  color-scheme: light;
+  --color-bg-app: #1e1e1e;
+  --color-bg-panel: #2d2d2d;
+  --color-bg-panel-header: #353535;
+  --color-bg-chrome: #3e3e3e;
+  --color-bg-elevated: #252525;
+  --color-bg-input: #2d2d2d;
+  --color-bg-hover: #3e3e3e;
+  --color-bg-selected: #264f77;
+  --color-bg-tag: #595959;
+  --color-bg-overlay: #00000061;
+  --color-bg-row-hover: #7f7ab124;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #ddd;
+  --color-text-muted: #bbb;
+  --color-text-disabled: #737373;
+  --color-text-on-accent: #f3f3f3;
+  --color-text-link: #007acc;
+  --color-border-subtle: #2d2d2d;
+  --color-border-default: #353535;
+  --color-border-strong: #595959;
+  --color-border-focus: #08629e;
+  --color-accent: #08629e;
+  --color-accent-hover: #007acc;
+  --color-accent-subtle: #7f7ab124;
+  --color-status-error: #f5584b;
+  --color-status-error-bg: #ff00001a;
+  --color-status-warn: #fbbc05;
+  --color-status-warn-bg: #342a18;
+  --color-status-success: #34a853;
+  --color-status-success-hover: #014321;
+  --color-active-indicator: #fbbc05;
+  --color-shadow: #0000004f;
+  --color-editable-value: #40a6ff;
+  --color-filter-selected: #002f4f;
+  --color-type-class: #8a58ab;
+  --color-type-enumeration: #39cca2;
+  --color-type-primitive: #477cc5;
+  --color-multiplicity: #fbbc05;
+  --color-grid-bg: #1e1e1e;
+  --color-grid-header: #2d2d2d;
+  --color-grid-text: #ddd;
+  --color-grid-selection: #45456b;
+  --color-caution: #b33659;
+  --color-scrollbar: #ffffff2e;
+  color-scheme: dark;
+
+  /* Query's names */
+  --bg: var(--color-bg-app);
+  --surface: var(--color-bg-elevated);
+  --surface-2: var(--color-bg-panel);
+  --border: var(--color-border-default);
+  --border-strong: var(--color-border-strong);
+  --text: var(--color-text-primary);
+  --text-2: var(--color-text-muted);
+  --text-3: var(--color-text-disabled);
+  --accent: var(--color-accent);
+  --accent-soft: var(--color-bg-selected);
+  --accent-text: var(--color-text-on-accent);
+  --ok: var(--color-status-success);
+  --warn: var(--color-status-warn);
+  --error: var(--color-status-error);
+  --error-soft: var(--color-status-error-bg);
+  --chip: var(--color-bg-chrome);
+  --mono: 'Roboto Mono', ui-monospace, monospace;
+  --sans: Roboto, sans-serif;
+  --radius: 2px;
+  --shadow: var(--color-shadow) 0 1px 5px 0;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #14171c; --surface: #1b1f26; --surface-2: #222731; --border: #2e3440; --border-strong: #3d4452;
-    --text: #e4e8ee; --text-2: #a3acb9; --text-3: #737d8c; --accent: #5b93f0; --accent-soft: #1f2d45;
-    --error-soft: #3a1f1d; --chip: #262c37; --shadow: 0 6px 24px rgba(0, 0, 0, 0.5); color-scheme: dark;
-  }
-}
-:root[data-theme='dark'] {
-  --bg: #14171c; --surface: #1b1f26; --surface-2: #222731; --border: #2e3440; --border-strong: #3d4452;
-  --text: #e4e8ee; --text-2: #a3acb9; --text-3: #737d8c; --accent: #5b93f0; --accent-soft: #1f2d45;
-  --error-soft: #3a1f1d; --chip: #262c37; --shadow: 0 6px 24px rgba(0, 0, 0, 0.5); color-scheme: dark;
+/* legacy-light: what Legend Query's switch turns on (_theme-legacy-light.scss) */
+:root[data-theme='light'] {
+  --color-bg-app: #edf0f1;
+  --color-bg-panel: #fff;
+  --color-bg-panel-header: #edf0f1;
+  --color-bg-chrome: #dce2e4;
+  --color-bg-elevated: #fff;
+  --color-bg-input: #fff;
+  --color-bg-hover: #edf0f1;
+  --color-bg-selected: #def3ff;
+  --color-bg-tag: #b5bec4;
+  --color-bg-row-hover: #def3ff;
+  --color-text-primary: #29323a;
+  --color-text-secondary: #4e5364;
+  --color-text-muted: #95a0a8;
+  --color-text-disabled: #b5bec4;
+  --color-text-on-accent: #fff;
+  --color-text-link: #1b4c8c;
+  --color-border-subtle: #edf0f1;
+  --color-border-default: #b5bec4;
+  --color-border-strong: #95a0a8;
+  --color-border-focus: #6a8db6;
+  --color-accent: #6a8db6;
+  --color-accent-hover: #4d6f9c;
+  --color-accent-subtle: #def3ff;
+  --color-status-error: #be1100;
+  --color-status-error-bg: #ffe6e3;
+  --color-status-warn: #f68f1e;
+  --color-status-warn-bg: #ffffe0;
+  --color-status-success: #5cb65c;
+  --color-active-indicator: #1b4c8c;
+  --color-shadow: #00000030;
+  --color-editable-value: #1b4c8c;
+  --color-filter-selected: #def3ff;
+  --color-grid-bg: #fff;
+  --color-grid-header: #edf0f1;
+  --color-grid-text: #29323a;
+  --color-grid-selection: #def3ff;
+  --color-scrollbar: #00000030;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
-body { background: var(--bg); color: var(--text); font: 13px/1.45 var(--sans); }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+/* upstream's scrollbars (legend-art normalize.scss): 8px, a translucent thumb */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-corner, ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-scrollbar); border-radius: 4px; border: 2px solid transparent; background-clip: padding-box; }
 button, input, select, textarea { font: inherit; color: inherit; }
 code, .mono { font-family: var(--mono); font-size: 12px; }
 a { color: var(--accent); }
@@ -178,3 +261,4 @@ a { color: var(--accent); }
 .q-tab.on { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
 .q-spinner { width: 14px; height: 14px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: q-spin .8s linear infinite; display: inline-block; }
 @keyframes q-spin { to { transform: rotate(360deg); } }
+.q-icon { display: inline-flex; align-items: center; justify-content: center; line-height: 0; }

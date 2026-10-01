@@ -2,6 +2,8 @@
 // (design D6): a panel is a function that renders into its container from the app's state and
 // renders again when that state changes.
 
+import { ICONS, type IconName } from './icons.ts';
+
 export type Child = Node | string | number | false | null | undefined | readonly Child[];
 
 export type Attrs = {
@@ -228,4 +230,11 @@ export function markdown(text: string): HTMLElement {
     list = undefined;
   }
   return root;
+}
+
+/** One of upstream's icons (icons.ts), 1em square in the text colour; `title` names it for a reader. */
+export function icon(name: IconName, title?: string): HTMLElement {
+  const span = h('span', { class: `q-icon q-icon--${name}`, ...(title ? { title, role: 'img', 'aria-label': title } : { 'aria-hidden': 'true' }) });
+  span.innerHTML = ICONS[name];
+  return span;
 }
