@@ -8,7 +8,7 @@ import type {
 import type { ModelGraph } from '../model/graph.ts';
 import {
   freshId, type AggregateOp, type ClassSource, type DateFunction, type FilterNode, type GraphFetch, type GraphNode, type Group, type Operator,
-  type Parameter, type ProjectionColumn, type PropertyPath, type PropertyStep, type QueryState, type SortSpec, type Value,
+  type Parameter, type PercentileOptions, type ProjectionColumn, type PropertyPath, type PropertyStep, type QueryState, type SortSpec, type Value,
   type WindowColumn, type WindowOp,
 } from './state.ts';
 
@@ -183,13 +183,32 @@ const REDUCERS: Readonly<Record<string, AggregateOp>> = {
 };
 
 function reducerOf(l: Node): AggregateOp {
+  return aggregateOf(l).aggregate;
+}
+
+/** An aggregate's reduce lambda as the column's aggregate -- with `percentile`'s settings. */
+function aggregateOf(l: Node): { aggregate: AggregateOp; percentile?: PercentileOptions } {
   const { param, body } = lambdaBody(l);
   if (!isFunc(body)) return fail('an aggregate that is not a function');
   const name = funcName(body);
-  const [arg] = body.parameters as Node[];
-  if (name === 'count' && arg && isFunc(arg) && funcName(arg) === 'distinct') return 'distinctCount';
+  const [arg, ...rest] = body.parameters as Node[];
+  if (name === 'count' && arg && isFunc(arg) && funcName(arg) === 'distinct') return { aggregate: 'distinctCount' };
   if (!arg || arg._type !== 'var' || (arg as Variable).name !== param) return fail(`the aggregate ${name}() over something other than its values`);
-  return REDUCERS[name] ?? fail(`the aggregate ${name}()`);
+  if (name === 'wavg') return rest.length === 0 ? { aggregate: 'wavg' } : fail('a wavg() with arguments');
+  if (name === 'percentile') {
+    // upstream's two spellings: percentile(p), or percentile(p, ascending, continuous)
+    const [p, ascending, continuous] = rest;
+    const value = p && (p._type === 'float' || p._type === 'integer' || p._type === 'decimal') ? Number(String((p as { value: unknown }).value)) : NaN;
+    const flag = (n: Node | undefined): boolean | undefined => (n?._type === 'boolean' ? (n as { value: boolean }).value : undefined);
+    if (!Number.isFinite(value)) return fail('a percentile() whose value is not a number');
+    if (rest.length === 1) return { aggregate: 'percentile', percentile: { value: Number((value * 100).toFixed(8)), ascending: true, continuous: true } };
+    const a = flag(ascending), c = flag(continuous);
+    if (rest.length !== 3 || a === undefined || c === undefined) return fail('a percentile() with other arguments');
+    return { aggregate: 'percentile', percentile: { value: Number((value * 100).toFixed(8)), ascending: a, continuous: c } };
+  }
+  if (rest.length > 0 && name !== 'joinStrings') return fail(`the aggregate ${name}() with arguments`);
+  const op = REDUCERS[name];
+  return op ? { aggregate: op } : fail(`the aggregate ${name}()`);
 }
 
 function sortOf(n: Node): SortSpec {
@@ -326,22 +345,43 @@ function load(graph: ModelGraph, lambda: Lambda, context?: { mapping: string; ru
   if (groupBy) {
     // each aggregate reads one projected column; an aggregate may rename it (`~[headcount:
     // x|$x.person: y|$y->count()]`), which the form keeps as the column's name
+    // -- a wavg reads two: `x|wavgRowMapper($x.price, $x.quantity) : y|$y->wavg()`, its weight
+    // column consumed (neither grouped nor shown)
     const keys = new Set(groupBy.keys);
     const readBy = new Map<string, string>();
+    const weights = new Set<string>();
+    const columnOf = (n: Node, param: string, g: string): string => {
+      const read = chainOf(n, param);
+      if (read.length !== 1) return fail(`the aggregate ${g} reads more than a column`);
+      return read[0]!.property;
+    };
     for (const g of groupBy.aggs) {
       if (!g.function1 || !g.function2) return fail(`the aggregate ${g.name} has no map and reduce`);
       const { param, body } = lambdaBody(g.function1 as Node);
-      const read = chainOf(body, param);
-      if (read.length !== 1) return fail(`the aggregate ${g.name} reads more than a column`);
-      const source = read[0]!.property;
+      const { aggregate, percentile } = aggregateOf(g.function2 as Node);
+      const mapper = isFunc(body) && funcName(body) === 'wavgRowMapper';
+      if (mapper !== (aggregate === 'wavg')) return fail(`the aggregate ${g.name}: wavgRowMapper() and wavg() go together`);
+      const [value, weight] = mapper ? (body as AppliedFunction).parameters as Node[] : [body];
+      if (mapper && ((body as AppliedFunction).parameters.length !== 2 || !weight)) return fail(`the aggregate ${g.name}: wavgRowMapper() of other than a value and a weight`);
+      const source = columnOf(value!, param, g.name);
       if (keys.has(source) || readBy.has(source)) fail(`the column ${source} is both grouped and aggregated`);
       readBy.set(source, g.name);
       const i = columns.findIndex((c) => c.name === source);
       if (i < 0) return fail(`the aggregate ${g.name} reads ${source}, which is not a column`);
-      columns[i] = { ...columns[i]!, name: g.name, aggregate: reducerOf(g.function2 as Node) };
+      const w = weight ? columnOf(weight, param, g.name) : undefined;
+      if (w !== undefined) {
+        if (w === source || keys.has(w) || !columns.some((c) => c.name === w)) return fail(`the aggregate ${g.name} weighs by ${w}, which is not another column`);
+        weights.add(w);
+      }
+      columns[i] = {
+        ...columns[i]!, name: g.name, aggregate,
+        ...(percentile ? { percentile } : {}),
+        ...(w !== undefined ? { weight: w } : {}),
+      };
     }
     for (const c of columns) {
-      if (c.aggregate === undefined && !keys.has(c.name)) fail(`the column ${c.name} is neither grouped nor aggregated`);
+      if (c.aggregate === undefined && !keys.has(c.name) && !weights.has(c.name)) fail(`the column ${c.name} is neither grouped nor aggregated`);
+      if (weights.has(c.name) && readBy.has(c.name)) fail(`the column ${c.name} is both a weight and aggregated`);
     }
   }
   const source: ClassSource = {

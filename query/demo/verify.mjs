@@ -215,6 +215,45 @@ async function suite(title, query) {
     assert.equal((await gridRows(page)).length, 6);
   });
 
+  await step('a percentile and a weighted average agree with the rows they summarise', async (page) => {
+    await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Trade')}`));
+    await page.waitForSelector('.q-node', { timeout: 60000 });
+    for (const p of ['Side', 'Price', 'Quantity']) await page.dblclick(`.q-node:has-text('${p}')`);
+    await run(page);
+    // the expected values, worked out here from the plain rows
+    const num = (s) => Number(String(s).replace(/,/g, ''));
+    const bySide = new Map();
+    for (const [side, price, qty] of await gridRows(page)) bySide.set(side, [...(bySide.get(side) ?? []), [num(price), num(qty)]]);
+    assert.deepEqual([...bySide.keys()].sort(), ['BUY', 'SELL']);
+    const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const k = (s.length - 1) / 2; return s[Math.floor(k)] + (s[Math.ceil(k)] - s[Math.floor(k)]) * (k - Math.floor(k)); };
+    const close = (a, b, what) => assert.ok(Math.abs(a - b) <= 1e-3 * Math.max(1, Math.abs(b)), `${what}: ${a} vs ${b}`);
+    const aggregate = async (n, label) => {
+      await page.click(`.q-col >> nth=${n} >> .q-col__agg`);
+      await page.click(`.q-menu button:has-text('${label}')`);
+    };
+    await page.click('.q-col >> nth=2 >> .q-col__remove');
+    await aggregate(1, 'percentile…');
+    await page.fill('.q-dialog input[aria-label=Percentile]', '50');
+    await page.click('.q-dialog button.primary');
+    await run(page);
+    let rows = await gridRows(page);
+    assert.equal(rows.length, bySide.size);
+    for (const [side, value] of rows) close(num(value), median(bySide.get(side).map(([p]) => p)), `the median price of ${side}`);
+    await page.dblclick(".q-node:has-text('Quantity')");
+    await aggregate(1, 'weighted average…');
+    await page.selectOption('.q-dialog select[aria-label="Weight column"]', 'Quantity');
+    await page.click('.q-dialog button.primary');
+    assert.equal(await page.textContent('.q-col >> nth=2 >> .q-col__agg'), 'weight');
+    await run(page);
+    rows = await gridRows(page);
+    assert.equal(rows.length, bySide.size);
+    for (const [side, value, ...rest] of rows) {
+      assert.deepEqual(rest, [], 'the weight is consumed, not shown');
+      const t = bySide.get(side);
+      close(num(value), t.reduce((s, [p, q]) => s + p * q, 0) / t.reduce((s, [, q]) => s + q, 0), `the volume-weighted price of ${side}`);
+    }
+  });
+
   await step('DataCube shows the rows, and groups them on the same planner', async (page) => {
     await page.goto(app(`#/extensions/dataspace/${GAV}/${enc('demo::trading::TradingDataSpace')}?class=${enc('demo::trading::Trade')}`));
     await page.waitForSelector('.q-node', { timeout: 60000 });

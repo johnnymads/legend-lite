@@ -13,7 +13,8 @@ import {
 import { agg, asc, colSpecs, derive, desc, from, over } from '../../../pure-protocol/src/index.ts';
 import { isToMany, type ModelGraph } from '../model/graph.ts';
 import type {
-  AggregateOp, Condition, DateFunction, FilterNode, GraphNode, Group, PropertyPath, QueryState, Value, WindowColumn, WindowOp,
+  AggregateOp, Condition, DateFunction, FilterNode, GraphNode, Group, ProjectionColumn, PropertyPath, QueryState, Value, WindowColumn,
+  WindowOp,
 } from './state.ts';
 
 /** A path's property chain from `$root`, and where it first crosses a to-many property. */
@@ -136,6 +137,32 @@ export function hasConditions(g: Group | undefined): boolean {
   return g !== undefined && g.children.some((c) => c.kind === 'condition' || hasConditions(c));
 }
 
+/**
+ * A column aggregate's map and reduce, as upstream's operators build them: the column's values and
+ * the reducer -- `percentile(p)` (p = the value over 100), or `percentile(p, ascending,
+ * continuous)` when either is off; for `wavg`, `wavgRowMapper(column, weight)` then `wavg()`.
+ */
+function columnAggregate(c: ProjectionColumn, columns: readonly ProjectionColumn[]): [Lambda, Lambda] {
+  const x = variable('x');
+  const y = variable('y');
+  if (c.aggregate === 'wavg') {
+    const weight = c.weight;
+    if (!weight || !columns.some((o) => o.name === weight && o.id !== c.id && o.aggregate === undefined)) {
+      throw new BuildError(`${c.name}: a weighted average needs a weight column`);
+    }
+    return [lambda(['x'], fn('wavgRowMapper', property(x, c.name), property(x, weight))), lambda(['y'], fn('wavg', y))];
+  }
+  if (c.aggregate === 'percentile') {
+    const o = c.percentile ?? { value: 50, ascending: true, continuous: true };
+    if (!(o.value >= 0 && o.value <= 100)) throw new BuildError(`${c.name}: a percentile is between 0 and 100`);
+    const p = lit.float(Number((o.value / 100).toFixed(10))) as ValueSpecification;
+    return [lambda(['x'], property(x, c.name)), o.ascending && o.continuous
+      ? lambda(['y'], fn('percentile', y, p))
+      : lambda(['y'], fn('percentile', y, p, lit.boolean(o.ascending), lit.boolean(o.continuous)))];
+  }
+  return [lambda(['x'], property(x, c.name)), reducer(c.aggregate!)];
+}
+
 function reducer(op: AggregateOp | WindowOp): Lambda {
   const y = variable('y');
   switch (op) {
@@ -206,9 +233,14 @@ export function buildLambda(graph: ModelGraph, q: QueryState, options: BuildOpti
     let r = from(rel).apply('project', colSpecs(cols));
     const aggregated = q.columns.filter((c) => c.aggregate !== undefined);
     if (aggregated.length > 0) {
-      const keys = q.columns.filter((c) => c.aggregate === undefined).map((c) => c.name);
+      // a wavg's weight column is consumed by the average: neither a key nor in the result
+      const weights = new Set(aggregated.flatMap((c) => (c.aggregate === 'wavg' && c.weight ? [c.weight] : [])));
+      const keys = q.columns.filter((c) => c.aggregate === undefined && !weights.has(c.name)).map((c) => c.name);
       // the aggregate replaces its column: map the row to the column, reduce the values
-      const aggs = aggregated.map((c) => agg(c.name, lambda(['x'], property(variable('x'), c.name)), reducer(c.aggregate!)));
+      const aggs = aggregated.map((c) => {
+        const [map, reduce] = columnAggregate(c, q.columns);
+        return agg(c.name, map, reduce);
+      });
       // with no key: `aggregate(~[...])` -- legend-engine fails on `groupBy(~[], ...)` (measured, 4.145.0)
       r = keys.length > 0 ? r.groupBy(keys, aggs) : r.apply('aggregate', colSpecs(aggs));
     }

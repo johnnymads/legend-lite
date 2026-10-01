@@ -66,6 +66,23 @@ describe('build', () => {
     assert.deepEqual(await columns(q), ['ticker:String', 'qty:Integer']);
   });
 
+  it("writes percentile and wavg as upstream's query builder does, the weight consumed", async () => {
+    const q = trades({
+      columns: [
+        col('side', 'side'),
+        { ...col('median', 'price'), aggregate: 'percentile' },
+        { ...col('p90', 'price'), aggregate: 'percentile', percentile: { value: 90, ascending: false, continuous: false } },
+        { ...col('vwap', 'price'), aggregate: 'wavg', weight: 'qty' },
+        col('qty', 'quantity'),
+      ],
+    });
+    assert.equal(await text(q),
+      '|demo::trading::Trade.all()->project(~[side:x|$x.side, median:x|$x.price, p90:x|$x.price, vwap:x|$x.price, qty:x|$x.quantity])->groupBy(~[side], ~[median:x|$x.median:y|$y->percentile(0.5), p90:x|$x.p90:y|$y->percentile(0.9, false, false), vwap:x|$x.vwap->wavgRowMapper($x.qty):y|$y->wavg()])');
+    assert.deepEqual(await columns(q), ['side:demo::trading::Side', 'median:Number', 'p90:Number', 'vwap:Float']);
+    assert.throws(() => buildLambda(graph, trades({ columns: [{ ...col('vwap', 'price'), aggregate: 'wavg' }] }), { withFrom: false }), BuildError);
+    assert.throws(() => buildLambda(graph, trades({ columns: [{ ...col('p', 'price'), aggregate: 'percentile', percentile: { value: 101, ascending: true, continuous: true } }] }), { withFrom: false }), BuildError);
+  });
+
   it('types window columns, a calculated column and a post-filter with lite', async () => {
     const q = trades({
       columns: [col('ticker', 'product', 'ticker'), col('qty', 'quantity'), { id: 'd', name: 'double', path: [], derivation: await grammar.lambdaJson('x|$x.quantity * 2') }],

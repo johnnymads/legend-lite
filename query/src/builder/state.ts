@@ -35,6 +35,18 @@ export interface ProjectionColumn {
   readonly derivation?: Lambda;
   /** An aggregate over the column: the query then groups by every other column. */
   readonly aggregate?: AggregateOp;
+  /** `percentile`'s settings (upstream's operator: a value 0-100, ascending, continuous). */
+  readonly percentile?: PercentileOptions;
+  /** `wavg`'s weight: another projected column, which the average consumes (it is neither a key nor
+   *  in the result -- `wavgRowMapper($x.column, $x.weight)`, upstream's spelling). */
+  readonly weight?: string;
+}
+
+export interface PercentileOptions {
+  /** 0-100, as the person writes it; the query carries it over 100. */
+  readonly value: number;
+  readonly ascending: boolean;
+  readonly continuous: boolean;
 }
 
 /** Window (OLAP) functions: a rank over the window, or an aggregate of a column over it. */
@@ -67,7 +79,7 @@ export interface GraphFetch {
 
 export type AggregateOp =
   | 'count' | 'distinctCount' | 'sum' | 'average' | 'min' | 'max' | 'stdDevPopulation' | 'stdDevSample'
-  | 'joinStrings';
+  | 'joinStrings' | 'percentile' | 'wavg';
 
 /** A value on the right of a condition, or a parameter's value. */
 export type Value =

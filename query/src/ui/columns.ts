@@ -4,9 +4,9 @@
 
 import { addColumn, PROPERTY_DRAG, propertyAt } from '../app/actions.ts';
 import type { Session } from '../app/session.ts';
-import type { AggregateOp, GraphNode, ProjectionColumn, PropertyPath, QueryState, SortSpec } from '../builder/state.ts';
+import type { AggregateOp, GraphNode, PercentileOptions, ProjectionColumn, PropertyPath, QueryState, SortSpec } from '../builder/state.ts';
 import { isNumericFamily, primitiveFamily, simpleName } from '../model/graph.ts';
-import { blankPlaceholder, dialog, h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
+import { blankPlaceholder, dialog, h, icon, mount, panelAction, panelHeader, select, showMenu, type Child } from './dom.ts';
 import type { AppContext } from '../app/context.ts';
 import { addToTree, calculatedDialog, renderGraph, renderWindows, windowDialog } from './advanced.ts';
 
@@ -20,10 +20,56 @@ const AGGREGATES: readonly { op: AggregateOp; label: string; fits: (family: stri
   { op: 'stdDevPopulation', label: 'std dev (population)', fits: (f) => isNumericFamily(f as never) },
   { op: 'stdDevSample', label: 'std dev (sample)', fits: (f) => isNumericFamily(f as never) },
   { op: 'joinStrings', label: 'join', fits: (f, e) => f === 'string' && !e },
+  { op: 'percentile', label: 'percentile', fits: (f) => isNumericFamily(f as never) },
+  { op: 'wavg', label: 'weighted average', fits: (f) => isNumericFamily(f as never) },
 ];
 
 export function aggregateLabel(op: AggregateOp): string {
   return AGGREGATES.find((a) => a.op === op)!.label;
+}
+
+const LABELLED = 'grid-template-columns:110px 1fr';
+
+/** A percentile's settings, as upstream's: the percentile, its order and whether it interpolates. */
+function percentileDialog(c: ProjectionColumn, apply: (p: PercentileOptions) => void): void {
+  const now = c.percentile ?? { value: 50, ascending: true, continuous: true };
+  const value = h('input', { class: 'q-input', type: 'number', min: '0', max: '100', step: 'any', value: String(now.value), 'aria-label': 'Percentile' });
+  const ascending = h('input', { type: 'checkbox', checked: now.ascending, id: 'q-pct-asc' });
+  const continuous = h('input', { type: 'checkbox', checked: now.continuous, id: 'q-pct-cont' });
+  dialog(`Percentile of ${c.name}`, (d) => ({
+    body: [
+      h('div', { class: 'q-field', style: LABELLED }, h('label', null, 'Percentile'), value),
+      h('div', { class: 'q-field', style: LABELLED }, h('label', { for: 'q-pct-asc' }, 'Ascending'), ascending),
+      h('div', { class: 'q-field', style: LABELLED }, h('label', { for: 'q-pct-cont' }, 'Continuous'), continuous),
+    ],
+    foot: [
+      h('button', { class: 'q-btn', onclick: () => d.close() }, 'Cancel'),
+      h('button', {
+        class: 'q-btn primary',
+        onclick: () => {
+          const v = Number(value.value);
+          if (value.value.trim() === '' || !(v >= 0 && v <= 100)) { value.classList.add('q-error'); value.title = 'A percentile is between 0 and 100'; return; }
+          d.close();
+          apply({ value: v, ascending: ascending.checked, continuous: continuous.checked });
+        },
+      }, 'Apply'),
+    ],
+  }));
+}
+
+/** A weighted average's weight: another numeric column, consumed by the aggregate. */
+function weightDialog(c: ProjectionColumn, candidates: readonly string[], apply: (weight: string) => void): void {
+  let chosen = c.weight !== undefined && candidates.includes(c.weight) ? c.weight : candidates[0];
+  dialog(`Weighted average of ${c.name}`, (d) => ({
+    body: candidates.length === 0
+      ? h('div', null, 'A weighted average weighs by another numeric column that is not aggregated. Add one to the columns first.')
+      : h('div', { class: 'q-field', style: LABELLED }, h('label', null, 'Weighted by'),
+        select(chosen, candidates.map((n) => ({ value: n, label: n })), (v) => { chosen = v; }, { 'aria-label': 'Weight column' })),
+    foot: [
+      h('button', { class: 'q-btn', onclick: () => d.close() }, 'Cancel'),
+      h('button', { class: 'q-btn primary', disabled: chosen === undefined, onclick: () => { if (chosen === undefined) return; d.close(); apply(chosen); } }, 'Apply'),
+    ],
+  }));
 }
 
 /** Accept a property drop on an element: highlight while over, call `onPath` on drop. */
@@ -56,29 +102,26 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
   const update = (f: (q: QueryState) => QueryState): void => session.update(f);
   let dragging: string | undefined;
 
-  const row = (c: ProjectionColumn): HTMLElement => {
-    let family = 'other';
-    let isEnum = false;
-    let typeText = '';
-    if (c.derivation) {
-      typeText = 'calculated';
-    } else {
-      try {
-        const { prop } = propertyAt(graph, q.source.class, c.path);
-        family = primitiveFamily(prop.type);
-        isEnum = graph.enumerations.has(prop.type);
-        typeText = simpleName(prop.type);
-      } catch (e) {
-        typeText = (e as Error).message;
-      }
+  // a column's type: a calculated column's is the compiler's, so aggregate choices treat it as a number
+  const typeOf = (c: ProjectionColumn): { family: string; isEnum: boolean; typeText: string } => {
+    if (c.derivation) return { family: 'number', isEnum: false, typeText: 'calculated' };
+    try {
+      const { prop } = propertyAt(graph, q.source.class, c.path);
+      return { family: primitiveFamily(prop.type), isEnum: graph.enumerations.has(prop.type), typeText: simpleName(prop.type) };
+    } catch (e) {
+      return { family: 'other', isEnum: false, typeText: (e as Error).message };
     }
+  };
+  const weights = new Set(q.columns.flatMap((o) => (o.aggregate === 'wavg' && o.weight ? [o.weight] : [])));
+  // a weighted average weighs by another numeric column that is not itself aggregated
+  const weightCandidates = (c: ProjectionColumn): string[] =>
+    q.columns.filter((o) => o.id !== c.id && o.aggregate === undefined && isNumericFamily(typeOf(o).family as never)).map((o) => o.name);
+
+  const row = (c: ProjectionColumn): HTMLElement => {
+    const { family, isEnum, typeText } = typeOf(c);
     // upstream shows the column's property behind an info icon, not under its name
     const info = h('span', { class: 'q-col__info', title: c.derivation ? 'a calculated column' : `\$x.${c.path.map((s) => s.property).join('.')} : ${typeText}` }, icon('info'));
-    if (c.derivation) {
-      void app.engine.lambdaText(c.derivation, 'STANDARD').then((t) => { info.title = t; }, () => undefined);
-      // a calculated column's type is the compiler's: aggregate choices follow it
-      family = 'number';
-    }
+    if (c.derivation) void app.engine.lambdaText(c.derivation, 'STANDARD').then((t) => { info.title = t; }, () => undefined);
     const name = h('input', {
       class: 'q-input', value: c.name, 'aria-label': 'Column name',
       onchange: () => {
@@ -87,7 +130,7 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
         if (!v || dup) { name.classList.add('q-error'); name.title = v ? 'Another column has this name' : 'A column needs a name'; return; }
         update((s) => ({
           ...s,
-          columns: s.columns.map((o) => (o.id === c.id ? { ...o, name: v } : o)),
+          columns: s.columns.map((o) => (o.id === c.id ? { ...o, name: v } : o.weight === c.name ? { ...o, weight: v } : o)),
           options: { ...s.options, sort: s.options.sort.map((x) => (x.column === c.name ? { ...x, column: v } : x)) },
         }));
       },
@@ -97,17 +140,23 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
       onclick: (e: MouseEvent) => showMenu(e.clientX, e.clientY, [
         { label: '(none) — group by this column', action: () => setAggregate(undefined) },
         'separator',
-        ...AGGREGATES.filter((a) => a.fits(family, isEnum)).map((a) => ({ label: a.label, action: () => setAggregate(a.op) })),
+        ...AGGREGATES.filter((a) => a.fits(family, isEnum)).map((a) => ({
+          label: a.op === 'percentile' || a.op === 'wavg' ? `${a.label}…` : a.label,
+          action: () => (a.op === 'percentile' ? percentileDialog(c, (p) => setAggregate('percentile', { percentile: p }))
+            : a.op === 'wavg' ? weightDialog(c, weightCandidates(c), (w) => setAggregate('wavg', { weight: w }))
+            : setAggregate(a.op)),
+        })),
       ]),
-    }, c.aggregate ? aggregateLabel(c.aggregate) : icon('sigma'));
-    const setAggregate = (op: AggregateOp | undefined): void => update((s) => ({
+    }, weights.has(c.name) ? 'weight' : c.aggregate ? aggregateLabel(c.aggregate) : icon('sigma'));
+    if (weights.has(c.name)) aggButton.title = 'The weight of a weighted average: neither grouped nor shown';
+    const setAggregate = (op: AggregateOp | undefined, settings: Pick<ProjectionColumn, 'percentile' | 'weight'> = {}): void => update((s) => ({
       ...s,
       columns: s.columns.map((o) => {
         if (o.id !== c.id) return o;
         const base = o.name.replace(/ \([^)]*\)$/, '');
-        const { aggregate: _drop, ...rest } = o;
-        void _drop;
-        return op ? { ...rest, aggregate: op, name: `${base} (${aggregateLabel(op)})` } : { ...rest, name: base };
+        const { aggregate: _a, percentile: _p, weight: _w, ...rest } = o;
+        void _a; void _p; void _w;
+        return op ? { ...rest, ...settings, aggregate: op, name: `${base} (${aggregateLabel(op)})` } : { ...rest, name: base };
       }),
     }));
     const el = h('div', {

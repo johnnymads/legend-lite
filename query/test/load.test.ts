@@ -98,6 +98,33 @@ describe('load', () => {
     });
   });
 
+  it('reads back percentile settings and a weighted average with its weight', async () => {
+    await roundTrip({
+      ...emptyQuery(SOURCE),
+      columns: [
+        col('side', 'side'),
+        { ...col('median', 'price'), aggregate: 'percentile', percentile: { value: 50, ascending: true, continuous: true } },
+        { ...col('p12.5', 'price'), aggregate: 'percentile', percentile: { value: 12.5, ascending: false, continuous: true } },
+        { ...col('vwap', 'price'), aggregate: 'wavg', weight: 'qty' },
+        col('qty', 'quantity'),
+      ],
+    });
+    // no keys: aggregate()
+    await roundTrip({
+      ...emptyQuery(SOURCE),
+      columns: [{ ...col('vwap', 'price'), aggregate: 'wavg', weight: 'qty' }, col('qty', 'quantity')],
+    });
+  });
+
+  it('refuses a wavg without its row mapper, and a row mapper without wavg', async () => {
+    const base = '|demo::trading::Trade.all()->project(~[p:x|$x.price, q:x|$x.quantity])->groupBy(~[q], ~[';
+    for (const agg of ['p:x|$x.p:y|$y->wavg()]', 'p:x|wavgRowMapper($x.p, $x.q):y|$y->sum()]']) {
+      const r = loadLambda(graph, await grammar.lambdaJson(`${base}${agg})`), { mapping: 'm', runtime: 'r' });
+      assert.equal(r.ok, false, agg);
+      if (!r.ok) assert.match(r.reason, /go together/, agg);
+    }
+  });
+
   it("opens the data space's curated queries in the form", async () => {
     const ds = graph.dataSpaces.get('demo::trading::TradingDataSpace')!;
     for (const e of ds.executables ?? []) {
