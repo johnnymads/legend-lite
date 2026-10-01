@@ -116,6 +116,17 @@ describe('load', () => {
     });
   });
 
+  it("reads back a derived property's arguments, in a column and a condition", async () => {
+    await roundTrip({
+      ...emptyQuery(SOURCE),
+      columns: [col('id', 'tradeId'), { id: '', name: 'n', path: [{ property: 'notionalAt', args: [{ kind: 'float', value: '1.1' }] }] }],
+      parameters: [{ name: 'size', type: 'Integer', multiplicity: { lowerBound: 1, upperBound: 1 } }],
+      filter: { kind: 'group', id: '', op: 'and', children: [
+        { kind: 'condition', id: '', path: [{ property: 'isAtLeast', args: [{ kind: 'variable', name: 'size' }] }], operator: 'equal', value: { kind: 'boolean', value: true } },
+      ] },
+    });
+  });
+
   it('reads back percentile settings and a weighted average with its weight', async () => {
     await roundTrip({
       ...emptyQuery(SOURCE),

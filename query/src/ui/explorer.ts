@@ -14,6 +14,7 @@ import { dialog, h, icon, mount, showMenu, tooltip, type Child } from './dom.ts'
 import type { IconName } from './icons.ts';
 import { preview, probeable } from '../app/probe.ts';
 import { addToTree } from './advanced.ts';
+import { stepOf } from './arguments.ts';
 import type { AppContext } from '../app/context.ts';
 import { cellText } from './format.ts';
 
@@ -84,7 +85,7 @@ export class Explorer {
     });
     const out: Child[] = [];
     for (const p of props) {
-      const path: PropertyPath = [...prefix, stepOf(p)];
+      const path: PropertyPath = [...prefix, stepOf(this.#graph, p)];
       out.push(this.#node(owner, p, path, depth, used));
       if (p.kind === 'class' && this.#open.has(key(path))) {
         out.push(...this.#children(p.type, path, depth + 1, used));
@@ -148,7 +149,7 @@ export class Explorer {
     while (queue.length > 0 && out.length < 100) {
       const { owner, prefix, depth } = queue.shift()!;
       for (const p of this.#graph.properties(owner)) {
-        const path: PropertyPath = [...prefix, stepOf(p)];
+        const path: PropertyPath = [...prefix, stepOf(this.#graph, p)];
         const text = `${p.name} ${humanize(p.name)} ${p.doc ?? ''}`.toLowerCase();
         if (text.includes(this.#search)) {
           const n = this.#node(owner, p, path, 0, used);
@@ -191,11 +192,6 @@ export class Explorer {
       return next;
     });
   }
-}
-
-/** A derived property with parameters carries its arguments; any other is just its name. */
-function stepOf(p: PropertyInfo): PropertyPath[number] {
-  return p.parameters.length > 0 ? { property: p.name, args: [] } : { property: p.name };
 }
 
 function key(path: PropertyPath): string {

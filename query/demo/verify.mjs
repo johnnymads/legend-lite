@@ -249,6 +249,28 @@ async function suite(title, query) {
     await page.click('.q-results-bar button.q-mode:text-is("Grid")');
   });
 
+  await step("a derived property's arguments: defaulted when added, edited, and run", async (page) => {
+    await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Trade')}`));
+    await page.waitForSelector('.q-node', { timeout: 60000 });
+    await page.dblclick(".q-node:has-text('Trade Id')");
+    await page.dblclick(".q-node:has-text('Notional At')");
+    await page.click('.q-col >> nth=1 >> button.q-args');
+    await page.fill('.q-dialog input[aria-label=Value]', '2');
+    await page.press('.q-dialog input[aria-label=Value]', 'Tab');
+    await page.click('.q-dialog button.primary');
+    await page.click(".q-node:has-text('Is At Least')", { button: 'right' });
+    await page.click(".q-menu button:has-text('Add as filter condition')");
+    await page.click('.q-cond button.q-args');
+    await page.fill('.q-dialog input[aria-label=Value]', '1000000');
+    await page.press('.q-dialog input[aria-label=Value]', 'Tab');
+    await page.click('.q-dialog button.primary');
+    await run(page);
+    // legend-engine 4.145.0 answers the same query (notionalAt(2.0), isAtLeast(1000000)) with these
+    const rows = (await gridRows(page)).map(([id, n]) => [Number(id), Number(String(n).replace(/,/g, ''))]);
+    assert.deepEqual(rows.map(([id]) => id), [5, 6, 7, 8, 9, 10]);
+    assert.equal(rows[0][1], 9825000);
+  });
+
   await step('a percentile and a weighted average agree with the rows they summarise', async (page) => {
     await page.goto(app(`#/create/manual/${GAV}/${enc('demo::trading::TradingMapping')}/${enc('demo::trading::Runtime')}?class=${enc('demo::trading::Trade')}`));
     await page.waitForSelector('.q-node', { timeout: 60000 });

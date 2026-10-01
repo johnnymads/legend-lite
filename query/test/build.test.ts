@@ -64,6 +64,21 @@ describe('build', () => {
     assert.deepEqual(await columns(q), ['ticker:String', 'qty:Integer']);
   });
 
+  it("passes a derived property's arguments: literals, a parameter and a constant", async () => {
+    const q = trades({
+      columns: [col('id', 'tradeId'), { id: 'n', name: 'n', path: [{ property: 'notionalAt', args: [{ kind: 'variable', name: 'fx' }] }] }],
+      parameters: [{ name: 'size', type: 'Integer', multiplicity: { lowerBound: 1, upperBound: 1 } }],
+      constants: [{ name: 'fx', type: 'Float', value: { kind: 'float', value: '1.1' } }],
+      filter: { kind: 'group', id: 'g', op: 'and', children: [
+        { kind: 'condition', id: 'c1', path: [{ property: 'isAtLeast', args: [{ kind: 'variable', name: 'size' }] }], operator: 'equal', value: { kind: 'boolean', value: true } },
+        { kind: 'condition', id: 'c2', path: [{ property: 'notionalAt', args: [{ kind: 'float', value: '0.5' }] }], operator: 'greaterThan', value: { kind: 'float', value: '1000.0' } },
+      ] },
+    });
+    assert.equal(await text(q),
+      '{size: Integer[1]|\nlet fx = 1.1;\ndemo::trading::Trade.all()->filter(x|($x.isAtLeast($size) == true) && ($x.notionalAt(0.5) > 1000.0))->project(~[id:x|$x.tradeId, n:x|$x.notionalAt($fx)]);\n}');
+    assert.deepEqual(await columns(q), ['id:Integer', 'n:Float']);
+  });
+
   it('writes constants as lets ahead of the query, used as variables', async () => {
     const q = trades({
       columns: [col('id', 'tradeId'), { id: 'big', name: 'big', path: [], derivation: await grammar.lambdaJson('x|$x.quantity > $threshold') }],

@@ -67,6 +67,8 @@ Class <<demo::trading::Governance.certified>> {meta::pure::profiles::doc.doc = '
   {meta::pure::profiles::doc.doc = 'Execution price per unit.'} price: Float[1];
   status: String[1];
   {meta::pure::profiles::doc.doc = 'Quantity times price.'} notional() {$this.quantity->toFloat() * $this.price}: Float[1];
+  {meta::pure::profiles::doc.doc = 'Notional converted at a rate, such as an FX rate.'} notionalAt(rate: Float[1]) {$this.notional() * $rate}: Float[1];
+  {meta::pure::profiles::doc.doc = 'Whether at least a given quantity was traded.'} isAtLeast(size: Integer[1]) {$this.quantity >= $size}: Boolean[1];
 }
 
 Association demo::trading::Firm_Employees

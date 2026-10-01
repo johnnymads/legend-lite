@@ -11,6 +11,7 @@ import { renderPostFilter } from './advanced.ts';
 import { humanize, isNumericFamily, isOptional, isToMany, primitiveFamily, type ModelGraph } from '../model/graph.ts';
 import { blankPlaceholder, h, icon, mount, panelAction, panelHeader, showMenu, type Child } from './dom.ts';
 import { propertyDropZone } from './columns.ts';
+import { argumentsButton } from './arguments.ts';
 import { defaultValue, valueEditor } from './values.ts';
 
 export const OPERATOR_LABELS: Readonly<Record<Operator, string>> = {
@@ -98,6 +99,7 @@ export function renderFilter(container: HTMLElement, session: Session, suggestio
     return h('div', { class: 'q-cond' },
       h('span', { class: 'prop', title: `$x.${c.path.map((s) => s.property).join('.')}` },
         c.path.map((s) => humanize(s.property)).join(' / ')),
+      argumentsButton(session, c.path, (path) => setRoot((g) => mapNode(g, c.id, (n) => ({ ...(n as Condition), path })))),
       h('span', { class: 'q-cond__op' }, opSelect),
       many ? h('span', { class: 'q-chip', title: 'A to-many property: the condition holds when any value matches' }, 'any') : null,
       needsValue ? valueEditor({

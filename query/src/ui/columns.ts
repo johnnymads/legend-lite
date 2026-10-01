@@ -9,6 +9,7 @@ import { isNumericFamily, primitiveFamily, simpleName } from '../model/graph.ts'
 import { blankPlaceholder, dialog, h, icon, mount, panelAction, panelHeader, select, showMenu, type Child } from './dom.ts';
 import type { AppContext } from '../app/context.ts';
 import { addToTree, calculatedDialog, renderGraph, renderWindows, windowDialog } from './advanced.ts';
+import { argumentsButton } from './arguments.ts';
 
 const AGGREGATES: readonly { op: AggregateOp; label: string; fits: (family: string, isEnum: boolean) => boolean }[] = [
   { op: 'count', label: 'count', fits: () => true },
@@ -179,6 +180,7 @@ export function renderColumns(container: HTMLElement, app: AppContext, session: 
     info,
     h('div', { class: 'q-col__name' }, name),
     c.derivation ? h('button', { class: 'q-icon-btn', title: 'Edit the calculation', onclick: () => void calculatedDialog(app, session, c) }, icon('calculator')) : null,
+    argumentsButton(session, c.path, (path) => update((s) => ({ ...s, columns: s.columns.map((o) => (o.id === c.id ? { ...o, path } : o)) }))),
     aggButton,
     h('button', {
       class: 'q-col__remove', title: 'Remove column', 'aria-label': 'Remove column',
