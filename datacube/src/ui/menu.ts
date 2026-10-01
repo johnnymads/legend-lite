@@ -158,6 +158,8 @@ export type MenuActionId =
    * ever being confused for one another.
    */
   | `host.${string}`
+  /** A tile's own entries (a chart's right-click menu, page/cube-page.ts). */
+  | `tile.${string}`
   | 'sort.asc'
   | 'sort.desc'
   | 'sort.addAsc'

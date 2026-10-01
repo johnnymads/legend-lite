@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 
 import type { ChartView } from '../src/page-document.ts';
-import { app, dom, root, settle, setUp } from './cube-fixture.ts';
+import { app, dom, remount, root, settle, setUp } from './cube-fixture.ts';
 
 // The fixture's cube is grouped by region, then desk: a following chart is region across, split
 // by desk; taking desk out of the row groups is a pivot it follows.
@@ -35,6 +35,40 @@ const click = async (id: string, text: string): Promise<void> => {
   el.click();
   await settle();
 };
+/** A chart's Dynamic / Frozen / Detached pill: what it says. */
+const pill = (id: string): string => tile(id).querySelector('.dc-tile-actions .dc-titlebar-toggle')?.textContent ?? '';
+/** Toggle a chart between Dynamic and Frozen, by its pill. */
+const togglePill = async (id: string): Promise<void> => {
+  (tile(id).querySelector('.dc-tile-actions .dc-titlebar-toggle') as HTMLElement).click();
+  await settle();
+};
+/** The entries of a tile's right-click menu, opened on its body. */
+const chartMenu = (id: string): HTMLElement[] => {
+  (tile(id).querySelector('.dc-chart-tile') as HTMLElement)
+    .dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  return [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')];
+};
+const menuEntry = (items: HTMLElement[], label: string): HTMLElement | undefined =>
+  items.find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === label);
+/** Open in grid, from the chart's right-click menu. */
+const openInGrid = async (id: string): Promise<void> => {
+  const item = menuEntry(chartMenu(id), 'Open in grid');
+  assert.ok(item && item.getAttribute('aria-disabled') !== 'true', `${id} offers Open in grid`);
+  item.click();
+  await settle();
+};
+/** Insert > Chart, from a grid's right-click menu (a grid in a tile). */
+const chartOf = async (gridTile: string): Promise<void> => {
+  (tile(gridTile).querySelector('.dc-row .dc-cell') as HTMLElement)
+    .dispatchEvent(new dom.window.MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  await settle();
+  const item = [...dom.window.document.querySelectorAll<HTMLElement>('.dc-menu .dc-menu-item')]
+    .find((el) => el.querySelector(':scope > .dc-menu-label')?.textContent === 'Chart'
+      && el.parentElement?.closest('.dc-menu-item')?.querySelector(':scope > .dc-menu-label')?.textContent === 'Insert');
+  assert.ok(item, 'Insert > Chart');
+  item.click();
+  await settle();
+};
 /** The main grid's row-group zone: the cube's own, not an editing grid's. */
 const mainZone = (): HTMLElement => [...root.querySelectorAll<HTMLElement>('.dc-zone-rows')]
   .find((z) => !z.closest('[data-tile^="edit-"]'))!;
@@ -57,9 +91,9 @@ describe('charts follow the grid until frozen', () => {
   it('any number follow, each badged, and a pivot changes every one', async () => {
     const [a, b] = await twoCharts();
     for (const id of [a, b]) {
-      assert.ok(shown(id).includes('Following the grid'), `${id}: ${shown(id).join(', ')}`);
-      assert.ok(shown(id).includes('Freeze'));
-      assert.ok(!shown(id).includes('Open in grid'));
+      assert.equal(pill(id), 'Dynamic');
+      assert.equal(menuEntry(chartMenu(id), 'Open in grid')?.getAttribute('aria-disabled'), 'true',
+        'a dynamic chart has nothing of its own to open');
     }
     await ungroup(mainZone(), 'desk');
     assert.deepEqual([chart(a).spec.split, chart(b).spec.split], [undefined, undefined]);
@@ -67,25 +101,25 @@ describe('charts follow the grid until frozen', () => {
 
   it('a frozen chart keeps its grouping; Follow the grid takes the grid\'s again', async () => {
     const [a, b] = await twoCharts();
-    await click(a, 'Freeze');
-    assert.ok(!shown(a).includes('Following the grid'));
-    assert.ok(shown(a).includes('Follow the grid') && shown(a).includes('Open in grid'));
+    await togglePill(a);
+    assert.equal(pill(a), 'Frozen');
+    assert.notEqual(menuEntry(chartMenu(a), 'Open in grid')?.getAttribute('aria-disabled'), 'true');
     await ungroup(mainZone(), 'desk');
     assert.equal(chart(a).spec.split, 'desk', 'frozen: the pivot did not change it');
     assert.equal(chart(b).spec.split, undefined, 'the other still follows');
-    await click(a, 'Follow the grid');
+    await togglePill(a);
     assert.equal(chart(a).spec.split, undefined, 'following again, it took the grid\'s grouping');
-    assert.ok(shown(a).includes('Following the grid'));
+    assert.equal(pill(a), 'Dynamic');
   });
 });
 
 describe('Open in grid: a grid of its own, beside the chart', () => {
   it('opens a second cube with the chart\'s grouping and leaves the cube\'s grid alone; Update writes it back', async () => {
     const [a] = await twoCharts();
-    await click(a, 'Freeze');
+    await togglePill(a);
     await ungroup(mainZone(), 'desk');
     assert.deepEqual(app.snapshot.rows, ['region']);
-    await click(a, 'Open in grid');
+    await openInGrid(a);
     const editing = tile(`edit-${a}`);
     assert.ok(editing, 'an editing tile on the board');
     const editZone = editing.querySelector('.dc-zone-rows') as HTMLElement;
@@ -107,9 +141,9 @@ describe('Open in grid: a grid of its own, beside the chart', () => {
 
   it('removing the editing grid leaves the chart as it was', async () => {
     const [a] = await twoCharts();
-    await click(a, 'Freeze');
+    await togglePill(a);
     const before = JSON.stringify(chart(a).spec);
-    await click(a, 'Open in grid');
+    await openInGrid(a);
     (tile(`edit-${a}`).querySelector('.dc-tile-remove') as HTMLElement).click();
     await settle();
     assert.equal(tile(`edit-${a}`), null);
@@ -119,8 +153,8 @@ describe('Open in grid: a grid of its own, beside the chart', () => {
 
   it('Ctrl-Z inside the editing grid undoes it, not the cube', async () => {
     const [a] = await twoCharts();
-    await click(a, 'Freeze');
-    await click(a, 'Open in grid');
+    await togglePill(a);
+    await openInGrid(a);
     // looked up each time: the zone is drawn again as the editing cube changes
     const editZone = (): HTMLElement => tile(`edit-${a}`).querySelector('.dc-zone-rows') as HTMLElement;
     await ungroup(editZone(), 'desk');
@@ -156,33 +190,35 @@ describe('grids are tiles like charts: + Grid, their own charts, removing one', 
     await settle();
     const id = added()[0]!.dataset['tile']!;
     const mine = charts()[0]!.id;
-    await click(id, '+ Chart');
+    await chartOf(id);
     const theirs = [...root.querySelectorAll<HTMLElement>('[data-tile^="chart-"]')].map((t) => t.dataset['tile']!)
       .find((t) => t !== mine)!;
     assert.ok(theirs, 'a chart of the added grid');
     await ungroup(zoneOf(id), 'desk');
     assert.equal(chart(mine).spec.split, 'desk', 'the cube\'s chart did not move');
-    // the added grid's chart is not saved yet (v1); its tile shows it followed
-    assert.ok(tile(theirs).querySelector('.dc-tile-badge:not([hidden])'));
+    // the added grid's chart is not saved yet (v1); its pill says it follows its grid
+    assert.equal(pill(theirs), 'Dynamic');
   });
 
   it('removing a grid removes its following charts and detaches its frozen ones', async () => {
     app.newGrid();
     await settle();
     const id = added()[0]!.dataset['tile']!;
-    await click(id, '+ Chart');
-    await click(id, '+ Chart');
+    await chartOf(id);
+    await chartOf(id);
     const ofGrid = [...root.querySelectorAll<HTMLElement>('[data-tile^="chart-"]')].map((t) => t.dataset['tile']!);
     assert.equal(ofGrid.length, 2);
-    await click(ofGrid[0]!, 'Freeze');
+    await togglePill(ofGrid[0]!);
     (tile(id).querySelector('.dc-tile-remove') as HTMLElement).click();
     await settle();
     assert.equal(tile(id), null, 'the grid is gone');
     assert.equal(tile(ofGrid[1]!), null, 'its following chart went with it');
     assert.ok(tile(ofGrid[0]!), 'its frozen chart stayed');
-    assert.ok(shown(ofGrid[0]!).includes('Detached'), shown(ofGrid[0]!).join(', '));
-    assert.ok(!shown(ofGrid[0]!).includes('Freeze') && !shown(ofGrid[0]!).includes('Follow the grid'));
-    assert.ok(shown(ofGrid[0]!).includes('Open in grid'), 'it can still be changed');
+    assert.equal(pill(ofGrid[0]!), 'Detached');
+    assert.equal((tile(ofGrid[0]!).querySelector('.dc-tile-actions .dc-titlebar-toggle') as HTMLButtonElement).disabled, true,
+      'a detached chart has no grid to follow');
+    assert.notEqual(menuEntry(chartMenu(ofGrid[0]!), 'Open in grid')?.getAttribute('aria-disabled'), 'true',
+      'it can still be changed');
   });
 
   it('Insert > Grid from an added grid\'s own menu adds to the page, not inside the grid', async () => {
@@ -203,3 +239,24 @@ describe('grids are tiles like charts: + Grid, their own charts, removing one', 
     assert.equal(first.querySelector('.dc-board-host'), null, 'no board inside the added grid');
   });
 });
+
+describe('each grid\'s header says its source and its plane', () => {
+  it('alone, the title bar says them; on a board, each grid\'s own tile header does', async () => {
+    await remount({ heldCopy: { label: 'trades (test)', takenAt: new Date(), rowCount: 3 } });
+    const bar = (): Element => root.querySelector(':scope > .dc-titlebar')!;
+    assert.equal(bar().querySelector('.dc-source-tag')?.textContent, 'trades (test)');
+    assert.equal(bar().querySelector('.dc-titlebar-toggle')?.textContent, 'Snapped');
+    app.newGrid();
+    await settle();
+    // the page's bar is the page's now
+    assert.equal(bar().querySelector('.dc-source-tag'), null);
+    assert.equal(bar().querySelector('.dc-titlebar-toggle'), null);
+    const head = (id: string): Element => tile(id).querySelector('.dc-tile-actions')!;
+    assert.equal(head('grid').querySelector('.dc-source-tag')?.textContent, 'trades (test)');
+    assert.equal(head('grid').querySelector('.dc-titlebar-toggle')?.textContent, 'Snapped');
+    const added = root.querySelector<HTMLElement>('[data-tile^="grid-"]')!.dataset['tile']!;
+    assert.equal(head(added).querySelector('.dc-source-tag')?.textContent, 'trades (test)', 'the same source');
+    assert.equal(head(added).querySelector('.dc-titlebar-toggle')?.textContent, 'Snapped', 'the same copy in the tab');
+  });
+});
+

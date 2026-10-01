@@ -91,6 +91,52 @@
   border-style: dashed;
 }
 
+/* WHAT THE GRID READS, beside its pill (the user, 2026-09-30): quiet, it is a fact, not a control. */
+.dc-source-tag {
+  font-size: var(--dc-text-sm-size);
+  color: var(--tw-neutral-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28ch;
+  padding: 0 var(--dc-pad-1);
+}
+
+/* A grid's part of its tile's header: its source, its pill, its zones' way back. */
+.dc-tile-cube { display: flex; align-items: center; gap: 4px; }
+.dc-tile-cube .dc-titlebar-host { flex: none; }
+
+/* In a tile's header the pills (a grid's Live / Snapped, a chart's Dynamic / Frozen) are the
+   header's size, not the title bar's. */
+.dc-tile-actions .dc-titlebar-toggle {
+  height: 20px;
+  font-size: var(--dc-text-sm-size);
+  padding: 0 6px;
+}
+
+/* WHAT THE GRID READS, beside its pill (the user, 2026-09-30): quiet, it is a fact, not a control. */
+.dc-source-tag {
+  font-size: var(--dc-text-sm-size);
+  color: var(--tw-neutral-500);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 28ch;
+  padding: 0 var(--dc-pad-1);
+}
+
+/* A grid's part of its tile's header: its source, its pill, its zones' way back. */
+.dc-tile-cube { display: flex; align-items: center; gap: 4px; }
+.dc-tile-cube .dc-titlebar-host { flex: none; }
+
+/* In a tile's header the pills (a grid's Live / Snapped, a chart's Dynamic / Frozen) are the
+   header's size, not the title bar's. */
+.dc-tile-actions .dc-titlebar-toggle {
+  height: 20px;
+  font-size: var(--dc-text-sm-size);
+  padding: 0 6px;
+}
+
 .dc-titlebar-menu {
   font: inherit;
   font-size: var(--dc-text-xl-size);

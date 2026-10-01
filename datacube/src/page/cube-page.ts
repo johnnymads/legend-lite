@@ -12,6 +12,8 @@
 // on the board beside it, leaving its grid as it is; Update writes it back.
 
 import { ChartPanel } from '../ui/chart-panel.ts';
+import { MenuView } from '../ui/menu-view.ts';
+import type { MenuItem } from '../ui/menu.ts';
 import { Board, BOARD_COLUMNS } from '../layout/board.ts';
 import { addToRow, below } from '../layout/tile-layout.ts';
 import { followCube, measureName } from '../chart-spec.ts';
@@ -68,12 +70,19 @@ export interface SpawnedGrid {
   chartSource(): ChartSource;
   /** Told each time a view lands. */
   on(event: 'view', fn: () => void): () => void;
+  /** Its part of its tile's header: its source, its Live/Snapped pill. */
+  tileHead(): HTMLElement;
 }
 
 export interface CubePageOptions {
   /** Where the board goes; the grid's element moves into its first tile. */
   readonly host: HTMLElement;
-  readonly grid: { readonly element: HTMLElement; readonly source: ChartSource };
+  readonly grid: {
+    readonly element: HTMLElement;
+    readonly source: ChartSource;
+    /** The grid's own part of its tile's header: its source, its Live/Snapped pill. */
+    readonly head?: HTMLElement;
+  };
   /** The page changed: a tile, its title, its layout, a chart's spec or selection. */
   readonly onChange: () => void;
   /** The last chart is gone: the page is only its grid again (the host puts it back). */
@@ -119,10 +128,14 @@ export class CubePage {
   #gridCount = 0;
   /** Until arranged by hand, the page lays itself out. */
   #auto = true;
+  /** A chart's right-click menu: its Options, Open in grid, Remove. */
+  readonly #menu: MenuView;
+  #menuFor: ((item: MenuItem) => void) | null = null;
 
   constructor(options: CubePageOptions) {
     this.#options = options;
     this.#doc = options.host.ownerDocument;
+    this.#menu = new MenuView(this.#doc, { onSelect: (item) => this.#menuFor?.(item) });
     this.#board = new Board(options.host, {
       fitRows: BOARD_ROWS,
       // a short window still fits its screenful; a 6-row tile is then ~110px
@@ -135,17 +148,15 @@ export class CubePage {
       },
       onRename: () => options.onChange(),
     });
+    // a chart or another grid is added from the menus (right-click or the hamburger, Insert), not
+    // from buttons on the tile (the user, 2026-09-30)
     this.#grids.set(GRID, { source: options.grid.source });
-    const add = this.#button('+ Chart', 'Add a chart of this grid');
-    add.addEventListener('click', () => this.openChart());
-    const addGrid = this.#button('+ Grid', 'Add another grid to the page, starting as this one is');
-    addGrid.addEventListener('click', () => this.addGrid());
     this.#board.add({
       id: GRID,
       // the cube's own name is the page's title already, above the board
       title: GRID_TILE_TITLE,
       element: options.grid.element,
-      actions: [addGrid, add],
+      actions: options.grid.head ? [options.grid.head] : [],
       removable: false,
       anchor: true,
       minW: 3,
@@ -182,10 +193,8 @@ export class CubePage {
       this.#reconcileGrid(id, cube.snapshot.filter);
     });
     this.#grids.set(id, { source: cube.chartSource(), added: { cube, stop } });
-    const add = this.#button('+ Chart', 'Add a chart of this grid');
-    add.addEventListener('click', () => this.openChart(undefined, id));
     const before = this.#board.layout;
-    this.#board.add({ id, title: `Grid ${n + 1}`, element: host, actions: [add], minW: 3, minH: TILE_MIN_ROWS }, { w: 6, h: 12 });
+    this.#board.add({ id, title: `Grid ${n + 1}`, element: host, actions: [cube.tileHead()], minW: 3, minH: TILE_MIN_ROWS }, { w: 6, h: 12 });
     if (this.#auto) this.#arrange();
     else this.#board.setLayout(addToRow(before, id, BOARD_COLUMNS, BOARD_ROWS - GRID_ROWS_ABOVE_CHARTS, CHARTS_PER_ROW, 3));
     this.#board.reveal(id);
@@ -209,34 +218,24 @@ export class CubePage {
     chip.className = 'dc-tile-chip';
     chip.hidden = true;
     chip.addEventListener('click', () => this.#select(id, null));
-    // which charts a pivot will change: every one that follows, marked
-    const badge = doc.createElement('span');
-    badge.className = 'dc-tile-badge';
-    badge.textContent = 'Following the grid';
-    badge.title = 'This chart re-draws as the grid is pivoted, grouped and filtered.';
-    const freeze = this.#button('Freeze', '');
-    const edit = this.#button('Open in grid', 'Change this chart\'s grouping in a grid of its own, beside it; your grid stays as it is.');
-    const options = this.#button('Options', 'This chart\'s mark, columns and options.');
-    options.setAttribute('aria-pressed', 'false');
+    // THE CHART'S HEADER, simple (the user, 2026-09-30): its title, a Dynamic / Frozen pill -- as
+    // a grid's Live / Snapped -- that says which and toggles it, the filter chip while a click is
+    // filtering its grid, and its x. Everything else is a right-click away.
+    const pill = doc.createElement('button');
+    pill.type = 'button';
+    pill.className = 'dc-titlebar-toggle';
     const paint = (): void => {
       const frozen = panel.frozen;
       const detached = link.grid === null;
-      badge.hidden = frozen && !detached;
-      badge.textContent = detached ? 'Detached' : 'Following the grid';
-      badge.title = detached
-        ? 'Its grid was removed: this chart keeps its own copy of that grid\'s query. Open in grid to change it.'
-        : 'This chart re-draws as the grid is pivoted, grouped and filtered.';
-      badge.classList.toggle('dc-tile-badge-quiet', detached);
-      // a detached chart has no grid to follow
-      freeze.hidden = detached;
-      freeze.textContent = frozen ? 'Follow the grid' : 'Freeze';
-      freeze.title = frozen
-        ? 'Follow the grid\'s pivots again (this chart takes the grid\'s grouping).'
-        : 'Keep this chart\'s grouping as it is: pivoting the grid will not change it.';
-      edit.hidden = !frozen;
-      // a scatter plots rows, not groups, and a treemap draws the grid as shown: neither has a
-      // grouping of its own to open
-      edit.disabled = panel.spec?.mark === 'scatter' || panel.spec?.mark === 'treemap';
+      pill.textContent = detached ? 'Detached' : frozen ? 'Frozen' : 'Dynamic';
+      pill.classList.toggle('dc-on', !frozen && !detached);
+      pill.classList.toggle('dc-fixed', detached);
+      pill.disabled = detached;
+      pill.title = detached
+        ? 'Its grid was removed: this chart keeps its own copy of that grid\'s query. Right-click > Open in grid to change it.'
+        : frozen
+          ? 'Frozen: it keeps its grouping as the grid is pivoted. Click to follow the grid again.'
+          : 'Dynamic: it re-draws as the grid is pivoted, grouped and filtered. Click to freeze it as it is.';
     };
     const panel = new ChartPanel(body, {
       onFrozen: () => {
@@ -253,15 +252,30 @@ export class CubePage {
       onPick: (mark) => { if (link.grid !== null) this.#select(id, mark); },
       formOpen: false,
     });
-    options.addEventListener('click', () => {
-      options.setAttribute('aria-pressed', String(panel.toggleForm()));
-    });
-    freeze.addEventListener('click', () => {
+    pill.addEventListener('click', () => {
+      if (link.grid === null) return;
       // following again, it takes the grid's grouping: an open editing grid has nothing to edit
       if (panel.frozen) this.#closeEditor(id);
       panel.setFrozen(!panel.frozen);
     });
-    edit.addEventListener('click', () => this.#openEditor(id));
+    // RIGHT-CLICK: the chart's own entries
+    body.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      const spec = panel.spec;
+      const editable = panel.frozen && spec?.mark !== 'scatter' && spec?.mark !== 'treemap';
+      this.#menuFor = (item) => {
+        if (item.id === 'tile.options') panel.toggleForm();
+        if (item.id === 'tile.edit') this.#openEditor(id);
+        if (item.id === 'tile.remove') this.#removeTile(id);
+      };
+      this.#menu.show([
+        { label: '', items: [
+          { id: 'tile.options', label: 'Options...' },
+          { id: 'tile.edit', label: 'Open in grid', ...(editable ? {} : { disabled: true }) },
+        ] },
+        { label: '', items: [{ id: 'tile.remove', label: 'Remove' }] },
+      ], event.clientX, event.clientY);
+    });
     paint();
     this.#charts.set(id, {
       panel,
@@ -272,7 +286,7 @@ export class CubePage {
       key: restore?.selection ? JSON.stringify(restore.selection) : '',
     });
     if (restore?.selection) this.#paintSelection(id);
-    const actions = [chip, badge, freeze, edit, options];
+    const actions = [pill, chip];
     if (restore) {
       // placed by the page's layout, once every view is on the board (`restore`)
       this.#board.add({ id, title: restore.title, element: body, actions, minW: 3, minH: TILE_MIN_ROWS });
@@ -392,6 +406,7 @@ export class CubePage {
   }
 
   dispose(): void {
+    this.#menu.close();
     for (const chart of this.#charts.values()) {
       chart.editor?.grid.dispose();
       chart.panel.dispose();

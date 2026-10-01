@@ -223,6 +223,8 @@ export interface CubeAppBaseOptions {
   readonly windowHost?: HTMLElement;
   /** A small cube in a tile (a chart's editing grid): its columns panel starts folded away. */
   readonly compact?: boolean;
+  /** What the grid reads, in the host's own words (its header says it); else the cube works it out. */
+  readonly sourceLabel?: string;
   /**
    * A grid on a page (page/cube-page.ts): its "+ Chart" and "New grid" go to the page, which
    * puts them on its board, instead of a board of this cube's own.
@@ -425,6 +427,8 @@ export class CubeApp {
   #zonePeek = false;
   /** The board of the grid and its charts (page/cube-page.ts), once a chart is open; until then the grid sits alone. */
   #page: { readonly page: CubePage; readonly host: HTMLElement } | null = null;
+  /** The grid's part of its tile's header (`tileHead`). */
+  readonly #tileHeadEl: HTMLElement;
   /** Where the grid lives when there is no board. */
   #middle: HTMLElement | null = null;
   #newColumns = 0;
@@ -494,6 +498,8 @@ export class CubeApp {
     Object.assign(this.#formats, renderFormats(this.#config, this.#snapshot));
 
     root.classList.add('dc-app');
+    this.#tileHeadEl = this.#doc.createElement('span');
+    this.#tileHeadEl.className = 'dc-tile-cube';
     // a grid in a page's tile: the page has the title bar
     root.classList.toggle('dc-compact', this.#options.compact === true);
     // which cube this is, on a page of several: its drags land only on it (ui/scope.ts)
@@ -1462,6 +1468,7 @@ export class CubeApp {
    */
   #renderChrome(): void {
     this.#buildToolbar();
+    this.#paintTileHead();
     this.#applyChrome();
   }
 
@@ -2355,17 +2362,20 @@ export class CubeApp {
     body.append(...parts);
     const page = new CubePage({
       host,
-      grid: { element: body, source: this.chartSource() },
+      grid: { element: body, source: this.chartSource(), head: this.#tileHeadEl },
       onChange: () => this.#pageChanged(),
       onEmpty: () => {
-        // back where they were, the board gone
+        // back where they were, the board gone: the title bar carries the source and pill again
         for (const el of parts) root.insertBefore(el, host);
         page.dispose();
         host.remove();
         this.#page = null;
+        this.#renderChrome();
       },
     });
     this.#page = { page, host };
+    // on the board: the grid's source and pill move into its tile's header
+    this.#renderChrome();
     return page;
   }
 
@@ -2406,6 +2416,11 @@ export class CubeApp {
         return new CubeApp(host, snapshot, {
           ...source,
           ...(o.snapTarget ? { snapTarget: o.snapTarget } : {}),
+          // what its rows ARE, as this grid knows it: the same copy in the tab, the same file, the
+          // host's own name for it -- so its header says the same source, and the same plane
+          ...(o.heldCopy ? { heldCopy: o.heldCopy } : {}),
+          ...(o.cubeSource ? { cubeSource: o.cubeSource } : {}),
+          ...(o.sourceLabel !== undefined ? { sourceLabel: o.sourceLabel } : {}),
           configuration: this.#config,
           // its windows float where this cube's do, not inside the small tile
           windowHost: o.windowHost ?? this.#els.root,
@@ -3328,7 +3343,7 @@ export class CubeApp {
         this.#setChrome({ showTitleBar: true });
       });
       bar.append(open);
-      if (!this.#config.showDragZones) bar.append(this.#zonesBack());
+      if (!this.#config.showDragZones && !this.#inTile) bar.append(this.#zonesBack());
       return;
     }
 
@@ -3349,10 +3364,69 @@ export class CubeApp {
       bar.append(title);
     }
 
+    // ONE GRID ALONE: the bar names its source and carries its Live/Snapped pill. On a board
+    // each grid carries its own, in its tile's header (`tileHead`, the user 2026-09-30).
+    if (!this.#inTile) {
+      const source = this.#sourceName();
+      if (source !== undefined) bar.append(this.#sourceTag(source));
+      bar.append(this.#snapPill());
+    }
+
+    // AND THE BAR FOLDS ITSELF: after the menu, in the fold column
+    // (appended below, once the hamburger is in).
+    const fold = doc.createElement('button');
+    fold.type = 'button';
+    fold.className = 'dc-titlebar-fold';
+    fold.append(this.#chevron('up'));
+    fold.title = 'Hide the title bar';
+    fold.setAttribute('aria-label', 'Hide the title bar');
+    fold.setAttribute('aria-expanded', 'true');
+    fold.addEventListener('click', () => {
+      this.#setChrome({ showTitleBar: false });
+    });
+
+    // THE MENU, under the hamburger: like the grid's right-click menu -- a short list, the rest a
+    // level down (the user, 2026-09-30). Page-wide things live here; what belongs to a column or
+    // a cell stays in the right-click menu, in its order.
+    const burger = doc.createElement('button');
+    burger.type = 'button';
+    burger.className = 'dc-titlebar-menu';
+    burger.setAttribute('aria-label', 'Menu');
+    burger.setAttribute('aria-haspopup', 'menu');
+    burger.textContent = '\u2261';
+    burger.addEventListener('click', () => {
+      // A second press on the hamburger SHUTS it: the outside-press dismissal would close the
+      // menu and the click that follows reopen it, so the button would appear to do nothing.
+      if (this.#menu.open) {
+        this.#menu.close();
+        return;
+      }
+      // BELOW THE BUTTON, not at the pointer: at the pointer the menu covered the button it came
+      // from, so a second press picked the first entry instead of shutting the menu.
+      const at = burger.getBoundingClientRect();
+      this.#menu.show(this.#mainMenu(), at.left, at.bottom, burger);
+    });
+    // THE MENU ON THE LEFT, the folds alone on the right (user, 2026-09-25)
+    bar.prepend(burger);
+    bar.append(fold);
+    // THE ZONES' WAY BACK, at the far right: directly above where their own fold was. Only while
+    // they are folded -- a control that is always there but does nothing half the time is worse
+    // than one that appears when it has something to do. On a board it is in the tile's header.
+    if (!this.#config.showDragZones && !this.#inTile) bar.append(this.#zonesBack());
+  }
+
+  /**
+   * The Live/Snapped pill: where this grid's rows come from, and -- where both planes exist -- the
+   * toggle between them. In the title bar of a grid alone, or in the grid's tile header on a
+   * board: one per grid either way.
+   */
+  #snapPill(): HTMLElement {
+    const doc = this.#doc;
     // Snap is legend-lite's own idea rather than DataCube's, but it
     // is a MODE, and a mode belongs in the bar rather than two
     // levels down a menu.
-    const host = this.#div(bar, 'dc-titlebar-host');
+    const host = doc.createElement('div');
+    host.className = 'dc-titlebar-host';
     const snap = doc.createElement('button');
     snap.type = 'button';
     snap.className = 'dc-titlebar-toggle';
@@ -3432,48 +3506,51 @@ export class CubeApp {
       paint();
       host.append(snap);
     }
+    return host;
+  }
 
-    // AND THE BAR FOLDS ITSELF: after the menu, in the fold column
-    // (appended below, once the hamburger is in).
-    const fold = doc.createElement('button');
-    fold.type = 'button';
-    fold.className = 'dc-titlebar-fold';
-    fold.append(this.#chevron('up'));
-    fold.title = 'Hide the title bar';
-    fold.setAttribute('aria-label', 'Hide the title bar');
-    fold.setAttribute('aria-expanded', 'true');
-    fold.addEventListener('click', () => {
-      this.#setChrome({ showTitleBar: false });
-    });
+  /** What this grid reads, as a person names it: a file, a table, a copy in this tab. */
+  #sourceName(): string | undefined {
+    const o = this.#options;
+    if (o.sourceLabel !== undefined) return o.sourceLabel;
+    if (o.heldCopy) return o.heldCopy.label;
+    if (o.cubeSource) return o.cubeSource.name;
+    const path = (this.#snapshot.source.query as { value?: { path?: readonly string[] } }).value?.path;
+    const table = path && path.length > 1 ? path.slice(1).join('.') : undefined;
+    if (table === undefined) return undefined;
+    return o.runner === undefined && o.live !== undefined ? `${table} (warehouse)` : table;
+  }
 
-    // THE MENU, under the hamburger: like the grid's right-click menu -- a short list, the rest a
-    // level down (the user, 2026-09-30). Page-wide things live here; what belongs to a column or
-    // a cell stays in the right-click menu, in its order.
-    const burger = doc.createElement('button');
-    burger.type = 'button';
-    burger.className = 'dc-titlebar-menu';
-    burger.setAttribute('aria-label', 'Menu');
-    burger.setAttribute('aria-haspopup', 'menu');
-    burger.textContent = '\u2261';
-    burger.addEventListener('click', () => {
-      // A second press on the hamburger SHUTS it: the outside-press dismissal would close the
-      // menu and the click that follows reopen it, so the button would appear to do nothing.
-      if (this.#menu.open) {
-        this.#menu.close();
-        return;
-      }
-      // BELOW THE BUTTON, not at the pointer: at the pointer the menu covered the button it came
-      // from, so a second press picked the first entry instead of shutting the menu.
-      const at = burger.getBoundingClientRect();
-      this.#menu.show(this.#mainMenu(), at.left, at.bottom, burger);
-    });
-    // THE MENU ON THE LEFT, the folds alone on the right (user, 2026-09-25)
-    bar.prepend(burger);
-    bar.append(fold);
-    // THE ZONES' WAY BACK, at the far right: directly above where their own fold was. Only while
-    // they are folded -- a control that is always there but does nothing half the time is worse
-    // than one that appears when it has something to do.
-    if (!this.#config.showDragZones) bar.append(this.#zonesBack());
+  #sourceTag(text: string): HTMLElement {
+    const el = this.#doc.createElement('span');
+    el.className = 'dc-source-tag';
+    el.textContent = text;
+    el.title = `This grid reads ${text}`;
+    return el;
+  }
+
+  /** In a tile on a board (this cube's own, or a page's), rather than alone on the page. */
+  get #inTile(): boolean {
+    return this.#page !== null || this.#options.compact === true;
+  }
+
+  /**
+   * The grid's own part of its TILE'S HEADER, on a board: its source, its Live/Snapped pill, and
+   * -- while its zones are folded -- their way back. The page puts it in the tile's header; it is
+   * repainted with the rest of the chrome.
+   */
+  tileHead(): HTMLElement {
+    return this.#tileHeadEl;
+  }
+
+  #paintTileHead(): void {
+    const head = this.#tileHeadEl;
+    head.replaceChildren();
+    if (!this.#inTile) return;
+    const source = this.#sourceName();
+    if (source !== undefined) head.append(this.#sourceTag(source));
+    head.append(this.#snapPill());
+    if (!this.#config.showDragZones) head.append(this.#zonesBack());
   }
 
   /**
