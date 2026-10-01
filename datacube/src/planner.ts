@@ -48,6 +48,16 @@ export class UpstreamPlanner implements Planner {
     this.#client = new PureV1Client(options, (m, subject) => new PlanError(m, subject));
   }
 
+  /**
+   * Plan against another model from now on (a file opened in this tab joins it). Every request
+   * carries the model, so the server holds nothing; what was planned against the old one goes.
+   */
+  useModel(model: string, runtime: string): void {
+    this.#client.useModel(model, runtime);
+    this.#cache.clear();
+    this.#types.clear();
+  }
+
   async plan(query: Lambda, signal?: AbortSignal): Promise<Plan> {
     const key = toJson(query);
     const hit = this.#useCache ? this.#cache.get(key) : undefined;

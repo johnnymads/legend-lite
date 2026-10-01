@@ -178,9 +178,15 @@ describe('there is exactly one planner, and no way to fall back to another', () 
   // happened to work.
   //
   // The rule is NOT "no fake may exist" -- a test injecting a stub is
-  // fine, because that choice is static and never ships. The rule is
-  // that shipped code must not be able to CHOOSE a planner at
-  // runtime.
+  // fine, because that choice is static and never ships. The rule WAS
+  // that shipped code must not be able to CHOOSE a planner at runtime.
+  // REVISED (the user, 2026-09-30): the in-tab planner, legend-lite and
+  // legend-engine are three addresses of the same service, so the demo
+  // is ONE page and the planner a setting of it. What the old rule
+  // protected stays: the choice is EXPLICIT (one place, the page's
+  // `?planner=`, read once), always SHOWN (the status bar), and never
+  // SUBSTITUTED (an unknown word is refused; an absent planner is said
+  // and the page stops -- no fallback, the shape that hid the bugs).
   const shipped = [...sources('src'), ...sources('demo')];
 
   it('scans both shipped trees', () => {
@@ -230,13 +236,15 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     }
   });
 
-  it('never lets a bundle pick its planner at runtime', () => {
-    // A URL parameter or env lookup feeding planner construction is
-    // the same defect as a catch-block fallback: nobody can tell from
-    // the screen which planner produced the SQL, so a divergence
-    // hides. The demo picks by ENTRY POINT instead -- main.ts wires
-    // the server, main-wasm.ts wires the browser build -- which is a
-    // build-time decision, visible in the bundle.
+  it('chooses a planner in ONE place, and nowhere constructs one from the address directly', () => {
+    // The page's `?planner=` is read in `chosenPlane` (demo/boot.ts) and nowhere else; a planner
+    // is BUILT from what it answers (demo/main.ts). A URL or env lookup in the same function as a
+    // planner's construction would be a second, unreviewed place to choose.
+    const readers = shipped.filter((f) => /searchParams\.get\('planner'\)|get\('planner'\)/.test(readFileSync(f, 'utf8')));
+    assert.deepEqual(readers.map((f) => f.replace(/\\/g, '/')), ['demo/boot.ts'], `?planner= read in: ${readers.join(', ')}`);
+    const boot = readFileSync(join('demo', 'boot.ts'), 'utf8');
+    assert.match(boot, /export function chosenPlane\(\)/);
+    assert.match(boot, /throw new Error\(`\?planner=\$\{word\} is not a planner/, 'an unknown planner is refused, never guessed');
     const bad: string[] = [];
     for (const file of shipped) {
       const text = readFileSync(file, 'utf8');
@@ -312,38 +320,29 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     assert.deepEqual(bad, [], `fallback runner in: ${bad.join(', ')}`);
   });
 
-  it('the engine entry REFUSES to run without the engine', () => {
-    // Same rule as the server entry, third absence. This plane has
-    // the least to fall back to: no local planner AND no local store,
-    // so an absent engine must stop startup before the cube exists
-    // rather than leave an empty grid under a title that claims data.
-    const demo = readFileSync(join('demo', 'main-engine.ts'), 'utf8');
-    const refuse = demo.indexOf("must('enginemissing').hidden = false");
-    const build = demo.indexOf('new CubeApp');
-    assert.ok(refuse > 0, 'main-engine.ts must show its refusal element');
-    assert.ok(build > 0, 'main-engine.ts must build a cube at all');
-    assert.ok(
-      refuse < build,
-      'the refusal must come BEFORE the cube is constructed',
-    );
-    // And it must actually stop: a refusal that falls through builds
-    // the cube anyway, which is the bug the ordering check alone
-    // would not catch.
-    const between = demo.slice(refuse, build);
-    assert.ok(
-      /\n\s*return;/.test(between),
-      'main-engine.ts must return after refusing, not carry on',
-    );
+  it('the refusal STOPS the page: it throws, it never returns a planner', () => {
+    // Not "warns and carries on": a refusal that falls through builds the cube anyway, a grid of
+    // invented numbers under a title that claims data.
+    const boot = readFileSync(join('demo', 'boot.ts'), 'utf8');
+    const fn = boot.slice(boot.indexOf('export function refusePlanner('));
+    assert.match(fn.slice(0, fn.indexOf('\n}\n')), /throw new Error\(/, 'refusePlanner must throw');
+    assert.match(boot, /export function refusePlanner\([^)]*\): never/);
   });
 
-  it('the server entry REFUSES to run without the engine', () => {
-    // Not "warns and carries on": constructs nothing, so there is no
-    // grid of invented numbers to mistake for real ones.
-    const demo = readFileSync(join('demo', 'main-server.ts'), 'utf8');
-    assert.ok(
-      /throw new Error\([^)]*legend-lite is not answering/s.test(demo),
-      'the server entry must throw when the engine is absent',
-    );
+  it('a server planner is asked first, and refused BEFORE it is built', () => {
+    const demo = readFileSync(join('demo', 'main.ts'), 'utf8');
+    const refuse = demo.indexOf('if (!answered) refusePlanner(');
+    const build = demo.indexOf('new UpstreamPlanner');
+    assert.ok(refuse > 0 && build > refuse, 'main.ts must refuse an absent server planner before building it');
+  });
+
+  it("the engine's own data REFUSES to run without the engine", () => {
+    // This path has the least to fall back to -- the data is the engine's -- so an absent engine
+    // must stop startup before the cube exists.
+    const demo = readFileSync(join('demo', 'engine-held.ts'), 'utf8');
+    const refuse = demo.indexOf('refusePlanner(');
+    const build = demo.indexOf('new CubeApp');
+    assert.ok(refuse > 0 && build > refuse, 'engine-held.ts must refuse before the cube is constructed');
   });
 
   it('the default entry REFUSES to run without its planner module', () => {
@@ -384,7 +383,7 @@ describe('there is exactly one planner, and no way to fall back to another', () 
   });
 
   it('keeps the shim gone from every entry point', () => {
-    for (const f of ['main.ts', 'main-server.ts', 'boot.ts']) {
+    for (const f of ['main.ts', 'engine-held.ts', 'boot.ts']) {
       assert.equal(
         /DemoOnlyPlanner/.test(readFileSync(join('demo', f), 'utf8')),
         false,

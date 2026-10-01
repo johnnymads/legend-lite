@@ -3518,7 +3518,9 @@ export class CubeApp {
     const path = (this.#snapshot.source.query as { value?: { path?: readonly string[] } }).value?.path;
     const table = path && path.length > 1 ? path.slice(1).join('.') : undefined;
     if (table === undefined) return undefined;
-    return o.runner === undefined && o.live !== undefined ? `${table} (warehouse)` : table;
+    // where the rows are, when not in this tab: run by an engine, or live on a warehouse
+    if (o.runner !== undefined) return `${table} (on the engine)`;
+    return o.live !== undefined ? `${table} (warehouse)` : table;
   }
 
   #sourceTag(text: string): HTMLElement {

@@ -1,4 +1,4 @@
-// The demo against a real legend-engine, which RUNS the query.
+// THE ENGINE'S OWN DATA, which the engine RUNS (`index.html?planner=engine&data=engine`).
 //
 // The other two entry points plan and execute in two steps: Pure to
 // SQL, then DuckDB-WASM runs the SQL in this tab, and the data is in
@@ -16,7 +16,12 @@
 //   Docker install -- see the recipe in memory. Then:
 //     java -cp legend-engine-server-*-shaded.jar \
 //       org.finos.legend.engine.server.Server server userTestConfig.json
-//   and open demo/index-engine.html.
+//   and open demo/index.html?planner=engine&data=engine.
+//
+// The engine is a PLANNER like any other on the one page (main.ts): there it plans and this tab
+// runs. Here the DATA is the engine's (an H2 table this tab cannot reach), so the engine runs the
+// query too -- where the data is decides where the query runs (the user, 2026-09-30). Until a
+// page holds several sources (New > Source...), this is how the page reaches it.
 
 import { CubeApp } from '../src/app.ts';
 import { LegendEngineExecutor } from '../src/engine-remote.ts';
@@ -29,6 +34,7 @@ import {
   goToPlane,
   must,
   planeMenu,
+  refusePlanner,
 } from './boot.ts';
 import { sourceColumns } from '../src/source-columns.ts';
 import { accessor } from '../../pure-protocol/src/index.ts';
@@ -45,17 +51,23 @@ const SOURCE = accessor('trades::h2::DB', 'TRADES_SCHEMA', 'TRADES');
  */
 const DECLARED = [{ name: 'year', kind: 'dimension' as const }];
 
-async function main(): Promise<void> {
+/** The engine's own data, run BY the engine (`?planner=engine&data=engine`). */
+export async function bootEngineHeld(): Promise<void> {
+  // the close button on the query window, wired by delegation (boot wires its own)
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const close = target.closest('.hostwin-close');
+    if (!(close instanceof HTMLElement)) return;
+    const id = close.dataset['win'];
+    if (id) must(id).hidden = true;
+  });
   const status = must('status');
   status.textContent = 'reaching the engine…';
   // where legend-engine runs: config.json, or ?engine= for one visit
   const legendEngine = (await pageConfig()).legendEngine;
-  must('enginewhere').textContent = legendEngine || 'no configured address';
   if (!legendEngine) {
-    must('enginemissing').hidden = false;
-    status.textContent = 'no legend-engine is configured: set "legendEngine" in config.json, or add ?engine=URL';
-    status.classList.add('bad');
-    return;
+    refusePlanner('legend-engine', '', 'set "legendEngine" in config.json, or add ?engine=URL');
   }
 
   // IS IT THERE? Asked before the cube is built, because a plane
@@ -67,10 +79,7 @@ async function main(): Promise<void> {
     });
     if (!health.ok) throw new Error(`${health.status}`);
   } catch {
-    must('enginemissing').hidden = false;
-    status.textContent = `no engine on ${legendEngine}`;
-    status.classList.add('bad');
-    return;
+    refusePlanner('legend-engine', legendEngine, 'start it (the shaded jar needs no JDK, Maven or Docker install)');
   }
 
   const model = await (await fetch(MODEL)).text();
@@ -145,21 +154,3 @@ async function main(): Promise<void> {
   status.textContent = 'engine';
   await app.open();
 }
-
-// The close button on the query window, wired by delegation.
-document.addEventListener('click', (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) return;
-  const close = target.closest('.hostwin-close');
-  if (!(close instanceof HTMLElement)) return;
-  const id = close.dataset['win'];
-  if (id) must(id).hidden = true;
-});
-
-void main().catch((e: unknown) => {
-  const s = document.getElementById('status');
-  if (s) {
-    s.textContent = `failed to start: ${e instanceof Error ? e.message : e}`;
-    s.classList.add('bad');
-  }
-});

@@ -88,36 +88,61 @@ const ROWS = 200_000;
  */
 export const PLANES: readonly {
   readonly id: `host.plane.${string}`;
-  readonly page: string;
+  /** Its `?planner=` word, and the status bar's. */
+  readonly word: PlaneWord;
   readonly label: string;
-  readonly word: string;
 }[] = [
-  {
-    id: 'host.plane.wasm',
-    page: 'index.html',
-    label: 'Plan local (in this tab)',
-    word: 'local',
-  },
-  {
-    id: 'host.plane.server',
-    page: 'index-server.html',
-    label: 'Plan remote (legend-lite on :8080)',
-    word: 'remote',
-  },
-  {
-    id: 'host.plane.engine',
-    page: 'index-engine.html',
-    label: 'Run on the engine (legend-engine on :6300)',
-    word: 'engine',
-  },
+  { id: 'host.plane.wasm', word: 'local', label: 'Plan local (in this tab)' },
+  { id: 'host.plane.server', word: 'remote', label: 'Plan remote (legend-lite on :8080)' },
+  { id: 'host.plane.engine', word: 'engine', label: 'Plan on the engine (legend-engine on :6300)' },
 ];
 
-/** Which page is loaded, and therefore which plane. */
+/** Where the page plans: in this tab, on legend-lite, or on legend-engine -- the same API. */
+export type PlaneWord = 'local' | 'remote' | 'engine';
+
+/**
+ * THE ONE PLACE A PLANNER IS CHOSEN (the user, 2026-09-30): the page's `?planner=`, read once
+ * as the page loads -- absent, the planner in this tab. ONE PAGE, three planners at three
+ * addresses of the same API: the in-tab one by WebAssembly calls, legend-lite and legend-engine
+ * over HTTP. The choice is explicit (the address, the status bar's picker), always shown (the
+ * status bar names it), and never changed behind the user's back: an unknown word is refused,
+ * and a planner that does not answer is SAID, never substituted (test/guardrails.test.ts).
+ */
+export function chosenPlane(): PlaneWord {
+  const word = new URLSearchParams(location.search).get('planner') ?? 'local';
+  const known = PLANES.find((plane) => plane.word === word);
+  if (!known) {
+    throw new Error(`?planner=${word} is not a planner: one of ${PLANES.map((p) => p.word).join(', ')}`);
+  }
+  return known.word;
+}
+
+/**
+ * THE REFUSAL, when the chosen planner does not answer: said on the page, in words that name what
+ * was wanted and where, with the way to another -- and the page stops there. It never switches
+ * planners for the user (test/guardrails.test.ts).
+ */
+export function refusePlanner(what: string, where: string, start: string): never {
+  const box = must('plannermissing');
+  box.replaceChildren();
+  const strong = document.createElement('strong');
+  strong.textContent = `${what} is not answering on ${where || 'no configured address'}.`;
+  const rest = document.createElement('span');
+  rest.textContent = ` This page does not switch planners on its own, and will not show numbers it made up: ${start}, and reload -- or plan in this tab: `;
+  const local = document.createElement('a');
+  const url = new URL(location.href);
+  url.searchParams.delete('planner');
+  url.searchParams.delete('data');
+  local.href = url.href;
+  local.textContent = 'index.html';
+  box.append(strong, rest, local, document.createTextNode('.'));
+  box.hidden = false;
+  throw new Error(`${what} is not answering on ${where || 'no configured address'}`);
+}
+
+/** Which planner the page plans on. */
 export function currentPlane(): string {
-  const here = location.pathname;
-  const found = PLANES.find((plane) => plane.page !== 'index.html'
-    && here.includes(plane.page.replace('.html', '')));
-  return (found ?? PLANES[0]!).word;
+  return chosenPlane();
 }
 
 /** The plane entries, with the one you are ON disabled, not hidden. */
@@ -136,8 +161,12 @@ export function planeMenu(): MenuItem[] {
 export function goToPlane(id: string | undefined): boolean {
   const found = PLANES.find((plane) => plane.id === id);
   if (!found) return false;
-  // the page's settings go with it (?remote=, ?warehouse=, ...)
-  location.href = found.page + location.search;
+  // THE SAME PAGE, its planner named in the address; the page's other settings go with it
+  // (?remote=, ?warehouse=, ...). A NAVIGATION: a cube never changes planner while it runs.
+  const url = new URL(location.href);
+  url.pathname = url.pathname.replace(/[^/]*$/, 'index.html');
+  url.searchParams.set('planner', found.word);
+  location.href = url.href;
   return true;
 }
 

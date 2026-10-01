@@ -56,7 +56,7 @@ export type Failure = (message: string, subject: Lambda | string) => Error;
 export type PrintStyle = 'PRETTY' | 'STANDARD';
 
 export class PureV1Client {
-  readonly #options: PureV1Options;
+  #options: PureV1Options;
   readonly #fetch: typeof fetch;
   readonly #fail: Failure;
 
@@ -96,6 +96,14 @@ export class PureV1Client {
       lambda: query,
       model: { _type: 'text', code: this.#options.model },
     }, query, signal, 'json'));
+  }
+
+  /**
+   * Compile against another model from now on: the page's model grows as it opens a file (each
+   * request carries the model, so the server holds nothing to update).
+   */
+  useModel(model: string, runtime: string): void {
+    this.#options = { ...this.#options, model, runtime };
   }
 
   /** E9 `execution/generatePlan`: the execution plan for a query. */

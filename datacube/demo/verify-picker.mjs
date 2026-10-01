@@ -162,9 +162,12 @@ try {
   // refusal element because each has a different thing to be missing:
   // the server page wants a planner on :8080, the engine page wants
   // an engine on :6300 and has no local fallback at all.
+  // ONE PAGE NOW (the user, 2026-09-30): each planner is index.html with its `?planner=`, and one
+  // refusal says which planner did not answer. The old addresses redirect there.
   for (const plane of [
+    { page: 'index.html?planner=remote', refusal: 'plannermissing', what: 'server' },
+    { page: 'index.html?planner=engine', refusal: 'plannermissing', what: 'engine' },
     { page: 'index-server.html', refusal: 'plannermissing', what: 'server' },
-    { page: 'index-engine.html', refusal: 'enginemissing', what: 'engine' },
   ]) {
     const other = await ctx.newPage();
     const errors = [];

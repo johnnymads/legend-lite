@@ -547,8 +547,6 @@ js_test(
 # entry point -> bundle
 _BUNDLES = {
     "demo/main.ts": "demo/bundle.js",
-    "demo/main-server.ts": "demo/bundle-server.js",
-    "demo/main-engine.ts": "demo/bundle-engine.js",
     "demo/page.ts": "demo/bundle-page.js",
     "src/planner-worker.ts": "demo/planner-worker.js",
     "demo/remote-harness.ts": "demo/remote-bundle.js",

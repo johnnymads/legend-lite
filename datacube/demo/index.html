@@ -174,8 +174,15 @@
     <span id="status">loading&hellip;</span>
     <span id="busy"></span>
     <span id="plannerreal"></span>
-    <span id="plannermissing"></span>
   </div>
+
+  <!-- THE REFUSAL, which has to be able to show itself: the chosen planner (?planner=) did not
+       answer, and the page has no other to fall back to. Outside the offstage box -- a hidden
+       parent hides its children however unhidden they are. Filled by `refusePlanner`. -->
+  <p class="warn" id="plannermissing" hidden
+     style="position: fixed; z-index: 30; inset: 12px 12px auto;
+            background: color-mix(in srgb, crimson 10%, #fff);
+            border-color: color-mix(in srgb, crimson 45%, transparent);"></p>
 
   <!-- The panels, in windows of their own. Hidden until asked for. -->
   <div id="datawin" class="hostwin" hidden>

@@ -54,10 +54,9 @@ Numeric columns become measures, except the key-like ones — `year`,
 `*_id`, `zip`, `*_code` — which stay dimensions and keep their digits
 unseparated, because `2,019` reads as a bug in the data.
 
-Only the in-browser entry offers this. `index-server.html` plans
-against a fixed model on a running legend-lite, where an uploaded
-file would have nowhere to live, so the control is absent there
-rather than present and broken.
+Every planner offers this: `index.html` plans in the tab, `?planner=remote` on legend-lite and
+`?planner=engine` on legend-engine -- the same API at three addresses. The file's rows live in
+this tab's DuckDB whichever plans, and its model joins the one each request carries.
 
 ## Your own file, from the command line
 
