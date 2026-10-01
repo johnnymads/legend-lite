@@ -13,6 +13,7 @@ import { openQuery } from './persist.ts';
 import { formatRoute, parseRoute, type Route } from './routes.ts';
 import { Session } from './session.ts';
 import { findAll, isFunction, type Lambda } from '../../../pure-protocol/src/index.ts';
+import { followTheme, toggleTheme } from '../ui/theme.ts';
 
 export class App {
   readonly #ctx: AppContext;
@@ -32,6 +33,7 @@ export class App {
   }
 
   start(): void {
+    followTheme();
     void this.#navigate();
   }
 
@@ -71,11 +73,7 @@ export class App {
       editor ? null : h('button', { class: 'q-btn', onclick: () => openQueryDialog(this.#ctx) }, 'Open a query'),
       h('button', {
         class: 'q-icon-btn', title: 'Light / dark',
-        onclick: () => {
-          const el = document.documentElement;
-          const dark = el.dataset.theme === 'dark' || (!el.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
-          el.dataset.theme = dark ? 'light' : 'dark';
-        },
+        onclick: toggleTheme,
       }, '◐'));
   }
 

@@ -169,3 +169,70 @@
 .dc-app-floating ::-webkit-scrollbar-thumb:hover {
   background: var(--tw-neutral-500);
 }
+
+/* ---- DARK: the same tokens, redefined (the user, 2026-10-01: "def should try dark mode") ----
+ *
+ * Opt-in, by the page: `<html data-dc-theme="dark">` -- a host (Query) sets it with its own
+ * theme; DataCube on its own stays light. On the root rather than on each cube because the
+ * cube's menus mount on the body and its windows may float outside it: one page, one theme.
+ *
+ * The palette's NAMES keep their roles, not their shades: --tw-white is the surface, --tw-black
+ * the ink, the neutral ramp runs the other way, and the light tints (sky-50, red-50) become dark
+ * ones -- so every rule written against the palette reads right in both. Colours a cube's
+ * configuration holds at their DEFAULT come through --dc-theme-* (grid/screen-colours.ts); a
+ * colour a person chose is theirs. Exports never read these: a file is light. */
+:root[data-dc-theme='dark'] :is(.dc-app, .dc-app-floating, .dc-grid, .dc-menu, .dc-filters) {
+  color-scheme: dark;
+  --tw-white: #1b1d21;
+  --tw-black: #eceef1;
+  --tw-neutral-50: #202227;
+  --tw-neutral-100: #26292e;
+  --tw-neutral-200: #33363c;
+  --tw-neutral-300: #44484f;
+  --tw-neutral-400: #6b7079;
+  --tw-neutral-500: #9198a1;
+  --tw-neutral-600: #b4bac2;
+  --tw-neutral-700: #cfd4da;
+  --tw-sky-50: #10293a;
+  --tw-sky-100: #12344b;
+  --tw-sky-200: #174663;
+  --tw-sky-500: #38bdf8;
+  --tw-sky-600: #4fb3ea;
+  --tw-sky-700: #8bd0f5;
+  --tw-red-50: #3a1d1f;
+  --tw-red-500: #f87171;
+  --tw-red-600: #f28b8b;
+  --tw-amber-50: #33290f;
+  --tw-amber-300: #a37a1c;
+  --tw-amber-500: #fbbf24;
+  --tw-amber-700: #f0c55e;
+  --tw-green-500: #4ade80;
+  --tw-green-600: #6ee7a0;
+  --tw-blue-600: #7aa7f5;
+  --tw-orange-500: #fb923c;
+
+  --dc-cell-fg: #dfe3e8;
+  --dc-row-hover: #ffffff10;
+  --dc-popup-shadow: 2px 2px 8px rgb(0 0 0 / 55%);
+  --dc-error-ink: #f28b8b;
+
+  /* a cube's default colours (grid/screen-colours.ts) */
+  --dc-theme-fg: #e6e9ed;
+  --dc-theme-negative: #f87171;
+  --dc-theme-zero: #7d838c;
+  --dc-theme-error: #7aa7f5;
+  --dc-theme-grid-line: #3a3e45;
+  --dc-theme-band: #232a35;
+}
+
+/* the chart window's own tokens (chart-render.ts themeOf reads them for the canvas) */
+:root[data-dc-theme='dark'] .dc-chartpanel {
+  --dc-chart-surface: #1b1d21;
+  --dc-chart-ink: #eceef1;
+  --dc-chart-ink-secondary: #b4bac2;
+  --dc-chart-muted: #8a9099;
+  --dc-chart-grid: #2e3238;
+  --dc-chart-axis: #4a4f57;
+  --dc-chart-series: #5b9cf0, #f08a5d, #3cc792, #f2b632, #ee93b9, #4cbf4c, #8f80e8, #f07070;
+  --dc-chart-sequential: #173a63, #1f5a9b, #3987e5, #6aa8f0, #a3c9f5, #d6e7fb;
+}

@@ -46,6 +46,7 @@ import {
   type CellRange,
 } from '../selection.ts';
 import { toClipboard } from '../export.ts';
+import { onScreen } from './screen-colours.ts';
 import {
   cellStyle,
   gridVariables,
@@ -521,7 +522,7 @@ export class DataGrid {
 
   #applyVariables(appearance: GridAppearance): void {
     for (const k of this.#vars) this.#root.style.removeProperty(k);
-    const vars = gridVariables(appearance);
+    const vars = onScreen(gridVariables(appearance));
     for (const [k, v] of Object.entries(vars)) this.#root.style.setProperty(k, v);
     this.#vars = Object.keys(vars);
   }
@@ -1218,7 +1219,7 @@ export class DataGrid {
             this.#options.appearance ?? {},
             this.#options.columnAppearance?.[leaf.name],
           );
-          for (const [k, v] of Object.entries(cellStyle(appearance, value, type))) {
+          for (const [k, v] of Object.entries(onScreen(cellStyle(appearance, value, type)))) {
             cell.style.setProperty(k, v);
           }
 

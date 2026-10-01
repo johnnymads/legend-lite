@@ -1771,7 +1771,7 @@
 }
 
 .dc-calc-check[data-state="refused"] {
-  color: #b3261e;
+  color: var(--dc-error-ink, #b3261e);
 }
 
 .dc-calc-fix {
@@ -1878,7 +1878,7 @@
 .dc-calc-problem {
   margin: 0;
   font-size: var(--dc-text-sm-size);
-  color: #b3261e;
+  color: var(--dc-error-ink, #b3261e);
 }
 
 

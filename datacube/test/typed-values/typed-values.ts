@@ -348,7 +348,19 @@ describe('T7: one formatter on compiler types', () => {
   /** A column's cells on screen: their text and colour, in row order. */
   const cells = (root: HTMLElement, column: string): [string, string][] =>
     [...root.querySelectorAll<HTMLElement>(`.dc-cell[data-column="${column}"]`)]
-      .map((c) => [c.textContent?.trim() ?? '', c.style.color]);
+      .map((c) => [c.textContent?.trim() ?? '', painted(c)]);
+  /**
+   * The colour the LIGHT theme paints a cell: a default colour reaches the DOM as its theme token
+   * with the default as fallback (grid/screen-colours.ts), which jsdom does not resolve -- so the
+   * fallback, normalised as jsdom normalises any colour.
+   */
+  const painted = (c: HTMLElement): string => {
+    const token = /^var\(--[\w-]+,\s*([^)]+)\)$/.exec(c.style.color);
+    if (!token) return c.style.color;
+    const probe = c.ownerDocument.createElement('span');
+    probe.style.color = token[1]!.trim();
+    return probe.style.color;
+  };
   const grouped = (measures: CubeSnapshot['measures'], only?: string) => openCube({
     source: { query: P },
     columns: ([

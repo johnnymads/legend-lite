@@ -22,7 +22,7 @@
   --dc-col-width: 104px;
   --dc-border: var(--dc-border-color, #e5e5e5);
   --dc-head-bg: var(--dc-header-bg, #f5f5f5);
-  --dc-total-bg: #fafafa;
+  --dc-total-bg: var(--tw-neutral-50, #fafafa);
   --dc-focus: var(--dc-active, #0284c7);
 
   display: flex;
@@ -417,7 +417,7 @@
   letter-spacing: 0.06em;
   padding: 2px 4px;
   border-radius: 3px;
-  background: #fef2f2;
+  background: var(--tw-red-50, #fef2f2);
   color: var(--tw-red-600);
   font-weight: 700;
 }
@@ -439,7 +439,7 @@
 /* A negated node must be obvious at a glance: reading a filter
    backwards is the most expensive mistake this editor can cause. */
 .dc-filter-not-on {
-  background: #fef2f2;
+  background: var(--tw-red-50, #fef2f2);
   border-color: var(--tw-red-500);
   color: var(--tw-red-600);
   font-weight: 700;
@@ -556,7 +556,7 @@
   --dc-hgrid: 0;
   --dc-vgrid: 1;
   /* Their DEFAULT_ROW_HIGHLIGHT_BACKGROUND_COLOR. */
-  --dc-alt-row: #d7e0eb;
+  --dc-alt-row: var(--dc-theme-band, #d7e0eb);
 }
 
 /* The configurable lines. Their defaults are horizontal OFF and
