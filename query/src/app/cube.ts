@@ -84,9 +84,11 @@ export async function openCube(app: AppContext, session: Session, host: HTMLElem
     onView: hooks.onView,
     onStatus: hooks.onStatus,
     writeClipboard: (text) => navigator.clipboard?.writeText(text),
-    download: (name, mime, text) => {
+    // an export is text (CSV, HTML) or bytes (Excel, PDF)
+    download: (name, mime, content) => {
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+      const part: BlobPart = typeof content === 'string' ? content : new Uint8Array(content);
+      a.href = URL.createObjectURL(new Blob([part], { type: mime }));
       a.download = name;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);

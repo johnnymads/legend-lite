@@ -1251,7 +1251,11 @@ class JavaEvalLedgerTest {
                             // compile and PLAN only -- no connection, no JDBC, no value
                             // computed; the plan's SQL is the database's to run
                             "PureV1Api.java",
-                            "QueryService.java"),
+                            "QueryService.java",
+                            // 2026-10-01, the Query app (docs/IN_FLIGHT.md, fourth line): legend-engine's
+                            // query store (/api/pure/v1/query) -- saved queries as JSON files in the
+                            // directory the server is started with; no connection, no JDBC, no value computed
+                            "SavedQueries.java"),
                     "core/src/main/java/com/legend/testdatagen",
                     // TestDataGenerationNatives (TDG lane S1): the ORCHESTRATION-time fold
                     // of the checker's census CARRIER — computes the census
