@@ -44,26 +44,17 @@ const OBJECT_ANSWERS = new Set(['graphFetch', 'graphFetchChecked', 'serialize'])
  * compiler before it opens; a query that does not compile refuses here, with the compiler's error.
  */
 /**
- * The cube as a results grid: no title bar, no drag zones, its columns panel folded away -- the
- * grid alone, in Query's look (lines between rows and columns, no banding, the page's font). All
- * the cube does stays on the grid's right-click menu (sort, filter, pivot, new columns, charts,
- * export, properties). The status bar is hidden by Query's stylesheet (`.q-cube`); the row
- * count and time show in Query's results bar, as the plain grid's do.
+ * The cube as a results grid, in DataCube's own look: no title bar, no drag zones, its columns
+ * panel folded away -- the grid alone, everything else on its right-click menu (sort, filter,
+ * pivot, new columns, charts, export, properties). The status bar is hidden by Query's
+ * stylesheet (`.q-cube`); the row count and time show in Query's results bar. Interim: a
+ * DataCube-owned grid-only mode, with its own way back to the controls, is proposed to the
+ * DataCube line (docs/IN_FLIGHT.md), and replaces both this and that stylesheet rule.
  */
 const RESULTS_GRID: CubeConfiguration = {
   ...DEFAULT_CONFIGURATION,
   showTitleBar: false,
   showDragZones: false,
-  appearance: {
-    ...DEFAULT_CONFIGURATION.appearance,
-    showHorizontalGridLines: true,
-    showVerticalGridLines: true,
-    gridLineColor: '#dde1e7',
-    alternateRowsStandardMode: false,
-    alternateRows: false,
-    fontFamily: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
-    fontSize: 12,
-  },
 };
 
 export async function openCube(app: AppContext, session: Session, host: HTMLElement,
