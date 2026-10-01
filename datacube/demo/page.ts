@@ -11,8 +11,8 @@
 import { CubeApp } from '../src/app.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { sourceColumns } from '../src/source-columns.ts';
-import { WasmPlanner } from '../src/wasm-planner.ts';
-import { demoConfiguration, generateTrades, loadModel, must, RUNTIME, SNAP_TARGET, SOURCE, startDuckDb } from './boot.ts';
+import { plannerFor } from './planners.ts';
+import { chosenPlane, demoConfiguration, generateTrades, loadModel, must, SNAP_TARGET, SOURCE, startDuckDb } from './boot.ts';
 
 /** What the browser harness reads: the cubes by tile, and every change each has told the page. */
 interface PageSignal {
@@ -28,12 +28,8 @@ async function main(): Promise<void> {
   (window as unknown as { __page?: PageSignal }).__page = signal;
 
   status.textContent = 'starting DuckDB and the planner…';
-  const planner = new WasmPlanner({
-    model: await loadModel(),
-    runtime: RUNTIME,
-    workerUrl: new URL('./planner-worker.js', import.meta.url).href,
-  });
-  const [{ engine }] = await Promise.all([startDuckDb(), planner.warmUp()]);
+  // the planner the page's ?planner= names, as on index.html: not hard-wired to the in-tab one
+  const [{ engine }, { planner }] = await Promise.all([startDuckDb(), loadModel().then((m) => plannerFor(chosenPlane(), m))]);
   await generateTrades(engine);
 
   const columns = await sourceColumns(planner, SOURCE, [{ name: 'year', kind: 'dimension' }]);

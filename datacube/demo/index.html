@@ -9,12 +9,16 @@
      same way, however exact the pixel values are. -->
 <!-- Served with the site (fonts.css, vendor/fonts): no request leaves for a font CDN. -->
 <link rel="stylesheet" href="fonts.css">
-<!-- Start the planner's 4.2 MB module downloading with the HTML
-     parse. Without this the fetch does not begin until bundle.js has
-     been fetched, parsed and executed, so the download sits behind
-     work it does not depend on. -->
-<link rel="preload" as="fetch" type="application/wasm"
-      href="./vendor/classes.wasm" crossorigin>
+<!-- Start the in-tab planner's 4.2 MB module downloading with the HTML parse -- WHEN IT IS THE
+     PLANNER (no ?planner=, or ?planner=local; boot.ts chosenPlane makes the choice, this only
+     starts the download early). Without the hint the fetch waits behind bundle.js. -->
+<script>
+  if ((new URLSearchParams(location.search).get('planner') ?? 'local') === 'local') {
+    const hint = document.createElement('link');
+    Object.assign(hint, { rel: 'preload', as: 'fetch', type: 'application/wasm', href: './vendor/classes.wasm', crossOrigin: 'anonymous' });
+    document.head.append(hint);
+  }
+</script>
 <link rel="stylesheet" href="../src/theme.css">
 <link rel="stylesheet" href="../src/grid/grid.css">
 <link rel="stylesheet" href="../src/app.css">

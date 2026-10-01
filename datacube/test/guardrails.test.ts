@@ -242,6 +242,14 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     // planner's construction would be a second, unreviewed place to choose.
     const readers = shipped.filter((f) => /searchParams\.get\('planner'\)|get\('planner'\)/.test(readFileSync(f, 'utf8')));
     assert.deepEqual(readers.map((f) => f.replace(/\\/g, '/')), ['demo/boot.ts'], `?planner= read in: ${readers.join(', ')}`);
+    // index.html reads it too, ONLY to start the in-tab planner's download early: one read, in
+    // the one script that adds the preload hint, and nothing else in the page reads it
+    const page = readFileSync(join('demo', 'index.html'), 'utf8');
+    const reads = page.match(/get\('planner'\)/g) ?? [];
+    assert.equal(reads.length, 1, 'index.html reads ?planner= once');
+    const script = page.slice(page.lastIndexOf('<script>', page.indexOf("get('planner')")), page.indexOf('</script>', page.indexOf("get('planner')")));
+    assert.match(script, /rel: 'preload'/, 'and only to add the preload hint');
+    assert.doesNotMatch(script, /Planner|import|bundle/, 'never to build or load a planner');
     const boot = readFileSync(join('demo', 'boot.ts'), 'utf8');
     assert.match(boot, /export function chosenPlane\(\)/);
     assert.match(boot, /throw new Error\(`\?planner=\$\{word\} is not a planner/, 'an unknown planner is refused, never guessed');
@@ -330,10 +338,10 @@ describe('there is exactly one planner, and no way to fall back to another', () 
   });
 
   it('a server planner is asked first, and refused BEFORE it is built', () => {
-    const demo = readFileSync(join('demo', 'main.ts'), 'utf8');
+    const demo = readFileSync(join('demo', 'planners.ts'), 'utf8');
     const refuse = demo.indexOf('if (!answered) refusePlanner(');
     const build = demo.indexOf('new UpstreamPlanner');
-    assert.ok(refuse > 0 && build > refuse, 'main.ts must refuse an absent server planner before building it');
+    assert.ok(refuse > 0 && build > refuse, 'planners.ts must refuse an absent server planner before building it');
   });
 
 
@@ -344,10 +352,10 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     // `warmUp()` is what forces that: it loads and instantiates, so
     // an unavailable module rejects startup instead of surfacing as
     // a half-rendered grid on the user's first interaction.
-    const demo = readFileSync(join('demo', 'main.ts'), 'utf8');
+    const demo = readFileSync(join('demo', 'planners.ts'), 'utf8');
     assert.ok(
       /await\s+planner\.warmUp\(\)/.test(demo),
-      'main.ts must await warmUp() before handing the planner to boot,'
+      'planners.ts must await warmUp() before handing the planner to boot,'
         + ' so a missing module fails startup rather than the first query',
     );
     const warm = demo.indexOf('warmUp()');
@@ -365,17 +373,17 @@ describe('there is exactly one planner, and no way to fall back to another', () 
     // 409ms to 1038ms, and time-to-first-row got WORSE (1009 -> 1175)
     // when the planner was started earlier to "overlap" it. On a
     // worker the two genuinely run at once: 828ms.
-    const demo = readFileSync(join('demo', 'main.ts'), 'utf8');
+    const demo = readFileSync(join('demo', 'planners.ts'), 'utf8');
     assert.ok(
       /workerUrl\s*:/.test(demo),
-      'demo/main.ts must give WasmPlanner a workerUrl — without it the'
+      'demo/planners.ts must give WasmPlanner a workerUrl — without it the'
         + ' boot layer blocks the main thread and startup gets slower,'
         + ' not faster',
     );
   });
 
   it('keeps the shim gone from every entry point', () => {
-    for (const f of ['main.ts', 'boot.ts']) {
+    for (const f of ['main.ts', 'planners.ts', 'boot.ts']) {
       assert.equal(
         /DemoOnlyPlanner/.test(readFileSync(join('demo', f), 'utf8')),
         false,

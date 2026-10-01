@@ -1,0 +1,77 @@
+// THE PLANNER THE PAGE CHOSE, built (the user, 2026-09-30): one module for every page of the demo
+// -- the cube page, the page of several cubes, the stress page -- so none of them is hard-wired to
+// one planner. `chosenPlane` (boot.ts) says which; this builds it.
+//
+// The in-tab planner (legend-lite's compiler as WebAssembly), legend-lite on a server and
+// legend-engine are three addresses of the same service -- pure/v1's generatePlan. A server
+// planner is asked whether it is there first; not there, the page says so and stops
+// (`refusePlanner`): there is no fallback.
+//
+// A FILE OPENED IN THIS TAB: its model (the `CREATE TABLE` of a Pure Database, from DuckDB's own
+// catalog) is written in the tab, as upstream DataCube writes a local file's -- no server can
+// read a database inside the browser -- and then compiled and typed by the chosen planner, whose
+// answer decides whether the file opens.
+
+import { refusePlanner, RUNTIME, SNAP_TARGET, SOURCE, type Engine, type PlaneWord } from './boot.ts';
+import { pageConfig } from './page-config.ts';
+import { UpstreamPlanner } from '../src/planner.ts';
+import { WasmPlanner } from '../src/wasm-planner.ts';
+
+const WORKER = (): string => new URL('./planner-worker.js', import.meta.url).href;
+
+/** The planner the page chose, over `model`, ready to plan. */
+export async function plannerFor(plane: PlaneWord, model: string): Promise<Engine> {
+  return plane === 'local' ? inTab(model) : onServer(model, plane);
+}
+
+/** The planner in this tab: legend-lite's compiler as WebAssembly, off the main thread. */
+async function inTab(model: string): Promise<Engine> {
+  const planner = new WasmPlanner({
+    model,
+    runtime: RUNTIME,
+    // Off the main thread: building the boot layer is ~600ms of synchronous WebAssembly, which on
+    // the main thread froze the page and starved DuckDB's startup.
+    workerUrl: WORKER(),
+  });
+  // Pay the cold cost (~1.3s, the boot layer) here rather than on the first interaction; `boot`
+  // starts this concurrently with DuckDB, so most of it lands inside a wait the page was making.
+  await planner.warmUp();
+  return {
+    planner,
+    source: SOURCE,
+    snapTarget: SNAP_TARGET,
+    label: 'local',
+    models: {
+      fromCatalog: (table) => planner.databaseFromCatalog(table),
+      use: (next, runtime) => planner.useModel(next, runtime),
+    },
+  };
+}
+
+/** A planner on a server -- legend-lite or legend-engine, the same API at another address. */
+async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engine> {
+  const config = await pageConfig();
+  const url = which === 'remote' ? config.legendLite : config.legendEngine;
+  const name = which === 'remote' ? 'legend-lite' : 'legend-engine';
+  const start = which === 'remote'
+    ? 'start it with `bazel run //core:server`'
+    : 'start it (the shaded jar needs no JDK, Maven or Docker install)';
+  if (!url) refusePlanner(name, '', `set "${which === 'remote' ? 'legendLite' : 'legendEngine'}" in config.json, then ${start}`);
+  const health = which === 'remote' ? `${url}/health` : `${url}/api/server/v1/info`;
+  const answered = await fetch(health, { signal: AbortSignal.timeout(2500) }).then((r) => r.ok, () => false);
+  if (!answered) refusePlanner(name, url, start);
+  const planner = new UpstreamPlanner({ baseUrl: url, model, runtime: RUNTIME });
+  // the model-writer for a file opened in this tab (see above): loaded only when one is opened
+  let catalog: WasmPlanner | undefined;
+  return {
+    planner,
+    source: SOURCE,
+    snapTarget: SNAP_TARGET,
+    label: which,
+    models: {
+      fromCatalog: (table) => (catalog ??= new WasmPlanner({ model, runtime: RUNTIME, workerUrl: WORKER() }))
+        .databaseFromCatalog(table),
+      use: (next, runtime) => planner.useModel(next, runtime),
+    },
+  };
+}

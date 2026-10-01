@@ -64,6 +64,8 @@ _EXTRA_DATA = {
     "multi-cube": ["test/cube-fixture.ts", "test/gate.ts"],
     "chart-tiles": ["test/cube-fixture.ts", "test/gate.ts"],
     "guardrails": glob(["demo/**/*.ts"]) + [
+        # the one page: its preload hint reads ?planner= (the one-place check)
+        "demo/index.html",
         "test/wasm-differential/compare.ts",
         "//wasm:differential",
     ],

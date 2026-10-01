@@ -28,7 +28,9 @@ import type {
   AggregateFn, CubeSnapshot, FilterNode, FilterOperator,
 } from '../src/snapshot.ts';
 import { ingestFile } from '../src/upload.ts';
-import { WasmPlanner } from '../src/wasm-planner.ts';
+import type { Planner } from '../src/cube.ts';
+import { chosenPlane } from './boot.ts';
+import { plannerFor } from './planners.ts';
 import { CORPUS } from './stress-corpus.ts';
 import { familyOf, isNumeric } from '../src/types.ts';
 import type { Plan } from '../src/relation-type.ts';
@@ -84,17 +86,17 @@ async function boot() {
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
   const conn = await db.connect();
   const engine = new DuckDbEngine(conn as unknown as ArrowishConnection);
-  const planner = new WasmPlanner({
-    model: '', runtime: '',
-    workerUrl: new URL('./planner-worker.js', location.href).href,
-  });
-  return { db, engine, planner };
+  // the planner the page's ?planner= names (in this tab unless said): each file's model is
+  // written and swapped in as it is opened (`models`)
+  const { planner, models } = await plannerFor(chosenPlane(), '');
+  if (!models) throw new Error('the chosen planner cannot take a file\'s model');
+  return { db, engine, planner, models };
 }
 
 /** Plan and run one snapshot, classifying whatever happens. */
 async function attempt(
   out: Outcome[],
-  deps: { engine: DuckDbEngine; planner: WasmPlanner },
+  deps: { engine: DuckDbEngine; planner: Planner },
   csv: string,
   op: string,
   snapshot: CubeSnapshot,
@@ -159,14 +161,14 @@ function base(source: ValueSpecification, columns: CubeSnapshot['columns']): Cub
 }
 
 export async function runStress(): Promise<Outcome[]> {
-  const { db, engine, planner } = await boot();
+  const { db, engine, planner, models } = await boot();
   const out: Outcome[] = [];
 
   for (const entry of CORPUS) {
     const file = new File([entry.text], entry.name, { type: 'text/csv' });
     let opened;
     try {
-      opened = await ingestFile(engine, db, file, (t) => planner.databaseFromCatalog(t));
+      opened = await ingestFile(engine, db, file, models.fromCatalog);
     } catch (e) {
       // Refusing a malformed file is fine; the message must name the
       // problem. Crashing is not.
@@ -174,7 +176,7 @@ export async function runStress(): Promise<Outcome[]> {
         detail: (e as Error).message });
       continue;
     }
-    planner.useModel(opened.model, opened.runtime);
+    models.use(opened.model, opened.runtime);
     const cols = await sourceColumns(planner, opened.source);
     const snap = (over: Partial<CubeSnapshot>): CubeSnapshot =>
       ({ ...base(opened.source, cols), ...over });

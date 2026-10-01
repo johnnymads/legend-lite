@@ -1,12 +1,9 @@
-// A runnable demo: real DuckDB-WASM in the browser, real snap mode,
-// the real grid.
+// A runnable demo: real DuckDB-WASM in the browser, real snap mode, the real grid.
 //
-// The planner is the one piece that needs the legend-lite server. If it
-// is reachable the demo uses it; otherwise it falls back to a shim that
-// emits SQL directly, clearly labelled in the UI so nobody mistakes the
-// fallback for the product. That shim lives HERE, in demo/, and not in
-// src/, because "one planner" is an architectural commitment and a
-// convenient second planner is exactly how such commitments rot.
+// ONE PAGE, its planner a setting (`chosenPlane`, `?planner=`): in this tab, legend-lite or
+// legend-engine -- three addresses of the same service, built by planners.ts. The planner writes
+// the SQL; DuckDB in this tab runs it. There is no fallback: a planner that does not answer is
+// said (`refusePlanner`) and the page stops.
 
 import * as duckdb from '@duckdb/duckdb-wasm';
 
@@ -207,20 +204,15 @@ export const DEMO_DIMENSIONS: readonly {
   { name: 'Calendar', columns: ['year', 'qtr'] },
 ];
 
-/** What an entry point must hand `boot`. */
+/** What the page hands `boot`: its planner and what it reads. */
 export interface Engine {
   readonly planner: Planner;
   readonly source: ValueSpecification;
   readonly snapTarget: SnapTarget;
   /**
-   * Models made in this tab: the compiler's Database for a table's catalog
-   * (T2), and repointing the planner at the model around it.
-   *
-   * OPTIONAL, and absent is meaningful: the server entry plans
-   * against a fixed model on a running legend-lite, where an
-   * uploaded file would have nowhere to live, so it supplies
-   * nothing and the upload control never appears. The capability
-   * and the affordance are the same fact.
+   * A file opened in this tab: its Database written from DuckDB's catalog (T2), and the planner
+   * repointed at the model that holds it. Every planner takes one (planners.ts); absent, the
+   * page offers no file to open -- the capability and the affordance are the same fact.
    */
   readonly models?: {
     readonly fromCatalog: CatalogBuilder;
@@ -248,14 +240,8 @@ export interface Engine {
 }
 
 /**
- * How a bundle supplies its planner.
- *
- * Passed in rather than chosen here, because "shipped code must not be
- * able to CHOOSE a planner at runtime" (test/guardrails.test.ts) and a
- * URL parameter is exactly that choice. Each entry point wires one
- * planner and cannot reach the other: `main.ts` the server, and
- * `main-wasm.ts` the in-browser build. The decision is made by which
- * bundle you load, which is static and visible in the build.
+ * How the page supplies its planner: the one `chosenPlane` names, built by planners.ts (main.ts).
+ * Passed in so `boot` starts it concurrently with DuckDB.
  */
 export type MakePlanner = (status: HTMLElement) => Promise<Engine>;
 
@@ -562,15 +548,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         if (item.id === 'host.saveAs') saveCube?.(true);
         if (item.id === 'host.share') void copyShareLink?.();
         if (item.id === 'host.query') toggleHostWindow('querywin');
-        // A NAVIGATION, not a switch. Each page loads exactly one
-        // arrangement, statically, and test/guardrails.test.ts holds
-        // that line: shipped code must not be able to CHOOSE at
-        // runtime, because the one time it could -- a health check
-        // falling back to a demo shim -- it hid three real bugs for
-        // the life of the project. The choice is still which bundle
-        // the page loads; this only saves knowing the file names.
+        // A NAVIGATION, not a switch: the same page loads again with the chosen ?planner= (a cube
+        // never changes planner while it runs). Asked first when leaving would lose work here.
         if (PLANES.some((plane) => plane.id === item.id)) {
-          if (!mayLeave(work, (q) => window.confirm(q), 'Switching plane loads another page')) return;
+          if (!mayLeave(work, (q) => window.confirm(q), 'Choosing another planner reloads the page')) return;
           leaving = true;
         }
         goToPlane(item.id);
@@ -642,7 +623,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           harnessSignal.changes += 1;
         });
         must('sql').textContent =
-          view.sql || '(the demo shim plans per level; expand a row)';
+          view.sql || '(no SQL for this view)';
       },
     });
     // For the browser harness ONLY: the running cube, so a check can
