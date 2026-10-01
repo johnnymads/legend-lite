@@ -675,6 +675,14 @@
 /* a grid in a page's tile (an added grid, a chart's editing grid): the page has the title bar */
 .dc-app.dc-compact > .dc-titlebar { display: none; }
 
+/* the controls hidden, the grid alone (setControlsHidden): the right-click menu's last entry
+   brings them back. The zone bar's own `hidden` stays the configuration's; this only overrides. */
+.dc-app.dc-controls-hidden { gap: 0; }
+.dc-app.dc-controls-hidden > .dc-titlebar,
+.dc-app.dc-controls-hidden > .dc-zone-bar,
+.dc-app.dc-controls-hidden > .dc-app-stats,
+.dc-app.dc-controls-hidden > .dc-app-middle > .dc-app-side { display: none; }
+
 .dc-app-middle .dc-app-grid {
   flex: 1;
   min-width: 0;

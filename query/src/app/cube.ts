@@ -9,7 +9,6 @@
 
 import { findAll, functionsCalled, isLambda, transform, type Lambda, type ValueSpecification } from '../../../pure-protocol/src/index.ts';
 import { CubeApp, type CubeAppOptions } from '../../../datacube/src/app.ts';
-import { DEFAULT_CONFIGURATION, type CubeConfiguration } from '../../../datacube/src/config.ts';
 import type { CubeView } from '../../../datacube/src/cube.ts';
 import { LegendEngineExecutor } from '../../../datacube/src/engine-remote.ts';
 import { RemoteRun } from '../../../datacube/src/runner.ts';
@@ -43,20 +42,6 @@ const OBJECT_ANSWERS = new Set(['graphFetch', 'graphFetchChecked', 'serialize'])
  * graph fetch (objects), or one `cubeSource` does not rewrite. Its columns are typed by the
  * compiler before it opens; a query that does not compile refuses here, with the compiler's error.
  */
-/**
- * The cube as a results grid, in DataCube's own look: no title bar, no drag zones, its columns
- * panel folded away -- the grid alone, everything else on its right-click menu (sort, filter,
- * pivot, new columns, charts, export, properties). The status bar is hidden by Query's
- * stylesheet (`.q-cube`); the row count and time show in Query's results bar. Interim: a
- * DataCube-owned grid-only mode, with its own way back to the controls, is proposed to the
- * DataCube line (docs/IN_FLIGHT.md), and replaces both this and that stylesheet rule.
- */
-const RESULTS_GRID: CubeConfiguration = {
-  ...DEFAULT_CONFIGURATION,
-  showTitleBar: false,
-  showDragZones: false,
-};
-
 export async function openCube(app: AppContext, session: Session, host: HTMLElement,
   onView: (view: CubeView) => void): Promise<CubeApp | undefined> {
   if (session.query.graph && !session.text) return undefined;
@@ -92,8 +77,8 @@ export async function openCube(app: AppContext, session: Session, host: HTMLElem
   };
   return new CubeApp(host, snapshot, {
     ...rows,
-    configuration: RESULTS_GRID,
-    compact: true,
+    // the grid alone, in DataCube's own look: its controls come back from the right-click menu
+    controlsHidden: true,
     onView,
     writeClipboard: (text) => navigator.clipboard?.writeText(text),
     // an export is text (CSV, HTML) or bytes (Excel, PDF)

@@ -128,6 +128,8 @@ export interface MenuContext {
   readonly excludedFromPivot?: boolean;
   /** The column has a fixed width, which Minimize must not override. */
   readonly fixedWidth?: boolean;
+  /** The cube's controls are hidden (the grid alone): the last entry brings them back. */
+  readonly controlsHidden?: boolean;
 }
 
 /**
@@ -204,6 +206,8 @@ export type MenuActionId =
   | 'chart.plot'
   | 'grid.new'
   | 'view.properties'
+  // the cube's controls hidden or shown, the grid alone (setControlsHidden)
+  | 'view.controls'
   // Upstream's Copy > Selected Rows, Resize > Minimize and Size to Fit,
   // and Pivot > Exclude / Include.
   | 'copy.rows'
@@ -699,6 +703,12 @@ export function buildMenu(ctx: MenuContext): MenuGroup[] {
     label: 'Properties...',
     ...(ctx.propertiesColumn !== undefined ? { column: ctx.propertiesColumn } : {}),
   }]);
+
+  // LAST, after every entry people know by its place (the user: the right-click order stays as it
+  // is): the one switch for the cube's controls -- title bar, drag zones, columns panel, status
+  // bar -- hidden together for the grid alone, and the way back. The right-click menu is the only
+  // way back (the user, 2026-10-01: "right click only").
+  push('', [{ id: 'view.controls', label: ctx.controlsHidden ? 'Show Controls' : 'Hide Controls' }]);
 
   return groups;
 }

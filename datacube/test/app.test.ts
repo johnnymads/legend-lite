@@ -504,6 +504,29 @@ describe('the app', () => {
     assert.deepEqual(app.snapshot.rows, ['region']);
   });
 
+  it('hides every control for the grid alone, and brings them back, from the right-click menu', () => {
+    // the user, 2026-10-01: a DataCube-owned mode for the most room; "right click only" back
+    const queries = engine.sql.length;
+    rightClick();
+    pick('Hide Controls');
+    assert.equal(app.controlsHidden, true);
+    assert.ok(root.classList.contains('dc-controls-hidden'));
+    rightClick();
+    pick('Show Controls');
+    assert.equal(app.controlsHidden, false);
+    assert.ok(!root.classList.contains('dc-controls-hidden'));
+    assert.equal(engine.sql.length, queries, 'view state: no query ran');
+  });
+
+  it('opens with the controls hidden when the host asks', () => {
+    const host = dom.window.document.createElement('div');
+    dom.window.document.body.append(host);
+    const own = new CubeApp(host, SNAPSHOT, { engine, planner, controlsHidden: true });
+    assert.equal(own.controlsHidden, true);
+    assert.ok(host.classList.contains('dc-controls-hidden'));
+    own.dispose();
+  });
+
   it('opens the context menu on right-click — the audit found it unreachable', () => {
     const grid = root.querySelector('.dc-app-grid') as HTMLElement;
     grid.dispatchEvent(

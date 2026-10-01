@@ -148,10 +148,7 @@ a { color: var(--accent); }
 /* the DataCube over the query fills the results area; its grid scrolls itself */
 .q-results-body:has(> .q-cube) { overflow: hidden; }
 .q-cube { position: absolute; inset: 0; display: flex; flex-direction: column; }
-.q-cube.dc-app { height: 100%; gap: 0; }
-/* the grid alone: the cube's status bar has no setting to hide it (its count and time show in
-   the results bar); the folded columns panel is a strip with nothing to show here */
-.q-cube .dc-app-stats, .q-cube .dc-app-side { display: none; }
+.q-cube.dc-app { height: 100%; }
 .q-grid { border-collapse: separate; border-spacing: 0; font-size: 12.5px; min-width: 100%; }
 .q-grid th { position: sticky; top: 0; background: var(--surface-2); text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--border-strong); border-right: 1px solid var(--border); font-weight: 600; cursor: pointer; white-space: nowrap; z-index: 1; }
 .q-grid td { padding: 3px 10px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis; background: var(--surface); }

@@ -268,6 +268,12 @@ export interface CubeAppBaseOptions {
   /** Show the column drag zone. Off matches DataCube exactly. */
   readonly showColumnZone?: boolean;
   /**
+   * Open with the cube's controls hidden -- title bar, drag zones, columns panel, status bar --
+   * the grid alone, for the most room (a host's results area). The grid's right-click menu
+   * brings them back ("Show Controls", its last entry). View state: not saved with the cube.
+   */
+  readonly controlsHidden?: boolean;
+  /**
    * Where a snap materialises: a relation the model declares, so a snapped
    * cube is planned as a live one is. Without one the cube cannot snap.
    */
@@ -411,6 +417,8 @@ export class CubeApp {
   readonly #progress: HTMLElement;
   /** Where the grid was scrolled when the context menu opened. */
   #menuScroll: { top: number; left: number } | null = null;
+  /** The controls hidden, the grid alone (`controlsHidden`); view state, never saved. */
+  #controlsHidden = false;
   /** Settings > ...: defaults under what the host kept. */
   #settings: SettingValues;
   /** The open calculated-column editors, by window key. */
@@ -502,6 +510,8 @@ export class CubeApp {
     this.#tileHeadEl.className = 'dc-tile-cube';
     // a grid in a page's tile: the page has the title bar
     root.classList.toggle('dc-compact', this.#options.compact === true);
+    this.#controlsHidden = this.#options.controlsHidden === true;
+    root.classList.toggle('dc-controls-hidden', this.#controlsHidden);
     // which cube this is, on a page of several: its drags land only on it (ui/scope.ts)
     root.dataset['dcCube'] = newCubeScope();
     this.#els = {
@@ -756,6 +766,21 @@ export class CubeApp {
   }
   async redo(): Promise<void> {
     await this.#redo();
+  }
+
+  /** Are the cube's controls hidden (the grid alone)? */
+  get controlsHidden(): boolean {
+    return this.#controlsHidden;
+  }
+
+  /**
+   * Hide the cube's controls -- title bar, drag zones, columns panel, status bar -- for the grid
+   * alone, or bring them back. View state: no query, no undo step, not saved with the cube. The
+   * grid re-measures itself (it watches its own size).
+   */
+  setControlsHidden(hidden: boolean): void {
+    this.#controlsHidden = hidden;
+    this.#els.root.classList.toggle('dc-controls-hidden', hidden);
   }
 
   /** Run the cube and show it: the first query. Not an undo step. */
@@ -1803,6 +1828,7 @@ export class CubeApp {
         canEmail: this.#options.email !== undefined
           || this.#options.download !== undefined,
         canSaveCube: this.#options.cubeSource !== undefined,
+        ...(this.#controlsHidden ? { controlsHidden: true } : {}),
         ...(column !== undefined && this.#config.columns[column]?.pinned
           ? { pinned: this.#config.columns[column]?.pinned as 'left' | 'right' }
           : {}),
@@ -1874,6 +1900,9 @@ export class CubeApp {
         return;
       case 'view.properties':
         this.openEditor(item.column);
+        return;
+      case 'view.controls':
+        this.setControlsHidden(!this.#controlsHidden);
         return;
       case 'copy.rows':
         this.#copy(this.#rowsCsv());

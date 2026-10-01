@@ -101,8 +101,15 @@ In the worktree `legend-lite-query`, branch `query/app`. **Owns:** `query/` (new
 - `datacube/BUILD.bazel`: ONE line, `visibility = ["//query:__pkg__"]` on `:src` (2026-09-30), so the Query app runs
   its planned SQL on DataCube's engines (`engine.ts`, `duckdb.ts`, `warehouse.ts`). And (2026-10-01, user-approved) a
   `styles` filegroup (`src/**/*.css`, visible to `//query`): Query's results grid is a `CubeApp` over the query, so
-  its page loads DataCube's stylesheets. No DataCube source changes; Query uses `CubeApp`, `Planner`,
-  `sourceColumns`, `RemoteRun`/`LegendEngineExecutor`, `relationColumns` as they are.
+  its page loads DataCube's stylesheets. Query uses `CubeApp`, `Planner`, `sourceColumns`,
+  `RemoteRun`/`LegendEngineExecutor`, `relationColumns` as they are.
+- `datacube/src` (2026-10-01, the user's ask, cleared with the DataCube line): a DataCube-owned "controls hidden" mode.
+  `CubeApp` option `controlsHidden` + `setControlsHidden()`/`controlsHidden`; one root class
+  (`dc-controls-hidden`, `app.css`) hides the title bar, drag zones, columns panel and status bar; the way back is the
+  right-click menu's LAST entry, `view.controls` "Hide Controls"/"Show Controls" (`ui/menu.ts`; the order before it
+  untouched; the user: "right click only"). View state: no query, no undo step, not saved. Tests: `menu.test.ts`,
+  `app.test.ts`. Query opens its embedded cube with it. NEXT on this line: a dark theme in DataCube (tokens for the
+  hard-coded colours, a dark set; charts' ECharts option and the heatmap colours too; exports stay light).
 - `MODULE.bazel`: a second `npm_translate_lock` (`npm_query`, `//query:pnpm-lock.yaml`), so `datacube/`'s lock
   is not touched.
 

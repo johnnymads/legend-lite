@@ -100,6 +100,18 @@ describe('buildMenu', () => {
     assert.ok(withSub.every((i) => i.id === undefined));
   });
 
+  it('ends with the switch for the controls, the order before it untouched', () => {
+    // The right-click order stays as people know it (the user); the one switch for the controls
+    // -- hidden for the grid alone, and the only way back (the user, 2026-10-01: "right click
+    // only") -- comes after everything, Properties... included.
+    const top = (hidden: boolean): (string | undefined)[] =>
+      buildMenu({ snapshot: CUBE, column: 'desk', ...(hidden ? { controlsHidden: true } : {}) })
+        .flatMap((g) => g.items).map((i) => i.label);
+    const shown = top(false);
+    assert.deepEqual(shown.slice(-2), ['Properties...', 'Hide Controls']);
+    assert.deepEqual(top(true).slice(-2), ['Properties...', 'Show Controls']);
+  });
+
   it('disables Email when the host cannot send it', () => {
     // A browser cannot attach a file to a mailto:, so emailing is
     // the host's to provide. Disabled rather than hidden: "this
