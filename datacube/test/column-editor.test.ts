@@ -74,6 +74,13 @@ const $ = <T extends Element>(sel: string): T => {
   assert.ok(e, sel);
   return e;
 };
+/** The formula as written: the lambda's head shown fixed, then what is in the box. */
+const formula = (): string =>
+  (root.querySelector('.dc-xc-prefix')?.textContent ?? '') + ($<HTMLTextAreaElement>('.dc-calc-input-expr').value);
+/** The Use as toggle's choice: measure or dimension. */
+const useAs = (): string | undefined => root.querySelector<HTMLElement>('.dc-xc-use .dc-on')?.dataset['value'];
+/** The rail's chosen kind. */
+const kindOn = (): string | undefined => root.querySelector<HTMLElement>('.dc-xc-kind.dc-on')?.dataset['kind'];
 const type = (sel: string, value: string): void => {
   const e = $<HTMLInputElement>(sel);
   e.value = value;
@@ -99,7 +106,8 @@ describe('a new column', () => {
   it("is upstream's: col_N, a Leaf Level Measure, and no Delete or Reset", () => {
     open({});
     assert.match($<HTMLInputElement>('.dc-calc-input-name').value, /^col_\d+$/);
-    assert.equal($<HTMLSelectElement>('.dc-calc-level').value, 'measure');
+    assert.equal(useAs(), 'measure');
+    assert.equal(kindOn(), 'formula');
     assert.equal(root.querySelector('.dc-calc-delete'), null);
     assert.equal(root.querySelector('.dc-calc-reset'), null);
   });
@@ -156,7 +164,7 @@ describe('an existing column', () => {
     open({ edit: 'uplift' });
     await settle();
     // the compiler's print of the column's lambda
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 1.1');
+    assert.equal(formula(), 'x|$x.notional * 1.1');
     type('.dc-calc-input-name', 'boost');
     await settle();
     $<HTMLButtonElement>('.dc-calc-ok').click();
@@ -170,7 +178,7 @@ describe('an existing column', () => {
     await settle();
     type('.dc-calc-input-expr', 'x|$x.notional * 9');
     $<HTMLButtonElement>('.dc-calc-reset').click();
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 1.1');
+    assert.equal(formula(), 'x|$x.notional * 1.1');
   });
 
   it('Delete takes it out; a refusal keeps the window and says why', async () => {
@@ -193,7 +201,7 @@ describe('an existing column', () => {
     $<HTMLButtonElement>('.dc-calc-ok').click();
     await settle();
     assert.equal(closed, 0);
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 3');
+    assert.equal(formula(), 'x|$x.notional * 3');
     assert.match($('.dc-calc-problem').textContent ?? '', /refused by the cube/);
   });
 });
@@ -227,11 +235,13 @@ describe('a window column', () => {
     e.value = value;
     e.dispatchEvent(new dom.window.Event('change'));
   };
+  /** The rail's kind, chosen as a person does. */
+  const kind = (k: string): void => $<HTMLButtonElement>(`.dc-xc-kind[data-kind="${k}"]`).click();
 
   it('builds a running sum from the form: function, column, partition, order, frame', async () => {
     open({});
-    choose('.dc-calc-mode', 'window');
-    assert.equal($<HTMLElement>('.dc-calc-exprbox').hidden, true, 'the expression box stays shown');
+    kind('window');
+    assert.equal(root.querySelector('.dc-calc-input-expr'), null, 'no formula box for a window');
     // Unfinished: the form says what is missing and OK waits.
     await settle();
     assert.match($<HTMLElement>('.dc-calc-check').textContent ?? '', /column the window reads/);
@@ -261,7 +271,7 @@ describe('a window column', () => {
 
   it('a rank takes no column and no frame; a moving average takes N rows', async () => {
     open({});
-    choose('.dc-calc-mode', 'window');
+    kind('window');
     choose('.dc-win-fn', 'rank');
     assert.equal(root.querySelector('.dc-win-column'), null);
     assert.equal(root.querySelector('.dc-win-frame'), null);
@@ -280,7 +290,7 @@ describe('a window column', () => {
 
   it('at the group level an empty order means the grid order, and says so', async () => {
     open({ level: 'group' });
-    choose('.dc-calc-mode', 'window');
+    kind('window');
     choose('.dc-win-fn', 'rowNumber');
     await settle();
     assert.match(root.querySelector('.dc-win-hint')?.textContent ?? '', /order the grid shows/);
@@ -294,7 +304,7 @@ describe('a window column', () => {
       snapshot: () => cube, start: { edit: 'prev' }, debounceMs: 0, parse: liteParse, print: litePrint,
       compile: async () => ({ query: someQuery(), refusal: null }), apply: async () => null, onClose: () => {},
     });
-    assert.equal($<HTMLSelectElement>('.dc-calc-mode').value, 'window');
+    assert.equal(kindOn(), 'window');
     assert.equal($<HTMLSelectElement>('.dc-win-fn').value, 'lag');
     assert.equal($<HTMLInputElement>('.dc-win-offset').value, '2');
   });
@@ -364,9 +374,10 @@ describe('picking a JSON field', () => {
     button('as String').click();
     await settle();
     assert.equal($<HTMLInputElement>('.dc-calc-input-name').value, 'customer_contact_email');
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value,
+    // the lambda's head shown fixed in front, the person's expression in the box
+    assert.equal(formula(),
       "x|$x.customer->get('contact')->get('email')->to(@String)");
-    assert.equal($<HTMLSelectElement>('.dc-calc-level').value, 'dimension');
+    assert.equal(useAs(), 'dimension');
     assert.ok(compiled.some((c) => c.derived.some((d) =>
       (printed(d) ?? '').includes("get('email')"))), 'the pick was compiled');
     $<HTMLButtonElement>('.dc-calc-ok').click();
@@ -379,20 +390,21 @@ describe('picking a JSON field', () => {
     await settle();
     button('as JSON').click();
     await settle();
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value,
+    assert.equal(formula(),
       "x|$x.customer->get('contact')");
   });
 
   it('explodes to ONE column: the fields ticked, a tuple; untick to a field, or to the element', async () => {
     openJson({ json: 'customer' }, [], false, ['{"addresses":[{"kind":"billing","city":"Paris"}]}']);
     await settle();
-    const explode = $<HTMLInputElement>('.dc-calc-input-explode');
-    assert.equal(explode.checked, false);
+    // the page is rebuilt with the pick: the checkbox is looked up again, as it shows
+    const explode = (): HTMLInputElement => $<HTMLInputElement>('.dc-calc-input-explode');
+    assert.equal(explode().checked, false);
     button('one row per element (explode)').click();
     await settle();
-    assert.equal(explode.checked, true);
+    assert.equal(explode().checked, true);
     const nameOf = (): string => $<HTMLInputElement>('.dc-calc-input-name').value;
-    const exprOf = (): string => $<HTMLTextAreaElement>('.dc-calc-input-expr').value;
+    const exprOf = (): string => formula();
     // every field ticked to start, in the data's order: one (kind, city) column
     assert.equal(nameOf(), 'addresses_kind_city');
     assert.match(exprOf(), /\['kind'->pair\(.*'city'->pair\(.*\]->newMap\(\)->toVariant\(\)/);
@@ -474,11 +486,11 @@ describe('arithmetic over a possibly-empty column (src/calc-fix.ts)', () => {
     await settle();
     assert.match($('.dc-calc-fix').textContent ?? '', /'notional' can be empty/);
     // nothing is changed until the person chooses
-    assert.equal($<HTMLTextAreaElement>('.dc-calc-input-expr').value, 'x|$x.notional * 1.1');
+    assert.equal(formula(), 'x|$x.notional * 1.1');
     refuse = null;
     $<HTMLButtonElement>('.dc-calc-fix-button[data-as="blank"]').click();
     await settle();
-    assert.match($<HTMLTextAreaElement>('.dc-calc-input-expr').value, /\$x\.notional->toOne\(\) \* 1\.1/);
+    assert.match(formula(), /\$x\.notional->toOne\(\) \* 1\.1/);
     assert.equal(root.querySelector('.dc-calc-fix'), null, 'compiled again, and taken');
     assert.equal($<HTMLButtonElement>('.dc-calc-ok').disabled, false);
   });
@@ -491,7 +503,7 @@ describe('arithmetic over a possibly-empty column (src/calc-fix.ts)', () => {
     refuse = null;
     $<HTMLButtonElement>('.dc-calc-fix-button[data-as="zero"]').click();
     await settle();
-    assert.match($<HTMLTextAreaElement>('.dc-calc-input-expr').value, /\$x\.notional->coalesce\(0\.0\) \* 1\.1/);
+    assert.match(formula(), /\$x\.notional->coalesce\(0\.0\) \* 1\.1/);
   });
 
   it('offers nothing for another refusal', async () => {
@@ -500,5 +512,17 @@ describe('arithmetic over a possibly-empty column (src/calc-fix.ts)', () => {
     type('.dc-calc-input-expr', 'x|$x.notional * 1.1');
     await settle();
     assert.equal(root.querySelector('.dc-calc-fix'), null);
+  });
+});
+
+describe('the rail keeps its shape', () => {
+  it('offers every kind, greying out the ones this cube cannot take, and says why', () => {
+    open({});
+    const kinds = [...root.querySelectorAll<HTMLButtonElement>('.dc-xc-kind')];
+    assert.deepEqual(kinds.map((k) => k.dataset['kind']), ['formula', 'window', 'ratio', 'children', 'json']);
+    const json = kinds.find((k) => k.dataset['kind'] === 'json')!;
+    assert.equal(json.disabled, true, 'no JSON column here');
+    assert.match(json.title, /no JSON column/);
+    assert.equal(kinds.find((k) => k.dataset['kind'] === 'formula')!.disabled, false);
   });
 });

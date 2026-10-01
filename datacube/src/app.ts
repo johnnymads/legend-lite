@@ -49,6 +49,7 @@ import { AdHocMode } from './adhoc/mode.ts';
 import { carryOver } from './adhoc/outline.ts';
 import { AdHocSession } from './adhoc/session.ts';
 import { drillLambda, levelLambda } from './query.ts';
+import { findAll, type AppliedProperty, type ValueSpecification } from '../../pure-protocol/src/index.ts';
 import { isPivotTotalColumn } from './snapshot.ts';
 import type { Lambda } from '../../pure-protocol/src/index.ts';
 import type { QueryEngine } from './engine.ts';
@@ -98,7 +99,7 @@ import { columnRange, heatColour } from './style.ts';
 import type { HeatmapRange, HeatmapSpec } from './style.ts';
 import { TreeState, parsePathKey, pathKey, type TreeRow } from './tree.ts';
 import { CubeStateOwner, type ChangeOptions, type CubeState, type OwnerEvent, type Outcome } from './cube-state.ts';
-import { ColumnEditor, type ColumnEditorStart } from './ui/column-editor.ts';
+import { ColumnEditor, type ColumnEditorStart, type ColumnPreview } from './ui/column-editor.ts';
 import {
   booleanSetting,
   numericSetting,
@@ -2967,14 +2968,63 @@ export class CubeApp {
           { snapshot: candidate, tree: this.#owner.current.tree }, this.#view, signal),
         apply: (row, group, rename) => this.#setCalc(row, group, rename),
         readJson: (column) => this.#jsonReader(column),
+        // the rail's choice: another calculated column, in this window's place
+        openOther: (next) => {
+          close();
+          this.openColumnEditor(next);
+        },
+        preview: (candidate, column, signal) => this.#previewColumn(candidate, column, signal),
         onClose: close,
       }));
     }, {
       key,
-      // Upstream's column editor window, a little taller for our
-      // completion list.
-      size: { x: 50, y: 50, width: 500, height: 420, minWidth: 300, minHeight: 200, center: false },
+      // one page: the rail, the builder and the preview side by side
+      size: { x: 50, y: 40, width: 860, height: 640, minWidth: 560, minHeight: 360, center: false },
     });
+  }
+
+  /**
+   * A calculated column's PREVIEW (the column editor's): the first rows of the cube with the draft
+   * in it, the new column beside what it reads -- through the cube's own query path, so on every
+   * planner. Computed per source row, the source's first rows; after grouping, the first level's
+   * first groups. The cells are written as the grid writes them.
+   */
+  async #previewColumn(candidate: CubeSnapshot, column: string, signal: AbortSignal): Promise<ColumnPreview> {
+    const PREVIEW_ROWS = 10;
+    const group = (candidate.groupDerived ?? []).find((d) => d.name === column);
+    const scope = { level: 1, parent: [] as never[], limit: PREVIEW_ROWS } as const;
+    let snapshot: CubeSnapshot;
+    let shown: string[];
+    if (group) {
+      if (candidate.pivotOn.length > 0) throw new Error('No preview while the cube pivots its columns');
+      snapshot = { ...candidate, groupDerived: (candidate.groupDerived ?? []).filter((d) => !d.childAggregate || d.name === column) };
+      shown = [...candidate.rows.slice(0, 1), ...readsOf(group).filter((c) => c !== column).slice(0, 3), column];
+    } else {
+      const at = candidate.derived.findIndex((d) => d.name === column);
+      const d = candidate.derived[at];
+      if (!d) throw new Error(`no calculated column '${column}'`);
+      // the source with the calculated columns up to this one: one may read another before it
+      snapshot = {
+        source: candidate.source,
+        columns: candidate.columns,
+        derived: candidate.derived.slice(0, at + 1),
+        rows: [],
+        pivotOn: [],
+        measures: [],
+        sorts: [],
+        epoch: candidate.epoch,
+      };
+      shown = [...readsOf(d).filter((c) => c !== column).slice(0, 4), column];
+    }
+    const query = levelLambda(snapshot, group && candidate.rows.length === 0 ? undefined : scope);
+    const { rows } = await this.#controller.runQuery(query, snapshot, group && candidate.rows.length === 0 ? undefined : scope, signal);
+    const columns = shown.map((name) => rows.columns.find((c) => c.name === name)).filter((c): c is NonNullable<typeof c> => c !== undefined);
+    const count = Math.min(PREVIEW_ROWS, rows.rowCount);
+    return {
+      columns: columns.map((c) => ({ name: c.name, type: c.type })),
+      rows: Array.from({ length: count }, (_, i) => columns.map((c) =>
+        this.#formatters.format(c.values[i] ?? null, this.#formats[c.name], c.type))),
+    };
   }
 
   /**
@@ -3948,3 +3998,22 @@ CubeDraft {
   };
 }
 
+
+
+/** The columns a calculated column reads: what its preview shows beside it. */
+function readsOf(d: DerivedColumn): string[] {
+  const out: string[] = [];
+  const add = (c: string | undefined): void => { if (c !== undefined && c !== '' && !out.includes(c)) out.push(c); };
+  if (d.lambda) {
+    for (const p of findAll(d.lambda as ValueSpecification, (n): n is AppliedProperty => n._type === 'property')) {
+      if (p.parameters[0]?._type === 'var') add(p.property);
+    }
+  }
+  if (d.window) {
+    add(d.window.column);
+    d.window.partition.forEach(add);
+    d.window.order.forEach((o) => add(o.column));
+  }
+  if (d.childAggregate) add(d.childAggregate.of);
+  return out;
+}

@@ -92,6 +92,48 @@ export interface ColumnEditorOptions {
    */
   /** A JSON column's cells: a sample, or every row (`JsonColumnReader`). */
   readonly readJson?: (column: string) => JsonColumnReader;
+  /** Another calculated column (or a new one) in this window's place: the rail's choice. */
+  readonly openOther?: (start: ColumnEditorStart) => void;
+  /**
+   * The first rows of the cube with the draft in it: the new column beside what it reads. Absent:
+   * no preview.
+   */
+  readonly preview?: (candidate: CubeSnapshot, column: string, signal: AbortSignal) => Promise<ColumnPreview>;
+}
+
+/** A preview's table, its cells as the grid writes them. */
+export interface ColumnPreview {
+  readonly columns: readonly { readonly name: string; readonly type?: string }[];
+  readonly rows: readonly (readonly string[])[];
+}
+
+/** What a calculated column computes: each kind its own builder, on one page. */
+type Kind = 'formula' | 'window' | 'ratio' | 'children' | 'json';
+
+interface KindMeta {
+  readonly id: Kind;
+  readonly label: string;
+  readonly hint: string;
+  /** The builder's heading. */
+  readonly title: string;
+}
+
+const KINDS: readonly KindMeta[] = [
+  { id: 'formula', label: 'Formula', hint: 'A value from each row', title: 'Formula on each row' },
+  { id: 'window', label: 'Running, rank, previous', hint: 'From the rows around each one', title: 'From the rows around each one' },
+  { id: 'ratio', label: 'Ratio of totals', hint: 'After grouping, from each group\u2019s figures', title: 'From each group\u2019s figures, after grouping' },
+  { id: 'children', label: 'From child groups', hint: 'Smallest, largest, average\u2026 of those beneath', title: 'From the groups beneath each group' },
+  { id: 'json', label: 'Field from JSON', hint: 'A field of a JSON column', title: 'A field of a JSON column' },
+];
+
+/**
+ * A lambda's head -- its parameter and bar, `x|` -- apart from its body, so the editor can show the
+ * head fixed and the person write the body. Only a leading `name|` is a head: the compiler parses
+ * the whole lambda, this only decides what the box shows.
+ */
+function splitHead(text: string): { readonly head: string; readonly body: string } {
+  const m = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\|/.exec(text);
+  return m ? { head: `${m[1]}|`, body: text.slice(m[0].length).replace(/^ /, '') } : { head: 'x|', body: text };
 }
 
 interface Draft {
@@ -151,12 +193,22 @@ export class ColumnEditor {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #inflight: AbortController | null = null;
   #els!: {
-    expr: HTMLTextAreaElement;
+    expr?: HTMLTextAreaElement;
     nameMark: HTMLElement;
     check: HTMLElement;
     problem: HTMLElement;
     ok: HTMLButtonElement;
+    preview: HTMLElement;
+    type: HTMLElement;
   };
+  /** The draft is a JSON field's extraction (a kind of its own, not inferable from the draft). */
+  #json = false;
+  /** The lambda's head the formula box shows fixed, `x|`. */
+  #head = 'x|';
+  /** The preview: the last one asked for, the last table, what it says. */
+  #previewAbort: AbortController | null = null;
+  #previewTable: ColumnPreview | undefined;
+  #previewNote = '';
 
   constructor(container: HTMLElement, options: ColumnEditorOptions) {
     this.#root = container;
@@ -186,6 +238,7 @@ export class ColumnEditor {
       };
     }
     this.#autoName = !('edit' in start);
+    this.#json = !('edit' in start) && start.json !== undefined;
     this.#draft = { ...this.#initial, window: { ...this.#initial.window }, child: { ...this.#initial.child } };
     this.#render();
     if (printing) void this.#open(printing);
@@ -223,6 +276,7 @@ export class ColumnEditor {
     clearTimeout(this.#timer);
     this.#inflight?.abort();
     this.#inflight = null;
+    this.#previewAbort?.abort();
   }
 
   // -- the draft as the cube would take it --------------------------------
@@ -290,8 +344,12 @@ export class ColumnEditor {
   /** What the calculation still lacks, or null when it is complete. */
   #bodyProblem(): string | null {
     const d = this.#draft;
-    // An expression is judged by the compiler: its parse refusal names what is missing.
-    if (d.mode === 'expression') return null;
+    // An expression is judged by the compiler: its parse refusal names what is missing -- once
+    // there is one. An empty one is not refused, it is not written yet.
+    if (d.mode === 'expression') {
+      if (splitHead(d.expression).body.trim() !== '') return null;
+      return this.#json ? 'Pick a field of the JSON column above, or write a formula' : 'Write the formula';
+    }
     if (d.mode === 'children') {
       const s = this.#options.snapshot();
       if (d.level !== 'group') return 'Child groups are a Group Level calculation';
@@ -383,6 +441,7 @@ export class ColumnEditor {
       this.#check = { state: 'unavailable' };
     } else if (outcome.refusal === null) {
       this.#check = { state: 'ok' };
+      void this.#refreshPreview(parsed.lambda);
     } else {
       this.#check = { state: 'refused', message: outcome.refusal, ...this.#compiled(parsed) };
     }
@@ -409,7 +468,7 @@ export class ColumnEditor {
       return;
     }
     this.#draft.expression = text;
-    this.#els.expr.value = text;
+    this.#render();
     this.#edited();
   }
 
@@ -476,119 +535,326 @@ export class ColumnEditor {
 
   // -- rendering -------------------------------------------------------------
 
+  // -- the kind: what the person wants to compute ---------------------------
+
+  /** The kind the draft is: from its mode and level (a JSON pick is remembered, not inferred). */
+  #kind(): Kind {
+    const d = this.#draft;
+    if (d.mode === 'children') return 'children';
+    if (d.mode === 'window') return 'window';
+    if (d.level === 'group') return 'ratio';
+    return this.#json ? 'json' : 'formula';
+  }
+
+  /** Choose a kind: it settles the mode and, where it decides it, the level. */
+  #setKind(k: Kind): void {
+    const d = this.#draft;
+    const rowLevel = (): ColumnLevel => (d.level === 'group' ? 'measure' : d.level);
+    this.#json = k === 'json';
+    if (k === 'formula' || k === 'json') { d.mode = 'expression'; d.level = rowLevel(); }
+    if (k === 'ratio') { d.mode = 'expression'; d.level = 'group'; }
+    if (k === 'children') { d.mode = 'children'; d.level = 'group'; }
+    if (k === 'window') d.mode = 'window';
+    if (k !== 'json') d.unnest = false;
+    // another kind: the last preview was of something else
+    this.#previewTable = undefined;
+    this.#previewNote = '';
+    this.#render();
+    this.#edited();
+  }
+
+  /**
+   * Every kind, always -- the rail keeps its shape -- each with why this cube cannot take it, when
+   * it cannot: a JSON field needs a JSON column; child groups, a cube that does not pivot.
+   */
+  #kinds(): readonly (KindMeta & { readonly unavailable?: string })[] {
+    const s = this.#options.snapshot();
+    const json = this.#options.readJson !== undefined
+      && rowColumns(s).some((c) => c.name !== this.#original && isVariant(c.type));
+    const children = s.pivotOn.length === 0 || this.#kind() === 'children';
+    return KINDS.map((k) => {
+      if (k.id === 'json' && !json) return { ...k, unavailable: 'This cube has no JSON column to read a field of' };
+      if (k.id === 'children' && !children) return { ...k, unavailable: 'Not on a cube that pivots its columns' };
+      return k;
+    });
+  }
+
+  // -- rendering -------------------------------------------------------------
+
   #render(): void {
     const doc = this.#doc;
     this.#root.replaceChildren();
-    this.#root.classList.add('dc-coleditor');
-    const form = el(doc, 'div', 'dc-coleditor-form', this.#root);
+    this.#root.classList.add('dc-coleditor', 'dc-xc');
+    const body = el(doc, 'div', 'dc-xc-body', this.#root);
 
-    const nameRow = field(doc, form, 'Column Name:');
-    const name = el(doc, 'input', 'dc-calc-input-name', nameRow) as HTMLInputElement;
+    // THE RAIL: this cube's calculated columns, to move between, and the kinds
+    const rail = el(doc, 'div', 'dc-xc-rail', body);
+    el(doc, 'div', 'dc-xc-rail-title', rail).textContent = 'Calculated columns';
+    const s = this.#options.snapshot();
+    const existing = [...s.derived, ...(s.groupDerived ?? [])];
+    const list = el(doc, 'div', 'dc-xc-columns', rail);
+    for (const d of existing) {
+      const b = el(doc, 'button', 'dc-xc-column', list) as HTMLButtonElement;
+      b.type = 'button';
+      b.textContent = d.name;
+      b.dataset['column'] = d.name;
+      const here = d.name === this.#original;
+      b.classList.toggle('dc-on', here);
+      b.setAttribute('aria-current', String(here));
+      if (!here) b.addEventListener('click', () => this.#switchTo({ edit: d.name }));
+    }
+    const fresh = el(doc, 'button', 'dc-xc-column dc-xc-new', list) as HTMLButtonElement;
+    fresh.type = 'button';
+    fresh.textContent = '+ New column';
+    fresh.classList.toggle('dc-on', this.#original === undefined);
+    if (this.#original !== undefined) fresh.addEventListener('click', () => this.#switchTo({}));
+
+    el(doc, 'div', 'dc-xc-rail-title', rail).textContent = 'Kind';
+    const kinds = el(doc, 'div', 'dc-xc-kinds', rail);
+    kinds.setAttribute('role', 'radiogroup');
+    kinds.setAttribute('aria-label', 'What it computes');
+    const kindNow = this.#kind();
+    for (const k of this.#kinds()) {
+      const b = el(doc, 'button', 'dc-xc-kind', kinds) as HTMLButtonElement;
+      b.type = 'button';
+      b.dataset['kind'] = k.id;
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(k.id === kindNow));
+      b.classList.toggle('dc-on', k.id === kindNow);
+      el(doc, 'span', 'dc-xc-kind-label', b).textContent = k.label;
+      el(doc, 'span', 'dc-xc-kind-hint', b).textContent = k.hint;
+      if (k.unavailable) {
+        b.disabled = true;
+        b.title = k.unavailable;
+      }
+      b.addEventListener('click', () => { if (this.#kind() !== k.id) this.#setKind(k.id); });
+    }
+
+    // THE PAGE: name, use, the builder, what the compiler says, the preview
+    const main = el(doc, 'div', 'dc-xc-main', body);
+    const head = el(doc, 'div', 'dc-xc-head', main);
+    const nameField = el(doc, 'label', 'dc-xc-name', head);
+    el(doc, 'span', 'dc-xc-label', nameField).textContent = 'Name';
+    const name = el(doc, 'input', 'dc-calc-input-name', nameField) as HTMLInputElement;
     name.type = 'text';
     name.value = this.#draft.name;
     name.spellcheck = false;
-    const nameMark = el(doc, 'span', 'dc-calc-namemark', nameRow);
+    const nameMark = el(doc, 'span', 'dc-calc-namemark', nameField);
     name.addEventListener('input', () => {
       this.#draft.name = name.value;
       this.#autoName = false;
       this.#edited();
     });
 
-    const levelRow = field(doc, form, 'Column Kind:');
-    const level = el(doc, 'select', 'dc-calc-level', levelRow) as HTMLSelectElement;
-    for (const l of LEVELS) {
-      const o = doc.createElement('option');
-      o.value = l.value;
-      o.textContent = l.label;
-      level.append(o);
-    }
-    level.value = this.#draft.level;
-    levelRow.append(docHint(doc, 'data-cube.extended-column.levels'));
-    level.addEventListener('change', () => {
-      this.#draft.level = level.value as ColumnLevel;
-      this.#edited();
-      // The scope changes with the level, so the completion list does.
-      this.#paintPicker(picker, expr);
-      this.#paintWindow(winBox);
-      this.#paintChildren(childBox);
-      showMode();
-    });
-
-    // EXPRESSION OR WINDOW: one row in, one value out -- or a value from
-    // the rows around it (a running total, a rank, the previous period).
-    const modeRow = field(doc, form, 'Calculation:');
-    const mode = el(doc, 'select', 'dc-calc-mode', modeRow) as HTMLSelectElement;
-    for (const [value, label] of [['expression', 'Expression'], ['window', 'Window (running, rank, previous…)'],
-      ['children', 'Child groups (min / max / … of the rows beneath)']] as const) {
-      const o = doc.createElement('option');
-      o.value = value;
-      o.textContent = label;
-      mode.append(o);
-    }
-    mode.value = this.#draft.mode;
-    const exprBox = el(doc, 'div', 'dc-calc-exprbox', form);
-    const winBox = el(doc, 'div', 'dc-calc-window', form);
-    const childBox = el(doc, 'div', 'dc-calc-children', form);
-    const showMode = (): void => {
-      // Child groups exist only after grouping: offered at Group Level.
-      const childOption = mode.querySelector<HTMLOptionElement>('option[value="children"]');
-      if (childOption) childOption.disabled = this.#draft.level !== 'group';
-      if (this.#draft.mode === 'children' && this.#draft.level !== 'group') {
-        this.#draft.mode = 'expression';
-        mode.value = 'expression';
+    // USE AS: a value of each row is a measure (summed when grouped) or a dimension (grouped
+    // by); a column computed after grouping is neither -- it is the group's own figure
+    const segmented = (parent: HTMLElement, cls: string, label: string,
+      options: readonly (readonly [string, string, string])[], value: string, onPick: (v: string) => void): void => {
+      const wrap = el(doc, 'div', `dc-xc-seg ${cls}`, parent);
+      el(doc, 'span', 'dc-xc-label', wrap).textContent = label;
+      const group = el(doc, 'div', 'dc-xc-seg-buttons', wrap);
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-label', label);
+      for (const [v, text, title] of options) {
+        const b = el(doc, 'button', 'dc-xc-seg-button', group) as HTMLButtonElement;
+        b.type = 'button';
+        b.dataset['value'] = v;
+        b.textContent = text;
+        b.title = title;
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(v === value));
+        b.classList.toggle('dc-on', v === value);
+        b.addEventListener('click', () => { if (v !== value) onPick(v); });
       }
-      exprBox.hidden = this.#draft.mode !== 'expression';
-      // JSON columns are source-row values: nothing to pick at Group Level.
-      jsonBox.hidden = this.#draft.level === 'group';
-      // explode repeats source rows: none left at Group Level
-      explodeRow.hidden = this.#draft.level === 'group';
-      winBox.hidden = this.#draft.mode !== 'window';
-      childBox.hidden = this.#draft.mode !== 'children';
     };
-    mode.addEventListener('change', () => {
-      this.#draft.mode = mode.value as Draft['mode'];
-      showMode();
-      this.#paintWindow(winBox);
-      this.#paintChildren(childBox);
+    const kind = this.#kind();
+    const meta = KINDS.find((k) => k.id === kind)!;
+    const builder = doc.createElement('div');
+    builder.className = 'dc-xc-builder';
+    el(doc, 'div', 'dc-xc-section', builder).textContent = meta.title;
+    if (kind === 'window') {
+      segmented(builder, 'dc-xc-over', 'Over', [
+        ['row', 'Source rows', 'Each source row, from the rows around it'],
+        ['group', 'Groups', 'Each group on the grid, from the groups around it'],
+      ], this.#draft.level === 'group' ? 'group' : 'row', (v) => {
+        this.#draft.level = v === 'group' ? 'group' : 'measure';
+        this.#render();
+        this.#edited();
+      });
+    }
+    if (this.#draft.level !== 'group') {
+      segmented(head, 'dc-xc-use', 'Use as', [
+        ['measure', 'Measure', 'Summed (or aggregated) when the cube groups'],
+        ['dimension', 'Dimension', 'Something to group by'],
+      ], this.#draft.level, (v) => {
+        this.#draft.level = v as ColumnLevel;
+        this.#render();
+        this.#edited();
+      });
+      head.querySelector('.dc-xc-use')?.append(docHint(doc, 'data-cube.extended-column.levels'));
+    }
+    const type = el(doc, 'span', 'dc-xc-type', head);
+    type.title = 'Its type, as the compiler gives it';
+    main.append(builder);
+
+    let expr: HTMLTextAreaElement | undefined;
+    if (kind === 'formula' || kind === 'ratio' || kind === 'json') {
+      if (kind === 'json') this.#paintJsonPick(builder, () => expr);
+      expr = this.#paintFormula(builder, kind);
+      if (kind === 'json') {
+        // EXPLODE: the expression yields a collection; each row repeats once per element
+        const explodeRow = el(doc, 'label', 'dc-calc-explode', builder);
+        const explode = el(doc, 'input', 'dc-calc-input-explode', explodeRow) as HTMLInputElement;
+        explode.type = 'checkbox';
+        explode.checked = this.#draft.unnest;
+        explodeRow.append(doc.createTextNode(' One row per element (explode)'));
+        explodeRow.title = 'Each row repeats once per element of the collection the expression yields. '
+          + 'A figure of the row itself (an order total) then appears once per element: summing it counts it again.';
+        explode.addEventListener('change', () => {
+          this.#draft.unnest = explode.checked;
+          this.#edited();
+        });
+      }
+    }
+    if (kind === 'window') this.#paintWindow(el(doc, 'div', 'dc-calc-window', builder));
+    if (kind === 'children') this.#paintChildren(el(doc, 'div', 'dc-calc-children', builder));
+
+    const check = el(doc, 'div', 'dc-calc-check', main);
+    check.setAttribute('role', 'status');
+    const problem = el(doc, 'p', 'dc-calc-problem', main);
+    problem.setAttribute('role', 'alert');
+
+    // THE PREVIEW: the first rows, the new column beside what it reads -- recomputed as it changes
+    const preview = el(doc, 'div', 'dc-xc-preview', main);
+    if (!this.#options.preview) preview.hidden = true;
+
+    const footer = el(doc, 'div', 'dc-calc-footer dc-xc-foot', this.#root);
+    const button = (label: string, cls: string, onClick: () => void): HTMLButtonElement => {
+      const b = el(doc, 'button', `dc-button ${cls}`, footer) as HTMLButtonElement;
+      b.type = 'button';
+      b.textContent = label;
+      b.addEventListener('click', onClick);
+      return b;
+    };
+    if (this.#original !== undefined) {
+      button('Delete', 'dc-calc-delete', () => void this.#delete());
+      button('Reset', 'dc-calc-reset', () => this.#reset());
+    }
+    el(doc, 'span', 'dc-xc-spacer', footer);
+    button('Cancel', 'dc-calc-cancel', () => this.#options.onClose());
+    const ok = button('OK', 'dc-calc-ok', () => void this.#ok());
+
+    this.#els = { ...(expr ? { expr } : {}), nameMark, check, problem, ok, preview, type };
+    this.#paint();
+  }
+
+  /** Open another calculated column (or a new one) in this window's place. */
+  #switchTo(start: ColumnEditorStart): void {
+    if (!this.#options.openOther) return;
+    this.#options.openOther(start);
+  }
+
+  /**
+   * The formula: the lambda's parameter (`x|`) fixed in front, the person's expression after it,
+   * and what can go in it -- the columns in scope and the functions -- a click away.
+   */
+  #paintFormula(box: HTMLElement, kind: Kind): HTMLTextAreaElement {
+    const doc = this.#doc;
+    const split = splitHead(this.#draft.expression);
+    this.#head = split.head;
+    const code = el(doc, 'div', 'dc-xc-code', box);
+    const prefix = el(doc, 'span', 'dc-xc-prefix', code);
+    prefix.textContent = this.#head;
+    prefix.title = 'The row: $x.<column> reads a column of it';
+    const expr = el(doc, 'textarea', 'dc-calc-input-expr', code) as HTMLTextAreaElement;
+    expr.value = split.body;
+    expr.rows = 3;
+    expr.spellcheck = false;
+    expr.setAttribute('aria-label', 'Expression');
+    expr.placeholder = kind === 'ratio' ? '$x.pnl / $x.notional' : '$x.notional * 1.1';
+    expr.addEventListener('input', () => {
+      // a whole lambda pasted (`x|...`): its parameter goes in front, the rest stays here
+      const again = splitHead(expr.value);
+      if (again.head !== '' && again.body !== expr.value) {
+        this.#head = again.head;
+        prefix.textContent = again.head;
+        const at = Math.max(0, (expr.selectionStart ?? 0) - (expr.value.length - again.body.length));
+        expr.value = again.body;
+        expr.setSelectionRange(at, at);
+      }
+      this.#draft.expression = this.#head + expr.value;
       this.#edited();
     });
+    const tools = el(doc, 'div', 'dc-xc-tools', box);
+    const insert = el(doc, 'div', 'dc-calc-picker dc-xc-insert', box);
+    insert.hidden = true;
+    const toggle = (what: 'column' | 'function', label: string): void => {
+      const b = el(doc, 'button', 'dc-button dc-xc-tool', tools) as HTMLButtonElement;
+      b.type = 'button';
+      b.textContent = label;
+      b.dataset['insert'] = what;
+      b.addEventListener('click', () => {
+        const showing = !insert.hidden && insert.dataset['what'] === what;
+        for (const t of tools.querySelectorAll('.dc-xc-tool')) t.classList.remove('dc-on');
+        if (showing) { insert.hidden = true; return; }
+        b.classList.add('dc-on');
+        insert.hidden = false;
+        insert.dataset['what'] = what;
+        this.#paintPicker(insert, expr, what);
+      });
+    };
+    toggle('column', '+ Column');
+    toggle('function', '+ Function');
+    return expr;
+  }
 
-    // FROM A JSON COLUMN: pick a field and the name, kind and Pure are
-    // filled in below -- then compiled and applied like anything typed.
-    const jsonBox = el(doc, 'div', 'dc-calc-json', exprBox);
-    /** An extraction into the form: name, kind, explode, and the compiler's print of its Pure. */
+  /** A JSON column's field, picked: the name, the use, explode and the formula are filled in. */
+  #paintJsonPick(box: HTMLElement, expr: () => HTMLTextAreaElement | undefined): void {
+    const doc = this.#doc;
+    const pickBox = el(doc, 'div', 'dc-calc-json', box);
+    // A PICK fills the page IN PLACE -- the name, the use, explode and the formula -- rather than
+    // rebuilding it: the person is in the middle of the JSON fields and the ticks below.
     const take = (e: Extraction): void => {
+      const q = <T extends Element>(sel: string): T | null => this.#root.querySelector<T>(sel);
       if (this.#autoName) {
         const taken = new Set(rowColumns(this.#options.snapshot()).map((c) => c.name));
         this.#draft.name = freeName(e.name, taken);
-        name.value = this.#draft.name;
+        const nameInput = q<HTMLInputElement>('.dc-calc-input-name');
+        if (nameInput) nameInput.value = this.#draft.name;
       }
       this.#draft.level = e.kind;
-      level.value = e.kind;
+      for (const b of this.#root.querySelectorAll<HTMLElement>('.dc-xc-use .dc-xc-seg-button')) {
+        const on = b.dataset['value'] === e.kind;
+        b.classList.toggle('dc-on', on);
+        b.setAttribute('aria-checked', String(on));
+      }
       this.#draft.unnest = e.unnest === true;
-      explode.checked = this.#draft.unnest;
+      const explode = q<HTMLInputElement>('.dc-calc-input-explode');
+      if (explode) explode.checked = this.#draft.unnest;
       // the extraction is a tree; the person edits the compiler's print of it
       void this.#options.print(e.lambda).then((text) => {
         this.#draft.expression = text;
-        expr.value = text;
-        this.#paintPicker(picker, expr);
+        const split = splitHead(text);
+        this.#head = split.head;
+        const prefix = q<HTMLElement>('.dc-xc-prefix');
+        if (prefix) prefix.textContent = split.head;
+        const box2 = expr();
+        if (box2) box2.value = split.body;
         this.#edited();
       });
     };
     // AN EXPLODE OF OBJECTS: which of each element's fields the ONE column holds -- one ticked,
     // its value; several, a tuple `(billing, Paris)`; none, the element as JSON.
-    const explodeFields = el(doc, 'div', 'dc-calc-explode-fields', exprBox);
-    explodeFields.hidden = true;
-    const paintExplode = (e: Extraction): void => {
-      explodeFields.replaceChildren();
+    const paintExplode = (e: Extraction, into: HTMLElement): void => {
+      into.replaceChildren();
       const ex = e.explode;
-      explodeFields.hidden = ex === undefined;
+      into.hidden = ex === undefined;
       if (!ex) return;
-      el(doc, 'div', 'dc-calc-explode-note', explodeFields).textContent =
+      el(doc, 'div', 'dc-calc-explode-note', into).textContent =
         'Each element becomes: the fields ticked, one column -- several make a tuple.';
       const chosen = new Set(ex.fields.map((f) => f.key));
       for (const f of ex.fields) {
-        const row = el(doc, 'label', 'dc-calc-explode-field', explodeFields);
+        const row = el(doc, 'label', 'dc-calc-explode-field', into);
         const tick = el(doc, 'input', 'dc-calc-explode-tick', row) as HTMLInputElement;
         tick.type = 'checkbox';
         tick.checked = true;
@@ -608,64 +874,12 @@ export class ColumnEditor {
         });
       }
     };
-    this.#paintJson(jsonBox, (e) => {
+    const explodeFields = el(doc, 'div', 'dc-calc-explode-fields', box);
+    explodeFields.hidden = true;
+    this.#paintJson(pickBox, (e) => {
       take(e);
-      paintExplode(e);
+      paintExplode(e, explodeFields);
     });
-
-    const exprRow = el(doc, 'label', 'dc-coleditor-code', exprBox);
-    const expr = el(doc, 'textarea', 'dc-calc-input-expr', exprRow) as HTMLTextAreaElement;
-    expr.value = this.#draft.expression;
-    expr.rows = 4;
-    expr.spellcheck = false;
-    expr.setAttribute('aria-label', 'Expression');
-    expr.placeholder = 'x|$x.notional * 1.05';
-    expr.addEventListener('input', () => {
-      this.#draft.expression = expr.value;
-      this.#edited();
-    });
-
-    // EXPLODE: the expression yields a collection; each row repeats once per element.
-    const explodeRow = el(doc, 'label', 'dc-calc-explode', exprBox);
-    const explode = el(doc, 'input', 'dc-calc-input-explode', explodeRow) as HTMLInputElement;
-    explode.type = 'checkbox';
-    explode.checked = this.#draft.unnest;
-    explodeRow.append(doc.createTextNode(' One row per element (explode)'));
-    explodeRow.title = 'Each row repeats once per element of the collection the expression yields. '
-      + 'A figure of the row itself (an order total) then appears once per element: summing it counts it again.';
-    explode.addEventListener('change', () => {
-      this.#draft.unnest = explode.checked;
-      this.#edited();
-    });
-
-    const check = el(doc, 'div', 'dc-calc-check', form);
-    check.setAttribute('role', 'status');
-    const problem = el(doc, 'p', 'dc-calc-problem', form);
-    problem.setAttribute('role', 'alert');
-
-    const picker = el(doc, 'div', 'dc-calc-picker', exprBox);
-    this.#paintPicker(picker, expr);
-    this.#paintWindow(winBox);
-    this.#paintChildren(childBox);
-    showMode();
-
-    const footer = el(doc, 'div', 'dc-calc-footer', this.#root);
-    const button = (label: string, cls: string, onClick: () => void): HTMLButtonElement => {
-      const b = el(doc, 'button', `dc-button ${cls}`, footer) as HTMLButtonElement;
-      b.type = 'button';
-      b.textContent = label;
-      b.addEventListener('click', onClick);
-      return b;
-    };
-    button('Cancel', 'dc-calc-cancel', () => this.#options.onClose());
-    if (this.#original !== undefined) {
-      button('Delete', 'dc-calc-delete', () => void this.#delete());
-      button('Reset', 'dc-calc-reset', () => this.#reset());
-    }
-    const ok = button('OK', 'dc-calc-ok', () => void this.#ok());
-
-    this.#els = { expr, nameMark, check, problem, ok };
-    this.#paint();
   }
 
   /** Everything that follows the draft, without disturbing the inputs. */
@@ -725,6 +939,72 @@ export class ColumnEditor {
     problem.textContent = message ?? '';
     problem.hidden = message === null;
     ok.disabled = this.#busy || !this.#canApply();
+    this.#paintPreview();
+  }
+
+  // -- the preview -------------------------------------------------------------
+
+  /** The first rows with the draft in the cube: asked once it compiles. */
+  async #refreshPreview(lambda?: Lambda): Promise<void> {
+    const preview = this.#options.preview;
+    if (!preview) return;
+    this.#previewAbort?.abort();
+    const abort = new AbortController();
+    this.#previewAbort = abort;
+    this.#previewNote = 'Computing\u2026';
+    this.#paintPreview();
+    try {
+      const table = await preview(this.#candidate(lambda), this.#draft.name.trim(), abort.signal);
+      if (abort.signal.aborted) return;
+      this.#previewTable = table;
+      this.#previewNote = '';
+    } catch (error: unknown) {
+      if (abort.signal.aborted) return;
+      this.#previewTable = undefined;
+      this.#previewNote = error instanceof Error ? error.message : String(error);
+    }
+    this.#paintPreview();
+  }
+
+  #paintPreview(): void {
+    const box = this.#els.preview;
+    const type = this.#els.type;
+    if (!this.#options.preview) return;
+    const doc = this.#doc;
+    box.replaceChildren();
+    const head = el(doc, 'div', 'dc-xc-section', box);
+    head.textContent = 'Preview';
+    const fresh = this.#check.state === 'ok';
+    const t = this.#previewTable;
+    const name = this.#draft.name.trim();
+    const mine = t?.columns.find((c) => c.name === name);
+    type.textContent = fresh && mine?.type ? mine.type : '';
+    type.hidden = type.textContent === '';
+    if (this.#previewNote) el(doc, 'span', 'dc-xc-preview-note', head).textContent = this.#previewNote;
+    else if (!fresh) el(doc, 'span', 'dc-xc-preview-note', head).textContent = 'as it last compiled';
+    if (!t) {
+      if (!this.#previewNote) {
+        el(doc, 'p', 'dc-xc-preview-empty', box).textContent = 'The first rows appear here once the column compiles.';
+      }
+      return;
+    }
+    const scroll = el(doc, 'div', 'dc-xc-preview-scroll', box);
+    const table = el(doc, 'table', 'dc-xc-preview-table', scroll);
+    table.classList.toggle('dc-stale', !fresh);
+    const tr = el(doc, 'tr', '', el(doc, 'thead', '', table));
+    for (const c of t.columns) {
+      const th = el(doc, 'th', c.name === name ? 'dc-xc-new-col' : '', tr);
+      th.textContent = c.name;
+    }
+    const tbody = el(doc, 'tbody', '', table);
+    for (const row of t.rows) {
+      const r = el(doc, 'tr', '', tbody);
+      row.forEach((v, i) => {
+        const td = el(doc, 'td', t.columns[i]?.name === name ? 'dc-xc-new-col' : '', r);
+        td.textContent = v;
+      });
+    }
+    if (t.rows.length === 0) el(doc, 'p', 'dc-xc-preview-empty', box).textContent = 'No rows.';
   }
 
   /** A JSON column to pick from, and its fields once one is chosen. */
@@ -970,15 +1250,17 @@ export class ColumnEditor {
     }
   }
 
-  #paintPicker(picker: HTMLElement, expr: HTMLTextAreaElement): void {
+  #paintPicker(picker: HTMLElement, expr: HTMLTextAreaElement, what: 'column' | 'function'): void {
     const doc = this.#doc;
     picker.replaceChildren();
     // Scope is the cube WITHOUT this column: a column cannot see itself.
     const s = this.#options.snapshot();
-    const offered = completionsFor(s, this.#stage(), this.#original, this.#pivot());
+    const offered = completionsFor(s, this.#stage(), this.#original, this.#pivot())
+      .filter((c) => (what === 'column' ? c.kind === 'column' : c.kind !== 'column'));
     const search = el(doc, 'input', 'dc-calc-search', picker) as HTMLInputElement;
     search.type = 'search';
-    search.placeholder = `Insert — ${offered.length} in scope`;
+    search.placeholder = what === 'column' ? `Search ${offered.length} columns` : `Search ${offered.length} functions`;
+    search.focus();
     const items = el(doc, 'ul', 'dc-calc-items', picker);
     const paint = (filter: string): void => {
       items.replaceChildren();
@@ -1013,7 +1295,7 @@ export class ColumnEditor {
       const after = at + c.insert.length;
       expr.setSelectionRange(after, after);
       expr.focus();
-      this.#draft.expression = expr.value;
+      this.#draft.expression = this.#head + expr.value;
       this.#edited();
     });
   }

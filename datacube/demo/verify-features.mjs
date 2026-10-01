@@ -2637,6 +2637,20 @@ try {
    * does: name, kind, expression, wait for the compile, OK. A draft
    * the compiler refuses leaves its window open, OK disabled.
    */
+  /**
+   * The column editor's kind, as a person picks it (src/ui/column-editor.ts): the rail's kind --
+   * a formula, a ratio of totals (computed after grouping), a window, the child groups -- then,
+   * for a window, over source rows or groups, and for a value of each row, Measure or Dimension.
+   */
+  const calcKind = async (level, mode = 'expression') => {
+    const kind = mode === 'window' ? 'window' : mode === 'children' ? 'children' : level === 'group' ? 'ratio' : 'formula';
+    await page.locator(`.dc-coleditor .dc-xc-kind[data-kind="${kind}"]`).click();
+    if (kind === 'window') {
+      await page.locator(`.dc-coleditor .dc-xc-over [data-value="${level === 'group' ? 'group' : 'row'}"]`).click();
+    }
+    if (level !== 'group') await page.locator(`.dc-coleditor .dc-xc-use [data-value="${level}"]`).click();
+  };
+
   const addCalc = async (stage, name, expression, kind = 'measure') => {
     await openCalc();
     await page.fill('.dc-coleditor .dc-calc-input-name', name);
@@ -2644,7 +2658,7 @@ try {
     // what a user who never touches the kind gets.
     const level = stage === 1 ? 'group' : kind;
     if (level !== null) {
-      await page.locator('.dc-coleditor .dc-calc-level').selectOption(level);
+      await calcKind(level);
     }
     await page.fill('.dc-coleditor .dc-calc-input-expr', expression);
     const check = await compiledCheck();
@@ -2843,7 +2857,8 @@ try {
     // nothing offered may be refused. So every offered column that is
     // not a row dimension is compiled, through the product's own check.
     await openCalc();
-    await page.locator('.dc-coleditor .dc-calc-level').selectOption('group');
+    await calcKind('group');
+    await page.locator('.dc-coleditor .dc-xc-tool[data-insert="column"]').click();
     const offered = await page.locator('.dc-coleditor .dc-calc-item-column'
       + ' .dc-calc-item-label').allTextContents();
     const dims = await dimensionNames();
@@ -3099,7 +3114,9 @@ try {
       const form = await page.evaluate(() => ({
         open: document.querySelectorAll('.dc-coleditor').length,
         name: document.querySelector('.dc-coleditor .dc-calc-input-name')?.value ?? null,
-        expr: document.querySelector('.dc-coleditor .dc-calc-input-expr')?.value ?? null,
+        // the formula as written: the lambda's head, shown fixed, then the box
+        expr: (document.querySelector('.dc-coleditor .dc-xc-prefix')?.textContent ?? '')
+          + (document.querySelector('.dc-coleditor .dc-calc-input-expr')?.value ?? ''),
         problem: document.querySelector('.dc-coleditor .dc-calc-check')?.textContent ?? '',
       }));
       await closeCalc();
@@ -3123,8 +3140,7 @@ try {
     await openCalc();
     const ed = (sel) => page.locator(`.dc-coleditor ${sel}`);
     await page.fill('.dc-coleditor .dc-calc-input-name', name);
-    await ed('.dc-calc-level').selectOption(level);
-    await ed('.dc-calc-mode').selectOption('window');
+    await calcKind(level, 'window');
     await ed('.dc-win-fn').selectOption(fn);
     if (of) await ed('.dc-win-column').selectOption(of);
     for (const p of partition) await ed(`.dc-win-part-check[value="${p}"]`).check();
@@ -3252,8 +3268,7 @@ try {
     await openCalc();
     const ed = (sel) => page.locator(`.dc-coleditor ${sel}`);
     await page.fill('.dc-coleditor .dc-calc-input-name', name);
-    await ed('.dc-calc-level').selectOption('group');
-    await ed('.dc-calc-mode').selectOption('children');
+    await calcKind('group', 'children');
     await ed('.dc-child-fn').selectOption(fn);
     await ed('.dc-child-of').selectOption(of);
     const verdict = await compiledCheck();
@@ -3356,8 +3371,9 @@ try {
         { col: await needCol('notional'), requery: false });
       await page.waitForSelector('.dc-coleditor', { timeout: 5000 });
       const seeded = await page.evaluate(() => ({
-        expr: document.querySelector('.dc-coleditor .dc-calc-input-expr')?.value,
-        kind: document.querySelector('.dc-coleditor .dc-calc-level')?.value,
+        expr: (document.querySelector('.dc-coleditor .dc-xc-prefix')?.textContent ?? '')
+          + (document.querySelector('.dc-coleditor .dc-calc-input-expr')?.value ?? ''),
+        kind: document.querySelector('.dc-coleditor .dc-xc-use .dc-on')?.dataset.value,
       }));
       if (seeded.expr !== 'x|$x.notional' || seeded.kind !== 'measure') {
         throw new Error(`Extend seeded ${JSON.stringify(seeded)}`);
@@ -3410,7 +3426,9 @@ try {
       await page.fill('.dc-coleditor .dc-calc-input-expr', 'x|$x.notional->toOne() * 9');
       // Reset, as upstream's: back to what the column had.
       await page.locator('.dc-coleditor .dc-calc-reset').click();
-      const expr = await page.inputValue('.dc-coleditor .dc-calc-input-expr');
+      // the formula as written: the lambda's head, shown fixed, then the box
+      const expr = (await page.textContent('.dc-coleditor .dc-xc-prefix'))
+        + (await page.inputValue('.dc-coleditor .dc-calc-input-expr'));
       await closeCalc();
       await clearCalcs();
       if (expr !== 'x|$x.notional->toOne() * 1.1') throw new Error(`Reset left ${expr}`);
