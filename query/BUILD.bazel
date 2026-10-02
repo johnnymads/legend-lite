@@ -107,8 +107,8 @@ js_binary(
     entry_point = "demo/serve.mjs",
 )
 
-# `bazel run //query:verify`: the app end to end in Chromium against a legend-lite server it
-# starts (needs java on the PATH and Playwright's Chromium, installed once).
+# `bazel run //query:verify`: the app end to end in Chromium, in the browser, against a legend-lite
+# server and against a warehouse it starts (needs Playwright's Chromium, installed once).
 js_binary(
     name = "verify",
     data = [
@@ -116,8 +116,15 @@ js_binary(
         ":node_modules/playwright",
         # legend-lite's server through its Bazel launcher: the hermetic JDK, whatever `java` a machine has
         "//core:server",
+        # the warehouse, as DataCube's live_snap_test runs it: the native image and its DuckDB
+        "//warehouse:duckdb_library",
+        "//warehouse:server_native",
     ],
     entry_point = "demo/verify.mjs",
+    env = {
+        "WAREHOUSE_BINARY": "$(rootpath //warehouse:server_native)",
+        "WAREHOUSE_DUCKDB_LIBRARY": "$(rootpath //warehouse:duckdb_library)",
+    },
     # CI's browser lane runs it (.github/workflows/gates-run.yml), with DataCube's harnesses
     tags = ["browser-ci"],
 )

@@ -1,8 +1,10 @@
 // `bazel run //query:verify`: the Query app end to end in a real browser (Chromium, headless), in
-// both places queries run: IN THE BROWSER (the tab's planner writes the SQL, DuckDB-WASM runs it,
-// saved queries in IndexedDB -- no server) and ON legend-lite's SERVER (it executes and keeps saved
-// queries; started here with an empty store). The same steps, each asserting what a person would
-// see -- rows, not "a request was made". Exit code 0 when every step holds in both.
+// each place queries run: IN THE BROWSER (the tab's planner writes the SQL, DuckDB-WASM runs it,
+// saved queries in IndexedDB -- no server), ON legend-lite's SERVER (it executes and keeps saved
+// queries; started here with an empty store) and ON A WAREHOUSE (the tab's planner writes the SQL,
+// the warehouse's DuckDB runs it as the signed-in user; started here, empty, seeded by the app).
+// The same steps, each asserting what a person would see -- rows, not "a request was made". Exit
+// code 0 when every step holds in all three.
 //
 // Needs Playwright's Chromium (`bazel run //datacube:install_browser` once); legend-lite's server comes with its JDK.
 
@@ -37,7 +39,26 @@ let engineLog = '';
 engine.stdout.on('data', (d) => { engineLog += d; });
 engine.stderr.on('data', (d) => { engineLog += d; });
 
-// ---- the site; config-server.json points at that server
+// ---- a warehouse, for the warehouse mode: the native image DataCube's live_snap_test runs, its
+// data in this run's directory; alice owns it (the demo's seed creates its tables as her)
+const SITE_ORIGIN = `http://127.0.0.1:${SITE_PORT}`;
+// the env's paths are Bazel rootpaths: from the main workspace, the directory above this package
+const MAIN = resolve(ROOT, '..');
+const warehouse = spawn(join(MAIN, process.env.WAREHOUSE_BINARY ?? ''), [
+  '--port', '0', '--data', join(store, 'warehouse'), '--user', 'alice:alice-pw', '--owner', 'alice',
+  '--allow-origin', SITE_ORIGIN, '--duckdb-library', join(MAIN, process.env.WAREHOUSE_DUCKDB_LIBRARY ?? ''),
+], { stdio: ['ignore', 'ignore', 'pipe'] });
+let warehouseLog = '';
+const warehouseUrl = new Promise((ok, fail) => {
+  warehouse.stderr.on('data', (d) => {
+    warehouseLog += d;
+    const m = /listening on 127\.0\.0\.1:(\d+)/.exec(warehouseLog);
+    if (m) ok(`http://127.0.0.1:${m[1]}`);
+  });
+  warehouse.on('exit', (code) => fail(new Error(`the warehouse exited (${code}):\n${warehouseLog}`)));
+});
+
+// ---- the site; config-server.json points at that server, config-warehouse.json at that warehouse
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm',
   '.json': 'application/json', '.pure': 'text/plain', '.sql': 'text/plain',
@@ -48,6 +69,12 @@ const site = createServer(async (req, res) => {
     if (pathname === '/demo/config-server.json') {
       const config = JSON.parse(await readFile(join(ROOT, 'demo', 'config-server.json'), 'utf8'));
       config.execution.engine = `http://127.0.0.1:${ENGINE_PORT}/api`;
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(config));
+      return;
+    }
+    if (pathname === '/demo/config-warehouse.json') {
+      const config = JSON.parse(await readFile(join(ROOT, 'demo', 'config-warehouse.json'), 'utf8'));
+      config.execution.url = await warehouseUrl;
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(config));
       return;
     }
@@ -96,13 +123,30 @@ async function cubeRows(page) {
   return page.$$eval('.q-cube .dc-row', (rows) => rows.map((r) => [...r.querySelectorAll('.dc-cell')].map((c) => c.textContent?.trim())));
 }
 
-/** Every step, on the page `query` configures (`''`: in the browser; `?config=...`: elsewhere). */
-async function suite(title, query) {
+/** The warehouse's sign-in form, answered as alice: the app asks on every load and stores nothing. */
+async function signIn(page) {
+  await page.fill('input[autocomplete=username]', 'alice', { timeout: 60000 });
+  await page.fill('input[type=password]', 'alice-pw');
+  await page.click('button[type=submit]');
+}
+
+/**
+ * Every step, on the page `query` configures (`''`: in the browser; `?config=...`: elsewhere);
+ * `signedIn`: each load of the page (a step's goto, a reload) answers the warehouse's sign-in.
+ */
+async function suite(title, query, signedIn = false) {
   console.log(`\n${title}:`);
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const app = (hash = '') => `${PAGE}${query}${hash}`;
   const step = async (name, fn) => {
     const page = await context.newPage();
+    if (signedIn) {
+      for (const load of ['goto', 'reload']) {
+        const original = page[load].bind(page);
+        // a hash-only goto stays in the document (Playwright answers null): no new sign-in then
+        page[load] = async (...args) => { const r = await original(...args); if (r !== null) await signIn(page); return r; };
+      }
+    }
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     try {
@@ -399,14 +443,16 @@ try {
   console.log('Query app, end to end');
   await suite('In the browser (DuckDB-WASM, no server)', '');
   await suite("On legend-lite's server", '?config=config-server.json');
+  await suite('On a warehouse (its DuckDB, signed in)', '?config=config-warehouse.json', true);
 } finally {
   await browser?.close();
   site.close();
   engine.kill();
+  warehouse.kill();
 }
 
 if (failures > 0) {
   console.log(`\n${failures} step(s) failed; screenshots in ${store}`);
   process.exit(1);
 }
-console.log('\nevery step holds, in both');
+console.log('\nevery step holds, in all three');

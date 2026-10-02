@@ -17,7 +17,7 @@ last and deferred.
 
 - **Three planes, one app** (`query/demo/config*.json`): in the browser (legend-lite's planner as WebAssembly
   plans, DuckDB-WASM in the tab runs; saved queries in IndexedDB -- no server at all), the warehouse
-  (DataCube's Live plane: the warehouse's DuckDB as the signed-in user; wired, not yet run against a real one),
+  (DataCube's Live plane: the warehouse's DuckDB as the signed-in user; run by `//query:verify` on the native warehouse it starts, every step as in the other planes),
   and legend-lite's server (it plans, executes and keeps saved queries; `--query-store DIR`).
 - **Server: thin API only** (`PureV1Api`, `SavedQueries`): execute with `parameterValues`, graphFetch results,
   `compilation/compile`, `lambdaReturnType`, the query store, `currentUser` -- each routed to existing lite
