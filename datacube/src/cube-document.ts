@@ -80,8 +80,36 @@ export interface QuerySource {
   readonly columns: readonly { readonly name: string; readonly type: string }[];
 }
 
-/** Where a cube's rows come from: a file, or a saved query. */
-export type CubeSource = FileSource | QuerySource;
+/**
+ * A WAREHOUSE TABLE the cube was built over, by where it is: the warehouse's address, the table,
+ * the columns it had. Never a sign-in: whoever reopens it signs in as themselves, and the
+ * warehouse's grants decide what they may read.
+ */
+export interface WarehouseSource {
+  readonly _type: 'warehouseTable';
+  /** `schema.table`: what a person calls this source. */
+  readonly name: string;
+  /** The warehouse's address, as its sign-in names it. */
+  readonly warehouse: string;
+  readonly schema: string;
+  readonly table: string;
+  readonly columns: readonly { readonly name: string; readonly type: string }[];
+}
+
+/**
+ * A REMOTE FILE the cube was built over (Parquet, CSV or Iceberg by URL), by where it is. Never
+ * its keys: a private bucket asks for them again when the cube is reopened.
+ */
+export interface RemoteSource {
+  readonly _type: 'remoteFile';
+  /** The file's name, the URL's last part: what a person calls this source. */
+  readonly name: string;
+  readonly url: string;
+  readonly columns: readonly { readonly name: string; readonly type: string }[];
+}
+
+/** Where a cube's rows come from: a file, a saved query, a warehouse table, a remote file. */
+export type CubeSource = FileSource | QuerySource | WarehouseSource | RemoteSource;
 
 /** The cube's definition: a snapshot without its runtime state (source relation, epoch, row window). */
 export type SavedQuery = Omit<CubeSnapshot, 'source' | 'epoch' | 'window'>;
@@ -204,6 +232,8 @@ function readSource(raw: unknown): CubeSource {
   const s = plain(raw);
   if (!isObject(s)) throw new CubeDocumentError("missing 'source'");
   if (s['_type'] === 'savedQuery') return readQuerySource(s);
+  if (s['_type'] === 'warehouseTable') return readWarehouseSource(s);
+  if (s['_type'] === 'remoteFile') return readRemoteSource(s);
   if (s['_type'] !== 'file') {
     throw new CubeDocumentError(`a source of kind ${JSON.stringify(s['_type'] ?? null)} is not supported yet`);
   }
@@ -223,6 +253,31 @@ function readSource(raw: unknown): CubeSource {
     throw new CubeDocumentError(`an unknown file format ${JSON.stringify(s['format'])}`);
   }
   return s as unknown as FileSource;
+}
+
+/** The columns a source had: each a name and a type. */
+function hasColumns(s: Record<string, unknown>): boolean {
+  const columns = s['columns'];
+  return Array.isArray(columns)
+    && columns.every((c) => isObject(c) && typeof c['name'] === 'string' && typeof c['type'] === 'string');
+}
+
+function readWarehouseSource(s: Record<string, unknown>): WarehouseSource {
+  for (const f of ['name', 'warehouse', 'schema', 'table']) {
+    if (typeof s[f] !== 'string' || s[f] === '') throw new CubeDocumentError(`the warehouse table source has no ${f}`);
+  }
+  if (!hasColumns(s)) throw new CubeDocumentError('the warehouse table source has no columns');
+  if ('password' in s || 'token' in s) throw new CubeDocumentError('the warehouse table source carries a credential: it is refused');
+  return s as unknown as WarehouseSource;
+}
+
+function readRemoteSource(s: Record<string, unknown>): RemoteSource {
+  for (const f of ['name', 'url']) {
+    if (typeof s[f] !== 'string' || s[f] === '') throw new CubeDocumentError(`the remote file source has no ${f}`);
+  }
+  if (!hasColumns(s)) throw new CubeDocumentError('the remote file source has no columns');
+  if ('secretAccessKey' in s || 'secret' in s) throw new CubeDocumentError('the remote file source carries a credential: it is refused');
+  return s as unknown as RemoteSource;
 }
 
 function readQuerySource(s: Record<string, unknown>): QuerySource {

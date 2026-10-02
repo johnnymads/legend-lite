@@ -19,8 +19,17 @@ const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm',
   '.pure': 'text/plain', '.sql': 'text/plain', '.json': 'application/json', '.woff2': 'font/woff2',
 };
+// A REMOTE FILE to read by URL, which can be made to refuse (as a private bucket refuses without its keys)
+let remoteRefuses = false;
+const REMOTE_CSV = ['side,qty', ...Array.from({ length: 30 }, (_, i) => `${['BUY', 'SELL', 'HOLD'][i % 3]},${(i + 1) * 10}`)].join('\n') + '\n';
 const server = createServer(async (req, res) => {
   const { pathname } = new URL(req.url ?? '/', 'http://x');
+  if (pathname === '/remote/positions.csv') {
+    if (remoteRefuses) { res.writeHead(403, { 'Content-Type': 'text/plain' }).end('forbidden'); return; }
+    res.writeHead(200, { 'Content-Type': 'text/csv', 'Content-Length': Buffer.byteLength(REMOTE_CSV), 'Accept-Ranges': 'bytes' });
+    res.end(req.method === 'HEAD' ? undefined : REMOTE_CSV);
+    return;
+  }
   const base = pathToFileURL(ROOT.endsWith(sep) ? ROOT : `${ROOT}${sep}`);
   const file = new URL(`.${pathname}`, base);
   try {
@@ -193,6 +202,75 @@ try {
     console.log('DataCube: Save of that cube, reopened from Open… after a reload, grouped by Side');
   } finally {
     await other.close();
+  }
+  // ---- A CUBE OVER A REMOTE FILE: opened by URL, grouped, shared, saved; refused, it asks for keys
+  const remoteCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  try {
+    const r = await remoteCtx.newPage();
+    r.on('pageerror', (e) => errors.push(`datacube (remote): ${e.message}`));
+    const menuOf = async (...path) => {
+      await r.click('.dc-titlebar-menu');
+      for (const [i, label] of path.entries()) {
+        const item = r.locator('.dc-menu .dc-menu-item', { has: r.locator(`:scope > .dc-menu-label:text-is(${JSON.stringify(label)})`) }).first();
+        if (i < path.length - 1) await item.hover(); else await item.click();
+      }
+    };
+    const threeGroups = (p) => p.waitForFunction(() => {
+      const rows = [...document.querySelectorAll('.dc-row')].map((x) => x.textContent ?? '');
+      return rows.length === 3 && ['BUY', 'HOLD', 'SELL'].every((s) => rows.some((t) => t.includes(s)));
+    }, undefined, { timeout: 60_000 });
+    await r.goto(`${ORIGIN}/datacube/demo/index.html`);
+    await r.waitForSelector('.dc-row', { timeout: 120_000 });
+    await menuOf('New', 'Blank Page');
+    await r.click('.dc-blank .dc-primary');
+    await r.locator('.dc-picker-tab[data-section="remote"]').click();
+    await r.fill('.dc-picker-url', `${ORIGIN}/remote/positions.csv`);
+    await r.click('.dc-picker-form button[type=submit]');
+    await r.waitForSelector('.dc-picker', { state: 'detached', timeout: 60_000 });
+    await r.waitForFunction(() => document.querySelectorAll('.dc-row').length === 30, undefined, { timeout: 60_000 });
+    await r.locator('.dc-row').first().locator('.dc-cell').nth(0).click({ button: 'right' });
+    await r.locator('.dc-menu .dc-menu-item', { has: r.locator(':scope > .dc-menu-label:text-is("Pivot")') }).first().hover();
+    await r.locator('.dc-menu .dc-menu-item').filter({ hasText: /^Vertical Pivot on/ }).filter({ hasNot: r.locator('.dc-submenu') }).first().click();
+    await threeGroups(r);
+    await menuOf('Share…');
+    await r.waitForFunction(() => (document.getElementById('sharelink')?.value ?? '').includes('#p1.'), undefined, { timeout: 15_000 });
+    const remoteLink = await r.inputValue('#sharelink');
+    await r.keyboard.press('Escape');
+    const someoneCtx = await browser.newContext();
+    try {
+      const someone = await someoneCtx.newPage();
+      someone.on('pageerror', (e) => errors.push(`datacube (remote, shared): ${e.message}`));
+      await someone.goto(remoteLink);
+      await threeGroups(someone);
+    } finally {
+      await someoneCtx.close();
+    }
+    console.log(`DataCube: a cube over a remote file (grouped by side), shared (${remoteLink.length} characters), opened grouped in another browser`);
+    // saved, then the file refuses: reopening asks for its keys, the URL filled in; once it reads again, it opens
+    await menuOf('Save');
+    await r.locator('.dc-save').waitFor();
+    await r.fill('.dc-save-input', 'Positions by side');
+    await r.click('.dc-save .dc-primary');
+    await r.locator('.dc-save').waitFor({ state: 'detached' });
+    remoteRefuses = true;
+    await r.reload();
+    await r.waitForSelector('.dc-row', { timeout: 120_000 });
+    await menuOf('Open…');
+    await r.locator('.dc-lib-row', { hasText: 'Positions by side' }).locator('button', { hasText: 'Open' }).click();
+    await r.waitForSelector('.dc-picker .dc-picker-url', { timeout: 60_000 });
+    const offered = await r.inputValue('.dc-picker-url');
+    const keysOpen = await r.locator('.dc-picker-more').evaluate((d) => d.open);
+    const why = await r.locator('.dc-picker-subtitle').last().textContent();
+    if (offered !== `${ORIGIN}/remote/positions.csv` || !keysOpen || !/did not open without its keys/.test(why ?? '')) {
+      throw new Error(`a refused remote file asked: url ${offered}, keys open ${keysOpen}, "${why}"`);
+    }
+    remoteRefuses = false;
+    await r.click('.dc-picker-form button[type=submit]');
+    await r.waitForSelector('.dc-picker', { state: 'detached', timeout: 60_000 });
+    await threeGroups(r);
+    console.log('DataCube: its Save, refused on reopen, asked for keys with the URL filled in, then reopened grouped');
+  } finally {
+    await remoteCtx.close();
   }
 } catch (e) {
   failed = true;

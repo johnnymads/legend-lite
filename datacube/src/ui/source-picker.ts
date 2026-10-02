@@ -95,11 +95,20 @@ export interface PickerSections<T> {
     readonly session?: DatabaseSession;
     signIn(url: string, user: string, password: string): Promise<DatabaseSession>;
     open(object: DatabaseObject): Promise<T>;
+    /**
+     * The table wanted (reopening a cube saved over it): opened as soon as the session lists it,
+     * without a click -- or, not granted, said so.
+     */
+    readonly want?: { readonly schema: string; readonly name: string };
   };
   readonly remote?: {
     /** The format a URL reads as, or undefined when it cannot tell. */
     detect(url: string): string | undefined;
     open(url: string, credentials?: RemoteCredentials): Promise<T>;
+    /** The URL to offer (reopening a cube saved over it). */
+    readonly url?: string;
+    /** Show the S3 credentials open: the file was refused without them. */
+    readonly keys?: boolean;
   };
 }
 
@@ -109,6 +118,8 @@ export interface PickSourceOptions<T> {
   readonly sections: PickerSections<T>;
   /** The section to start on; the first offered otherwise. */
   readonly start?: SectionId;
+  /** Why the window opened, said under its title (reopening a cube that needs a sign-in, or keys). */
+  readonly reason?: string;
 }
 
 const SECTIONS: readonly {
@@ -192,9 +203,9 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
     const titles = el(doc, 'div', 'dc-picker-titles', head);
     const title = el(doc, 'h2', 'dc-picker-title', titles, options.purpose === 'add' ? 'Add a source' : 'Open a source');
     title.id = 'dc-picker-title';
-    el(doc, 'p', 'dc-picker-subtitle', titles, options.purpose === 'add'
+    el(doc, 'p', 'dc-picker-subtitle', titles, options.reason ?? (options.purpose === 'add'
       ? 'A new grid over it joins the page, beside what is there.'
-      : 'The cube opens over it, in place of what it shows now.');
+      : 'The cube opens over it, in place of what it shows now.'));
     const close = el(doc, 'button', 'dc-picker-close', head, '×') as HTMLButtonElement;
     close.type = 'button';
     close.setAttribute('aria-label', 'Close');
@@ -512,6 +523,20 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
             return;
           }
           const s = session;
+          // the table wanted: opened straight away once listed, or said not to be granted
+          if (db.want) {
+            const w = db.want;
+            const found = s.objects.find((o) => o.schema === w.schema && o.name === w.name);
+            if (found) {
+              // the list stays beneath it: an open that fails leaves the person choosing
+              queueMicrotask(() => void attempt(`Opening ${w.schema}.${w.name}…`, () => db.open(found)));
+            } else {
+              queueMicrotask(() => {
+                status.className = 'dc-picker-status dc-failed';
+                status.textContent = `${w.schema}.${w.name} is not granted to ${s.principal} at ${s.where}: ask its owner, or sign in as someone else.`;
+              });
+            }
+          }
           heading(host, 'Choose a table', `Signed in as ${s.principal} at ${s.where}: what you may read.`);
           const bar = el(doc, 'div', 'dc-picker-searchbar', host);
           const filter = el(doc, 'input', 'dc-picker-input dc-picker-search', bar) as HTMLInputElement;
@@ -559,12 +584,18 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
         url.placeholder = 'https://example.com/trades.parquet, s3://bucket/table/metadata';
         url.setAttribute('aria-label', 'URL');
         const kind = el(doc, 'span', 'dc-picker-badge dc-unknown', row, 'format');
-        url.addEventListener('input', () => {
+        const badge = (): void => {
           const f = url.value.trim() ? remote.detect(url.value.trim()) : undefined;
           kind.textContent = f ?? 'format';
           kind.className = `dc-picker-badge ${f ? 'dc-known' : 'dc-unknown'}`;
-        });
+        };
+        url.addEventListener('input', badge);
+        if (remote.url) {
+          url.value = remote.url;
+          badge();
+        }
         const more = el(doc, 'details', 'dc-picker-more', form);
+        if (remote.keys) more.open = true;
         el(doc, 'summary', '', more, 'S3 credentials (optional)');
         const creds = el(doc, 'div', 'dc-picker-creds', more);
         const region = field(creds, 'Region');
@@ -587,7 +618,8 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
           };
           void attempt(`Reading ${where}…`, () => remote.open(where, Object.keys(c).length > 0 ? c : undefined));
         });
-        url.focus();
+        if (remote.keys) region.focus();
+        else url.focus();
       },
     };
 

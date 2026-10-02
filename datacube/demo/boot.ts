@@ -17,7 +17,7 @@ import type { ModelOptions } from '../src/planner.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { inferFormat, mountRemote, type S3Credentials } from '../src/remote.ts';
 import { catalogColumns, forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
-import { pickSource, type DatabaseSession, type PickerSections } from '../src/ui/source-picker.ts';
+import { pickSource, type DatabaseSession, type PickerSections, type RemoteCredentials } from '../src/ui/source-picker.ts';
 import { saveDialog } from '../src/ui/save-dialog.ts';
 import { Latest, TabWork, mayLeave } from '../src/host.ts';
 import { isPageFragment, readPageFragment, shareLink } from '../src/share/link.ts';
@@ -28,7 +28,12 @@ import {
   type CubeSource,
   type FileSource,
   type QuerySource,
+  type RemoteSource,
+  type WarehouseSource,
 } from '../src/cube-document.ts';
+
+/** A saved (or shared) cube being reopened: the document, its id in the store, the page around it. */
+type Saved = { readonly doc: CubeDocument; readonly id?: string; readonly page?: PageDocument };
 
 /** A saved cube over a file: what reopening one needs is that file back. */
 type FileCube = CubeDocument & { readonly source: FileSource };
@@ -711,8 +716,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     };
 
     /** A warehouse table IN PLACE of the cube: Live there as the user, Snap into this tab. */
-    async function openTable(signedIn: WarehouseSession, chosen: CatalogObject): Promise<{
-      readonly live: WarehouseEngine; readonly excluded: readonly string[];
+    async function openTable(signedIn: WarehouseSession, chosen: CatalogObject, saved?: Saved): Promise<{
+      readonly live: WarehouseEngine; readonly excluded: readonly string[]; readonly notes: readonly string[];
     }> {
       // A warehouse table is read-only: a column the compiler says must be
       // converted to be declared cannot be, so it is left out, and named.
@@ -721,12 +726,19 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       local.use(m.model, m.runtime, { bitColumns: m.bitColumns });
       const columns = await sourceColumns(planner, m.source);
       const live = track(new WarehouseEngine(signedIn));
-      app.dispose();
-      app = makeApp(rawRows(m.source, columns), { ...DEFAULT_CONFIGURATION, reportTitle: `${chosen.schema}.${chosen.name}` }, [],
-        { live, snapTarget: { schema: chosen.schema, table: chosen.name, source: m.source } });
+      const name = `${chosen.schema}.${chosen.name}`;
+      // where it is, never the sign-in: whoever reopens it signs in as themselves
+      const cubeSource: WarehouseSource = {
+        _type: 'warehouseTable', name, warehouse: signedIn.baseUrl, schema: chosen.schema, table: chosen.name,
+        columns: columns.map((c) => ({ name: c.name, type: c.type })),
+      };
+      const notes = await landCube({
+        relation: m.source, columns, label: name, cubeSource,
+        place: { live, snapTarget: { schema: chosen.schema, table: chosen.name, source: m.source } },
+        ...(saved ? { saved } : {}),
+      });
       status.textContent = `live on the warehouse as ${signedIn.principal}`;
-      await app.open();
-      return { live, excluded: m.excluded };
+      return { live, excluded: m.excluded, notes };
     }
 
     // THE CUBE ON SCREEN, as a saved cube sees it: the file it reads (by identity, and the
@@ -1013,8 +1025,16 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
     /** Open a saved cube (from the store, or a file someone handed over), with the page around it. */
     async function openDocument(doc: CubeDocument, id: string | undefined, page?: PageDocument): Promise<void> {
-      if (doc.source._type === 'savedQuery') {
-        const notes = await openQueryCube(await openedRecord(await pageConfig(), doc.source.query), { doc, ...(id !== undefined ? { id } : {}), ...(page ? { page } : {}) });
+      const saved: Saved = { doc, ...(id !== undefined ? { id } : {}), ...(page ? { page } : {}) };
+      if (doc.source._type !== 'file') {
+        const src = doc.source;
+        const notes = src._type === 'savedQuery' ? await openQueryCube(await openedRecord(await pageConfig(), src.query), saved)
+          : src._type === 'warehouseTable' ? await reopenTable(src, saved)
+            : await reopenRemote(src, saved);
+        if (notes === undefined) {
+          library?.say(`not opened: "${doc.name}" needs ${src._type === 'warehouseTable' ? 'a sign-in' : 'its keys'}`, 'warn');
+          return;
+        }
         library?.say(notes.length === 0
           ? `opened "${doc.name}"`
           : `opened "${doc.name}", with changes since it was saved:\n${notes.map((n) => `- ${n}`).join('\n')}`,
@@ -1047,7 +1067,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const refused = app.saveRefusal();
       if (refused) throw new Error(refused);
       const form = savedForm(name);
-      if (!form) throw new Error('This cube cannot be saved yet: only cubes over a file or a saved query are.');
+      if (!form) throw new Error('This cube cannot be saved yet: it does not know its source.');
       const id = !asNew && current.cubeId !== undefined ? current.cubeId : crypto.randomUUID();
       const record = { id, name, content: form.content };
       if (id === current.cubeId) await store.update(id, record);
@@ -1150,6 +1170,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         const src = current.source;
         const leaves = src?._type === 'savedQuery'
           ? `Not the rows: opening it runs the saved query “${src.name}” again.`
+          : src?._type === 'warehouseTable'
+            ? `Not the rows, and not your sign-in: opening it reads ${src.name} on the warehouse again, signed in as whoever opens it.`
+            : src?._type === 'remoteFile'
+              ? `Not the rows, and not its keys: opening it reads ${src.name} again from its URL.`
           : src?.sample
             ? `Not the rows: the example (${src.sample.rows.toLocaleString()} rows) is generated again when it opens.`
             : `Not the rows: opening it reads ${src?.name ?? 'its file'} again, from your computer.`;
@@ -1200,7 +1224,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const src = page.cubes[0]?.cube.source;
       const needs = src?._type === 'savedQuery'
         ? `it reads the saved query “${src.name}” again, where its project (${src.query.groupId}:${src.query.artifactId}) is known`
-        : src?.sample
+        : src?._type === 'warehouseTable'
+          ? `whoever opens it signs in to the warehouse as themselves and needs to be granted ${src.name}; no sign-in is in the link`
+          : src?._type === 'remoteFile'
+            ? `it reads ${src.url} again; no keys are in the link, a private bucket asks for them`
+            : src?.sample
           ? 'it rebuilds its sample on its own'
           : `whoever opens it needs ${src?.name ?? 'the same file'}`;
       const about = `It holds the page's settings, filter values included, not its data; ${needs}.`;
@@ -1398,17 +1426,32 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      * saved (or shared) cube rebuilt over it, its grouping, filters and charts put back. Its
      * source is the query itself, so Save and Share write it down (cube-document.ts QuerySource).
      */
-    async function openQueryCube(
-      o: OpenedQuery,
-      saved?: { readonly doc: CubeDocument; readonly id?: string; readonly page?: PageDocument },
-    ): Promise<readonly string[]> {
+    async function openQueryCube(o: OpenedQuery, saved?: Saved): Promise<readonly string[]> {
       local.use(o.model, o.runtime, o.how);
-      const cubeSource = saved?.doc.source._type === 'savedQuery' ? saved.doc.source : o.cubeSource;
-      const cube = saved ? openCube(saved.doc, { query: o.source }, o.columns) : undefined;
+      return landCube({ relation: o.source, columns: o.columns, label: o.label, cubeSource: o.cubeSource, ...(saved ? { saved } : {}) });
+    }
+
+    /**
+     * THE CUBE ON SCREEN, REPLACED by one over `relation` (the planner already over its model): a
+     * fresh one, or -- `saved` -- a saved (or shared) cube rebuilt over it, its grouping, filters
+     * and charts put back. Its source is written down (`cubeSource`), so Save and Share work.
+     * What opening left out of the saved cube is returned, to be said.
+     */
+    async function landCube(o: {
+      readonly relation: ValueSpecification;
+      readonly columns: CubeSnapshot['columns'];
+      readonly label: string;
+      readonly cubeSource: CubeSource;
+      readonly place?: { readonly live?: WarehouseEngine; readonly snapTarget?: SnapTarget };
+      readonly saved?: Saved;
+    }): Promise<readonly string[]> {
+      const saved = o.saved;
+      const cubeSource = o.cubeSource;
+      const cube = saved ? openCube(saved.doc, { query: o.relation }, o.columns) : undefined;
       app.dispose();
-      app = makeApp(cube?.snapshot ?? rawRows(o.source, o.columns),
+      app = makeApp(cube?.snapshot ?? rawRows(o.relation, o.columns),
         cube?.configuration ?? { ...DEFAULT_CONFIGURATION, reportTitle: o.label }, [],
-        { cubeSource, ...(cube?.tree ? { tree: cube.tree } : {}) });
+        { cubeSource, ...(o.place ?? {}), ...(cube?.tree ? { tree: cube.tree } : {}) });
       current = {
         source: cubeSource,
         ...(saved?.id ? { cubeId: saved.id } : {}),
@@ -1444,12 +1487,18 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         await openTable(chosen.session, chosen.object);
         return;
       }
-      const m = await mountedRemote(chosen.url, chosen.s3, freshTable('remote'));
+      await openRemote(chosen.url, chosen.s3);
+    }
+
+    /** A remote file IN PLACE of the cube -- fresh, or a saved cube rebuilt over it. Its keys are never written down. */
+    async function openRemote(url: string, s3: S3Credentials | undefined, saved?: Saved): Promise<readonly string[]> {
+      const m = await mountedRemote(url, s3, freshTable('remote'));
       local.use(m.model, m.runtime, { bitColumns: m.bitColumns });
       const columns = await sourceColumns(planner, m.source);
-      app.dispose();
-      app = makeApp(rawRows(m.source, columns), { ...DEFAULT_CONFIGURATION, reportTitle: lastSegment(chosen.url) }, []);
-      await app.open();
+      const cubeSource: RemoteSource = {
+        _type: 'remoteFile', name: lastSegment(url), url, columns: columns.map((c) => ({ name: c.name, type: c.type })),
+      };
+      return landCube({ relation: m.source, columns, label: lastSegment(url), cubeSource, ...(saved ? { saved } : {}) });
     }
 
     // THE QUERY STORE, through the one client (query-store/README.md): the server config.json names,
@@ -1539,55 +1588,133 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             return `Link copied (${link.length.toLocaleString()} characters): it opens the query as the cube’s source, and holds the query, never its rows.`;
           },
         },
-        database: {
-          ...((config.warehouse || rememberedWarehouse()) ? { url: config.warehouse || rememberedWarehouse() } : {}),
-          ...(signedIn ? { session: asSession(signedIn) } : {}),
-          signIn: async (url, user, password) => {
-            // nothing of a previous sign-in stays on offer until this one has listed its tables (P2-334)
-            signedIn = undefined;
-            const connected = await connect(url, user, password);
-            signedIn = { session: connected.session, objects: connected.objects };
-            try {
-              window.localStorage.setItem(REMEMBERED, connected.session.baseUrl);
-            } catch {
-              // storage refused: not remembered, nothing else changes
-            }
-            // THE CUBES LIVE THERE go on with the new token when it is the same user (P2-297)
-            for (const live of liveEngines) {
-              try {
-                live.renew(connected.session);
-              } catch {
-                // another user: that cube keeps its own sign-in
-              }
-            }
-            return asSession(signedIn);
-          },
-          open: (object) => {
-            const s = signedIn;
-            const found = s?.objects.find((o) => o.schema === object.schema && o.name === object.name);
-            if (!s || !found) return Promise.reject(new Error(`${object.schema}.${object.name} is no longer offered: sign in again`));
-            return act({ kind: 'table', session: s.session, object: found });
-          },
-        },
+        database: databaseSection(config, (session, object) => act({ kind: 'table', session, object })),
         remote: {
-          detect: (url) => ({ parquet: 'Parquet', csv: 'CSV', iceberg: 'Iceberg' })[inferFormat(url)],
-          open: (url, credentials) => act({
-            kind: 'remote',
-            url,
-            ...(credentials ? {
-              s3: {
-                ...(credentials.region ? { region: credentials.region } : {}),
-                ...(credentials.keyId ? { accessKeyId: credentials.keyId } : {}),
-                ...(credentials.secret ? { secretAccessKey: credentials.secret } : {}),
-                ...(credentials.endpoint ? { endpoint: credentials.endpoint } : {}),
-              },
-            } : {}),
-          }),
+          detect: detectFormat,
+          open: (url, credentials) => act({ kind: 'remote', url, ...(credentials ? { s3: s3Of(credentials) } : {}) }),
         },
       };
       const made = await pickSource(document, { purpose, sections });
       return made ?? undefined;
     };
+
+    const detectFormat = (url: string): string | undefined => ({ parquet: 'Parquet', csv: 'CSV', iceberg: 'Iceberg' })[inferFormat(url)];
+    /** What the Remote section's form gave, as DuckDB's S3 settings: only what was filled in. */
+    const s3Of = (credentials: RemoteCredentials): S3Credentials => ({
+      ...(credentials.region ? { region: credentials.region } : {}),
+      ...(credentials.keyId ? { accessKeyId: credentials.keyId } : {}),
+      ...(credentials.secret ? { secretAccessKey: credentials.secret } : {}),
+      ...(credentials.endpoint ? { endpoint: credentials.endpoint } : {}),
+    });
+    /** One warehouse, however its address is written. */
+    const sameWarehouse = (a: string, b: string): boolean => {
+      try {
+        return new URL(a).origin === new URL(b).origin;
+      } catch {
+        return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
+      }
+    };
+
+    /**
+     * The Database section: the sign-in kept between windows, and what opening a listed table does.
+     * `want` (reopening a cube saved over a table): its warehouse's address offered, the session of
+     * another warehouse not, and the table opened as soon as it is listed.
+     */
+    function databaseSection<T>(
+      config: PageConfig,
+      open: (session: WarehouseSession, object: CatalogObject) => Promise<T>,
+      want?: { readonly warehouse: string; readonly schema: string; readonly name: string },
+    ): NonNullable<PickerSections<T>['database']> {
+      const url = want?.warehouse ?? (config.warehouse || rememberedWarehouse());
+      const keep = signedIn && (!want || sameWarehouse(signedIn.session.baseUrl, want.warehouse)) ? signedIn : undefined;
+      return {
+        ...(url ? { url } : {}),
+        ...(keep ? { session: asSession(keep) } : {}),
+        ...(want ? { want: { schema: want.schema, name: want.name } } : {}),
+        signIn: async (url, user, password) => {
+          // nothing of a previous sign-in stays on offer until this one has listed its tables (P2-334)
+          signedIn = undefined;
+          const connected = await connect(url, user, password);
+          signedIn = { session: connected.session, objects: connected.objects };
+          try {
+            window.localStorage.setItem(REMEMBERED, connected.session.baseUrl);
+          } catch {
+            // storage refused: not remembered, nothing else changes
+          }
+          // THE CUBES LIVE THERE go on with the new token when it is the same user (P2-297)
+          for (const live of liveEngines) {
+            try {
+              live.renew(connected.session);
+            } catch {
+              // another user: that cube keeps its own sign-in
+            }
+          }
+          return asSession(signedIn);
+        },
+        open: (object) => {
+          const s = signedIn;
+          const found = s?.objects.find((o) => o.schema === object.schema && o.name === object.name);
+          if (!s || !found) return Promise.reject(new Error(`${object.schema}.${object.name} is no longer offered: sign in again`));
+          return open(s.session, found);
+        },
+      };
+    }
+
+    /**
+     * A saved (or shared) cube over a WAREHOUSE TABLE, reopened: straight away when this page is
+     * signed in to that warehouse; otherwise the Database section asks for a sign-in there and
+     * opens the table once it is listed. No credential was ever written down.
+     */
+    async function reopenTable(src: WarehouseSource, saved: Saved): Promise<readonly string[] | undefined> {
+      const on = signedIn && sameWarehouse(signedIn.session.baseUrl, src.warehouse) ? signedIn : undefined;
+      const found = on?.objects.find((o) => o.schema === src.schema && o.name === src.table);
+      if (on && found) return (await openTable(on.session, found, saved)).notes;
+      let notes: readonly string[] = [];
+      const host = (() => { try { return new URL(src.warehouse).host; } catch { return src.warehouse; } })();
+      const done = await pickSource<boolean>(document, {
+        purpose: 'open',
+        start: 'database',
+        reason: `“${saved.doc.name}” reads ${src.name} on ${host}: sign in there to open it.`,
+        sections: {
+          database: databaseSection(await pageConfig(), async (session, object) => {
+            notes = (await openTable(session, object, saved)).notes;
+            return true;
+          }, { warehouse: src.warehouse, schema: src.schema, name: src.table }),
+        },
+      });
+      return done ? notes : undefined;
+    }
+
+    /**
+     * A saved (or shared) cube over a REMOTE FILE, reopened: read straight away when the file is
+     * public; refused (a private bucket), the Remote section asks for its keys, the URL filled in.
+     */
+    async function reopenRemote(src: RemoteSource, saved: Saved): Promise<readonly string[] | undefined> {
+      let refusal: string;
+      try {
+        return await openRemote(src.url, undefined, saved);
+      } catch (e) {
+        refusal = e instanceof Error ? e.message : String(e);
+      }
+      let notes: readonly string[] = [];
+      const done = await pickSource<boolean>(document, {
+        purpose: 'open',
+        start: 'remote',
+        reason: `“${saved.doc.name}” reads ${src.name}, which did not open without its keys (${refusal.slice(0, 160)}).`,
+        sections: {
+          remote: {
+            detect: detectFormat,
+            url: src.url,
+            keys: true,
+            open: async (url, credentials) => {
+              notes = await openRemote(url, credentials ? s3Of(credentials) : undefined, saved);
+              return true;
+            },
+          },
+        },
+      });
+      return done ? notes : undefined;
+    }
 
     // A BLANK PAGE (New ▸ Blank Page; the user, 2026-10-01): every grid and chart goes, and the page
     // says what to do first -- a data source (the picker, opening in place) or a saved cube. Asked

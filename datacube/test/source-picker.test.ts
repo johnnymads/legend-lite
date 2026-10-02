@@ -142,6 +142,69 @@ describe('the source picker', () => {
     assert.equal(await chosen, 'sales.v_daily');
   });
 
+  it('reopening a cube over a table: says why, signs in there, and opens the table without a click', async () => {
+    const chosen = pickSource<string>(doc, {
+      purpose: 'open',
+      start: 'database',
+      reason: '“Orders” reads sales.orders on wh: sign in there to open it.',
+      sections: { database: {
+        url: 'http://wh',
+        want: { schema: 'sales', name: 'orders' },
+        signIn: async (_url, user) => ({ principal: user, where: 'wh', objects: [
+          { schema: 'sales', name: 'orders', kind: 'table', columns: 7 },
+        ] }),
+        open: async (o) => `reopened ${o.schema}.${o.name}`,
+      } },
+    });
+    assert.equal($('.dc-picker-subtitle').textContent, '“Orders” reads sales.orders on wh: sign in there to open it.');
+    const inputs = [...doc.querySelectorAll<HTMLInputElement>('.dc-picker-form .dc-picker-input')];
+    assert.equal(inputs[0]!.value, 'http://wh');
+    inputs[1]!.value = 'rita';
+    inputs[2]!.value = 'pw';
+    $<HTMLFormElement>('.dc-picker-form').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+    assert.equal(await chosen, 'reopened sales.orders');
+  });
+
+  it('a wanted table not granted to whoever signed in: said, and the tables they may read listed', async () => {
+    const chosen = pickSource<string>(doc, {
+      purpose: 'open',
+      start: 'database',
+      sections: { database: {
+        session: { principal: 'sam', where: 'wh', objects: [{ schema: 'sales', name: 'v_daily', kind: 'view', columns: 3 }] },
+        want: { schema: 'sales', name: 'orders' },
+        signIn: async () => { throw new Error('not asked'); },
+        open: async (o) => `${o.schema}.${o.name}`,
+      } },
+    });
+    await settle();
+    assert.match($('.dc-picker-status').textContent ?? '', /sales\.orders is not granted to sam at wh/);
+    assert.deepEqual([...doc.querySelectorAll<HTMLElement>('.dc-picker-row')].map((r) => r.dataset['object']), ['sales.v_daily']);
+    $<HTMLButtonElement>('.dc-picker-close').click();
+    assert.equal(await chosen, undefined);
+  });
+
+  it('reopening a cube over a private remote file: its URL offered, the keys open to fill in', async () => {
+    const asked: string[] = [];
+    const chosen = pickSource<string>(doc, {
+      purpose: 'open',
+      start: 'remote',
+      sections: { remote: {
+        detect: () => 'Parquet',
+        url: 's3://bucket/trades.parquet',
+        keys: true,
+        open: async (url, c) => { asked.push(`${url}|${c?.keyId ?? ''}`); return 'reopened'; },
+      } },
+    });
+    assert.equal($<HTMLInputElement>('.dc-picker-url').value, 's3://bucket/trades.parquet');
+    assert.equal($<HTMLDetailsElement>('.dc-picker-more').open, true);
+    assert.equal($('.dc-picker-badge').textContent, 'Parquet');
+    const creds = [...doc.querySelectorAll<HTMLInputElement>('.dc-picker-creds .dc-picker-input')];
+    creds[1]!.value = 'AKIA1';
+    $<HTMLFormElement>('.dc-picker-form').dispatchEvent(new dom.window.Event('submit', { cancelable: true }));
+    assert.equal(await chosen, 'reopened');
+    assert.deepEqual(asked, ['s3://bucket/trades.parquet|AKIA1']);
+  });
+
   it('a saved query that cannot be a source is listed, disabled, and says why', async () => {
     const chosen = pickSource<string>(doc, {
       purpose: 'add',

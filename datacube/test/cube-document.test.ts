@@ -19,6 +19,8 @@ import {
   writeCube,
   type FileSource,
   type QuerySource,
+  type RemoteSource,
+  type WarehouseSource,
 } from '../src/cube-document.ts';
 import { DEFAULT_CONFIGURATION, type CubeConfiguration } from '../src/config.ts';
 import type { ColumnSpec, CubeSnapshot } from '../src/snapshot.ts';
@@ -166,6 +168,39 @@ describe('a cube over a saved query', () => {
     const noColumns = JSON.parse(cubeToJson(over()));
     delete noColumns.source.columns;
     assert.throws(() => readCube(noColumns), /saved query source is incomplete/);
+  });
+});
+
+describe('a cube over a warehouse table, or a remote file: where it is, never how to get in', () => {
+  const TABLE: WarehouseSource = {
+    _type: 'warehouseTable', name: 'sales.orders', warehouse: 'https://warehouse.example.com',
+    schema: 'sales', table: 'orders', columns: [{ name: 'region', type: 'String' }],
+  };
+  const REMOTE: RemoteSource = {
+    _type: 'remoteFile', name: 'trades.parquet', url: 'https://data.example.com/trades.parquet', columns: [{ name: 'qty', type: 'Integer' }],
+  };
+  const over = (source: WarehouseSource | RemoteSource) => writeCube({
+    name: 'Orders', source, snapshot: EVERY, configuration: CONFIG, tree: TreeState.fromPaths([]),
+  });
+
+  it('writes each down and reads it back exactly', () => {
+    assert.deepEqual(readCube(cubeToJson(over(TABLE))).source, TABLE);
+    assert.deepEqual(readCube(cubeToJson(over(REMOTE))).source, REMOTE);
+  });
+
+  it('refuses one missing a part, or one carrying a credential', () => {
+    const noTable = JSON.parse(cubeToJson(over(TABLE)));
+    delete noTable.source.table;
+    assert.throws(() => readCube(noTable), /the warehouse table source has no table/);
+    const withToken = JSON.parse(cubeToJson(over(TABLE)));
+    withToken.source.token = 'abc';
+    assert.throws(() => readCube(withToken), /carries a credential/);
+    const withSecret = JSON.parse(cubeToJson(over(REMOTE)));
+    withSecret.source.secretAccessKey = 'shh';
+    assert.throws(() => readCube(withSecret), /carries a credential/);
+    const noUrl = JSON.parse(cubeToJson(over(REMOTE)));
+    delete noUrl.source.url;
+    assert.throws(() => readCube(noUrl), /the remote file source has no url/);
   });
 });
 
