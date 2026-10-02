@@ -78,4 +78,39 @@ public final class StoreCompiler {
     }
 
     private static final Type VARIANT = new Type.ClassType(com.legend.compiler.element.type.PlatformTypes.VARIANT);
+
+    /**
+     * The store model's column type as the SQL layer's DECLARED type: the one crossing from store
+     * model to SQL IR (the SQL layer stands alone). One owner for DDL and for a scan's stored types
+     * (docs/STORE_TYPES_HOMEWORK_2026_10_02.md, step 2), moved here from exec.Ddl.
+     */
+    public static com.legend.sql.SqlDdl.ColumnType declaredType(RelationalDataType t) {
+        return switch (t) {
+            case RelationalDataType.BigInt ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.BIGINT);
+            case RelationalDataType.SmallInt ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.SMALLINT);
+            case RelationalDataType.TinyInt ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.TINYINT);
+            case RelationalDataType.Integer_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.INTEGER);
+            case RelationalDataType.Float_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.FLOAT);
+            case RelationalDataType.Double_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.DOUBLE);
+            case RelationalDataType.Real ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.REAL);
+            case RelationalDataType.Bit ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.BIT);
+            case RelationalDataType.Timestamp ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.TIMESTAMP);
+            case RelationalDataType.Date_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.DATE);
+            case RelationalDataType.SemiStructured ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.JSON);
+            case RelationalDataType.Other ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.OTHER);
+            case RelationalDataType.Distinct ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.DISTINCT);
+            case RelationalDataType.Array ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.ARRAY);
+            case RelationalDataType.Object_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.OBJECT);
+            case RelationalDataType.Varchar v -> new com.legend.sql.SqlDdl.ColumnType.Sized("VARCHAR", v.size());
+            case RelationalDataType.Char_ c -> new com.legend.sql.SqlDdl.ColumnType.Sized("CHAR", c.size());
+            case RelationalDataType.Binary b -> new com.legend.sql.SqlDdl.ColumnType.Sized("BINARY", b.size());
+            case RelationalDataType.Varbinary v -> new com.legend.sql.SqlDdl.ColumnType.Sized("VARBINARY", v.size());
+            case RelationalDataType.Decimal d -> new com.legend.sql.SqlDdl.ColumnType.Scaled("DECIMAL", d.precision(), d.scale());
+            case RelationalDataType.Numeric n -> new com.legend.sql.SqlDdl.ColumnType.Scaled("NUMERIC", n.precision(), n.scale());
+        };
+    }
+
+    private static com.legend.sql.SqlDdl.ColumnType plain(com.legend.sql.SqlDdl.ColumnType.Kind k) {
+        return new com.legend.sql.SqlDdl.ColumnType.Plain(k);
+    }
 }

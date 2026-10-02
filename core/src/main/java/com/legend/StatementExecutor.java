@@ -3135,7 +3135,7 @@ final class StatementExecutor {
                         + " ^Column(name='…', type=^<datatype>()), got " + e.getClass().getSimpleName());
             }
             cols.add(new com.legend.sql.SqlDdl.Column(name.value(), false,
-                    Ddl.columnType(datatypeLiteral(type)), false, false));
+                    com.legend.compiler.element.StoreCompiler.declaredType(datatypeLiteral(type)), false, false));
         }
         com.legend.sql.SqlDdl.CreateTable ct = new com.legend.sql.SqlDdl.CreateTable(null, table, cols, true);
         sendEffect(env, env.dialect().render(ct), H2_DDL.render(ct), com.legend.exec.StatementOrigin.RAW, true);

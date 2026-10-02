@@ -49,38 +49,6 @@ public final class Ddl {
         return new com.legend.sql.SqlDdl.DropTable(schema, table);
     }
 
-    /** The store model's column type as the SQL layer's DECLARED type —
-     *  the one crossing from store model to SQL IR (the SQL layer stands
-     *  alone; {@code Ddl} is the exec-side translator). */
-    public static com.legend.sql.SqlDdl.ColumnType columnType(RelationalDataType t) {
-        return switch (t) {
-            case RelationalDataType.BigInt ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.BIGINT);
-            case RelationalDataType.SmallInt ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.SMALLINT);
-            case RelationalDataType.TinyInt ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.TINYINT);
-            case RelationalDataType.Integer_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.INTEGER);
-            case RelationalDataType.Float_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.FLOAT);
-            case RelationalDataType.Double_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.DOUBLE);
-            case RelationalDataType.Real ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.REAL);
-            case RelationalDataType.Bit ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.BIT);
-            case RelationalDataType.Timestamp ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.TIMESTAMP);
-            case RelationalDataType.Date_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.DATE);
-            case RelationalDataType.SemiStructured ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.JSON);
-            case RelationalDataType.Other ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.OTHER);
-            case RelationalDataType.Distinct ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.DISTINCT);
-            case RelationalDataType.Array ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.ARRAY);
-            case RelationalDataType.Object_ ignored -> plain(com.legend.sql.SqlDdl.ColumnType.Kind.OBJECT);
-            case RelationalDataType.Varchar v -> new com.legend.sql.SqlDdl.ColumnType.Sized("VARCHAR", v.size());
-            case RelationalDataType.Char_ c -> new com.legend.sql.SqlDdl.ColumnType.Sized("CHAR", c.size());
-            case RelationalDataType.Binary b -> new com.legend.sql.SqlDdl.ColumnType.Sized("BINARY", b.size());
-            case RelationalDataType.Varbinary v -> new com.legend.sql.SqlDdl.ColumnType.Sized("VARBINARY", v.size());
-            case RelationalDataType.Decimal d -> new com.legend.sql.SqlDdl.ColumnType.Scaled("DECIMAL", d.precision(), d.scale());
-            case RelationalDataType.Numeric n -> new com.legend.sql.SqlDdl.ColumnType.Scaled("NUMERIC", n.precision(), n.scale());
-        };
-    }
-
-    private static com.legend.sql.SqlDdl.ColumnType plain(com.legend.sql.SqlDdl.ColumnType.Kind k) {
-        return new com.legend.sql.SqlDdl.ColumnType.Plain(k);
-    }
 
     /** {@code constraints}: emit the engine's {@code NULL}/{@code NOT NULL}
      * and trailing {@code PRIMARY KEY(...)} in an EXECUTION flavor too —
@@ -98,7 +66,7 @@ public final class Ddl {
             DatabaseDefinition.TableDefinition def, @com.legend.base.Nullable String schema) {
         java.util.List<com.legend.sql.SqlDdl.Column> cols = new java.util.ArrayList<>();
         for (DatabaseDefinition.ColumnDefinition col : def.columns()) {
-            cols.add(new com.legend.sql.SqlDdl.Column(col.name(), col.quoted(), columnType(col.dataType()),
+            cols.add(new com.legend.sql.SqlDdl.Column(col.name(), col.quoted(), com.legend.compiler.element.StoreCompiler.declaredType(col.dataType()),
                     col.notNull(), col.primaryKey()));
         }
         return new com.legend.sql.SqlDdl.CreateTable(schema, def.name(), cols);
@@ -395,7 +363,7 @@ public final class Ddl {
      * Integer spells INT; Other spells OTHER (execution walls — a
      * column of type Other cannot be created). */
     public static String dataTypeToSqlText(RelationalDataType t) {
-        return com.legend.sql.dialect.DdlSpelling.engineText(columnType(t));
+        return com.legend.sql.dialect.DdlSpelling.engineText(com.legend.compiler.element.StoreCompiler.declaredType(t));
     }
 
 }
