@@ -36,6 +36,85 @@ public final class Postgres extends AnsiSqlRenderer {
     }
 
     // ==================================================================
+    // The catalog: a Postgres table's model, from Postgres's own catalog
+    // ==================================================================
+
+    /**
+     * A Postgres column, from Postgres's OWN catalog (the warehouse asks it inside the attached
+     * database, {@code pg_catalog}; docs/STORE_TYPES_HOMEWORK_2026_10_02.md step 7): its canonical
+     * type is the base type's {@code pg_catalog} name ({@code int4}, {@code numeric}, {@code inet};
+     * a domain is its base type's), or, outside {@code pg_catalog}, the kind information_schema
+     * names -- {@code ARRAY}, {@code ENUM}, {@code COMPOSITE}, {@code RANGE}, {@code USER-DEFINED}; a
+     * {@code numeric} column's precision and scale come as numbers. Never DuckDB's view of the table:
+     * it reads a Postgres array as a LIST and a {@code point} as a STRUCT, which this dialect would
+     * read as {@code jsonb} (Postgres refuses the cast), and {@code inet} as VARCHAR, which Postgres
+     * will not search as text.
+     */
+    @Override
+    public CatalogType catalogType(CatalogModel.Column column) {
+        return CATALOG_RULES.typeOf(column);
+    }
+
+    /**
+     * Every built-in Postgres 17 base type (its {@code pg_catalog} name, upper-cased) and every
+     * information_schema kind, decided. A number, a text, a date or a timestamp is declared as
+     * itself; json and jsonb are a Variant (read as {@code jsonb}); bytes are left out, by name; every
+     * other type -- arrays, enums, uuid, interval, times of day, network, geometric and range types,
+     * money, xml, bit strings, text search, object identifiers, and any user or extension type -- is
+     * OTHER: a Pure String, read as its text (every Postgres type has one) wherever it is referenced.
+     */
+    public static final java.util.Map<String, CatalogType> CATALOG_TYPES = catalogTypes();
+
+    /** Postgres's catalog decisions as one {@link CatalogRules}: an unconstrained numeric is a DOUBLE. */
+    public static final CatalogRules CATALOG_RULES = new CatalogRules("Postgres", CATALOG_TYPES,
+            java.util.Map.of(), java.util.Map.of(), "NUMERIC", CatalogType.asStored("DOUBLE"));
+
+    private static java.util.Map<String, CatalogType> catalogTypes() {
+        java.util.Map<String, CatalogType> m = new java.util.LinkedHashMap<>();
+        CatalogType text = CatalogType.asStored("VARCHAR(4096)");
+        CatalogType other = CatalogType.asStored("OTHER");
+        m.put("BOOL", CatalogType.asStored("BIT"));
+        m.put("INT2", CatalogType.asStored("SMALLINT"));
+        m.put("INT4", CatalogType.asStored("INTEGER"));
+        m.put("INT8", CatalogType.asStored("BIGINT"));
+        m.put("FLOAT4", CatalogType.asStored("REAL"));
+        m.put("FLOAT8", CatalogType.asStored("DOUBLE"));
+        m.put("TEXT", text);
+        m.put("VARCHAR", text);
+        m.put("BPCHAR", text);
+        m.put("NAME", text);
+        m.put("DATE", CatalogType.asStored("DATE"));
+        m.put("TIMESTAMP", CatalogType.asStored("TIMESTAMP"));
+        // a zoned timestamp is its UTC instant: read in place under the UTC session the attach pins,
+        // and a copy (in the tab's DuckDB, where conversions run) holds its UTC wall time
+        m.put("TIMESTAMPTZ", CatalogType.copyConverted("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)"));
+        m.put("JSON", CatalogType.asStored("SEMISTRUCTURED"));
+        m.put("JSONB", CatalogType.asStored("SEMISTRUCTURED"));
+        m.put("BYTEA", CatalogType.leftOut("bytes: no Pure Database type holds them"));
+        for (String t : List.of(
+                // the kinds outside pg_catalog
+                "ARRAY", "ENUM", "COMPOSITE", "RANGE", "USER-DEFINED",
+                // numbers Pure cannot hold as numbers: money is formatted, an oid an identifier
+                "MONEY", "OID", "REGCLASS", "REGCOLLATION", "REGCONFIG", "REGDICTIONARY", "REGNAMESPACE",
+                "REGOPER", "REGOPERATOR", "REGPROC", "REGPROCEDURE", "REGROLE", "REGTYPE",
+                // times of day and spans
+                "TIME", "TIMETZ", "INTERVAL",
+                // geometric, network, bit strings
+                "POINT", "LINE", "LSEG", "BOX", "PATH", "POLYGON", "CIRCLE", "INET", "CIDR", "MACADDR", "MACADDR8",
+                "BIT", "VARBIT",
+                // built-in ranges and multiranges
+                "INT4RANGE", "INT8RANGE", "NUMRANGE", "DATERANGE", "TSRANGE", "TSTZRANGE",
+                "INT4MULTIRANGE", "INT8MULTIRANGE", "NUMMULTIRANGE", "DATEMULTIRANGE", "TSMULTIRANGE", "TSTZMULTIRANGE",
+                // the rest of pg_catalog's base types
+                "UUID", "XML", "JSONPATH", "TSVECTOR", "TSQUERY", "GTSVECTOR", "CHAR", "ACLITEM", "CID", "TID", "XID",
+                "XID8", "PG_LSN", "PG_SNAPSHOT", "TXID_SNAPSHOT", "REFCURSOR", "PG_NODE_TREE", "PG_NDISTINCT",
+                "PG_DEPENDENCIES", "PG_MCV_LIST", "PG_BRIN_BLOOM_SUMMARY", "PG_BRIN_MINMAX_MULTI_SUMMARY")) {
+            m.put(t, other);
+        }
+        return java.util.Collections.unmodifiableMap(m);
+    }
+
+    // ==================================================================
     // Session and scripts (the JVM lane; the product path pins the zone in
     // the attach DSN — a planner has no connection)
     // ==================================================================
@@ -577,6 +656,14 @@ public final class Postgres extends AnsiSqlRenderer {
                 && r.orderBy().isEmpty() && isBoolean(r.args().get(0))) {
             return (r.fn() == SqlAgg.Fn.MAX ? "bool_or(" : "bool_and(") + expr(r.args().get(0), 0) + ")";
         }
+        // nor over jsonb (measured: "function max(jsonb) does not exist"), though jsonb is ordered: the
+        // first of the values in that order, NULLs last, is max/min exactly -- NULL only when all are.
+        // A Variant column (json read as jsonb, StoredReads) reaches this in DataCube's one-value columns.
+        if ((r.fn() == SqlAgg.Fn.MAX || r.fn() == SqlAgg.Fn.MIN) && r.args().size() == 1
+                && r.orderBy().isEmpty() && isJson(r.args().get(0))) {
+            String x = expr(r.args().get(0), 0);
+            return "(array_agg(" + x + " ORDER BY " + x + (r.fn() == SqlAgg.Fn.MAX ? " DESC" : " ASC") + " NULLS LAST))[1]";
+        }
         return switch (r.fn()) {
             // ANY_VALUE is Postgres 16+; ordered aggregates keep the base's spelling —
             // Postgres' default null placement (ASC last, DESC first) IS the
@@ -623,6 +710,10 @@ public final class Postgres extends AnsiSqlRenderer {
 
     private static boolean isBoolean(SqlExpr e) {
         return e.type() instanceof com.legend.sql.TypeFact.Typed t && t.type() == SqlType.Scalar.BOOLEAN;
+    }
+
+    private static boolean isJson(SqlExpr e) {
+        return e.type() instanceof com.legend.sql.TypeFact.Typed t && t.type() == SqlType.Scalar.JSON;
     }
 
     private static boolean isNumeric(SqlExpr e) {

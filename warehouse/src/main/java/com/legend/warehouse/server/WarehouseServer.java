@@ -502,18 +502,16 @@ public final class WarehouseServer implements AutoCloseable {
     /**
      * A catalog's tables and views with their columns, read by the server itself (a reader may not call
      * duckdb_columns()), then filtered to what the caller may see: an owner everything, a reader what is
-     * granted to it. An attached catalog lists its database's tables as DuckDB sees them -- DuckDB's own type
-     * names, as a native catalog answers, so one model writer reads both -- without that database's own
-     * schemas; its readers hold USAGE of the whole catalog (the connection's role decides the rows).
+     * granted to it. A native catalog answers from DuckDB's catalog; an ATTACHED one from its database's own
+     * ({@link Attachment#catalogListing}: a Postgres table in Postgres's type names, so its model is written
+     * by Postgres's rules), without that database's own schemas; its readers hold USAGE of the whole catalog
+     * (the connection's role decides the rows, and the columns it may read).
      */
     private List<Json.Node> objectsIn(String principal, String catalog) throws Reply {
         Attachment attachment = catalogs.attachment(catalog);
-        String which = attachment == null ? "NOT c.internal"
-                : "c.database_name = '" + Attachment.ALIAS + "' AND c.schema_name NOT IN ("
-                        + String.join(", ", attachment.systemSchemas.stream().map(n -> "'" + n + "'").toList()) + ")";
         Statements.Run run;
         try {
-            run = statements.submit(Statements.SERVER, new StatementRequest("""
+            run = statements.submit(Statements.SERVER, new StatementRequest(attachment != null ? attachment.catalogListing() : """
                     SELECT c.schema_name AS schema, c.table_name AS name,
                            CASE WHEN v.view_name IS NULL THEN 'table' ELSE 'view' END AS kind,
                            c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale,
@@ -523,8 +521,8 @@ public final class WarehouseServer implements AutoCloseable {
                          AND v.schema_name = c.schema_name AND v.view_name = c.table_name
                     LEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()
                                WHERE internal AND type_oid IS NOT NULL) t ON t.type_oid = c.data_type_id
-                    WHERE %s
-                    ORDER BY 1, 2, c.column_index""".formatted(which), catalog, 30_000, 30_000, 1_000_000));
+                    WHERE NOT c.internal
+                    ORDER BY 1, 2, c.column_index""", catalog, 30_000, 30_000, 1_000_000));
         } catch (Statements.QueueFull full) {
             throw Reply.error(503, ErrorCode.QUEUE_FULL, String.valueOf(full.getMessage()));
         }

@@ -261,7 +261,9 @@ public final class Wasm {
             }
             com.legend.sql.dialect.CatalogModel.Database db = com.legend.sql.dialect.CatalogModel.database(
                     in.getString("path"), in.getStringOr("schema", null), in.getString("table"), columns,
-                    new com.legend.sql.dialect.DuckDb(), in.getBool("convertible"));
+                    // the table's own database reads its catalog (a Postgres table's, Postgres's rules)
+                    com.legend.Compiler.dialectFor(com.legend.model.ConnectionDefinition.DatabaseType.valueOf(
+                            in.getString("databaseType"))), in.getBool("convertible"));
             java.util.List<java.util.Map<String, Object>> conversions = new java.util.ArrayList<>();
             for (com.legend.sql.dialect.CatalogModel.Conversion c : db.conversions()) {
                 java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();

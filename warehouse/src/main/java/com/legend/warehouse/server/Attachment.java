@@ -56,6 +56,14 @@ enum Attachment {
         };
     }
 
+    /** The DuckDB statement that lists the attached database's tables and columns from ITS OWN catalog, in the
+     *  listing's shape -- so a model of them is written by that database's rules. */
+    String catalogListing() {
+        return switch (this) {
+            case POSTGRES -> Postgres.catalogListing(systemSchemas);
+        };
+    }
+
     /** Refuses, by name, an attached server older than the dialect is written for. */
     void requireSupported(String catalog, Conn c) throws IOException {
         switch (this) {

@@ -86,9 +86,28 @@ try {
     await page.locator(own(`Vertical Pivot on ${GROUP}`)).first().click();
     await page.waitForFunction(() => document.querySelectorAll('.dc-row[aria-expanded]').length > 0, undefined,
       { timeout: 60_000 }).catch(() => bad(`grouping by ${GROUP} shows no groups`));
-    if (await page.locator('text=Data Fetch Failure').count()) bad(`grouping by ${GROUP} failed in Postgres`);
+    if (await page.locator('text=Data Fetch Failure').count()) {
+      // the failure dialog's own words: what Postgres (or the planner) said
+      const said = (await page.locator('text=Data Fetch Failure').locator('xpath=ancestor::*[contains(@class, "dc-")][1]').innerText())
+        .replace(/\s+/g, ' ').slice(-900);
+      bad(`grouping by ${GROUP} failed in Postgres: ${said}`);
+    }
     else ok(`grouped by ${GROUP}: ${await page.locator('.dc-row[aria-expanded]').count()} groups`);
   }
+
+  // 2b. SNAPPED: the plane button copies the table into the tab; the copy shows the same groups,
+  // planned for the tab's DuckDB, with no failure (every column of the table, as Postgres read it)
+  const groups = await page.locator('.dc-row[aria-expanded]').count();
+  await page.click('.dc-titlebar-toggle');
+  await page.waitForFunction(() => window.__dataCube?.controller.snaps.state.mode === 'snapped'
+    && !window.__dataCube.busy, null, { timeout: 120_000 })
+    .catch(() => bad('the table did not snap'));
+  if (await page.locator('text=Data Fetch Failure').count()) {
+    bad(`the snapped copy failed: ${(await page.locator('text=Data Fetch Failure')
+      .locator('xpath=ancestor::*[contains(@class, "dc-")][1]').innerText()).replace(/\s+/g, ' ').slice(-900)}`);
+  } else if (await page.locator('.dc-row[aria-expanded]').count() !== groups) {
+    bad(`the snapped copy shows ${await page.locator('.dc-row[aria-expanded]').count()} groups, Live showed ${groups}`);
+  } else ok(`snapped: the copy shows the same ${groups} groups`);
 
   // 3. A RELOAD signs in again with the key still in the address
   await page.reload();

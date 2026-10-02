@@ -133,7 +133,7 @@ describe('ingestFile with JSON', () => {
     assert.match(r.model, /s SEMISTRUCTURED/);
   });
 
-  it('converts what the compiler says to, as it loads: exact, never truncated (S3b)', async () => {
+  it('converts what the compiler says to, as it loads: exact, never truncated (S3b); keeps a type Pure cannot name as stored', async () => {
     // (No file carries a HUGEINT: Parquet has no 128-bit integer and DuckDB writes one as a
     // DOUBLE. Its declaration, DECIMAL(38,0), is pinned by core's CatalogModelTest.)
     await engine.run(
@@ -149,14 +149,15 @@ describe('ingestFile with JSON', () => {
       arrayBuffer: async () => bytes.slice().buffer,
     });
     for (const [column, sql] of [['stamp', 'TIMESTAMP'], ['big', 'DECIMAL\\(20,0\\)'],
-      ['id', 'VARCHAR\\(4096\\)'], ['tod', 'VARCHAR\\(4096\\)']] as const) {
+      ['id', 'OTHER'], ['tod', 'OTHER']] as const) {
       assert.match(r.model, new RegExp(`${column} ${sql}`), column);
     }
     const row = await engine.run(`SELECT CAST(stamp AS VARCHAR), CAST(big AS VARCHAR),
         id, tod, typeof(stamp), typeof(big), typeof(id) FROM "${r.table}"`, 0);
     assert.deepEqual(row.columns.map((c) => c.values[0]),
       ['2024-01-02 01:04:05.123456', '18446744073709551615',
-        '4ac7a9e2-5b8f-4c1e-9a3d-2f6b8c0d1e7f', '13:14:15.678901', 'TIMESTAMP', 'DECIMAL(20,0)', 'VARCHAR']);
+        // a uuid and a time of day are declared OTHER and kept as stored: every query reads them as text
+        '4ac7a9e2-5b8f-4c1e-9a3d-2f6b8c0d1e7f', '13:14:15.678901', 'TIMESTAMP', 'DECIMAL(20,0)', 'UUID']);
   });
 
   it('opens the offered orders sample with its nested fields as Variant', async () => {

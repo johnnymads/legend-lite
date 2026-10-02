@@ -101,6 +101,7 @@ export function inferModel(
     table: options.table,
     columns,
     convertible: options.convertible,
+    databaseType: options.databaseType,
   });
 
   const model = `${db.text}
@@ -148,6 +149,6 @@ Runtime ${pkg}::SnapRT
     source: db.source,
     conversions: db.conversions,
     excluded: db.excluded,
-    bitColumns: columns.filter((c) => !db.excluded.includes(c.name) && catalogType(c).declared === 'BIT').map((c) => c.name),
+    bitColumns: columns.filter((c) => !db.excluded.includes(c.name) && catalogType(c, options.databaseType).declared === 'BIT').map((c) => c.name),
   };
 }

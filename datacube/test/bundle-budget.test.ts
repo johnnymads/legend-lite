@@ -33,8 +33,10 @@ function startup(): string[] {
   return [...seen];
 }
 
-/** The page's grid-only download, gzipped, in bytes: what it costs before any chart. Raise it on purpose. */
-const BUDGET = 350_000;
+/** The page's grid-only download, gzipped, in bytes: what it costs before any chart. Raise it on purpose.
+ *  350,000 -> 352,000 (2026-10-02, store types step 7): Postgres's catalog rules -- DataCube writes a
+ *  Postgres table's model by Postgres's own rules (generated/catalog-facts.ts), about 0.5 KB gzipped. */
+const BUDGET = 352_000;
 
 describe('the page loads ECharts only when a chart draws', () => {
   it('no file the page loads at startup contains ECharts', () => {

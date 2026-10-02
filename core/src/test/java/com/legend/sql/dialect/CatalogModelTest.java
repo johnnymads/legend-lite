@@ -153,12 +153,25 @@ class CatalogModelTest {
     @Test
     void aReadOnlySourceLeavesOutWhatItCannotConvert_namingIt() {
         CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", catalog("id BIGINT, ref UUID, big UBIGINT"), new DuckDb(), false);
-        assertEquals(List.of("ref", "big"), db.excluded());
+        assertEquals(List.of("big"), db.excluded());
         assertEquals(List.of(), db.conversions());
-        assertTrue(!db.text().contains("ref ") && !db.text().contains("big "), db.text());
+        assertTrue(!db.text().contains("big ") && db.text().contains("ref OTHER"), db.text());
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> CatalogModel.database("t::DB", null, "T",
-                catalog("ref UUID"), new DuckDb(), false));
-        assertTrue(e.getMessage().contains("ref"), e.getMessage());
+                catalog("big UBIGINT"), new DuckDb(), false));
+        assertTrue(e.getMessage().contains("big"), e.getMessage());
+    }
+
+    /** A type Pure cannot name is declared OTHER and read as its text in place (StoredReads), so even a
+     *  read-only source keeps the column: a uuid, an interval, a time of day, an enum, a bit string. */
+    @Test
+    void aTypePureCannotNameIsOther_readInPlaceOnAnySource() {
+        CatalogModel.Database db = CatalogModel.database("t::DB", null, "t",
+                catalog("u UUID, i INTERVAL, tm TIME, e ENUM('a', 'b'), b BIT"), new DuckDb(), false);
+        assertEquals(List.of(), db.excluded());
+        assertEquals(List.of(), db.conversions());
+        for (String c : List.of("u", "i", "tm", "e", "b")) {
+            assertTrue(db.text().contains(c + " OTHER"), db.text());
+        }
     }
 
     /**

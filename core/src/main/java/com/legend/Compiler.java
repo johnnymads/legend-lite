@@ -865,39 +865,46 @@ public final class Compiler {
             }
             types.put(connFqn, conn.get().databaseType());
         }
-        var distinct = new java.util.TreeSet<String>();
+        // one dialect per query: the bindings' dialects, by kind
+        var distinct = new java.util.TreeMap<String, com.legend.sql.dialect.SqlDialect>();
         for (var e : types.entrySet()) {
-            switch (e.getValue()) {
-                case DuckDB, SQLite -> distinct.add(e.getValue().name());
-                // H2 rides the ANSI-flavored DuckDB renderer: the corpus
-                // executes H2-typed connections on the session's DuckDB, and
-                // every emission H2 sees is the ANSI subset.
-                case H2 -> distinct.add("DuckDB");
-                // the browser planner's path (2026-10-01 W5.5/P1 Postgres dialect):
-                // a plan-only Postgres runtime renders Postgres SQL
-                case Postgres -> distinct.add("Postgres");
-                default -> throw new com.legend.error.NotImplementedException(
-                        "SQL dialect for database type '" + e.getValue()
-                                + "' (connection '" + e.getKey() + "' of runtime '"
-                                + runtimeFqn + "') is not implemented yet");
-            }
+            com.legend.sql.dialect.SqlDialect d = dialectFor(e.getValue(),
+                    "connection '" + e.getKey() + "' of runtime '" + runtimeFqn + "'");
+            distinct.putIfAbsent(d.getClass().getSimpleName(), d);
         }
         if (distinct.size() > 1) {
             throw new com.legend.error.NotImplementedException(
                     "runtime '" + runtimeFqn + "' mixes database types "
-                            + distinct + " — one dialect per query is supported");
+                            + types.values() + " — one dialect per query is supported");
         }
-        if (distinct.contains("Postgres")) {
-            return new com.legend.sql.dialect.Postgres();
-        }
-        // SQLite differs from the ANSI baseline ONLY lexically — it is a
-        // Lexicon row, not a dialect subclass (remediation T3.2).
-        return distinct.contains("SQLite")
-                ? new com.legend.sql.dialect.AnsiSqlRenderer(
-                        com.legend.sql.dialect.Lexicon.SQLITE,
-                        com.legend.sql.dialect.TypeNames.ANSI,
-                        com.legend.sql.dialect.Spellings.DUCKDB)
-                : new com.legend.sql.dialect.DuckDb();
+        return distinct.isEmpty() ? new com.legend.sql.dialect.DuckDb() : distinct.firstEntry().getValue();
+    }
+
+    /** THE dialect a database type plans with -- a runtime's ({@link #dialectOf}), and the one that
+     *  reads a catalog of that database ({@code SqlDialect.catalogType}: a table's model). */
+    public static com.legend.sql.dialect.SqlDialect dialectFor(com.legend.model.ConnectionDefinition.DatabaseType type) {
+        return dialectFor(type, "database type " + type);
+    }
+
+    private static com.legend.sql.dialect.SqlDialect dialectFor(
+            com.legend.model.ConnectionDefinition.DatabaseType type, String where) {
+        return switch (type) {
+            // the browser planner's path (2026-10-01 W5.5/P1 Postgres dialect):
+            // a plan-only Postgres runtime renders Postgres SQL
+            case Postgres -> new com.legend.sql.dialect.Postgres();
+            // SQLite differs from the ANSI baseline ONLY lexically — it is a
+            // Lexicon row, not a dialect subclass (remediation T3.2).
+            case SQLite -> new com.legend.sql.dialect.AnsiSqlRenderer(
+                    com.legend.sql.dialect.Lexicon.SQLITE,
+                    com.legend.sql.dialect.TypeNames.ANSI,
+                    com.legend.sql.dialect.Spellings.DUCKDB);
+            // H2 rides the ANSI-flavored DuckDB renderer: the corpus
+            // executes H2-typed connections on the session's DuckDB, and
+            // every emission H2 sees is the ANSI subset.
+            case DuckDB, H2 -> new com.legend.sql.dialect.DuckDb();
+            default -> throw new com.legend.error.NotImplementedException(
+                    "SQL dialect for database type '" + type + "' (" + where + ") is not implemented yet");
+        };
     }
 
     /** THE query front door: raw-space desugars (the relational

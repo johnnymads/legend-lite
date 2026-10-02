@@ -18,6 +18,7 @@ describe('the TypeScript Database writer is legend-lite\'s, case for case', () =
   for (const c of CATALOG_CORPUS) {
     it(c.name, () => {
       const table = {
+        databaseType: c.input.databaseType,
         path: c.input.path,
         ...(c.input.schema === null ? {} : { schema: c.input.schema }),
         table: c.input.table,

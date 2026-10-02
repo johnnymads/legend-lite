@@ -21,7 +21,7 @@ import type { CubeSnapshot } from '../../src/snapshot.ts';
 import { WasmPlanner } from '../../src/wasm-planner.ts';
 import { inferModel } from '../../src/infer.ts';
 import { catalogColumns } from '../../src/upload.ts';
-import { CATALOG_REFUSED, CATALOG_TYPES } from '../../src/generated/catalog-facts.ts';
+import { CATALOG_RULES } from '../../src/generated/catalog-facts.ts';
 import { sourceColumns } from '../../src/source-columns.ts';
 import { familyOf } from '../../src/types.ts';
 import { toCsv } from '../../src/export.ts';
@@ -259,11 +259,11 @@ describe('a source\'s columns come from the compiler', () => {
 
   it('every canonical type of the browser\'s DuckDB has a decision (declared, DECIMAL, or refused)', async () => {
     // the browser runs its own DuckDB, a version apart from legend-lite's: a type it adds must be
-    // decided in legend-lite (DuckDb.CATALOG_TYPES / CATALOG_REFUSED), not met by a person first
+    // decided in legend-lite (DuckDb.CATALOG_RULES), not met by a person first
     const types = await new DuckDbEngine(conn).run(
       'SELECT DISTINCT logical_type FROM duckdb_types() WHERE internal AND type_oid IS NOT NULL', 0);
     const undecided = (types.columns[0]?.values ?? []).map(String)
-      .filter((t) => t !== 'DECIMAL' && !(t in CATALOG_TYPES) && !(t in CATALOG_REFUSED));
+      .filter((t) => t !== 'DECIMAL' && !(t in CATALOG_RULES.DuckDB!.types) && !(t in CATALOG_RULES.DuckDB!.refused));
     assert.deepEqual(undecided, []);
   });
 

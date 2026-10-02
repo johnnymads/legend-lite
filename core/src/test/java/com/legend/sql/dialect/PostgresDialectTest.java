@@ -73,6 +73,17 @@ class PostgresDialectTest {
     }
 
     @Test
+    void aJsonColumnGroupsOneValueInJsonbsOwnOrder() {
+        // DataCube's "the group's one value" over a Variant column, read as jsonb: Postgres has no
+        // max(jsonb), though jsonb is ordered (found driving DataCube Live on Postgres, 2026-10-02)
+        String model = MODEL.replace("f8 DOUBLE)", "f8 DOUBLE, doc SEMISTRUCTURED)");
+        String sql = Compiler.plan(model, "#>{pg::DB.trades}#->groupBy(~[sym], ~[u: r|$r.doc : y|$y->uniqueValueOnly()])",
+                "pg::RT").sql();
+        assertTrue(sql.contains("(array_agg(CAST(\"t0\".\"doc\" AS JSONB) ORDER BY CAST(\"t0\".\"doc\" AS JSONB) DESC NULLS LAST))[1]"), sql);
+        assertFalse(sql.contains("MAX(CAST("), sql);
+    }
+
+    @Test
     void aConstantKeyIsATypedExpression() {
         // DataCube's root row groups by the constant '[ROOT]': Postgres refuses a bare
         // non-integer constant in GROUP BY and reads an integer as a position (found driving

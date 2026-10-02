@@ -228,3 +228,23 @@ What must stay loud (decision 4):
 6. **The `SEMANTICS_REGISTER` row.**
 7. **The per-database catalog reading,** with conformance tests and the live run.
 8. **Separately:** the planned-frame CTE keeps quoted column names.
+
+## 10. Step 7 as built (2026-10-02)
+
+- **Each database's catalog is read by its own dialect.** A warehouse lists an attached Postgres
+  catalog from Postgres's own catalog (`pg_catalog`, `Attachment.catalogListing`), not DuckDB's view
+  of it, which reads an array as a LIST, a point as a STRUCT and an inet as VARCHAR. The rules are one
+  algorithm over per-database data (`CatalogRules`); DataCube runs the same algorithm on the same data,
+  generated, picked by the listing's `databaseType`; the wasm export picks by `Compiler.dialectFor`.
+- **Postgres's rules** (every built-in Postgres 17 type decided): numbers, text, dates and timestamps
+  as themselves (an unconstrained numeric DOUBLE, a zoned timestamp its UTC instant); json and jsonb
+  a Variant, read as jsonb; bytea left out; everything else OTHER, read as its text -- arrays (until
+  P4), enums, uuid, interval, times of day, network, geometric and range types, money, xml, bit
+  strings, user and extension types.
+- **DuckDB's rules, the same way:** UUID, INTERVAL, TIME, TIMETZ, ENUM, BIT and BIGNUM are OTHER, read
+  as text in place, where they were converted at ingest or left out of a read-only table.
+- **Found live:** Postgres has no `max(jsonb)`; DataCube's one-value columns over a Variant read it in
+  jsonb's own order (`(array_agg(x ORDER BY x DESC NULLS LAST))[1]`), as `max(boolean)` reads `bool_or`.
+- **Proof:** the probe table (every kind of column) opens Live and Snapped in DataCube and groups by an
+  enum; on Postgres its planned SQL filters an inet as text and groups by json, uuid and an enum; the
+  feature sweep is 171/171 Live and Snapped on a Postgres table; the render census is unchanged.

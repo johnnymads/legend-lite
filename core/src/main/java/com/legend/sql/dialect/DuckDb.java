@@ -76,9 +76,9 @@ public final class DuckDb extends AnsiSqlRenderer {
      * A DuckDB column, from its STRUCTURED catalog (T2; the user, 2026-10-01: no type strings
      * parsed): its canonical type ({@code duckdb_types().logical_type}, joined on the column's
      * {@code data_type_id}), and a DECIMAL's precision and scale as numbers. Every type the DDL can
-     * say is declared as itself; a type it cannot is converted at the source, explicitly -- the
-     * unsigned and 128-bit integers to exact decimals, a time of day, a UUID, an interval, an enum
-     * and a bit string to their canonical text; a zoned timestamp is its UTC instant, read in place
+     * say is declared as itself; the unsigned and 128-bit integers are converted at the source to
+     * exact decimals; a type Pure cannot name -- a time of day, a UUID, an interval, an enum, a bit
+     * string -- is declared OTHER, a String read as its text in place; a zoned timestamp is its UTC instant, read in place
      * under the UTC session and converted only in a copy ({@link CatalogType.Read#COPY_CONVERTED}); a
      * nested value (STRUCT, LIST, MAP, UNION, ARRAY) is a Variant as stored; JSON (an ALIAS of VARCHAR,
      * so known by its alias name) is a Variant; bytes are left out, by name. Every other canonical
@@ -86,27 +86,7 @@ public final class DuckDb extends AnsiSqlRenderer {
      */
     @Override
     public CatalogType catalogType(CatalogModel.Column column) {
-        CatalogType alias = CATALOG_ALIASES.get(column.dataType().trim().toUpperCase(java.util.Locale.ROOT));
-        if (alias != null) {
-            return alias;
-        }
-        String logical = column.logicalType() == null ? null : column.logicalType().toUpperCase(java.util.Locale.ROOT);
-        if (logical != null && logical.equals("DECIMAL")) {
-            if (column.precision() == null || column.scale() == null) {
-                throw new DialectCapability("a DECIMAL column whose catalog gives no precision and scale ('"
-                        + column.dataType() + "') cannot be declared");
-            }
-            return CatalogType.asStored("DECIMAL(" + column.precision() + "," + column.scale() + ")");
-        }
-        CatalogType known = logical == null ? null : CATALOG_TYPES.get(logical);
-        if (known != null) {
-            return known;
-        }
-        String why = logical == null ? null : CATALOG_REFUSED.get(logical);
-        throw new DialectCapability("a column of DuckDB type '" + column.dataType()
-                + "' cannot be declared in a Pure Database ("
-                + (why != null ? why : logical == null ? "its catalog names no canonical type" : "a type this dialect does not read")
-                + ")");
+        return CATALOG_RULES.typeOf(column);
     }
 
     /**
@@ -141,9 +121,16 @@ public final class DuckDb extends AnsiSqlRenderer {
     /** Canonical types refused, each with its reason. */
     public static final java.util.Map<String, String> CATALOG_REFUSED = catalogRefused();
 
+    /** DuckDB's catalog decisions as one {@link CatalogRules}: an unsized DECIMAL is refused. */
+    public static final CatalogRules CATALOG_RULES =
+            new CatalogRules("DuckDB", CATALOG_TYPES, CATALOG_ALIASES, CATALOG_REFUSED, "DECIMAL", null);
+
     private static java.util.Map<String, CatalogType> catalogTypes() {
         java.util.Map<String, CatalogType> m = new java.util.LinkedHashMap<>();
-        CatalogType text = CatalogType.converted("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
+        // a type Pure cannot name is declared OTHER: a Pure String, read as its text wherever it is
+        // referenced (StoredReads; SEMANTICS_REGISTER S26) -- in place on any source, so a read-only
+        // table keeps the column
+        CatalogType other = CatalogType.asStored("OTHER");
         CatalogType variant = CatalogType.asStored("SEMISTRUCTURED");
         m.put("VARCHAR", CatalogType.asStored("VARCHAR(4096)"));
         m.put("BOOLEAN", CatalogType.asStored("BIT"));
@@ -167,13 +154,13 @@ public final class DuckDb extends AnsiSqlRenderer {
         // a zoned timestamp is its UTC instant: read in place under the UTC session (every reading
         // session's, sessionSetup), and a copy holds its UTC wall time, whatever zone later reads it
         m.put("TIMESTAMP WITH TIME ZONE", CatalogType.copyConverted("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)"));
-        m.put("TIME", text);
-        m.put("TIME WITH TIME ZONE", text);
-        m.put("UUID", text);
-        m.put("INTERVAL", text);
-        m.put("BIT", text);
-        m.put("BIGNUM", text);
-        m.put("ENUM", text);
+        m.put("TIME", other);
+        m.put("TIME WITH TIME ZONE", other);
+        m.put("UUID", other);
+        m.put("INTERVAL", other);
+        m.put("BIT", other);
+        m.put("BIGNUM", other);
+        m.put("ENUM", other);
         // nested: a Variant AS STORED -- no conversion: navigation reads it as it is, and a whole value
         // is read through to_json where it is used whole (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)
         m.put("STRUCT", variant);

@@ -57,6 +57,46 @@ final class Postgres {
         }
     }
 
+    /**
+     * The DuckDB statement that lists, from Postgres's OWN catalog, every column the catalog's role may
+     * read outside {@code systemSchemas} -- in the listing's shape (schema, name, kind, column_name,
+     * data_type, logical_type, numeric_precision, numeric_scale, not_null). The canonical type is what the
+     * Postgres dialect reads (core's {@code Postgres.CATALOG_TYPES}): the base type's {@code pg_catalog}
+     * name ({@code int4}, {@code inet}; a domain is its base type's, its precision and scale too), or the
+     * kind information_schema names -- {@code ARRAY}, {@code ENUM}, {@code COMPOSITE}, {@code RANGE},
+     * {@code USER-DEFINED}. Not DuckDB's view of the attached table: it reads an array as a LIST, a point as
+     * a STRUCT and an inet as VARCHAR (docs/STORE_TYPES_HOMEWORK_2026_10_02.md step 7).
+     */
+    static String catalogListing(List<String> systemSchemas) {
+        String pg = """
+                SELECT n.nspname AS schema, c.relname AS name,
+                       CASE WHEN c.relkind IN ('v', 'm') THEN 'view' ELSE 'table' END AS kind,
+                       a.attname AS column_name, format_type(a.atttypid, a.atttypmod) AS data_type,
+                       CASE WHEN b.typcategory = 'A' THEN 'ARRAY'
+                            WHEN b.typnamespace = 'pg_catalog'::regnamespace THEN b.typname::text
+                            WHEN b.typtype = 'e' THEN 'ENUM'
+                            WHEN b.typtype = 'c' THEN 'COMPOSITE'
+                            WHEN b.typtype IN ('r', 'm') THEN 'RANGE'
+                            ELSE 'USER-DEFINED' END AS logical_type,
+                       CASE WHEN b.typname = 'numeric' AND b.typnamespace = 'pg_catalog'::regnamespace AND m.typmod >= 4
+                            THEN ((m.typmod - 4) >> 16) & 65535 END AS numeric_precision,
+                       CASE WHEN b.typname = 'numeric' AND b.typnamespace = 'pg_catalog'::regnamespace AND m.typmod >= 4
+                            THEN (m.typmod - 4) & 65535 END AS numeric_scale,
+                       a.attnotnull AS not_null
+                FROM pg_attribute a
+                JOIN pg_class c ON c.oid = a.attrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                JOIN pg_type t ON t.oid = a.atttypid
+                JOIN pg_type b ON b.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END
+                CROSS JOIN LATERAL (SELECT CASE WHEN t.typtype = 'd' THEN t.typtypmod ELSE a.atttypmod END AS typmod) m
+                WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+                  AND n.nspname NOT IN (%s) AND n.nspname NOT LIKE 'pg\\_toast%%' AND n.nspname NOT LIKE 'pg\\_temp%%'
+                  AND has_column_privilege(c.oid, a.attnum, 'SELECT')
+                ORDER BY 1, 2, a.attnum""".formatted(String.join(", ",
+                systemSchemas.stream().map(n -> "'" + n.replace("'", "''") + "'").toList()));
+        return "SELECT * FROM postgres_query('" + Attachment.ALIAS + "', '" + pg.replace("'", "''") + "')";
+    }
+
     private static final Pattern STATEMENT_ID = Pattern.compile("[0-9a-f-]{36}");
 
     /**

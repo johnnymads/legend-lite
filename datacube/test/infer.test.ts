@@ -95,28 +95,41 @@ describe('inferModel', () => {
     ], { table: 't', convertible: true, databaseType: 'DuckDB' }), /two columns named/);
   });
 
-  it('names what a copy must convert, and what a read-only source leaves out', async () => {
+  it('names what a copy must convert, and keeps a type Pure cannot name on any source', async () => {
     const cols = [col_('id', 'BIGINT'), col_('at', 'TIMESTAMP WITH TIME ZONE'), col_('ref', 'UUID')];
     const upload = inferModel(cols, { table: 't', convertible: true, databaseType: 'DuckDB' });
-    assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` },
-      { column: 'ref', sql: `CAST("ref" AS VARCHAR)` }]);
+    assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
     assert.match(upload.model, /at TIMESTAMP/);
     // a zoned timestamp is read in place, as its UTC instant under the UTC session; its conversion is
-    // still the copy's (a Snap). A UUID must be converted to be read at all: left out, by name.
+    // still the copy's (a Snap). A UUID is OTHER: read as its text wherever it is used, on every source.
     const warehouse = inferModel(cols, { table: 't', schema: 's', convertible: false, databaseType: 'DuckDB' });
-    assert.deepEqual(warehouse.excluded, ['ref']);
+    assert.deepEqual(warehouse.excluded, []);
     assert.match(warehouse.model, / at TIMESTAMP/);
+    assert.match(warehouse.model, / ref OTHER/);
     assert.deepEqual(warehouse.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
   });
 
+  it('reads a Postgres table by Postgres\'s rules: an array and an inet are text, json a Variant, bytes left out', async () => {
+    const pg = (name: string, dataType: string, logicalType: string) =>
+      ({ name, dataType, logicalType, precision: null, scale: null, notNull: false });
+    const m = inferModel([pg('id', 'integer', 'int4'), pg('ia', 'integer[]', 'ARRAY'), pg('ip', 'inet', 'inet'),
+      pg('doc', 'jsonb', 'jsonb'), pg('photo', 'bytea', 'bytea')],
+    { table: 'kinds', schema: 'probe', convertible: false, databaseType: 'Postgres' });
+    assert.match(m.model, /id INTEGER,\n\s*ia OTHER,\n\s*ip OTHER,\n\s*doc SEMISTRUCTURED\n/);
+    assert.deepEqual(m.excluded, ['photo']);
+    const sql = (await plannerFor(m.model, m.runtime).plan(from(m.source).lambda())).sql;
+    assert.match(sql, /CAST\("t0"\."ia" AS VARCHAR\) AS "ia"/);
+    assert.match(sql, /CAST\("t0"\."doc" AS JSONB\) AS "doc"/);
+  });
+
   it('declares the database type it is given: a warehouse Postgres catalog plans Postgres SQL', () => {
-    const m = inferModel([col_('id', 'BIGINT')], { table: 'orders', schema: 'sales', convertible: false, databaseType: 'Postgres' });
+    const m = inferModel([col_('id', 'int8', 'bigint')], { table: 'orders', schema: 'sales', convertible: false, databaseType: 'Postgres' });
     assert.match(m.model, /type: Postgres;/);
     assert.match(inferModel([col_('id', 'BIGINT')], { table: 't', convertible: true, databaseType: 'DuckDB' }).model, /type: DuckDB;/);
   });
 
   it('carries a snap runtime over the SAME Database when the copy\'s store is named (leg C)', () => {
-    const m = inferModel([col_('id', 'BIGINT')],
+    const m = inferModel([col_('id', 'int8', 'bigint')],
       { table: 'orders', schema: 'sales', convertible: false, databaseType: 'Postgres', snapDatabaseType: 'DuckDB' });
     assert.equal(m.runtime, 'local::RT');
     assert.equal(m.snapRuntime, 'local::SnapRT');
@@ -129,7 +142,8 @@ describe('inferModel', () => {
   });
 
   it('plans the SAME query in each runtime\'s SQL: Postgres live, DuckDB on the copy', async () => {
-    const m = inferModel([col_('region', 'VARCHAR'), col_('n', 'BIGINT')],
+    // a Postgres table, as its own catalog describes it
+    const m = inferModel([col_('region', 'text'), col_('n', 'int8', 'bigint')],
       { table: 'orders', schema: 'sales', convertible: false, databaseType: 'Postgres', snapDatabaseType: 'DuckDB' });
     // the root row's constant group key: Postgres needs it typed, DuckDB takes it bare
     const query = from(m.source).extend([derive('k', lambda(['x'], lit.string('[ROOT]')))])

@@ -1,25 +1,29 @@
-// A DUCKDB TABLE'S MODEL -- the Pure Database, from DuckDB's own STRUCTURED catalog -- written here,
+// A TABLE'S MODEL -- the Pure Database, from its database's own STRUCTURED catalog (DuckDB's, or
+// Postgres's as a warehouse lists an attached catalog) -- written here,
 // with no WebAssembly, whichever planner the page uses (the user, 2026-10-01). As upstream DataCube
 // writes a local file's model in the browser (no server can read a database inside the tab); the
 // chosen planner then compiles and types it, and its answer decides whether the table opens.
 //
-// It CANNOT DRIFT from legend-lite's own writer (core's CatalogModel and DuckDb.catalogType):
-//   - every type decision, and the catalog question itself, is GENERATED from legend-lite
-//     (generated/catalog-facts.ts) -- this file holds no type rule;
+// It CANNOT DRIFT from legend-lite's own writer (core's CatalogModel and CatalogRules.typeOf):
+//   - every type decision, per database, and DuckDB's catalog question are GENERATED from
+//     legend-lite (generated/catalog-facts.ts) -- this file holds no type rule, only typeOf's
+//     algorithm over that data;
 //   - the assembly below is tested against what CatalogModel.database answers for a corpus of
-//     real DuckDB tables (test/catalog-model.test.ts, test/generated/catalog-corpus.ts).
+//     real DuckDB tables and Postgres catalog rows (test/catalog-model.test.ts,
+//     test/generated/catalog-corpus.ts).
 // Nothing parses a type string: a column's canonical type and a DECIMAL's precision and scale come
 // from the catalog as data; JSON (an alias of VARCHAR) is known by its alias name.
 
-import { CATALOG_ALIASES, CATALOG_COLUMNS_SQL, CATALOG_REFUSED, CATALOG_TYPES, type CatalogRead, type CatalogType } from './generated/catalog-facts.ts';
+import { CATALOG_COLUMNS_SQL, CATALOG_RULES, type CatalogRead, type CatalogRules, type CatalogType } from './generated/catalog-facts.ts';
 import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
 
-/** One column, as DuckDB's catalog describes it (the catalog question's row). */
+/** One column, as its database's catalog describes it (the catalog question's row). */
 export interface CatalogColumn {
   readonly name: string;
   /** Its own type name, as the catalog writes it: for an alias and for messages, never parsed. */
   readonly dataType: string;
-  /** Its canonical type (`duckdb_types().logical_type`), or null when the catalog names none. */
+  /** Its canonical type (DuckDB's `duckdb_types().logical_type`; Postgres's base type name, or its kind:
+   *  `ARRAY`, `ENUM`, ...), or null when the catalog names none. */
   readonly logicalType: string | null;
   /** A DECIMAL's precision and scale, as numbers; null for any other type. */
   readonly precision: number | null;
@@ -30,6 +34,8 @@ export interface CatalogColumn {
 
 /** A table's catalog, to write its Database from. */
 export interface CatalogTable {
+  /** The table's database type, as a Pure connection names it (`DuckDB`, `Postgres`): whose rules read its catalog. */
+  readonly databaseType: string;
   /** The Database element's path, e.g. `local::DB`. */
   readonly path: string;
   readonly schema?: string;
@@ -72,22 +78,31 @@ export function catalogColumnsSql(schema: string, table: string): string {
   return CATALOG_COLUMNS_SQL.replace('{schema}', lit(schema)).replace('{table}', lit(table));
 }
 
-/** How a column of DuckDB is declared (DuckDb.catalogType): an alias, DECIMAL from its numbers, a decision, or refused. */
-export function catalogType(column: CatalogColumn): CatalogType {
-  const alias = CATALOG_ALIASES[column.dataType.trim().toUpperCase()];
+/** The rules that read a database type's catalog, or a refusal naming the type. */
+export function catalogRules(databaseType: string): CatalogRules {
+  const rules = CATALOG_RULES[databaseType];
+  if (!rules) throw new CatalogRefusal(`legend-lite reads no catalog of database type '${databaseType}'`);
+  return rules;
+}
+
+/** How a column is declared by its database's rules (CatalogRules.typeOf): an alias, the exact decimal, a decision, or refused. */
+export function catalogType(column: CatalogColumn, databaseType: string): CatalogType {
+  const rules = catalogRules(databaseType);
+  const alias = rules.aliases[column.dataType.trim().toUpperCase()];
   if (alias) return alias;
   // absent (a catalog older than the structured listing) reads as null: no canonical type named
   const logical = column.logicalType == null ? null : column.logicalType.toUpperCase();
-  if (logical === 'DECIMAL') {
-    if (column.precision === null || column.scale === null) {
-      throw new CatalogRefusal(`a DECIMAL column whose catalog gives no precision and scale ('${column.dataType}') cannot be declared`);
+  if (logical === rules.decimal) {
+    if (column.precision !== null && column.scale !== null) {
+      return { read: 'AS_STORED', declared: `DECIMAL(${column.precision},${column.scale})`, conversion: null, reason: null };
     }
-    return { read: 'AS_STORED', declared: `DECIMAL(${column.precision},${column.scale})`, conversion: null, reason: null };
+    if (rules.unsizedDecimal !== null) return rules.unsizedDecimal;
+    throw new CatalogRefusal(`a ${rules.decimal} column whose catalog gives no precision and scale ('${column.dataType}') cannot be declared`);
   }
-  const known = logical === null ? undefined : CATALOG_TYPES[logical];
+  const known = logical === null ? undefined : rules.types[logical];
   if (known) return known;
-  const why = logical === null ? undefined : CATALOG_REFUSED[logical];
-  throw new CatalogRefusal(`a column of DuckDB type '${column.dataType}' cannot be declared in a Pure Database (${
+  const why = logical === null ? undefined : rules.refused[logical];
+  throw new CatalogRefusal(`a column of ${rules.database} type '${column.dataType}' cannot be declared in a Pure Database (${
     why ?? (logical === null ? 'its catalog names no canonical type' : 'a type this dialect does not read')})`);
 }
 
@@ -112,7 +127,7 @@ export function databaseFromCatalog(t: CatalogTable): CatalogDatabase {
     seen.add(lower);
     let type: CatalogType;
     try {
-      type = catalogType(c);
+      type = catalogType(c, t.databaseType);
     } catch (e) {
       throw new CatalogRefusal(`column '${c.name}': ${e instanceof Error ? e.message : String(e)}`);
     }
