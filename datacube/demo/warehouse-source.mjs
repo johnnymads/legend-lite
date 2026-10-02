@@ -9,7 +9,8 @@
 // WAREHOUSE_USER / WAREHOUSE_PASSWORD (default alice / secret) sign in. The page is served on
 // PORT, which the warehouse must allow (`--allow-origin http://127.0.0.1:PORT`). The table should
 // hold the harness's own sample (`sampleCsv`, 5,000 rows, seed 20260920) under the sample's
-// column names and types, so the checks written against it read the same data.
+// column names and types, so the checks written against it read the same data. WAREHOUSE_SNAP=1
+// snaps the table as soon as it opens: the same checks then run on its copy in the tab's DuckDB.
 
 /** The warehouse to read from, or undefined: the harness opens its file, as always. */
 export const WAREHOUSE = process.env.WAREHOUSE
@@ -18,6 +19,8 @@ export const WAREHOUSE = process.env.WAREHOUSE
     user: process.env.WAREHOUSE_USER ?? 'alice',
     password: process.env.WAREHOUSE_PASSWORD ?? 'secret',
     object: process.env.WAREHOUSE_OBJECT ?? 'public.trades',
+    /** WAREHOUSE_SNAP=1: snapped as soon as it opens, so every check runs on the copy in the tab. */
+    snap: process.env.WAREHOUSE_SNAP === '1',
   }
   : undefined;
 
@@ -50,4 +53,12 @@ export async function openWarehouseTable(page) {
   }
   await row.click();
   await page.locator('.dc-picker').waitFor({ state: 'detached', timeout: 60_000 });
+  if (WAREHOUSE.snap) {
+    // the plane button, as a person snaps: the rows copied into the tab, every query planned for it
+    await page.locator('.dc-titlebar-toggle').waitFor({ timeout: 60_000 });
+    await page.waitForFunction(() => document.querySelectorAll('.dc-row').length > 0, null, { timeout: 60_000 });
+    await page.click('.dc-titlebar-toggle');
+    await page.waitForFunction(() => window.__dataCube?.controller.snaps.state.mode === 'snapped'
+      && !window.__dataCube.busy, null, { timeout: 60_000 });
+  }
 }

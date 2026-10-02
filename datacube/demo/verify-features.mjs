@@ -13,7 +13,7 @@
 //
 //   bazel run //datacube:verify_features            (generates its own sample)
 //   DATA=/abs/file.csv bazel run //datacube:verify_features
-//   WAREHOUSE=http://127.0.0.1:8772 PORT=8022 bazel run //datacube:verify_features
+//   WAREHOUSE=http://127.0.0.1:8772 [WAREHOUSE_SNAP=1] PORT=8022 bazel run //datacube:verify_features
 //                                                  (the sample, LIVE on a warehouse: warehouse-source.mjs)
 
 import { createServer } from 'node:http';
@@ -649,7 +649,7 @@ async function freshCube() {
 
 try {
   await freshCube();
-  if (DATA) loaded = WAREHOUSE ? `${WAREHOUSE.object}, live on ${WAREHOUSE.url}` : DATA.split('/').pop();
+  if (DATA) loaded = WAREHOUSE ? `${WAREHOUSE.object}, ${WAREHOUSE.snap ? 'snapped from' : 'live on'} ${WAREHOUSE.url}` : DATA.split('/').pop();
   const start = await state();
   console.log(`\nloaded ${loaded}: ${start.rows.length} rows,`
     + ` ${start.headers.length} headers\n`);
