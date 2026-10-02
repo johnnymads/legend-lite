@@ -138,7 +138,7 @@ public final class ViewSignatures {
     }
 
     private static Type pureType(RelationalDataType dt) {
-        return StoreCompiler.scalarType(dt).orElseGet(() -> new Type.ClassType(PlatformTypes.ANY));
+        return StoreCompiler.columnType(dt);
     }
 
     private static Type.Column any(String name) {

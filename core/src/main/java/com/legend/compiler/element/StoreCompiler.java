@@ -41,17 +41,16 @@ public final class StoreCompiler {
         return new Type.RelationType(columns);
     }
 
-    /** THE store column type: a relational data type as its scalar Pure type
-     *  (loud for the kinds that have none). */
+    /**
+     * THE store column type: a relational data type as its Pure type, for every kind
+     * (docs/STORE_TYPES_HOMEWORK_2026_10_02.md, ruled 2026-10-02). A type Pure cannot name --
+     * OTHER, and DISTINCT (the SQL-standard user-defined distinct type) -- is a String, as upstream
+     * types them (dataTypeToCompatiblePureType), and is READ as text (the dialect's stored read); a
+     * nested value -- ARRAY, OBJECT, SEMISTRUCTURED -- is a Variant, as DuckDB's catalog declares
+     * every nested type.
+     */
     static Type columnType(RelationalDataType dt) {
-        return scalarType(dt).orElseThrow(() -> unsupportedColumnType(dt));
-    }
-
-    /** {@link #columnType} as a decision: empty for the kinds with no scalar
-     *  Pure type (DISTINCT, OTHER, ARRAY, OBJECT) — a reader that declares
-     *  such a column as nothing (a view's signature) asks here. */
-    static java.util.Optional<Type> scalarType(RelationalDataType dt) {
-        return java.util.Optional.ofNullable(switch (dt) {
+        return switch (dt) {
             case RelationalDataType.Bit b -> Type.Primitive.BOOLEAN;
             case RelationalDataType.TinyInt i -> Type.Primitive.INTEGER;
             case RelationalDataType.SmallInt i -> Type.Primitive.INTEGER;
@@ -68,19 +67,15 @@ public final class StoreCompiler {
             case RelationalDataType.Varbinary b -> Type.Primitive.BYTE;
             case RelationalDataType.Date_ d -> Type.Primitive.STRICT_DATE;
             case RelationalDataType.Timestamp t -> Type.Primitive.DATE_TIME;
-            case RelationalDataType.Distinct d -> null;
-            case RelationalDataType.Other o -> null;
-            // Semi-structured (JSON) columns are Variant — the get()/to(@Type)
-            // navigation surface (engine GetChecker's source shape).
-            case RelationalDataType.SemiStructured s ->
-                    new Type.ClassType(com.legend.compiler.element.type.PlatformTypes.VARIANT);
-            case RelationalDataType.Array a -> null;
-            case RelationalDataType.Object_ o -> null;
-        });
+            case RelationalDataType.Distinct d -> Type.Primitive.STRING;
+            case RelationalDataType.Other o -> Type.Primitive.STRING;
+            // nested values are Variant — the get()/to(@Type) navigation
+            // surface (engine GetChecker's source shape)
+            case RelationalDataType.SemiStructured s -> VARIANT;
+            case RelationalDataType.Array a -> VARIANT;
+            case RelationalDataType.Object_ o -> VARIANT;
+        };
     }
 
-    private static com.legend.error.ModelException unsupportedColumnType(RelationalDataType dt) {
-        return new com.legend.error.ModelException(com.legend.error.LegendCompileException.Phase.MODEL, 
-                "SQL column type '" + dt.getClass().getSimpleName() + "' has no scalar Pure type");
-    }
+    private static final Type VARIANT = new Type.ClassType(com.legend.compiler.element.type.PlatformTypes.VARIANT);
 }

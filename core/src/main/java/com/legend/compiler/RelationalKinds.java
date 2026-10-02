@@ -40,13 +40,13 @@ public final class RelationalKinds {
             // silently skipped. Aligned with StoreCompiler.columnType:
             case RelationalDataType.Binary b -> "Byte";
             case RelationalDataType.Varbinary b -> "Byte";
+            // aligned with StoreCompiler.columnType: a type Pure cannot name
+            // is a String (read as text); a nested value is a Variant
             case RelationalDataType.SemiStructured x -> "Variant";
-            // non-scalar carriers: their OWN names never match a declared
-            // platform kind — coercion skips EXPLICITLY, never silently
-            case RelationalDataType.Distinct d -> "Distinct";
-            case RelationalDataType.Other o -> "Other";
-            case RelationalDataType.Array a -> "Array";
-            case RelationalDataType.Object_ o -> "Object";
+            case RelationalDataType.Distinct d -> "String";
+            case RelationalDataType.Other o -> "String";
+            case RelationalDataType.Array a -> "Variant";
+            case RelationalDataType.Object_ o -> "Variant";
         };
     }
 }

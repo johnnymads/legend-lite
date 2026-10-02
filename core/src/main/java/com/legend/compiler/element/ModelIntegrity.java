@@ -314,6 +314,40 @@ final class ModelIntegrity {
             checkStoreRefs(db, model, f.condition(),
                     "multigrain filter '" + f.name() + "'");
         }
+        for (var td : db.tables()) {
+            checkMilestoningColumnTypes(db, td);
+        }
+    }
+
+    /**
+     * A milestoning date column must hold a date: one declared OTHER or DISTINCT is a String READ AS
+     * TEXT (StoreCompiler.columnType), and comparing dates as text is silently wrong -- refused, by name
+     * (docs/STORE_TYPES_HOMEWORK_2026_10_02.md, decision 5).
+     */
+    private static void checkMilestoningColumnTypes(com.legend.model.DatabaseDefinition db,
+            com.legend.model.DatabaseDefinition.TableDefinition td) {
+        var m = td.milestoning();
+        if (m == null) {
+            return;
+        }
+        var b = m.business();
+        var p = m.processing();
+        for (String mc : new String[] {
+                b == null ? null : b.from(), b == null ? null : b.thru(),
+                b == null ? null : b.snapshotDate(),
+                p == null ? null : p.in(), p == null ? null : p.out(),
+                p == null ? null : p.snapshotDate()}) {
+            for (var c : td.columns()) {
+                if (c.name().equals(mc) && (c.dataType() instanceof com.legend.model.RelationalDataType.Other
+                        || c.dataType() instanceof com.legend.model.RelationalDataType.Distinct)) {
+                    throw new com.legend.error.ModelException(
+                            com.legend.error.LegendCompileException.Phase.MODEL,
+                            "The milestoning column '" + mc + "' of table '" + td.name() + "' in database '"
+                                    + db.qualifiedName() + "' is declared " + c.dataType().getClass().getSimpleName()
+                                    + ": a milestoning date must be a DATE or TIMESTAMP column");
+                }
+            }
+        }
     }
 
     private static void checkStoreRefs(com.legend.model.DatabaseDefinition db,
