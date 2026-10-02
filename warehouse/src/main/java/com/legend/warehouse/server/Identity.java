@@ -47,6 +47,11 @@ public final class Identity {
     private record Hashed(byte[] salt, byte[] hash) {
     }
 
+    private record Launch(String principal, byte[] key) {
+    }
+
+    private @Nullable Launch launch;
+
     public Identity(byte[] key, Duration tokenLife, Clock clock) {
         this(key, tokenLife, DEFAULT_SESSION_LIMIT, clock);
     }
@@ -60,11 +65,16 @@ public final class Identity {
     }
 
     /** Whether a user of that name can sign in (names compare without case, as grants do). */
-    public boolean hasUser(String name) {
+    public synchronized boolean hasUser(String name) {
         for (String u : users.keySet()) {
             if (u.equalsIgnoreCase(name)) return true;
         }
-        return false;
+        return launch != null && launch.principal().equalsIgnoreCase(name);
+    }
+
+    /** A user a token may stand for: one with a password, or the launch key's. */
+    private synchronized boolean known(String principal) {
+        return users.containsKey(principal) || (launch != null && launch.principal().equals(principal));
     }
 
     public static boolean validPrincipal(String name) {
@@ -88,6 +98,35 @@ public final class Identity {
         if (h == null || !MessageDigest.isEqual(tried, h.hash())) return null;
         Instant now = clock.instant();
         return issue(name, now.plus(tokenLife), now.getEpochSecond());
+    }
+
+    /**
+     * Make the key that signs {@code principal} in without a password: the single-user app's
+     * (docs/DATACUBE_APP_PLAN_2026_10_02.md, A1), handed to the browser it opens in the address's
+     * fragment, which a browser never sends. It stays good while the server runs, so the page can
+     * reload; there is one, made once.
+     */
+    public synchronized String launchKey(String principal) {
+        if (!validPrincipal(principal)) throw new IllegalArgumentException("bad user name: " + principal);
+        if (launch != null) throw new IllegalStateException("the launch key is already made");
+        byte[] k = new byte[32];
+        random.nextBytes(k);
+        launch = new Launch(principal, k);
+        return enc(k);
+    }
+
+    /** A token for the launch key's principal, or null when {@code key} is not the launch key. */
+    public synchronized @Nullable Issued loginWithKey(String key) {
+        if (launch == null) return null;
+        byte[] tried;
+        try {
+            tried = Base64.getUrlDecoder().decode(key);
+        } catch (IllegalArgumentException garbled) {
+            return null;
+        }
+        if (!MessageDigest.isEqual(tried, launch.key())) return null;
+        Instant now = clock.instant();
+        return issue(launch.principal(), now.plus(tokenLife), now.getEpochSecond());
     }
 
     /**
@@ -151,7 +190,7 @@ public final class Identity {
             return null;
         }
         if (clock.instant().getEpochSecond() >= expiry) return null;
-        return validPrincipal(principal) && users.containsKey(principal) ? new Verified(principal, signedInAt) : null;
+        return validPrincipal(principal) && known(principal) ? new Verified(principal, signedInAt) : null;
     }
 
     private byte[] sign(String payload) {

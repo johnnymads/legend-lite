@@ -47,19 +47,34 @@ and retries. Without a terminal it stops with that message.
 `/config.json` is answered as `{"warehouse": "<the request's own origin>"}`. The origin is
 `http://` + Host, so `localhost` and `127.0.0.1` both work and no CORS setting is needed.
 
-**`--single-user`** is the URL's Postgres user as the only principal, and an owner. There are no
-`--user` or `--owner` lists.
-- A random **launch key** is made at start. `POST /sql/v1/login {"key": "<launch key>"}` is
-  accepted once and issues an ordinary token; a second use is refused.
-- Combined with `--user`, the server refuses to start.
+**`--single-user`** has one principal, an owner: the OS account running the server. Each Postgres
+catalog still connects as its own URL's user, so several URLs with different users work. There are
+no `--user` or `--owner` lists.
+- A random **launch key** is made at start. `POST /sql/v1/login {"key": "<launch key>"}` issues an
+  ordinary token.
+- The key **stays valid while the server runs** (revised during A1). The page keeps its token in
+  memory, so a single-use key would make a reload lose the sign-in, and a single-user server has no
+  password to fall back on. This is the same contract as Jupyter's token. The key travels only in
+  the address's fragment, which a browser never sends, and the server listens on 127.0.0.1 only.
+- Combined with `--user` or `--owner`, the server refuses to start.
 
 **`--open`** prints the address and opens the default browser at
 `http://127.0.0.1:<port>/#key=<launch key>`. The key is in the fragment, which a browser never sends.
 `--table schema.name` adds `&table=schema.name` to that fragment.
 
-**Tests:** URL parsing; the catalog name; the default timeout; `--site` traversal; `/config.json` per
-Host; the key accepted once then refused; `--single-user` with `--user` refused; live (key, then
-list, then query).
+**Also:**
+- **Postgres 16 is checked when a catalog attaches.** An older server is refused at start, by name.
+- **The site is served to a loopback Host only** (`127.0.0.1`, `localhost`, `[::1]`). A page that
+  another site's name resolves here (DNS rebinding) is refused.
+- **Start-up errors are one line and exit 2:** a bad command line, or a catalog that cannot attach
+  (with the `~/.pgpass`/`PGPASSWORD` hint when libpq lacked a password).
+
+**Tests:**
+- URL parsing, the catalog name and the default timeout;
+- `--site` traversal and `/config.json` per Host;
+- the launch key (valid, reusable, wrong key refused);
+- `--single-user` with `--user` refused;
+- live: the version check on every attach.
 
 ### A2. `//datacube:app` (Bazel)
 The `warehouse_run` rule gains an optional `site` and fixed extra args. `//datacube:app` is

@@ -1,8 +1,11 @@
 package com.legend.warehouse.server;
 
 import com.legend.base.Nullable;
+import com.legend.json.Json;
+import com.legend.warehouse.server.duck.Collect;
 import com.legend.warehouse.server.duck.Conn;
 import com.legend.warehouse.server.duck.Database;
+import com.legend.warehouse.server.duck.Result;
 import com.legend.warehouse.server.duck.DuckException;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -80,14 +83,49 @@ public final class Catalogs implements AutoCloseable {
         try {
             db.attachPostgres(extension, dsn, Postgres.ATTACH);
             db.lockDown(null);
-        } catch (DuckException e) {
+            requireSupportedVersion(name, db);
+        } catch (DuckException | IOException e) {
             db.close();
             // the DSN may carry a password: name the catalog, never echo the connection string
-            throw new IOException("could not attach Postgres catalog " + name + ": "
-                    + String.valueOf(e.getMessage()).replace(dsn, "<dsn>"));
+            String why = String.valueOf(e.getMessage()).replace(dsn, "<dsn>");
+            throw new AttachFailed(name, why, why.contains(NO_PASSWORD));
         }
         databases.put(name, db);
         postgres.add(name);
+    }
+
+    /** libpq's words when it found no password to send (fe-auth.c); a caller with a terminal can ask for one. */
+    private static final String NO_PASSWORD = "no password supplied";
+
+    /** The oldest Postgres the dialect is written for (docs/POSTGRES_DIALECT_HOMEWORK_2026_10_01.md, Q7). */
+    static final int MIN_SERVER_VERSION_NUM = 160000;
+
+    private static void requireSupportedVersion(String name, Database db) throws DuckException, IOException {
+        try (Conn c = db.connect(Statements.SERVER);
+             Result r = c.execute("SELECT * FROM postgres_query('" + Postgres.ATTACH + "', 'SELECT current_setting(''server_version_num'') AS v')")) {
+            List<List<Json.Node>> rows = Collect.json(r, 1);
+            int version = Integer.parseInt(((Json.Str) rows.get(0).get(0)).value());
+            if (version < MIN_SERVER_VERSION_NUM) {
+                throw new IOException("Postgres catalog " + name + " is PostgreSQL " + version / 10000
+                        + "; DataCube needs " + MIN_SERVER_VERSION_NUM / 10000 + " or newer");
+            }
+        } catch (DuckException | IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("could not read Postgres catalog " + name + "'s server version: " + e.getMessage(), e);
+        }
+    }
+
+    /** A Postgres catalog that could not be attached, by name; whether libpq lacked a password. */
+    public static final class AttachFailed extends IOException {
+        public final String catalog;
+        public final boolean missingPassword;
+
+        AttachFailed(String catalog, String why, boolean missingPassword) {
+            super("could not attach Postgres catalog " + catalog + ": " + why);
+            this.catalog = catalog;
+            this.missingPassword = missingPassword;
+        }
     }
 
     private void claim(String name) {

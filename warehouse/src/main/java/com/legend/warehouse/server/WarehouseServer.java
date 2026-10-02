@@ -64,30 +64,39 @@ public final class WarehouseServer implements AutoCloseable {
             List<String> allowedOrigins,
             Duration sessionLimit,
             Map<String, String> postgres,
-            @Nullable Path duckdbExtensions) {
+            @Nullable Path duckdbExtensions,
+            @Nullable Path site,
+            @Nullable String singleUser) {
+
+        public Config {
+            if (singleUser != null && (!users.isEmpty() || !owners.isEmpty())) {
+                throw new IllegalArgumentException("--single-user signs its one user in with the launch key:"
+                        + " --user and --owner have no place beside it");
+            }
+        }
 
         /** DuckDB's library from the classpath (DuckDB's JDBC jar carries it). */
         public Config(int port, Path dataDir, List<String> catalogs, List<String[]> users,
                 byte @Nullable [] tokenKey, Duration tokenLife, Statements.Limits limits) {
             this(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, null, List.of(), List.of(),
-                    Identity.DEFAULT_SESSION_LIMIT, Map.of(), null);
+                    Identity.DEFAULT_SESSION_LIMIT, Map.of(), null, null, null);
         }
 
         public Config withOwners(List<String> owners) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins, sessionLimit, postgres, duckdbExtensions);
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions, site, singleUser);
         }
 
         /** The web pages (exact origins, e.g. {@code https://cube.example.com}) whose browsers may call this server. */
         public Config withAllowedOrigins(List<String> allowedOrigins) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins, sessionLimit, postgres, duckdbExtensions);
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions, site, singleUser);
         }
 
         /** How long one sign-in may be kept alive by refreshing its token (`Identity.refresh`). */
         public Config withSessionLimit(Duration sessionLimit) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins, sessionLimit, postgres, duckdbExtensions);
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions, site, singleUser);
         }
 
         /**
@@ -96,8 +105,24 @@ public final class WarehouseServer implements AutoCloseable {
          */
         public Config withPostgres(Map<String, String> postgres, @Nullable Path duckdbExtensions) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins, sessionLimit, Map.copyOf(postgres), duckdbExtensions);
+                    allowedOrigins, sessionLimit, Map.copyOf(postgres), duckdbExtensions, site, singleUser);
         }
+
+        /** A DataCube page served from DIR for every GET outside the API, with {@code /config.json} naming this server. */
+        public Config withSite(@Nullable Path site) {
+            return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions, site, singleUser);
+        }
+
+        /** One user, an owner, signed in by the launch key ({@link WarehouseServer#launchKey}) and no password. */
+        public Config withSingleUser(@Nullable String singleUser) {
+            return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions, site, singleUser);
+        }
+    }
+
+    /** The command line: the server's {@link Config}, and what the launcher does once it runs. */
+    public record CommandLine(Config config, boolean open, @Nullable String table) {
     }
 
     private final HttpServer http;
@@ -110,6 +135,8 @@ public final class WarehouseServer implements AutoCloseable {
     private final Sessions sessions;
     private final Statements statements;
     private final ResultStore results;
+    private final @Nullable Path site;
+    private final @Nullable String launchKey;
 
     public WarehouseServer(Config config) throws IOException, DuckException {
         DuckLibrary.load(config.duckdbLibrary());
@@ -127,6 +154,9 @@ public final class WarehouseServer implements AutoCloseable {
             if (u[0].equalsIgnoreCase(Statements.SERVER)) throw new IllegalArgumentException("'" + u[0] + "' is the server's own name");
             identity.addUser(u[0], u[1]);
         }
+        launchKey = config.singleUser() == null ? null : identity.launchKey(config.singleUser());
+        List<String> owners = config.singleUser() == null ? config.owners() : List.of(config.singleUser());
+        site = config.site();
         catalogs = new Catalogs(config.dataDir(), config.catalogs(), config.postgres(), config.duckdbExtensions());
         system = Database.open(config.dataDir().resolve("system.duckdb"));
         system.lockDown(null);
@@ -143,7 +173,7 @@ public final class WarehouseServer implements AutoCloseable {
             throw new IOException("could not read DuckDB's functions", e);
         }
         statements = new Statements(catalogs, sessions, results, history,
-                new Statements.Access(config.owners(), grants, authorizer, identity::hasUser), config.limits(), clock);
+                new Statements.Access(owners, grants, authorizer, identity::hasUser), config.limits(), clock);
         allowedOrigins = java.util.Set.copyOf(config.allowedOrigins());
         http = HttpServer.create(new InetSocketAddress("127.0.0.1", config.port()), 0);
         http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
@@ -153,6 +183,11 @@ public final class WarehouseServer implements AutoCloseable {
 
     public int port() {
         return http.getAddress().getPort();
+    }
+
+    /** With {@code --single-user}, the key that signs its user in ({@link Identity#launchKey}); else null. */
+    public @Nullable String launchKey() {
+        return launchKey;
     }
 
     public History history() {
@@ -232,6 +267,10 @@ public final class WarehouseServer implements AutoCloseable {
             throw new Reply(200, "{\"status\":\"ok\",\"results\":{\"inMemoryBytes\":" + results.inMemory()
                     + ",\"spilledBytes\":" + results.spilled() + "}}");
         }
+        if (site != null && method.equals("GET") && !path.startsWith("/sql/")) {
+            site(ex, site, path);
+            return;
+        }
         if (path.equals("/sql/v1/login") && method.equals("POST")) {
             login(ex);
             return;
@@ -298,12 +337,19 @@ public final class WarehouseServer implements AutoCloseable {
         try {
             o = Json.parseObject(body(ex));
         } catch (RuntimeException bad) {
-            throw Reply.error(400, ErrorCode.BAD_REQUEST, "the body must be {\"user\", \"password\"}");
+            throw Reply.error(400, ErrorCode.BAD_REQUEST, "the body must be {\"user\", \"password\"} or {\"key\"}");
         }
-        String user = o.getStringOr("user", null);
-        String password = o.getStringOr("password", null);
-        Identity.Issued issued = user == null || password == null ? null : identity.login(user, password);
-        if (issued == null) throw Reply.error(401, ErrorCode.AUTH_INVALID, "wrong user or password");
+        String key = o.getStringOr("key", null);
+        Identity.Issued issued;
+        if (key != null) {
+            issued = identity.loginWithKey(key);
+            if (issued == null) throw Reply.error(401, ErrorCode.AUTH_INVALID, "wrong launch key");
+        } else {
+            String user = o.getStringOr("user", null);
+            String password = o.getStringOr("password", null);
+            issued = user == null || password == null ? null : identity.login(user, password);
+            if (issued == null) throw Reply.error(401, ErrorCode.AUTH_INVALID, "wrong user or password");
+        }
         throw new Reply(200, Json.toCompact(ApiJson.token(
                 new Token(issued.token(), issued.expires().toString(), issued.principal()))));
     }
@@ -489,6 +535,51 @@ public final class WarehouseServer implements AutoCloseable {
         throw new Reply(200, Json.toCompact(new Json.Arr(out)));
     }
 
+    // -- the site --------------------------------------------------------------
+
+    /** The media types the DataCube site is made of; anything else is served as bytes (RFC 9110 §8.3). */
+    private static final Map<String, String> SITE_TYPES = Map.of(
+            "html", "text/html; charset=utf-8",
+            "js", "text/javascript; charset=utf-8",
+            "mjs", "text/javascript; charset=utf-8",
+            "css", "text/css; charset=utf-8",
+            "json", "application/json",
+            "wasm", "application/wasm",
+            "pure", "text/plain; charset=utf-8",
+            "svg", "image/svg+xml",
+            "woff2", "font/woff2");
+
+    /**
+     * The DataCube page ({@code --site}): its files, and {@code /config.json} naming this server as the
+     * page's warehouse, at the origin the browser used, so the page and the API are one origin and no
+     * CORS is needed. Served to a loopback Host only: a page another site's name resolves here (DNS
+     * rebinding) is refused.
+     */
+    private static void site(HttpExchange ex, Path root, String path) throws IOException, Reply {
+        // every answer is a Reply, sent by handle()
+        String host = ex.getRequestHeaders().getFirst("Host");
+        if (host == null || !LOOPBACK_HOST.matcher(host).matches()) {
+            throw Reply.error(403, ErrorCode.FORBIDDEN, "this page is served to 127.0.0.1 and localhost only");
+        }
+        if (path.equals("/config.json")) {
+            LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
+            f.put("warehouse", Json.str("http://" + host));
+            throw new Reply(200, Json.toCompact(new Json.Obj(f)));
+        }
+        String relative = path.equals("/") ? "index.html" : path.substring(1);
+        Path file = root.resolve(relative).normalize();
+        if (relative.contains("\\") || List.of(relative.split("/")).contains("..") || !file.startsWith(root.normalize())
+                || !java.nio.file.Files.isRegularFile(file)) {
+            throw Reply.error(404, ErrorCode.NOT_FOUND, "GET " + path);
+        }
+        String name = file.getFileName().toString();
+        String type = SITE_TYPES.get(name.substring(name.lastIndexOf('.') + 1));
+        ex.getResponseHeaders().set("Cache-Control", "no-cache");
+        throw new Reply(200, type == null ? "application/octet-stream" : type, java.nio.file.Files.readAllBytes(file));
+    }
+
+    private static final Pattern LOOPBACK_HOST = Pattern.compile("(127\\.0\\.0\\.1|localhost|\\[::1\\])(:\\d{1,5})?");
+
     // -- plumbing ------------------------------------------------------------
 
     private static void waitFor(Statements.Run run, long ms) {
@@ -589,15 +680,77 @@ public final class WarehouseServer implements AutoCloseable {
      * or not: grants are managed from a DuckDB catalog.
      */
     public static void main(String[] args) throws Exception {
-        Config config = parse(args);
-        WarehouseServer s = new WarehouseServer(config);
+        try {
+            start(args);
+        } catch (IllegalArgumentException | Catalogs.AttachFailed e) {
+            // the command line or a Postgres catalog: said in one line, not as a stack trace
+            System.err.println("warehouse: " + e.getMessage());
+            if (e instanceof Catalogs.AttachFailed f && f.missingPassword) {
+                System.err.println("warehouse: put the password in ~/.pgpass or PGPASSWORD, or start it from a terminal");
+            }
+            System.exit(2);
+        }
+    }
+
+    private static void start(String[] args) throws Exception {
+        CommandLine command = commandLine(args);
+        Config config = command.config();
+        WarehouseServer s;
+        while (true) {
+            try {
+                s = new WarehouseServer(config);
+                break;
+            } catch (Catalogs.AttachFailed failed) {
+                config = withPasswordAsked(config, failed);
+            }
+        }
         List<String> names = new ArrayList<>(config.catalogs());
         names.addAll(new java.util.TreeSet<>(config.postgres().keySet()));
         System.err.println("warehouse listening on 127.0.0.1:" + s.port() + ", catalogs " + names);
+        if (command.open()) {
+            String url = "http://127.0.0.1:" + s.port() + "/#key=" + s.launchKey()
+                    + (command.table() == null ? "" : "&table=" + command.table());
+            System.err.println("DataCube: " + url);
+            System.err.println("Press Ctrl+C to stop.");
+            openBrowser(url);
+        }
+    }
+
+    /**
+     * A Postgres catalog libpq found no password for ({@code ~/.pgpass}, {@code PGPASSWORD}): asked once on
+     * the terminal, as psql asks. Anything else, or no terminal to ask on, stops the server with libpq's words.
+     */
+    private static Config withPasswordAsked(Config config, Catalogs.AttachFailed failed) throws IOException {
+        String dsn = config.postgres().get(failed.catalog);
+        java.io.Console console = System.console();
+        if (!failed.missingPassword || console == null || dsn == null || PostgresUrl.isUrl(dsn)) throw failed;
+        char[] password = console.readPassword("Postgres password for %s: ", failed.catalog);
+        if (password == null) throw failed;
+        LinkedHashMap<String, String> postgres = new LinkedHashMap<>(config.postgres());
+        postgres.put(failed.catalog, PostgresUrl.withPassword(dsn, password));
+        return config.withPostgres(postgres, config.duckdbExtensions());
+    }
+
+    /** The default browser at {@code url}; the address is printed first, so a machine without one still has it. */
+    private static void openBrowser(String url) {
+        String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        List<String> command = os.contains("mac") ? List.of("open", url)
+                : os.contains("windows") ? List.of("rundll32", "url.dll,FileProtocolHandler", url)
+                : List.of("xdg-open", url);
+        try {
+            new ProcessBuilder(command).inheritIO().start();
+        } catch (IOException e) {
+            System.err.println("could not open a browser (" + e.getMessage() + "): open the address above");
+        }
     }
 
     /** The command line, as a {@link Config} (see {@link #main}); throws IllegalArgumentException when it is wrong. */
     public static Config parse(String[] args) throws IOException {
+        return commandLine(args).config();
+    }
+
+    /** The command line: the server's Config and the launcher's {@code --open} and {@code --table}. */
+    public static CommandLine commandLine(String[] args) throws IOException {
         int port = 8765;
         Path data = Path.of("warehouse-data");
         List<String> cats = new ArrayList<>();
@@ -615,9 +768,30 @@ public final class WarehouseServer implements AutoCloseable {
         long sessionHours = Identity.DEFAULT_SESSION_LIMIT.toHours();
         LinkedHashMap<String, String> postgres = new LinkedHashMap<>();
         Path extensions = null;
+        Path site = null;
+        boolean singleUser = false;
+        boolean open = false;
+        String table = null;
         for (int i = 0; i < args.length; i++) {
+            if (PostgresUrl.isUrl(args[i])) {
+                PostgresUrl url = PostgresUrl.parse(args[i]);
+                if (postgres.put(url.catalog(), url.dsn()) != null) {
+                    throw new IllegalArgumentException("catalog " + url.catalog() + " is named twice");
+                }
+                continue;
+            }
+            if (args[i].equals("--single-user")) {
+                singleUser = true;
+                continue;
+            }
+            if (args[i].equals("--open")) {
+                open = true;
+                continue;
+            }
             if (i + 1 >= args.length) throw new IllegalArgumentException(args[i] + " needs a value");
             switch (args[i]) {
+                case "--site" -> site = Path.of(args[++i]);
+                case "--table" -> table = args[++i];
                 case "--postgres" -> {
                     String[] kv = args[++i].split("=", 2);
                     if (kv.length != 2 || kv[1].isBlank()) {
@@ -659,9 +833,27 @@ public final class WarehouseServer implements AutoCloseable {
             }
             extensions = DuckLibrary.executableDir("--duckdb-extensions");
         }
-        return new Config(port, data, cats, users,
+        String user = null;
+        if (singleUser) {
+            // the warehouse's one principal is the account running it; each Postgres catalog connects as its own user
+            user = System.getProperty("user.name", "");
+            if (!Identity.validPrincipal(user)) {
+                throw new IllegalArgumentException("--single-user: the account name '" + user + "' cannot be a warehouse user");
+            }
+        }
+        if (open && (site == null || !singleUser)) {
+            throw new IllegalArgumentException("--open opens the page: it needs --site and --single-user");
+        }
+        if (table != null && (!open || !TABLE.matcher(table).matches())) {
+            throw new IllegalArgumentException("--table takes schema.name, with --open");
+        }
+        Config config = new Config(port, data, cats, users,
                 tokenKeyFile == null ? null : tokenKey(tokenKeyFile), Duration.ofMinutes(tokenMinutes),
                 new Statements.Limits(concurrency, queue, maxRows, Duration.ofMinutes(retainMinutes), resultMemoryMb << 20),
-                library, owners, origins, Duration.ofHours(sessionHours), Map.copyOf(postgres), extensions);
+                library, owners, origins, Duration.ofHours(sessionHours), Map.copyOf(postgres), extensions, site, user);
+        return new CommandLine(config, open, table);
     }
+
+    /** {@code --table}'s schema.name: what the page's address carries, so nothing that needs escaping there. */
+    private static final Pattern TABLE = Pattern.compile("[A-Za-z_][A-Za-z0-9_$]*\\.[A-Za-z_][A-Za-z0-9_$]*");
 }
