@@ -60,7 +60,7 @@ public class Test_LegendLite_Postgres_EssentialFunctions_PCT extends PCTReportCo
             one("meta::pure::functions::collection::tests::add::testAddWithOffset_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::collection::tests::add::testAdd_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::collection::tests::at::testAtOtherScenario_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::collection::tests::concatenate::testConcatenateTypeInference_Function_1__Boolean_1_", "TO_VARIANT reached Postgres: variant over jsonb is leg P4"),
+            one("meta::pure::functions::collection::tests::concatenate::testConcatenateTypeInference_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
             one("meta::pure::functions::collection::tests::contains::testContainsNonPrimitive_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
             one("meta::pure::functions::collection::tests::contains::testContainsWithFunction_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::collection::tests::drop::testDropInList_Function_1__Boolean_1_", "an array literal reached a dialect without array support"),
@@ -117,7 +117,7 @@ public class Test_LegendLite_Postgres_EssentialFunctions_PCT extends PCTReportCo
             one("meta::pure::functions::string::tests::split::testSplitWithNoSplit_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::string::tests::split::testSplit_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::string::tests::toString::testComplexClassToString_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::string::tests::toString::testPairCollectionToString_Function_1__Boolean_1_", "JSON_TYPE reached Postgres: variant over jsonb is leg P4"),
+            one("meta::pure::functions::string::tests::toString::testPairCollectionToString_Function_1__Boolean_1_", "collection reduction 'STRING_AGG' reached a dialect without a list encoding"),
             // refused by name: a construct the Postgres dialect does not spell yet
             one("meta::pure::functions::collection::tests::fold::testFoldFiltering_Function_1__Boolean_1_", "'otherNames' is not a known class, mapping, runtime, connection, or database — user elements in a query need a fully qualified name"),
             one("meta::pure::functions::collection::tests::fold::testFoldToMany_Function_1__Boolean_1_", "'otherNames' is not a known class, mapping, runtime, connection, or database — user elements in a query need a fully qualified name"),

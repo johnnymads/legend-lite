@@ -277,12 +277,44 @@ public final class Postgres extends AnsiSqlRenderer {
     /** Composite casts other than DECIMAL are the collection carrier's (leg P4). */
     @Override
     protected String variantAwareCast(SqlExpr.Cast c) {
-        if (c.target() instanceof SqlType.Array || c.target() instanceof SqlType.Map
-                || c.target() == SqlType.Scalar.JSON) {
+        if (c.target() instanceof SqlType.Array || c.target() instanceof SqlType.Map) {
             throw new DialectCapability("a cast to " + c.target() + " reached Postgres before"
-                    + " the jsonb carrier (leg P4)");
+                    + " the jsonb collection carrier (leg P4)");
+        }
+        // A VARIANT is jsonb: text parses into it; any other value converts (no cast from a number
+        // or a boolean to jsonb exists)
+        if (c.target() == SqlType.Scalar.JSON) {
+            return isText(c.value()) ? "CAST(" + expr(c.value(), 0) + " AS JSONB)"
+                    : "to_jsonb(" + expr(c.value(), 0) + ")";
+        }
+        // a value out of a variant: its TEXT (->> strips JSON quoting; #>> '{}' for the whole value),
+        // then the cast -- the swap lives in rendering, as DuckDB's
+        if (c.target() != SqlType.Scalar.TEMPORAL_TEXT && c.target() != SqlType.Scalar.DECIMAL_TEXT) {
+            if (c.value() instanceof SqlExpr.Call call && call.fn() == SqlFn.VARIANT_GET) {
+                return "CAST((" + expr(call.args().get(0), 8) + " ->> " + expr(call.args().get(1), 8) + ") AS "
+                        + castTypeName(c.target()) + ")";
+            }
+            // a whole value to a scalar reads its text; to TEXT it is its JSON text, as DuckDB's cast
+            if (isJson(c.value()) && c.target() != SqlType.Scalar.VARCHAR) {
+                return "CAST((" + expr(c.value(), 8) + " #>> '{}') AS " + castTypeName(c.target()) + ")";
+            }
         }
         return super.variantAwareCast(c);
+    }
+
+    /** VARIANT navigation over jsonb: a key or a 0-based index (-1 the last, past the end NULL --
+     *  DuckDB's JSON arrow agrees). */
+    @Override
+    protected String variantGet(List<SqlExpr> args) {
+        return "(" + expr(args.get(0), 8) + " -> " + expr(args.get(1), 8) + ")";
+    }
+
+    @Override
+    protected String variantConstruct(List<SqlExpr> a) {
+        if (a.size() != 1) {
+            throw new DialectCapability("toVariant of " + a.size() + " arguments reached Postgres");
+        }
+        return "to_jsonb(" + expr(a.get(0), 0) + ")";
     }
 
     // ==================================================================
@@ -463,8 +495,12 @@ public final class Postgres extends AnsiSqlRenderer {
             case FORMAT -> throw wall(c.fn(), "Postgres' format() has no %d/%f");
             case SHA1, LEVENSHTEIN, JARO_WINKLER ->
                     throw wall(c.fn(), "an extension function (pgcrypto/fuzzystrmatch)");
-            case JSON_MERGE_PATCH, JSON_TYPE, JSON_ARRAY_LENGTH, JSON_PRETTY, TO_VARIANT,
-                 VARIANT_ELEMENTS, VARIANT_GET ->
+            // ---- variant (jsonb)
+            case TO_VARIANT, VARIANT_GET -> super.call(c, parentPrec);
+            case JSON_TYPE -> "jsonb_typeof(" + expr(a.get(0), 0) + ")";
+            case JSON_ARRAY_LENGTH -> "jsonb_array_length(" + expr(a.get(0), 0) + ")";
+            case JSON_PRETTY -> "jsonb_pretty(" + expr(a.get(0), 0) + ")";
+            case JSON_MERGE_PATCH, VARIANT_ELEMENTS ->
                     throw wall(c.fn(), "variant over jsonb is leg P4");
             case LIST_FILTER, LIST_TRANSFORM, LIST_CONCAT, LIST_GET, LIST_POSITION,
                  LIST_EXISTS, LIST_FOR_ALL, STRUCT_INSERT, UNNEST, LIST_FLATTEN,
@@ -751,6 +787,10 @@ public final class Postgres extends AnsiSqlRenderer {
 
     private static boolean isBoolean(SqlExpr e) {
         return e.type() instanceof com.legend.sql.TypeFact.Typed t && t.type() == SqlType.Scalar.BOOLEAN;
+    }
+
+    private static boolean isText(SqlExpr e) {
+        return e.type() instanceof com.legend.sql.TypeFact.Typed t && t.type() == SqlType.Scalar.VARCHAR;
     }
 
     private static boolean isJson(SqlExpr e) {
