@@ -57,7 +57,7 @@ import {
   contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf, type ModelElement,
 } from '../src/saved-queries.ts';
 import {
-  BrowserRecords as BrowserQueryRecords, LOCAL_API, localQueryServer, QueryStoreClient, type Query, type QueryReader,
+  BrowserRecords as BrowserQueryRecords, LOCAL_API, localQueryServer, QueryStoreClient, watchBrowserStore, type Query, type QueryReader,
 } from '../../query-store/src/index.ts';
 import {
   connect,
@@ -1441,6 +1441,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         },
         saved: {
           where: queryStore(config).where,
+          // the browser's store: a query saved in another tab (Legend Query) appears without reopening
+          ...(config.queryStore ? {} : { watch: (changed: () => void) => watchBrowserStore(changed) }),
           search: async (text, mineOnly) => (await queryStore(config).store.search({
             ...(text ? { searchTermSpecification: { searchTerm: text, includeOwner: true } } : {}),
             showCurrentUserQueriesOnly: mineOnly,

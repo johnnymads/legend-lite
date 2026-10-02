@@ -2,5 +2,5 @@
 
 export * from './wire.ts';
 export * from './client.ts';
-export { BrowserRecords, MemoryRecords, DATABASE, type Records } from './records.ts';
+export { BrowserRecords, MemoryRecords, DATABASE, CHANNEL, watchBrowserStore, type Records } from './records.ts';
 export { localQueryServer, LOCAL_API, type LocalServer, type LocalServerOptions } from './local-server.ts';

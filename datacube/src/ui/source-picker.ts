@@ -81,6 +81,8 @@ export interface PickerSections<T> {
     readonly unavailable?: string;
     /** Where the list comes from, for the person: "this browser", "localhost:8080". */
     readonly where?: string;
+    /** Told when the store changes (another tab saved a query): the list is read again. Returns how to stop. */
+    watch?(changed: () => void): () => void;
     search(text: string, mineOnly: boolean): Promise<readonly SavedQueryCard[]>;
     open(id: string): Promise<T>;
   };
@@ -157,9 +159,16 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
     const before = doc.activeElement as HTMLElement | null;
 
     let done = false;
+    /** What the section on show holds open (a watch on the store): let go when it goes. */
+    let leave: (() => void)[] = [];
+    const letGo = (): void => {
+      for (const f of leave) f();
+      leave = [];
+    };
     const finish = (value: T | undefined): void => {
       if (done) return;
       done = true;
+      letGo();
       doc.removeEventListener('keydown', onKey, true);
       backdrop.remove();
       before?.focus?.();
@@ -230,6 +239,7 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
         tab.setAttribute('aria-selected', String(on));
         tab.tabIndex = on ? 0 : -1;
       }
+      letGo();
       panel.replaceChildren();
       clearStatus();
       paint[id](panel);
@@ -432,6 +442,7 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
           timer = setTimeout(() => void refresh(), 250);
         });
         mine.addEventListener('change', () => void refresh());
+        if (saved.watch) leave.push(saved.watch(() => void refresh()));
         void refresh();
         search.focus();
       },

@@ -28,6 +28,20 @@ const STORE = 'queries';
  */
 const LAYOUT = 2;
 
+/** Where a write to this origin's store is announced: every app's open tabs hear it. */
+export const CHANNEL = 'legend-query-store';
+
+/**
+ * Told whenever a tab on this origin writes its browser store (a query saved in Query, say),
+ * so an open list can be read again. Returns how to stop. Absent BroadcastChannel: never told.
+ */
+export function watchBrowserStore(onChange: () => void): () => void {
+  if (typeof BroadcastChannel === 'undefined') return () => undefined;
+  const channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = () => onChange();
+  return () => channel.close();
+}
+
 export class BrowserRecords implements Records {
   readonly #db: Promise<IDBDatabase>;
 
@@ -86,6 +100,11 @@ export class BrowserRecords implements Records {
 
   async put(id: string, versions: readonly Query[]): Promise<void> {
     await this.#request('readwrite', (s) => s.put(versions, id));
+    if (typeof BroadcastChannel !== 'undefined') {
+      const channel = new BroadcastChannel(CHANNEL);
+      channel.postMessage({ id });
+      channel.close();
+    }
   }
 
   async all(): Promise<Query[][]> {

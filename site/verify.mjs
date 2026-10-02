@@ -44,7 +44,18 @@ const name = `Shared sells ${Date.now().toString(36)}`;
 const enc = encodeURIComponent;
 
 try {
-  // ---- Legend Query, in this browser: build Trade Id, Side, Quantity where Side = SELL; save it
+  // ---- DataCube first, same origin: its Saved queries open, BEFORE Query saves anything
+  const cube = await context.newPage();
+  cube.on('pageerror', (e) => errors.push(`datacube: ${e.message}`));
+  await cube.goto(`${ORIGIN}/datacube/demo/index.html`);
+  await cube.waitForSelector('.dc-row', { timeout: 120_000 });
+  await cube.click('.dc-titlebar-menu');
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Data Source…")') }).click();
+  await cube.locator('.dc-picker-tab[data-section="saved"]').click();
+  await cube.locator('.dc-picker-body').waitFor({ timeout: 15_000 });
+
+  // ---- then Legend Query, in this browser: build Trade Id, Side, Quantity where Side = SELL; save it
   const query = await context.newPage();
   query.on('pageerror', (e) => errors.push(`query: ${e.message}`));
   await query.goto(`${ORIGIN}/query/demo/index.html#/extensions/dataspace/${enc('demo:trading:0.0.0')}/${enc('demo::trading::TradingDataSpace')}?class=${enc('demo::trading::Trade')}`);
@@ -62,17 +73,11 @@ try {
   await query.waitForFunction(() => location.hash.startsWith('#/edit/'), undefined, { timeout: 30_000 });
   console.log(`Query: saved "${name}" in this browser (it ran to ${ranTo} rows)`);
 
-  // ---- DataCube, same origin: its Saved queries list it, from this browser; it opens as a grid
-  const cube = await context.newPage();
-  cube.on('pageerror', (e) => errors.push(`datacube: ${e.message}`));
-  await cube.goto(`${ORIGIN}/datacube/demo/index.html`);
-  await cube.waitForSelector('.dc-row', { timeout: 120_000 });
-  await cube.click('.dc-titlebar-menu');
-  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
-  await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Data Source…")') }).click();
-  await cube.locator('.dc-picker-tab[data-section="saved"]').click();
+  // ---- DataCube's open list shows it, without reopening (BroadcastChannel); it opens as a grid
+  await cube.bringToFront();
   const row = cube.locator('.dc-picker-row[data-query]', { hasText: name });
   await row.waitFor({ timeout: 15_000 });
+  console.log('DataCube: the open picker listed it as Query saved it, without reopening');
   const said = (await cube.textContent('.dc-picker-body')) ?? '';
   if (!/Saved in this browser/.test(said)) throw new Error(`the picker does not say the list is this browser's: ${said.slice(0, 200)}`);
   await row.click();
