@@ -715,6 +715,13 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       }
     };
 
+    /**
+     * A warehouse table's Snap (a copy into this tab's DuckDB, the same plan run there): only a DuckDB
+     * catalog's. A Postgres catalog's plan is Postgres SQL, which this tab's DuckDB cannot run.
+     */
+    const snapOf = (o: CatalogObject, source: SnapTarget['source']): { snapTarget?: SnapTarget } =>
+      o.engine === 'postgres' ? {} : { snapTarget: { schema: o.schema, table: o.name, source } };
+
     /** A warehouse table IN PLACE of the cube: Live there as the user, Snap into this tab. */
     async function openTable(signedIn: WarehouseSession, chosen: CatalogObject, saved?: Saved): Promise<{
       readonly live: WarehouseEngine; readonly excluded: readonly string[]; readonly notes: readonly string[];
@@ -722,10 +729,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       // A warehouse table is read-only: a column the compiler says must be
       // converted to be declared cannot be, so it is left out, and named.
       const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
-        { table: chosen.name, schema: chosen.schema, convertible: false });
+        { table: chosen.name, schema: chosen.schema, convertible: false, engine: chosen.engine });
       local.use(m.model, m.runtime, { bitColumns: m.bitColumns });
       const columns = await sourceColumns(planner, m.source);
-      const live = track(new WarehouseEngine(signedIn));
+      const live = track(new WarehouseEngine(signedIn, chosen.catalog));
       const name = `${chosen.schema}.${chosen.name}`;
       // where it is, never the sign-in: whoever reopens it signs in as themselves
       const cubeSource: WarehouseSource = {
@@ -734,7 +741,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       };
       const notes = await landCube({
         relation: m.source, columns, label: name, cubeSource,
-        place: { live, snapTarget: { schema: chosen.schema, table: chosen.name, source: m.source } },
+        place: { live, ...snapOf(chosen, m.source) },
         ...(saved ? { saved } : {}),
       });
       status.textContent = `live on the warehouse as ${signedIn.principal}`;
@@ -1292,11 +1299,17 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       }
       return { file: new File([text], sampleFileName(s), { type: mimeOf(s) }), sample: { id: s.id, rows } };
     };
-    const asSession = (s: { readonly session: WarehouseSession; readonly objects: readonly CatalogObject[] }): DatabaseSession => ({
-      principal: s.session.principal,
-      where: new URL(s.session.baseUrl).host,
-      objects: s.objects.map((o) => ({ schema: o.schema, name: o.name, kind: o.kind, columns: o.columns.length })),
-    });
+    const asSession = (s: { readonly session: WarehouseSession; readonly objects: readonly CatalogObject[] }): DatabaseSession => {
+      // the catalog is named only when the warehouse offers more than one
+      const several = new Set(s.objects.map((o) => o.catalog)).size > 1;
+      return {
+        principal: s.session.principal,
+        where: new URL(s.session.baseUrl).host,
+        objects: s.objects.map((o) => ({
+          ...(several ? { catalog: o.catalog } : {}), schema: o.schema, name: o.name, kind: o.kind, columns: o.columns.length,
+        })),
+      };
+    };
     const lastSegment = (url: string): string => url.replace(/[?#].*$/, '').replace(/\/+$/, '').split('/').pop() || url;
 
     /** A remote file as a view of this tab's DuckDB, and the model written from its catalog. */
@@ -1403,12 +1416,13 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       }
       if (chosen.kind === 'table') {
         const o = chosen.object;
-        const m = inferModel(o.columns.map((c) => ({ ...c, dataType: c.type })), { table: o.name, schema: o.schema, convertible: false });
+        const m = inferModel(o.columns.map((c) => ({ ...c, dataType: c.type })),
+          { table: o.name, schema: o.schema, convertible: false, engine: o.engine });
         const own = local.another(m.model, m.runtime, { bitColumns: m.bitColumns });
         return {
           snapshot: rawRows(m.source, await sourceColumns(own, m.source)),
-          place: { engine, planner: own, live: track(new WarehouseEngine(chosen.session)) },
-          snapTarget: { schema: o.schema, table: o.name, source: m.source },
+          place: { engine, planner: own, live: track(new WarehouseEngine(chosen.session, o.catalog)) },
+          ...snapOf(o, m.source),
           label: `${o.schema}.${o.name}`,
         };
       }
@@ -1653,7 +1667,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         },
         open: (object) => {
           const s = signedIn;
-          const found = s?.objects.find((o) => o.schema === object.schema && o.name === object.name);
+          const found = s?.objects.find((o) => (object.catalog === undefined || o.catalog === object.catalog)
+            && o.schema === object.schema && o.name === object.name);
           if (!s || !found) return Promise.reject(new Error(`${object.schema}.${object.name} is no longer offered: sign in again`));
           return open(s.session, found);
         },

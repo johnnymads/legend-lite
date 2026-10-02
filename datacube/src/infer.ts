@@ -57,6 +57,11 @@ export interface InferOptions {
   readonly pkg?: string;
   /** See `CatalogTable.convertible`. */
   readonly convertible: boolean;
+  /**
+   * The SQL the table's database runs: the runtime's connection type, from which the planner
+   * picks its dialect. A warehouse's Postgres catalog is `postgres`; default `duckdb`.
+   */
+  readonly engine?: 'duckdb' | 'postgres';
 }
 
 /**
@@ -81,7 +86,7 @@ export function inferModel(
 ###Connection
 RelationalDatabaseConnection ${pkg}::Conn
 {
-    type: DuckDB;
+    type: ${options.engine === 'postgres' ? 'Postgres' : 'DuckDB'};
     specification: DuckDB { };
     auth: Test;
 }

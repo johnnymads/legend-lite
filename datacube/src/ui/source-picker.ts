@@ -40,6 +40,8 @@ export interface DatabaseSession {
 }
 
 export interface DatabaseObject {
+  /** The warehouse catalog it is in: shown when the warehouse has more than one. */
+  readonly catalog?: string;
   readonly schema: string;
   readonly name: string;
   readonly kind: string;
@@ -560,7 +562,7 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
               row.dataset['object'] = `${o.schema}.${o.name}`;
               const main = el(doc, 'span', 'dc-picker-row-main', row);
               const name = el(doc, 'span', 'dc-picker-row-name', main);
-              el(doc, 'span', 'dc-picker-row-schema', name, `${o.schema}.`);
+              el(doc, 'span', 'dc-picker-row-schema', name, `${o.catalog === undefined ? '' : `${o.catalog} · `}${o.schema}.`);
               name.append(doc.createTextNode(o.name));
               el(doc, 'span', 'dc-picker-row-meta', main, `${count(o.columns)} columns`);
               el(doc, 'span', `dc-picker-badge dc-${o.kind === 'view' ? 'view' : 'table'}`, row, o.kind);
