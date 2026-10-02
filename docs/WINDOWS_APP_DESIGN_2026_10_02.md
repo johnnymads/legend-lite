@@ -1,0 +1,179 @@
+# The DataCube app on Windows: the design (2026-10-02)
+
+**Goal.** On Windows x64, `bazel run //datacube:app -- postgresql://reader@127.0.0.1:5432/shop` does
+what it does on macOS and Linux: Bazel builds the native warehouse, puts DuckDB's library and its
+Postgres extension beside it, serves the DataCube site, opens the browser. `//warehouse:serve` the
+same. Today both are refused on Windows (`docs/DATACUBE_ON_POSTGRES.md`: "Windows is not supported
+yet").
+
+**Baseline** (the same day, ahead of this design): the Windows developer setup. `.gitattributes`
+(`* -text`: every file checked out as committed, whatever `core.autocrlf` says); `.bazelrc` names Git
+for Windows' bash (`BAZEL_SH`, `--shell_executable`), without which no Maven repository fetched from a
+PowerShell or cmd prompt; two tests that failed on a Windows desk and not on CI's runners
+(`WarehouseJdbcTest`'s reference session zone, `query-store`'s `lite_test` stopping only the launcher
+of a two-process server); the README's Windows prerequisites. On a Windows 11 x64 desk, `bazel build
+//...` and `bazel test //...` are green: 147 pass, 2 skipped (the native targets below).
+
+## What stops the app on Windows
+
+- `//warehouse:server_native`, `:duckdb_library`, `:tests_native`, `:postgres_live_native`, `:serve`,
+  `//datacube:app` and `//datacube:live_snap_test` are incompatible with Windows (`NOT_ON_WINDOWS`, or
+  the same `select` inline), each because the native image was not built there.
+- `duckdb_library` and `POSTGRES_EXTENSION` (`warehouse/defs.bzl`) have no Windows arm, and
+  `MODULE.bazel` pins DuckDB's postgres extension for four platforms, none of them Windows.
+- `warehouse_run`'s launcher is a bash script, and `bazel run` cannot start a script on Windows.
+
+The warehouse's Java needs nothing: it names DuckDB's Windows library (`DuckLibrary.resourceName`),
+opens the browser with `rundll32`, and makes the token key owner-only only where the file system has
+POSIX modes. DuckDB's JDBC jar 1.5.5.1 carries `libduckdb_java.so_windows_amd64` (35 MB), and
+`extensions.duckdb.org` serves `v1.5.5/windows_amd64/postgres_scanner.duckdb_extension.gz` (10 MB,
+published with the Linux build).
+
+## Decisions, and what they rest on
+
+1. **The native binary on Windows too.** The app is "native only" (`DATACUBE_APP_PLAN_2026_10_02.md`,
+   A2), and the Windows native build is owed (`WAREHOUSE_W1_DESIGN_2026_09_26.md`, `gates-run.yml`).
+   GraalVM 25 supports FFM downcalls and upcalls on Windows x64, which is how the server calls DuckDB.
+   rules_graalvm 0.12.0 already hands MSVC's environment to `native-image`; no new rule, no patch.
+   *Cost:* Visual Studio 2022 Build Tools on every Windows desk, as a C toolchain is on macOS and Linux;
+   the hosted `windows-2022` runners carry Visual Studio 2022. *Measured:* a native image built under
+   Bazel with Build Tools 17.14 (MSVC 14.44) in 15 s (a probe program).
+
+2. **The Windows launcher is [hermetic-launcher](https://github.com/hermeticbuild/hermetic-launcher)**
+   (BCR `hermetic_launcher` 0.0.16, MIT): a native stub, built from a released template, with the
+   entrypoint and fixed arguments baked in, `$(rlocationpath …)` arguments resolved through runfiles at
+   run time, and the caller's arguments appended. Every alternative was run on a Windows desk with the
+   app's own argument shapes (`…?sslmode=require&connect_timeout=10`, `options=-c%20statement_timeout…`,
+   a DSN with spaces, an empty argument):
+
+   | The launcher on Windows | Result |
+   |---|---|
+   | a `.bat` | cmd.exe splits the URL at `&` and runs the rest as commands |
+   | the bash script, as `warehouse_run` makes it | `bazel run`: not a valid Win32 application |
+   | `sh_binary` (Bazel's bash launcher) | quotes only arguments with spaces into `bash -c`; the `&` backgrounds the rest |
+   | `java_binary` (Bazel's Java launcher) | every argument intact; ruled out: no Java process beside the native server |
+   | **hermetic-launcher** | every argument intact but those holding `"` (below); embedded paths resolved; the exit code passed through; Ctrl+C reaches the server, whose shutdown hooks run |
+
+   PowerShell needs a `.bat` in front of it to be started by `bazel run`, and the `.bat` is where `&`
+   is lost.
+
+3. **macOS and Linux keep their bash launcher.** It `exec`s the server, so nothing stands between the
+   terminal and the server, and it runs the server where `bazel run` was started. A single launcher
+   for all three would change both platforms, and neither can be run from the Windows desk this work
+   is verified on.
+
+## The design
+
+### 1. Toolchain and targets
+
+- **Windows x64 only.** DuckDB's jar carries no Windows ARM64 library.
+- `//warehouse:server_native` drops `NOT_ON_WINDOWS`; on Windows it is an `.exe`.
+- `//warehouse:duckdb_library` gains a `windows_x86_64` arm (a new `config_setting` beside
+  `linux_x86_64`) naming `libduckdb_java.so_windows_amd64`, out of the same pinned jar.
+- `MODULE.bazel` pins `windows_amd64` in the `duckdb_postgres_extension_*` comprehension, by its
+  sha256 like the four others; `POSTGRES_EXTENSION` selects it for `//warehouse:windows_x86_64`.
+- Every Windows exclusion listed above is removed; each existed only for want of the native image.
+- `MODULE.bazel` adds `bazel_dep(name = "hermetic_launcher", version = "0.0.16")` and moves `platforms`
+  from 1.0.0 to 1.1.0, the version hermetic_launcher requires (`--check_direct_dependencies` otherwise
+  warns that the root's pin is not the resolved one).
+
+### 2. The launcher
+
+`warehouse_run` becomes a macro with the same attributes (`server`, `library`,
+`postgres_extension_gz`, `site`, `args_before`) and four targets:
+
+- **`<name>_extensions`**: a directory holding `postgres_scanner.duckdb_extension`, gunzipped from the
+  pinned download as today (a directory, so that a launcher can name it: `--duckdb-extensions` takes a
+  directory, and a runfiles manifest lists a directory output where it does not list a file's parent).
+- **`<name>_posix`**: today's rule and script, `target_compatible_with` everything but Windows. Its one
+  change: the script names the extension directory instead of taking the extension file's `dirname`.
+- **`<name>_windows`**: a `launcher_binary` whose `entrypoint` is the server and whose
+  `embedded_args` are `--duckdb-library $(rlocationpath <library>)`,
+  `--duckdb-extensions $(rlocationpath <name>_extensions)`, then, given a site,
+  `--site $(rlocationpath <site>)`, then `args_before`; `data` holds the library, the extension
+  directory and the site; Windows only. The app's launcher uses 9 of the stub's 10 embedded arguments
+  (the entrypoint counts).
+- **`<name>`**: an `alias` selecting `<name>_windows` on `@platforms//os:windows`, `<name>_posix`
+  elsewhere. `bazel run //datacube:app` and `bazel run //warehouse:serve` keep their names and their
+  arguments.
+
+### 3. Tests, the harness, CI
+
+- **Newly on Windows**, with their exclusions gone: `//warehouse:tests_native` (TestServer starts the
+  `.exe` itself and stops it with `destroy()`: one process) and `//datacube:live_snap_test` (spawns
+  the `.exe` itself, stops it with `kill()`).
+- **`//warehouse:launcher_test`**, new, a `junit_test` on every platform. Nothing runs a
+  `warehouse_run` launcher today (`verify_app` is manual). It runs `//warehouse:serve` (from runfiles,
+  `$(rlocationpath :serve)`) twice:
+  1. `--port x&y`: the launcher exits 2 and the server said `warehouse: For input string: "x&y"`.
+     The arguments reached the server intact, and its exit code came back.
+  2. `--data <the test's temporary directory> --port 0 --user alice:alice-pw` and a Postgres catalog
+     by URL, `postgresql://postgres@127.0.0.1:<port>/postgres?sslmode=disable&connect_timeout=10`, on
+     the embedded Postgres 16 that gate 7P starts (`//testing` `EmbeddedPostgres`,
+     `@embedded_postgres`): the server prints `warehouse listening on 127.0.0.1:<n>, catalogs [main,
+     postgres]`. The server, DuckDB's library and the extension directory all resolved through the
+     launcher, and the extension loaded and attached. The test then stops the launcher's descendants
+     and the launcher.
+- **`//datacube:verify_app`** (manual) takes the launcher from Bazel
+  (`env = {"WAREHOUSE_SERVE": "$(rlocationpath //warehouse:serve)"}`) instead of naming
+  `warehouse/serve.sh`, and stops it with `taskkill /t /f` on Windows (the launcher and the server
+  are two processes there; `kill()` would stop the launcher alone, as `lite_test` found) and
+  `kill('SIGTERM')` elsewhere.
+- **CI** (`gates-run.yml`): the `native` lane is no longer filtered out on Windows, and runs
+  `//warehouse:tests_native //warehouse:launcher_test` on all three platforms. The `browser` lane
+  stays Linux-only, as designed.
+
+### 4. Docs
+
+- **`docs/DATACUBE_ON_POSTGRES.md`**:
+  - Windows x64 in the requirements, with Developer Mode, Git for Windows, and Visual Studio 2022
+    Build Tools ("Desktop development with C++"), installed before the first build, or else
+    `bazel fetch --configure --force` once after, since Bazel keeps the C++ toolchain it found first.
+  - PowerShell forms of section 3's sample database (the `psql` here-document) and of
+    `PGPASSWORD=… bazel run`.
+  - libpq's password file on Windows: `%APPDATA%\postgresql\pgpass.conf`.
+  - The known limits below.
+- **`README.md`**: Visual Studio 2022 Build Tools joins the Windows prerequisites (`bazel build //...`
+  builds the native targets on Windows now), with the same `bazel fetch --configure --force` note.
+- **Owed → done**: `WAREHOUSE_W1_DESIGN_2026_09_26.md`'s "Owed: Windows native builds", the
+  `NOT_ON_WINDOWS` comments in `warehouse/BUILD.bazel` and `datacube/BUILD.bazel`, the comments in
+  `gates-run.yml`; a dated entry in `docs/GATES.md` for the lane.
+
+## Known limits on Windows (documented, not fixed here)
+
+1. **The server runs in Bazel's runfiles folder**, not where `bazel run` was started: hermetic-launcher
+   has no working-directory option, so a relative path among the caller's arguments resolves in the
+   runfiles folder, and `//warehouse:serve`'s default `--data warehouse-data` lands in Bazel's output
+   tree. The app's usual arguments (a URL, `--table`, `--port`) are unaffected, and its data goes to a
+   temporary directory. `bazel run --run_in_cwd` runs it where it was started, per command.
+2. **An argument containing `"` arrives mangled**, and a quoted argument ending in `\` gains a `\`
+   (hermetic-launcher 0.0.16's Windows quoting; `bazel run` straight to the `.exe` passes both
+   intact). Postgres URLs and libpq DSNs, which quote with `'`, contain neither.
+3. **Windows x64 only.**
+4. **Visual Studio installed after Bazel first ran** needs `bazel fetch --configure --force` once.
+
+1 and 2 are for hermetic-launcher upstream: a request for a working-directory option and a bug report.
+
+## Done when
+
+- On a Windows x64 desk: `bazel build //...` and `bazel test //...` green, now including
+  `//warehouse:tests_native`, `//warehouse:launcher_test` and `//datacube:live_snap_test`.
+- On that desk, against Postgres 16: `bazel run //datacube:app -- postgresql://…` opens the browser on
+  the tables; `bazel run //datacube:verify_app` prints only `ok:` lines; Ctrl+C stops the app and
+  leaves no process and no temporary directory behind.
+- macOS and Linux: `bazel run //datacube:app` behaves as before. Their CI lanes, the `native` lane on
+  all three platforms among them, are green once the change is pushed.
+
+## Out of scope
+
+Windows ARM64; the `browser` lane and `//query:verify` on Windows; one launcher for every platform;
+fixing hermetic-launcher; releases and installers.
+
+## Order of work
+
+1. §1's targets: the native image and `//warehouse:tests_native` green on Windows.
+2. §2's launcher, with `//warehouse:launcher_test`.
+3. The harness and `//datacube:live_snap_test`.
+4. CI.
+5. The docs.
+6. End to end on the desk: the app, `verify_app`, Ctrl+C.
