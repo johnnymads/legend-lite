@@ -296,7 +296,8 @@ export type MakePlanner = (status: HTMLElement) => Promise<Engine>;
 
 /** Where the demo's shared model and tables live: `#>{trades::DB.TRADES}#`. */
 export const SOURCE = accessor('trades::DB', 'TRADES');
-export const SNAP_TARGET: SnapTarget = {
+/** Where the demo cube snaps; its copy is planned by the page's own planner (the model is DuckDB's). */
+export const SNAP_TARGET: Omit<SnapTarget, 'planner'> = {
   table: 'TRADES_SNAP',
   source: accessor('trades::DB', 'TRADES_SNAP'),
   conversions: [],
@@ -752,12 +753,21 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     };
 
     /**
-     * A warehouse table's Snap (a copy into this tab's DuckDB, the same plan run there): only a DuckDB
-     * catalog's. A Postgres catalog's plan is Postgres SQL, which this tab's DuckDB cannot run.
+     * A warehouse table's model: its own runtime (the catalog's database type), and the runtime its
+     * Snap -- a copy into this tab's engine -- is planned against (the tab engine's type).
      */
-    const snapOf = (o: CatalogObject, m: InferredModel): { snapTarget?: SnapTarget } =>
-      o.databaseType !== engine.databaseType ? {}
-        : { snapTarget: { schema: o.schema, table: o.name, source: m.source, conversions: m.conversions } };
+    const warehouseModel = (o: CatalogObject): InferredModel & { readonly snapRuntime: string } => inferModel(o.columns.map((c) => ({ ...c, dataType: c.type })),
+      { table: o.name, schema: o.schema, convertible: false, databaseType: o.databaseType, snapDatabaseType: engine.databaseType });
+    /**
+     * A warehouse table's Snap: the rows pulled with the live plan, into a table of the same name in
+     * this tab, and every query on the copy planned by the SAME model against the snap runtime.
+     */
+    const snapOf = (o: CatalogObject, m: InferredModel & { readonly snapRuntime: string }): { snapTarget: SnapTarget } => ({
+      snapTarget: {
+        schema: o.schema, table: o.name, source: m.source, conversions: m.conversions,
+        planner: local.another(m.model, m.snapRuntime, { bitColumns: m.bitColumns }),
+      },
+    });
 
     /** A warehouse table IN PLACE of the cube: Live there as the user, Snap into this tab. */
     async function openTable(signedIn: WarehouseSession, chosen: CatalogObject, saved?: Saved): Promise<{
@@ -765,8 +775,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     }> {
       // A warehouse table is read-only: a column the compiler says must be
       // converted to be declared cannot be, so it is left out, and named.
-      const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
-        { table: chosen.name, schema: chosen.schema, convertible: false, databaseType: chosen.databaseType });
+      const m = warehouseModel(chosen);
       local.use(m.model, m.runtime, { bitColumns: m.bitColumns });
       const columns = await sourceColumns(planner, m.source);
       const live = track(new WarehouseEngine(signedIn, chosen.catalog));
@@ -1462,8 +1471,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       }
       if (chosen.kind === 'table') {
         const o = chosen.object;
-        const m = inferModel(o.columns.map((c) => ({ ...c, dataType: c.type })),
-          { table: o.name, schema: o.schema, convertible: false, databaseType: o.databaseType });
+        const m = warehouseModel(o);
         const own = local.another(m.model, m.runtime, { bitColumns: m.bitColumns });
         return {
           snapshot: rawRows(m.source, await sourceColumns(own, m.source)),

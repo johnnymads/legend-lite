@@ -236,6 +236,17 @@ export class CubeController {
    * `snap` refuses by name.
    */
   readonly #local: PlanThenRun | null;
+  /**
+   * The planner the LIVE plane's queries are planned with: the model against its source's runtime
+   * (a Postgres catalog's table plans Postgres SQL). A snap's rows are pulled with its plan, since
+   * the pull runs where the rows are. Null with a runner, which plans for itself.
+   */
+  readonly #livePlanner: Planner | null;
+  /**
+   * What answers queries while snapped: the snap target's planner (the same model against the tab
+   * engine's runtime) and the tab's engine, which holds the copy. Null when nothing can be snapped.
+   */
+  readonly #copy: PlanThenRun | null;
   readonly #guard = new EpochGuard();
   readonly #snaps: SnapManager;
   readonly #options: CubeControllerOptions;
@@ -273,12 +284,14 @@ export class CubeController {
       ? null
       : new PlanThenRun(second as Planner, first as QueryEngine);
     this.#local = local;
+    this.#livePlanner = asRunner ? null : (second as Planner);
     const options = asRunner
       ? ((second as CubeControllerOptions | undefined) ?? {})
       : third;
     this.#liveRunner = asRunner
       ?? (options.live ? new PlanThenRun(second as Planner, options.live) : (local as PlanThenRun));
     this.#options = options;
+    this.#copy = local && options.snapTarget ? new PlanThenRun(options.snapTarget.planner, local.engine) : null;
     this.#snaps = new SnapManager(local ? local.engine : null, options.live ?? null);
   }
 
@@ -287,11 +300,12 @@ export class CubeController {
   }
 
   /**
-   * What answers the next query: while snapped the local pair (the snap is
-   * there), otherwise the live runner. The plane is the user's choice.
+   * What answers the next query: while snapped the copy's pair (the snap is
+   * there, planned for the tab's engine), otherwise the live runner. The
+   * plane is the user's choice.
    */
   get #runner(): QueryRunner {
-    return this.#snaps.isSnapped && this.#local ? this.#local : this.#liveRunner;
+    return this.#snaps.isSnapped && this.#copy ? this.#copy : this.#liveRunner;
   }
 
   /** Which arrangement answers queries, for diagnostics. */
@@ -579,7 +593,7 @@ export class CubeController {
     // fresh cube references none, which made this `select(~[])` and the
     // planner refuse it. The query is a tree, so a column called
     // `trade date` is a name, not grammar.
-    if (!this.#local) {
+    if (!this.#local || !this.#livePlanner) {
       // The SnapManager says the same thing; saying it here too
       // keeps the reason next to the attempt.
       throw new CubeRefusal(
@@ -592,7 +606,8 @@ export class CubeController {
       throw new CubeRefusal('this cube names no table to freeze a snapshot into.');
     }
     const query = from(snapshot.source.query).select(snapshot.columns.map((c) => c.name)).lambda();
-    const sourceSql = (await this.#local.planner.plan(query)).sql;
+    // the PULL is the live plan: it runs where the rows are, in that database's SQL
+    const sourceSql = (await this.#livePlanner.plan(query)).sql;
 
     await this.#snaps.snap(sourceSql, this.#guard.current, {
       ...(label !== undefined ? { label } : {}),

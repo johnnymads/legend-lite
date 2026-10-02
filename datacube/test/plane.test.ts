@@ -15,6 +15,7 @@ import { describe, it } from 'node:test';
 import { CubeController, type Planner } from '../src/cube.ts';
 import type { Plan, PlanColumn } from '../src/relation-type.ts';
 import type { ResultTable } from '../src/result.ts';
+import type { SnapTarget } from '../src/snap.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import { TreeState } from '../src/tree.ts';
 import { FakeEngine } from './fake-engine.ts';
@@ -79,12 +80,22 @@ function selectOf(q: Lambda): { readonly source: unknown; readonly columns: read
   };
 }
 
-/** Where these cubes snap: a table the model would declare. */
-const SNAP_TARGET = { table: 'TRADES_SNAP', source: accessor('trades::DB', 'TRADES_SNAP'), conversions: [] };
+/**
+ * Where these cubes snap: a table the model would declare, and the planner its copy is planned
+ * with (the same model against the tab engine's runtime; a planner of its own here).
+ */
+const snapInto = (planner: Planner = new RecordingPlanner()): SnapTarget =>
+  ({ table: 'TRADES_SNAP', source: accessor('trades::DB', 'TRADES_SNAP'), conversions: [], planner });
 
 class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
   readonly sql: string[] = [];
+  /** The tables Arrow was loaded into (DuckDbEngine.loadArrow). */
+  readonly loaded: string[] = [];
+  async loadArrow(target: { readonly schema?: string; readonly table: string }, chunks: AsyncIterable<Uint8Array>): Promise<void> {
+    for await (const _ of chunks) void _;
+    this.loaded.push(target.table);
+  }
   async answer(sql: string, epoch: number): Promise<ResultTable> {
     this.sql.push(sql);
     // `SELECT count(*)` is the snap preflight; it wants one number.
@@ -100,6 +111,15 @@ class RecordingEngine extends FakeEngine {
   }
 }
 
+/** A warehouse: counts, and streams the rows of whatever SQL it is asked to pull. */
+class PullingEngine extends RecordingEngine {
+  readonly pulled: string[] = [];
+  async *arrowChunks(sql: string): AsyncIterable<Uint8Array> {
+    this.pulled.push(sql);
+    yield new Uint8Array([1]);
+  }
+}
+
 /** A state to run: the snapshot, no groups open. */
 const at = (snapshot: CubeSnapshot) => ({ snapshot, tree: TreeState.empty() });
 
@@ -111,7 +131,7 @@ describe('snapping goes through the planner', () => {
     // and DuckDB rejected it.
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, planner, { snapTarget: SNAP_TARGET });
+    const c = new CubeController(engine, planner, { snapTarget: snapInto() });
     const ran: CubeSnapshot = SNAPSHOT;
     await c.run(at(ran));
     planner.pure.length = 0;
@@ -137,7 +157,7 @@ describe('snapping goes through the planner', () => {
 
   it('snaps EVERY source column, so any later view answers from the snap', async () => {
     const planner = new RecordingPlanner();
-    const c = new CubeController(new RecordingEngine(), planner, { snapTarget: SNAP_TARGET });
+    const c = new CubeController(new RecordingEngine(), planner, { snapTarget: snapInto() });
     // a measure over one column: the other is still copied
     const ran: CubeSnapshot = SNAPSHOT;
     await c.run(at(ran));
@@ -152,7 +172,7 @@ describe('snapping goes through the planner', () => {
     // It used to select only the columns the view referenced -- none, for a
     // freshly opened table -- and the planner refused `select(~[])`.
     const planner = new RecordingPlanner();
-    const c = new CubeController(new RecordingEngine(), planner, { snapTarget: SNAP_TARGET });
+    const c = new CubeController(new RecordingEngine(), planner, { snapTarget: snapInto() });
     const ran: CubeSnapshot = { ...SNAPSHOT, measures: [], columns: [...SNAPSHOT.columns, { name: 'trade date', type: 'StrictDate' }] };
     await c.run(at(ran));
     planner.queries.length = 0;
@@ -166,7 +186,7 @@ describe('snapping goes through the planner', () => {
   it('materialises what the planner returned', async () => {
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, planner, { snapTarget: SNAP_TARGET });
+    const c = new CubeController(engine, planner, { snapTarget: snapInto() });
     const ran: CubeSnapshot = SNAPSHOT;
     await c.run(at(ran));
     await c.snap(ran, 'test');
@@ -186,7 +206,7 @@ describe('a snap is a copy: it holds the declared types', () => {
     // no such session, so the copy holds its UTC wall time (leg B, docs/DATACUBE_APP_PLAN_2026_10_02.md)
     const engine = new RecordingEngine();
     const conversions = [{ column: 'at', sql: 'CAST(timezone(\'UTC\', "at") AS TIMESTAMP)' }];
-    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: { ...SNAP_TARGET, conversions } });
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: { ...snapInto(), conversions } });
     await c.run(at(SNAPSHOT));
     engine.sql.length = 0;
     await c.snap(SNAPSHOT, 'test');
@@ -197,7 +217,7 @@ describe('a snap is a copy: it holds the declared types', () => {
 
   it('copies the rows as they are when nothing needs converting', async () => {
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: snapInto() });
     await c.run(at(SNAPSHOT));
     engine.sql.length = 0;
     await c.snap(SNAPSHOT, 'test');
@@ -212,36 +232,65 @@ describe('the snapped plane actually redirects', () => {
     // cosmetic: a table was materialised and every later query
     // still went to the live source.
     const planner = new RecordingPlanner();
+    const copy = new RecordingPlanner();
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, planner, {
-      snapTarget: {
-        table: 'TRADES_SNAP',
-        source: accessor('trades::DB', 'TRADES_SNAP'),
-        conversions: [],
-      },
-    });
+    const c = new CubeController(engine, planner, { snapTarget: snapInto(copy) });
     const ran: CubeSnapshot = SNAPSHOT;
     await c.run(at(ran));
     await c.snap(ran, 'test');
     planner.pure.length = 0;
 
     await c.run(at(ran));
-    assert.ok(
-      planner.pure.every((p) => p.includes('TRADES_SNAP')),
-      `still reading live: ${planner.pure.join(' ;; ')}`,
-    );
+    assert.ok(copy.pure.length > 0 && copy.pure.every((p) => p.includes('TRADES_SNAP')),
+      `still reading live: ${copy.pure.join(' ;; ')}`);
+    assert.deepEqual(planner.pure, [], 'the live planner plans nothing on the copy');
+  });
+
+  it('pulls with the LIVE plan and plans the copy with the snap target\'s planner (leg C)', async () => {
+    // A Postgres table: the pull runs on the warehouse, in Postgres SQL (the live runtime); the
+    // copy is in the tab's DuckDB, and every query on it is planned against the tab's runtime.
+    const live = new RecordingPlanner();
+    const copy = new RecordingPlanner();
+    const tab = new RecordingEngine();
+    const warehouse = new PullingEngine();
+    const c = new CubeController(tab, live, { live: warehouse, snapTarget: snapInto(copy) });
+    await c.run(at(SNAPSHOT));
+    live.queries.length = 0;
+    live.pure.length = 0;
+    await c.snap(SNAPSHOT, 'test');
+    assert.equal(live.queries.length, 1, `the pull is planned once, live: ${live.pure.join(' ;; ')}`);
+    assert.equal(selectOf(live.queries[0]!)?.source, toJson(accessor('trades::DB', 'TRADES')));
+    assert.deepEqual(warehouse.pulled, ['SELECT * FROM planned_1'], 'the live plan is what the warehouse ran');
+    assert.equal(copy.pure.length, 0, 'nothing is planned for the copy before it exists');
+    tab.sql.length = 0;
+    await c.run(at(SNAPSHOT));
+    assert.ok(copy.pure.length > 0 && copy.pure.every((p) => p.includes('TRADES_SNAP')), copy.pure.join(' ;; '));
+    assert.equal(live.pure.length, 1, 'the live planner plans nothing on the copy');
+    assert.ok(tab.sql.length > 0 && tab.sql.every((q) => /planned_/.test(q)), 'the copy\'s plans run in the tab');
+  });
+
+  it('converts the pulled copy in the tab, after the pull: the warehouse runs only the live plan', async () => {
+    // A copy conversion is SQL in the catalog's (DuckDB's) terms; the pull may run in another
+    // database's SQL (a Postgres catalog), so the tab rewrites what landed
+    const tab = new RecordingEngine();
+    const warehouse = new PullingEngine();
+    const conversions = [{ column: 'at', sql: 'CAST(timezone(\'UTC\', "at") AS TIMESTAMP)' }];
+    const c = new CubeController(tab, new RecordingPlanner(), { live: warehouse, snapTarget: { ...snapInto(), conversions } });
+    await c.run(at(SNAPSHOT));
+    tab.sql.length = 0;
+    await c.snap(SNAPSHOT, 'test');
+    assert.equal(warehouse.pulled.length, 1);
+    assert.doesNotMatch(warehouse.pulled[0]!, /REPLACE|timezone/);
+    assert.deepEqual(tab.loaded, ['TRADES_SNAP__pulled']);
+    assert.ok(tab.sql.some((q) => q === 'CREATE OR REPLACE TABLE "TRADES_SNAP" AS SELECT * REPLACE (CAST(timezone(\'UTC\', "at") AS TIMESTAMP) AS "at") FROM "TRADES_SNAP__pulled"'),
+      tab.sql.join(' ;; '));
+    assert.ok(tab.sql.some((q) => q === 'DROP TABLE IF EXISTS "TRADES_SNAP__pulled"'), tab.sql.join(' ;; '));
   });
 
   it('goes back to the live source on release', async () => {
     const planner = new RecordingPlanner();
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, planner, {
-      snapTarget: {
-        table: 'TRADES_SNAP',
-        source: accessor('trades::DB', 'TRADES_SNAP'),
-        conversions: [],
-      },
-    });
+    const c = new CubeController(engine, planner, { snapTarget: snapInto() });
     const ran: CubeSnapshot = SNAPSHOT;
     await c.run(at(ran));
     await c.snap(ran, 'test');
@@ -276,7 +325,7 @@ describe('a plane holds only once it has answered', () => {
     // Going live dropped the snap first: a dead warehouse then left the dropped
     // copy's rows on screen under "Live" (2026-09-29).
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: snapInto() });
     await c.run(at(SNAPSHOT));
     await c.snap(SNAPSHOT, 'test');
     engine.sql.length = 0;
@@ -287,7 +336,7 @@ describe('a plane holds only once it has answered', () => {
 
   it('drops the snap once live has answered', async () => {
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: snapInto() });
     await c.run(at(SNAPSHOT));
     await c.snap(SNAPSHOT, 'test');
     await c.goLive(applied);
@@ -298,7 +347,7 @@ describe('a plane holds only once it has answered', () => {
   it('is live again when the snap it took cannot be read', async () => {
     // A file's model with no snap table: the badge said Snapped over a failed query.
     const engine = new RecordingEngine();
-    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: snapInto() });
     await c.run(at(SNAPSHOT));
     await assert.rejects(c.snapAndRun(SNAPSHOT, refused), /could not snap — .*Still live\./);
     assert.equal(c.snaps.isSnapped, false);
@@ -317,7 +366,7 @@ describe('receipts', () => {
   }
 
   it('the view carries the receipt of every query that answered it', async () => {
-    const c = new CubeController(new SigningEngine(), new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const c = new CubeController(new SigningEngine(), new RecordingPlanner(), { snapTarget: snapInto() });
     const view = await c.run(at(SNAPSHOT));
     assert.ok(typeof view !== 'symbol');
     assert.ok(view.receipts.length > 0);
@@ -326,7 +375,7 @@ describe('receipts', () => {
   });
 
   it('while snapped, each receipt names the copy it read', async () => {
-    const c = new CubeController(new SigningEngine(), new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const c = new CubeController(new SigningEngine(), new RecordingPlanner(), { snapTarget: snapInto() });
     await c.run(at(SNAPSHOT));
     await c.snap(SNAPSHOT, 'test');
     const view = await c.run(at(SNAPSHOT));
@@ -336,7 +385,7 @@ describe('receipts', () => {
   });
 
   it('a result with no receipt adds none: nothing is made up for an engine that says nothing', async () => {
-    const c = new CubeController(new RecordingEngine(), new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    const c = new CubeController(new RecordingEngine(), new RecordingPlanner(), { snapTarget: snapInto() });
     const view = await c.run(at(SNAPSHOT));
     assert.ok(typeof view !== 'symbol');
     assert.deepEqual(view.receipts, []);

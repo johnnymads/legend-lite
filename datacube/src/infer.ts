@@ -41,6 +41,11 @@ export interface InferredModel {
    * on engine reads them Boolean (relation-type.ts, ENGINE DEFECT S23).
    */
   readonly bitColumns: readonly string[];
+  /**
+   * The runtime a COPY of the table is planned against (`InferOptions.snapDatabaseType`): the same
+   * Database, through a connection of the copy's store's type. Present only when asked for.
+   */
+  readonly snapRuntime?: string;
 }
 
 export interface InferOptions {
@@ -63,13 +68,28 @@ export interface InferOptions {
    * tab's engine (`QueryEngine.databaseType`) or a warehouse catalog (`CatalogObject.databaseType`).
    */
   readonly databaseType: string;
+  /**
+   * The database type of the store a Snap copies the table into (the tab's engine,
+   * `QueryEngine.databaseType`), when it can be snapped. The model then also carries a second
+   * runtime over the SAME Database (`snapRuntime`): the rows are pulled with a plan against the
+   * table's own runtime, and every query on the copy is planned against this one, so a Postgres
+   * table's copy in the tab's DuckDB is queried in DuckDB's SQL (leg C,
+   * docs/DATACUBE_APP_PLAN_2026_10_02.md).
+   */
+  readonly snapDatabaseType?: string;
 }
 
 /**
  * Turn a table's catalog into a model the planner can compile: legend-lite's Database (written
  * here, catalog-model.ts), wrapped in a DuckDB connection and a runtime. A column of a type no
- * Database declares is refused (`CatalogRefusal`), naming it.
+ * Database declares is refused (`CatalogRefusal`), naming it. Given `snapDatabaseType`, the model
+ * carries the snap runtime too, and says so in its type.
  */
+export function inferModel(
+  columns: readonly CatalogColumn[],
+  options: InferOptions & { readonly snapDatabaseType: string },
+): InferredModel & { readonly snapRuntime: string };
+export function inferModel(columns: readonly CatalogColumn[], options: InferOptions): InferredModel;
 export function inferModel(
   columns: readonly CatalogColumn[],
   options: InferOptions,
@@ -101,11 +121,30 @@ Runtime ${pkg}::RT
         ${pkg}::DB: [ c1: ${pkg}::Conn ]
     ];
 }
-`;
+${options.snapDatabaseType === undefined ? '' : `
+###Connection
+RelationalDatabaseConnection ${pkg}::SnapConn
+{
+    type: ${options.snapDatabaseType};
+    specification: DuckDB { };
+    auth: Test;
+}
+
+###Runtime
+Runtime ${pkg}::SnapRT
+{
+    mappings: [];
+    connections:
+    [
+        ${pkg}::DB: [ c1: ${pkg}::SnapConn ]
+    ];
+}
+`}`;
 
   return {
     model,
     runtime: `${pkg}::RT`,
+    ...(options.snapDatabaseType === undefined ? {} : { snapRuntime: `${pkg}::SnapRT` }),
     source: db.source,
     conversions: db.conversions,
     excluded: db.excluded,

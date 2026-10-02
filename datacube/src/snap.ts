@@ -29,6 +29,7 @@
 //      it is drilling into.
 
 import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
+import type { Planner } from './cube.ts';
 import type { QueryEngine } from './engine.ts';
 import type { Receipt } from './receipt.ts';
 
@@ -90,9 +91,20 @@ export interface SnapTarget {
    * What the COPY applies so it holds the model's declared types (the catalog model's
    * `conversions`, CatalogModel.database): a zoned timestamp read in place under the source's
    * UTC session is copied as its UTC wall time, so the tab's store, in whatever zone, reads the
-   * same values (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B). Applied where the rows are read.
+   * same values (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B). SQL in the catalog's own terms --
+   * DuckDB's, whose catalog describes every column (catalog-model.ts) -- so it is applied by the
+   * store the copy is written to, after the pull: the pull runs where the rows are, in that
+   * database's SQL (a Postgres catalog's is Postgres), and a rewrite there would have to be
+   * spelled in it.
    */
   readonly conversions: readonly { readonly column: string; readonly sql: string }[];
+  /**
+   * How a query on the copy is planned: the SAME model against the runtime of the store the copy
+   * is in (`InferredModel.snapRuntime`). The rows are pulled with the live plan, which runs where
+   * they are; every query on the copy runs here, in the tab's engine, so it is planned for that
+   * engine's database type (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg C).
+   */
+  readonly planner: Planner;
 }
 
 export type PlaneState =
@@ -226,7 +238,7 @@ export class SnapManager {
        * a table the cube's model also declares. Supplied by the caller,
        * which owns the model.
        */
-      readonly target: SnapTarget;
+      readonly target: Omit<SnapTarget, 'planner'>;
     },
   ): Promise<SnapInfo> {
     const estimate = await this.preflight(sourceSql, epoch);
@@ -240,24 +252,35 @@ export class SnapManager {
     const bare = options.target.table;
     const table = qualified(schema, bare);
     const engine = this.#localStore();
-    // the copy's rows, converted where they are read (the source's session, not the tab's): the
-    // same rewrite an upload applies at ingest (upload.ts)
+    // the copy's conversions, applied by the store the copy is written to (SnapTarget.conversions):
+    // the same rewrite an upload applies at ingest (upload.ts), in that store's SQL
     const conversions = options.target.conversions;
-    const copied = conversions.length === 0 ? sourceSql
-      : `SELECT * REPLACE (${conversions.map((c) => `${c.sql} AS ${quoteIdent(c.column)}`).join(', ')}) `
-        + `FROM (${sourceSql}) AS ${quoteIdent('snap_source')}`;
+    const converted = (from: string): string => (conversions.length === 0 ? from
+      : `SELECT * REPLACE (${conversions.map((c) => `${c.sql} AS ${quoteIdent(c.column)}`).join(', ')}) FROM ${from}`);
     if (this.#remote) {
-      // The rows live on the server: stream its Arrow chunks into a local
-      // table of the same name, so the model -- and the planned SQL -- read
-      // it unchanged. Exactly the rows the server let this user read.
+      // The rows live on the server: the live plan runs there, and its Arrow
+      // chunks stream into a local table of the same name, so the model -- and
+      // the planned SQL -- read it unchanged. Exactly the rows the server let
+      // this user read. A copy that needs converting lands beside its name
+      // first, and is rewritten into it here.
       const loader = engine as unknown as Partial<ArrowLoader>;
       if (typeof loader.loadArrow !== 'function') {
         throw new SnapRefusal('the local store cannot load Arrow data, so a remote live plane cannot be snapped');
       }
-      await loader.loadArrow({ ...(schema ? { schema } : {}), table: bare },
-        this.#remote.arrowChunks(copied, undefined, (r) => { pulledBy = r; }));
+      const landing = conversions.length === 0 ? bare : `${bare}__pulled`;
+      await loader.loadArrow({ ...(schema ? { schema } : {}), table: landing },
+        this.#remote.arrowChunks(sourceSql, undefined, (r) => { pulledBy = r; }));
+      if (landing !== bare) {
+        const pulled = qualified(schema, landing);
+        try {
+          await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${converted(pulled)}`, epoch);
+        } finally {
+          await engine.run(`DROP TABLE IF EXISTS ${pulled}`, epoch);
+        }
+      }
     } else {
-      await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${copied}`, epoch);
+      await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${conversions.length === 0 ? sourceSql
+        : converted(`(${sourceSql}) AS ${quoteIdent('snap_source')}`)}`, epoch);
     }
 
     const takenAt = new Date();

@@ -184,6 +184,27 @@ difference, and the clear ones are fixed in their layer.
 **Snap** plans the same model against the tab's database type instead of reusing the live plan's
 SQL, so a Postgres table snaps like any other.
 
+**As built (C):**
+- **The audit.** `verify_features` runs Live on a warehouse table: `WAREHOUSE=<url> PORT=<port>`,
+  and `WAREHOUSE_SNAP=1` to snap it first. It found one dialect bug: Postgres refuses a constant
+  `GROUP BY '[ROOT]'` and reads an integer key as a position. The fix is `ConstantKeysAsExpressions`
+  (a typed cast). The one check still failing is the status bar's one-word backend, which a
+  warehouse cube fills with its plane sentence: a presentation choice, open.
+- **Snap.**
+  - `inferModel(…, { databaseType, snapDatabaseType })` writes ONE Database and two runtimes: `RT`
+    (the table's type) and `SnapRT` (the tab engine's, `QueryEngine.databaseType`).
+  - `SnapTarget.planner` is required: the same model against `SnapRT`. `CubeController` pulls the
+    rows with the LIVE planner, because the pull runs where the rows are, and runs every query on
+    the copy with the target's planner. The `snapOf` exception is gone.
+- **Copy conversions are applied in the tab, after the pull.** The catalog's conversions are DuckDB
+  SQL (DuckDB's catalog describes every column), and a Postgres catalog's pull is Postgres SQL. The
+  pull lands in `<table>__pulled`, and the tab rewrites it into `<table>`. An upload applies the same
+  rewrite at ingest.
+- **Live proof** (`cube.public.trades_tz`, 5,000 rows, a `timestamptz` column):
+  - the pull ran on the warehouse in Postgres SQL, and after the snap nothing went to the warehouse;
+  - group, filter (including the `timestamptz` column) and pivot on the copy equal Live and psql;
+  - the sweep passes 170/171 both Live and snapped.
+
 ## Order
 A1 → A2 → A3 → A4, sequentially (one author, shared files). B starts after A1's commit; it touches
 `duck/Database.java` and `Catalogs.java`. C's plan is reviewed before it writes code.

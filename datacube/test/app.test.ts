@@ -1194,7 +1194,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine: new CountingEngine(),
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [] },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner() },
     });
     await app.open();
     const toggle = root.querySelector('.dc-titlebar-toggle') as HTMLButtonElement;
@@ -1218,7 +1218,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine,
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [] },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner() },
       heldCopy: { label: 'trades.csv', takenAt: new Date(2026, 8, 29, 9, 30), rowCount: 1234 },
     });
     await app.open();
@@ -1247,7 +1247,7 @@ describe('the bar says what you are looking at, and nothing else', () => {
     const app = new CubeApp(root, SNAPSHOT, {
       engine: new SigningEngine(),
       planner: new StubPlanner(),
-      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [] },
+      snapTarget: { table: 'TRADES_SNAP', source: element('TRADES_SNAP'), conversions: [], planner: new StubPlanner() },
     });
     await app.open();
     const chip = () => root.querySelector('.dc-status-receipt') as HTMLButtonElement;

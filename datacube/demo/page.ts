@@ -73,7 +73,7 @@ async function main(): Promise<void> {
     const cube = new CubeApp(body, t.snapshot, {
       engine,
       planner,
-      snapTarget: SNAP_TARGET,
+      snapTarget: { ...SNAP_TARGET, planner },
       configuration: demoConfiguration(t.title),
       windowHost: page,
     });

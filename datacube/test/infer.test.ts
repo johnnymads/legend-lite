@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { inferModel } from '../src/infer.ts';
 import type { CatalogColumn } from '../src/catalog-model.ts';
 import { formatOf, tableNameOf } from '../src/upload.ts';
-import { col, derive, from, lambda, lit, times } from '../../pure-protocol/src/index.ts';
+import { agg, col, derive, fn, from, lambda, lit, times, variable } from '../../pure-protocol/src/index.ts';
 import { print } from './lite-compiler.ts';
 import { plannerFor } from './catalog-builder.ts';
 
@@ -113,6 +113,33 @@ describe('inferModel', () => {
     const m = inferModel([col_('id', 'BIGINT')], { table: 'orders', schema: 'sales', convertible: false, databaseType: 'Postgres' });
     assert.match(m.model, /type: Postgres;/);
     assert.match(inferModel([col_('id', 'BIGINT')], { table: 't', convertible: true, databaseType: 'DuckDB' }).model, /type: DuckDB;/);
+  });
+
+  it('carries a snap runtime over the SAME Database when the copy\'s store is named (leg C)', () => {
+    const m = inferModel([col_('id', 'BIGINT')],
+      { table: 'orders', schema: 'sales', convertible: false, databaseType: 'Postgres', snapDatabaseType: 'DuckDB' });
+    assert.equal(m.runtime, 'local::RT');
+    assert.equal(m.snapRuntime, 'local::SnapRT');
+    assert.match(m.model, /RelationalDatabaseConnection local::Conn\n\{\n {4}type: Postgres;/);
+    assert.match(m.model, /RelationalDatabaseConnection local::SnapConn\n\{\n {4}type: DuckDB;/);
+    assert.match(m.model, /Runtime local::SnapRT[\s\S]*local::DB: \[ c1: local::SnapConn \]/);
+    assert.equal((m.model.match(/^Database /gm) ?? []).length, 1, 'one Database, read through either runtime');
+    // not asked for, none
+    assert.equal(inferModel([col_('id', 'BIGINT')], { table: 't', convertible: true, databaseType: 'DuckDB' }).snapRuntime, undefined);
+  });
+
+  it('plans the SAME query in each runtime\'s SQL: Postgres live, DuckDB on the copy', async () => {
+    const m = inferModel([col_('region', 'VARCHAR'), col_('n', 'BIGINT')],
+      { table: 'orders', schema: 'sales', convertible: false, databaseType: 'Postgres', snapDatabaseType: 'DuckDB' });
+    // the root row's constant group key: Postgres needs it typed, DuckDB takes it bare
+    const query = from(m.source).extend([derive('k', lambda(['x'], lit.string('[ROOT]')))])
+      .groupBy(['k'], [agg('n', lambda(['x'], col('x', 'n')), lambda(['y'], fn('sum', variable('y'))))]).lambda();
+    const live = (await plannerFor(m.model, m.runtime).plan(query)).sql;
+    const copy = (await plannerFor(m.model, m.snapRuntime).plan(query)).sql;
+    assert.match(live, /GROUP BY CAST\('\[ROOT\]' AS VARCHAR\)/);
+    assert.match(copy, /GROUP BY '\[ROOT\]'/);
+    assert.match(live, /FROM "sales"\."orders"/);
+    assert.match(copy, /FROM sales\.orders|FROM "sales"\."orders"/);
   });
 
   it('leaves bytes out by name, on every source, and opens the rest', async () => {
