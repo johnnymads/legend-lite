@@ -814,6 +814,19 @@ _CI_HARNESSES = [
     tags = ["browser-ci"] if h in _CI_HARNESSES else [],
 ) for h in _HARNESSES]
 
+# `bazel run //datacube:verify_app` (manual; see demo/verify-app.mjs for its Postgres): the single-user app
+# end to end -- the native warehouse serving :dist, started from the launch key.
+js_binary(
+    name = "verify_app",
+    data = [
+        ":dist",
+        ":node_modules/playwright",
+        "//warehouse:serve",
+    ],
+    entry_point = "demo/verify-app.mjs",
+    tags = ["manual"],
+)
+
 # `bazel run //datacube:install_browser [-- --with-deps]`: the Chromium the harnesses drive, at
 # the version the lock file pins.
 js_binary(

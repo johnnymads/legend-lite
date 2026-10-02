@@ -17,7 +17,7 @@ import type { ModelOptions } from '../src/planner.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { inferFormat, mountRemote, type S3Credentials } from '../src/remote.ts';
 import { catalogColumns, forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
-import { pickSource, type DatabaseSession, type PickerSections, type RemoteCredentials } from '../src/ui/source-picker.ts';
+import { pickSource, type DatabaseSession, type PickerSections, type RemoteCredentials, type SectionId } from '../src/ui/source-picker.ts';
 import { saveDialog } from '../src/ui/save-dialog.ts';
 import { Latest, TabWork, mayLeave } from '../src/host.ts';
 import { isPageFragment, readPageFragment, shareLink } from '../src/share/link.ts';
@@ -72,6 +72,8 @@ const savedQueries = () => import('../src/saved-queries.ts');
 const queryStores = () => import('../../query-store/src/index.ts');
 import {
   connect,
+  listAllObjects,
+  signInWithKey,
   WarehouseEngine,
   type CatalogObject,
   type WarehouseSession,
@@ -125,6 +127,30 @@ export type PlaneWord = 'local' | 'remote' | 'engine';
  * status bar names it), and never changed behind the user's back: an unknown word is refused,
  * and a planner that does not answer is SAID, never substituted (test/guardrails.test.ts).
  */
+/**
+ * WHAT THE PAGE WAS ASKED TO OPEN, decided before anything is generated or mounted
+ * (docs/DATACUBE_APP_PLAN_2026_10_02.md, A3). Only `sample` builds the sample cube -- over the
+ * generated trades, or over a `?remote=` file read through the same model. A share link or a saved
+ * page in the address opens in place of nothing; so does the single-user app's launch key
+ * (`#key=…&table=schema.name`, a fragment: never sent to a server).
+ */
+type Start =
+  | { readonly kind: 'sample' }
+  | { readonly kind: 'link' }
+  | { readonly kind: 'warehouse'; readonly key: string; readonly table?: string };
+
+async function startOf(where: Location): Promise<Start> {
+  if (where.hash.startsWith('#key=')) {
+    const p = new URLSearchParams(where.hash.slice(1));
+    const table = p.get('table');
+    return { kind: 'warehouse', key: p.get('key') ?? '', ...(table ? { table } : {}) };
+  }
+  if (isPageFragment(where.hash)) return { kind: 'link' };
+  const queryLink = where.hash.replace(/^#\/shared\//, '#');
+  if (queryLink.length > 1 && (await queryStores()).isQueryFragment(queryLink)) return { kind: 'link' };
+  return { kind: 'sample' };
+}
+
 export function chosenPlane(): PlaneWord {
   const word = new URLSearchParams(location.search).get('planner') ?? 'local';
   const known = PLANES.find((plane) => plane.word === word);
@@ -358,6 +384,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   // reported as unhandled in the window before that.
   engineReady.catch(() => {});
 
+  const start = await startOf(location);
   status.textContent = 'starting DuckDB…';
 
   const { engine, db } = await startDuckDb();
@@ -378,7 +405,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   const remote = params.get('remote');
   /** Generated rows are a copy in this tab from the start; a mounted remote file is live. */
   let generated: HeldCopy | undefined;
-  if (remote) {
+  if (start.kind === 'sample' && remote) {
     status.textContent = `mounting ${remote}…`;
     const format = params.get('format');
     await mountRemote(engine, {
@@ -397,7 +424,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // said on every receipt: this tab's DuckDB answers, reading the file over HTTP
     engine.readsRemote(remote);
     status.textContent = `reading ${remote}`;
-  } else {
+  } else if (start.kind === 'sample') {
 
   status.textContent = `generating ${ROWS.toLocaleString()} rows…`;
   await generateTrades(engine);
@@ -411,7 +438,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   const { planner, source, snapTarget, label, models } = await engineReady;
   status.textContent = label;
 
-  const snapshot: CubeSnapshot = {
+  /** The sample cube's opening view. */
+  const sampleSnapshot = async (): Promise<CubeSnapshot> => ({
     source: { query: source },
     // the compiler types every column; the page declares only that year is a dimension
     columns: await sourceColumns(planner, source, [{ name: 'year', kind: 'dimension' }]),
@@ -421,7 +449,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     measures: [{ name: 'notional', column: 'notional', fn: 'sum' }],
     sorts: [],
     epoch: 1,
-  };
+  });
 
 
   // The page builds the APP, not a grid and a pile of checkboxes.
@@ -529,7 +557,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         },
       } : {}),
       configuration: config,
-      snapTarget: place.snapTarget ?? snapTarget,
+      // Snap only where the place says what to copy: no other source's target stands in for it
+      ...(place.snapTarget ? { snapTarget: place.snapTarget } : {}),
       ...(place.cubeSource ? { cubeSource: place.cubeSource } : {}),
       ...(place.tree ? { tree: place.tree } : {}),
       ...(place.heldCopy ? { heldCopy: place.heldCopy } : {}),
@@ -676,12 +705,18 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
   /** Told when a view lands: "changed since saved" is re-read then. */
   let onCubeView: (() => void) | undefined;
   /** The source picker, once the page can open sources: New ▸ Data Source… adds a grid over one; a blank page opens one. */
-  let picker: ((purpose: 'add' | 'open') => Promise<GridSource | undefined>) | undefined;
+  let picker: ((purpose: 'add' | 'open', start?: SectionId) => Promise<GridSource | undefined>) | undefined;
   /** New ▸ Blank Page: everything goes, for a first data source. */
-  let blankPage: (() => void) | undefined;
-  let app = makeApp(snapshot, configuration, DEMO_DIMENSIONS, generated ? { heldCopy: generated } : {});
-
-  await app.open();
+  let blankPage: ((reason?: string) => void) | undefined;
+  /** Why the page's start opened nothing (a link that failed, a key refused): the blank page says it. */
+  let startProblem: string | undefined;
+  /** The cube on screen; none until the source the page was asked to open is open (a blank page has none). */
+  let app: CubeApp | undefined;
+  if (start.kind === 'sample') {
+    app = makeApp(await sampleSnapshot(), configuration, DEMO_DIMENSIONS,
+      { snapTarget, ...(generated ? { heldCopy: generated } : {}) });
+    await app.open();
+  }
 
   // OPENING A FILE.
   //
@@ -774,6 +809,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      * "changed since saved".
      */
     const savedForm = (name: string): { content: Record<string, unknown>; definition: string } | undefined => {
+      if (!app) return undefined;
       const page = app.pageDocument(name, {
         ...(current.unknown ? { cube: current.unknown } : {}),
         ...(current.pageUnknown ? { page: current.pageUnknown } : {}),
@@ -882,7 +918,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             reportTitle: opened.fileName,
           };
         }
-        app.dispose();
+        app?.dispose();
         app = makeApp(snap, config, [], {
           cubeSource: source,
           heldCopy: { label: opened.fileName, takenAt: loadedAt, rowCount: opened.rowCount },
@@ -1071,6 +1107,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
     /** Save the cube on screen: over its saved copy, or as a new one (the Save window's act). */
     async function saveTo(name: string, asNew: boolean): Promise<void> {
+      if (!app) throw new Error('There is no cube to save: open a data source first.');
       const refused = app.saveRefusal();
       if (refused) throw new Error(refused);
       const form = savedForm(name);
@@ -1159,12 +1196,17 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // THE MENU'S SAVE AND SAVE AS: a window of their own (src/ui/save-dialog.ts) -- the name, where
     // it is kept, what is saved and what is not (the rows), and what saving over would drop
     saveCube = (asNew) => {
+      const cube = app;
+      if (!cube) {
+        library?.say('There is no cube to save: open a data source first.', 'warn');
+        return;
+      }
       void (async () => {
-        const refused = app.saveRefusal();
-        const offered = current.name ?? app.configuration.reportTitle ?? current.source?.name ?? 'cube';
+        const refused = cube.saveRefusal();
+        const offered = current.name ?? cube.configuration.reportTitle ?? current.source?.name ?? 'cube';
         const savedAt = current.cubeId !== undefined ? (await store.get(current.cubeId).catch(() => undefined))?.lastUpdatedAt : undefined;
-        const s = app.snapshot;
-        const charts = app.pageViews().views.filter((v) => v.kind === 'chart').length;
+        const s = cube.snapshot;
+        const charts = cube.pageViews().views.filter((v) => v.kind === 'chart').length;
         const keeps = [
           s.rows.length > 0 ? `Grouped by ${s.rows.join(', ')}` : 'Its rows as they are, grouped by nothing',
           ...(s.pivotOn.length > 0 ? [`Pivoted on ${s.pivotOn.join(', ')}`] : []),
@@ -1207,9 +1249,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // SHARE: the link in a window of its own, shown and copied to the clipboard at once, with a
     // way to copy it again -- and what it holds (the page's settings, never its data) said there.
     copyShareLink = async () => {
-      const refused = app.saveRefusal();
-      const name = current.name ?? app.configuration.reportTitle ?? current.source?.name ?? 'cube';
-      const page = refused ? undefined : app.pageDocument(name, {
+      const cube = app;
+      // nothing on screen is said the way any unsharable cube is: in the window, not as a dead button
+      const refused = cube ? cube.saveRefusal() : 'There is no cube to share: open a data source first.';
+      const name = current.name ?? cube?.configuration.reportTitle ?? current.source?.name ?? 'cube';
+      const page = refused || !cube ? undefined : cube.pageDocument(name, {
         ...(current.unknown ? { cube: current.unknown } : {}),
         ...(current.pageUnknown ? { page: current.pageUnknown } : {}),
       });
@@ -1462,7 +1506,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const saved = o.saved;
       const cubeSource = o.cubeSource;
       const cube = saved ? openCube(saved.doc, { query: o.relation }, o.columns) : undefined;
-      app.dispose();
+      app?.dispose();
       app = makeApp(cube?.snapshot ?? rawRows(o.relation, o.columns),
         cube?.configuration ?? { ...DEFAULT_CONFIGURATION, reportTitle: o.label }, [],
         { cubeSource, ...(o.place ?? {}), ...(cube?.tree ? { tree: cube.tree } : {}) });
@@ -1533,7 +1577,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       return stores;
     };
 
-    picker = async (purpose: 'add' | 'open'): Promise<GridSource | undefined> => {
+    picker = async (purpose: 'add' | 'open', start?: SectionId): Promise<GridSource | undefined> => {
       const config = await pageConfig();
       const act = async (chosen: Chosen): Promise<GridSource | null> => {
         if (purpose === 'add') return gridOver(chosen);
@@ -1608,7 +1652,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           open: (url, credentials) => act({ kind: 'remote', url, ...(credentials ? { s3: s3Of(credentials) } : {}) }),
         },
       };
-      const made = await pickSource(document, { purpose, sections });
+      const made = await pickSource(document, { purpose, sections, ...(start ? { start } : {}) });
       return made ?? undefined;
     };
 
@@ -1734,9 +1778,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // A BLANK PAGE (New ▸ Blank Page; the user, 2026-10-01): every grid and chart goes, and the page
     // says what to do first -- a data source (the picker, opening in place) or a saved cube. Asked
     // first when there are unsaved changes; the old cube stays until the person agrees.
-    blankPage = () => {
+    blankPage = (reason?: string) => {
       if (dirty() && !window.confirm('The page has unsaved changes. Start a blank page anyway?')) return;
-      app.dispose();
+      app?.dispose();
+      app = undefined;
       must('offstage').append(status);
       current = {};
       const doc = document;
@@ -1750,6 +1795,13 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const lead = doc.createElement('p');
       lead.className = 'dc-blank-lead';
       lead.textContent = 'Start with a data source: a file from your computer, an example, a table in a warehouse, or a remote Parquet, CSV or Iceberg file.';
+      if (reason) {
+        const why = doc.createElement('p');
+        why.className = 'dc-blank-reason';
+        why.setAttribute('role', 'alert');
+        why.textContent = reason;
+        card.append(why);
+      }
       const actions = doc.createElement('div');
       actions.className = 'dc-blank-actions';
       const add = doc.createElement('button');
@@ -1763,7 +1815,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       saved.textContent = 'Open a saved cube';
       saved.addEventListener('click', () => showCubes?.());
       actions.append(add, saved);
-      card.append(title, lead, actions);
+      card.prepend(title, lead);
+      card.append(actions);
       blank.append(card);
       host.replaceChildren(blank);
       document.title = 'New page';
@@ -1784,9 +1837,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         const config = await pageConfig();
         await openInPlace({ kind: 'saved', query: await openedRecord(config, await links.readQueryFragment(queryLink)) });
       } catch (e) {
-        harnessSignal.changes += 1;
-        status.textContent = e instanceof Error ? e.message : String(e);
-        status.classList.add('bad');
+        failedStart(e);
       }
     }
     if (isPageFragment(location.hash)) {
@@ -1799,6 +1850,48 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         library?.say(e instanceof Error ? e.message : String(e), 'error');
       }
     }
+
+    // THE SINGLE-USER APP'S START (docs/DATACUBE_APP_PLAN_2026_10_02.md, A3): the launch key signs in
+    // to the warehouse that served this page (its config.json names it), then the table asked for is
+    // opened, or the tables are offered. The key stays in the address: a reload signs in again.
+    if (start.kind === 'warehouse') {
+      const config = await pageConfig();
+      try {
+        if (!config.warehouse) throw new Error('this page was not served by a warehouse: its config.json names none');
+        const session = await signInWithKey(config.warehouse, start.key);
+        signedIn = { session, objects: await listAllObjects(session) };
+      } catch (e) {
+        failedStart(e);
+      }
+      const on = signedIn;
+      const asked = start.table;
+      const found = on && asked ? on.objects.filter((o) => `${o.schema}.${o.name}` === asked) : [];
+      if (on && found.length === 1 && found[0]) {
+        await openInPlace({ kind: 'table', session: on.session, object: found[0] });
+      } else if (on) {
+        if (asked) {
+          failedStart(new Error(found.length === 0
+            ? `${asked} is not a table you may read here`
+            : `${asked} is in ${found.length} catalogs (${found.map((o) => o.catalog).join(', ')}): choose one`));
+        }
+        blankPage(startProblem);
+        void picker('open', 'database');
+      }
+    }
+    // A START THAT OPENED NOTHING (a link that failed, a key refused) leaves the blank page and the
+    // reason in the status line: never an empty page
+    if (!app) blankPage(startProblem);
+  } else if (start.kind !== 'sample') {
+    status.textContent = 'this planner opens only the sample: the link or key in the address needs the in-tab planner';
+    status.classList.add('bad');
+  }
+
+  /** The reason a start opened nothing, said where the page says what is wrong. */
+  function failedStart(e: unknown): void {
+    harnessSignal.changes += 1;
+    startProblem = e instanceof Error ? e.message : String(e);
+    status.textContent = startProblem;
+    status.classList.add('bad');
   }
 }
 

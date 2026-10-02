@@ -3016,6 +3016,8 @@
 .dc-blank-title { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: var(--tw-neutral-700); }
 .dc-blank-lead { margin: 8px 0 22px; font-size: 13px; line-height: 19px; color: var(--tw-neutral-500); }
 .dc-blank-actions { display: flex; justify-content: center; gap: 10px; }
+/* why the page's start opened nothing (a link that failed, a launch key refused) */
+.dc-blank-reason { margin: -10px 0 22px; font-size: 13px; line-height: 19px; color: var(--tw-red-600); }
 
 /* ---- Save and Save As (ui/save-dialog.ts), in the source picker's style ---- */
 .dc-picker.dc-save { width: min(560px, 100%); height: auto; max-height: 100%; }

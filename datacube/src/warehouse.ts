@@ -118,6 +118,21 @@ export async function signIn(baseUrl: string, user: string, password: string): P
   return { baseUrl, token: t.token, principal: t.principal, expiresAt: t.expiresAt };
 }
 
+/**
+ * The single-user app's sign-in (docs/DATACUBE_APP_PLAN_2026_10_02.md): the launch key the warehouse
+ * printed and put in this page's address, for a token like a password's -- refreshed, and renewed, the same.
+ */
+export async function signInWithKey(baseUrl: string, key: string): Promise<WarehouseSession> {
+  const r = await fetch(url(baseUrl, '/sql/v1/login'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  });
+  if (!r.ok) throw new Error(`sign-in failed — ${await failure(r)}`);
+  const t = await r.json() as { token: string; expiresAt: string; principal: string };
+  return { baseUrl, token: t.token, principal: t.principal, expiresAt: t.expiresAt };
+}
+
 /** The SQL a warehouse catalog runs: DuckDB's own, or Postgres SQL passed through to a Postgres database. */
 export type CatalogEngine = 'duckdb' | 'postgres';
 

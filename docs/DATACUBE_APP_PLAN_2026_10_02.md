@@ -102,6 +102,24 @@ With `#key`, the page:
 **Gate:** the existing page suites (no regression for the sample, `?remote=` or share links), plus
 A2's Playwright test.
 
+**As built (A3):**
+- **No cube is a state.** The cube on screen is optional. The blank page sets it to none, and a key or
+  link start begins with none. Save says "there is no cube to save", and Share says so in its window.
+- **A start that opens nothing** (a link that failed, a key refused, an unknown `table`) leaves the
+  blank page, with the reason on its card (`.dc-blank-reason`), never an empty page.
+- **No other source's Snap.** `makeApp` took `place.snapTarget ?? <the sample's>`, so any cube
+  without its own Snap target snapped the sample's table. Now only a place that names what to copy
+  can Snap, and the sample passes its own.
+- **The picker opens on a given section** (`picker('open', 'database')`).
+- **`signInWithKey`** in `warehouse.ts`.
+- **`bazel run //datacube:verify_app`** (manual; needs Postgres) runs the native warehouse with
+  `:dist`. It checks:
+  - the table opens Live, with nothing generated;
+  - grouping runs in Postgres;
+  - a reload signs in again;
+  - without a table, the tables are offered with no password asked;
+  - a wrong key and an unknown table are said on the blank page.
+
 ### A4. Catalog kinds as data; one listing; no engine names in TypeScript
 - **Warehouse:** a catalog is `Native` (DuckDB's own tables, per-object grants, the Authorizer,
   sessions) or `Attached` (passthrough). `Attached` carries a row of a closed table of attachable
