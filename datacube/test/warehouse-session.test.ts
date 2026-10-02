@@ -52,15 +52,18 @@ describe('signing in is one step with its table list (P2-334)', () => {
     reply = (url) => (url.endsWith('/login')
       ? new Response(JSON.stringify({ token: 't', expiresAt: 'x', principal: 'bob' }), { status: 200 })
       : new Response('upstream down', { status: 502 }));
-    await assert.rejects(() => connect('https://wh.example', 'bob', 'pw'), /catalog/);
+    await assert.rejects(() => connect('https://wh.example', 'bob', 'pw'), /could not list the tables/);
   });
 
   it('a good sign-in and listing give the session WITH its own tables', async () => {
     reply = (url) => (url.endsWith('/login')
       ? new Response(JSON.stringify({ token: 't', expiresAt: 'x', principal: 'bob' }), { status: 200 })
-      : new Response(JSON.stringify([{ schema: 's', name: 'bobs', kind: 'table', columns: [] }]), { status: 200 }));
+      : url.endsWith('/sql/v1/objects')
+        ? new Response(JSON.stringify([{ catalog: 'main', databaseType: 'DuckDB', schema: 's', name: 'bobs', kind: 'table', columns: [] }]), { status: 200 })
+        : new Response('not this route', { status: 404 }));
     const got = await connect('https://wh.example', 'bob', 'pw');
     assert.equal(got.session.principal, 'bob');
-    assert.deepEqual(got.objects.map((o) => o.name), ['bobs']);
+    // one listing call: every catalog's objects, each with its catalog and database type
+    assert.deepEqual(got.objects.map((o) => [o.catalog, o.databaseType, o.name]), [['main', 'DuckDB', 'bobs']]);
   });
 });

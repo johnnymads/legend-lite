@@ -72,7 +72,7 @@ const savedQueries = () => import('../src/saved-queries.ts');
 const queryStores = () => import('../../query-store/src/index.ts');
 import {
   connect,
-  listAllObjects,
+  listObjects,
   signInWithKey,
   WarehouseEngine,
   type CatalogObject,
@@ -756,7 +756,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      * catalog's. A Postgres catalog's plan is Postgres SQL, which this tab's DuckDB cannot run.
      */
     const snapOf = (o: CatalogObject, m: InferredModel): { snapTarget?: SnapTarget } =>
-      o.engine === 'postgres' ? {} : { snapTarget: { schema: o.schema, table: o.name, source: m.source, conversions: m.conversions } };
+      o.databaseType !== engine.databaseType ? {}
+        : { snapTarget: { schema: o.schema, table: o.name, source: m.source, conversions: m.conversions } };
 
     /** A warehouse table IN PLACE of the cube: Live there as the user, Snap into this tab. */
     async function openTable(signedIn: WarehouseSession, chosen: CatalogObject, saved?: Saved): Promise<{
@@ -765,14 +766,14 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       // A warehouse table is read-only: a column the compiler says must be
       // converted to be declared cannot be, so it is left out, and named.
       const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
-        { table: chosen.name, schema: chosen.schema, convertible: false, engine: chosen.engine });
+        { table: chosen.name, schema: chosen.schema, convertible: false, databaseType: chosen.databaseType });
       local.use(m.model, m.runtime, { bitColumns: m.bitColumns });
       const columns = await sourceColumns(planner, m.source);
       const live = track(new WarehouseEngine(signedIn, chosen.catalog));
       const name = `${chosen.schema}.${chosen.name}`;
       // where it is, never the sign-in: whoever reopens it signs in as themselves
       const cubeSource: WarehouseSource = {
-        _type: 'warehouseTable', name, warehouse: signedIn.baseUrl, schema: chosen.schema, table: chosen.name,
+        _type: 'warehouseTable', name, warehouse: signedIn.baseUrl, catalog: chosen.catalog, schema: chosen.schema, table: chosen.name,
         columns: columns.map((c) => ({ name: c.name, type: c.type })),
       };
       const notes = await landCube({
@@ -1361,7 +1362,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     async function mountedRemote(url: string, s3: S3Credentials | undefined, name: string) {
       await mountRemote(engine, { sources: [{ name, url }], ...(s3 ? { s3 } : {}) });
       // a view of a remote file cannot be rewritten: a column that needs a conversion is left out
-      return inferModel(await catalogColumns(engine, name), { table: name, convertible: false });
+      return inferModel(await catalogColumns(engine, name), { table: name, convertible: false, databaseType: engine.databaseType });
     }
 
     // A SAVED QUERY (the picker's Saved queries; the user, 2026-10-01: "load from a saved Query"):
@@ -1462,7 +1463,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       if (chosen.kind === 'table') {
         const o = chosen.object;
         const m = inferModel(o.columns.map((c) => ({ ...c, dataType: c.type })),
-          { table: o.name, schema: o.schema, convertible: false, engine: o.engine });
+          { table: o.name, schema: o.schema, convertible: false, databaseType: o.databaseType });
         const own = local.another(m.model, m.runtime, { bitColumns: m.bitColumns });
         return {
           snapshot: rawRows(m.source, await sourceColumns(own, m.source)),
@@ -1727,7 +1728,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      */
     async function reopenTable(src: WarehouseSource, saved: Saved): Promise<readonly string[] | undefined> {
       const on = signedIn && sameWarehouse(signedIn.session.baseUrl, src.warehouse) ? signedIn : undefined;
-      const found = on?.objects.find((o) => o.schema === src.schema && o.name === src.table);
+      const found = on?.objects.find((o) => o.catalog === src.catalog && o.schema === src.schema && o.name === src.table);
       if (on && found) return (await openTable(on.session, found, saved)).notes;
       let notes: readonly string[] = [];
       const host = (() => { try { return new URL(src.warehouse).host; } catch { return src.warehouse; } })();
@@ -1860,7 +1861,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       try {
         if (!config.warehouse) throw new Error('this page was not served by a warehouse: its config.json names none');
         const session = await signInWithKey(config.warehouse, start.key);
-        signedIn = { session, objects: await listAllObjects(session) };
+        signedIn = { session, objects: await listObjects(session) };
       } catch (e) {
         failedStart(e);
       }

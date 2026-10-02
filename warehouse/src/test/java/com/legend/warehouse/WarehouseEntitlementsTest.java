@@ -298,6 +298,15 @@ class WarehouseEntitlementsTest {
         assertEquals(Set.of("main.my_orders", "pub.t1", "pub.t2"), objects(dave));
         Set<String> all = objects(alice);
         assertTrue(all.containsAll(List.of("main.secret", "sales.orders", "sales.v_orders", "pub.t1")), all.toString());
+        // every catalog's at once: the same objects, each naming its catalog and its database type
+        List<SqlApi.CatalogObject> everywhere = API.objects(sendTo(server, API.allObjects(carol)));
+        Set<String> named = new TreeSet<>();
+        for (SqlApi.CatalogObject o : everywhere) {
+            assertEquals("main", o.catalog());
+            assertEquals("DuckDB", o.databaseType());
+            named.add(o.schema() + "." + o.name());
+        }
+        assertEquals(objects(carol), named);
     }
 
     // -- helpers ---------------------------------------------------------------------------------------

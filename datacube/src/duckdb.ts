@@ -257,6 +257,8 @@ class BatchAccumulator {
 
 export class DuckDbEngine implements QueryEngine {
   readonly name = 'duckdb';
+  /** The database type of what this tab holds, as a Pure connection names it: what a model of its tables declares. */
+  readonly databaseType = 'DuckDB';
   readonly #conn: ArrowishConnection;
   /** Tail of the queue of queries on this connection. See #serialised. */
   #chain: Promise<void> = Promise.resolve();

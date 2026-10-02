@@ -101,15 +101,14 @@ public final class Database implements AutoCloseable {
     }
 
     /**
-     * Loads DuckDB's {@code postgres} extension from {@code extension} (a file: no download) and attaches
-     * the Postgres database {@code dsn} (a libpq connection string) as {@code alias}, READ_ONLY. Before
-     * {@link #lockDown}: once external access is off, neither LOAD nor ATTACH is allowed again.
+     * Attach another database READ_ONLY under {@code alias}, through the DuckDB extension at {@code extension}
+     * ({@code ATTACH ... (TYPE <type>)}): before {@link #lockDown}, which closes LOAD and ATTACH for good.
      */
-    public void attachPostgres(Path extension, String dsn, String alias) throws DuckException {
+    public void attach(Path extension, String connection, String alias, String type) throws DuckException {
         Conn c = new Conn(this, rawConnect());
         try {
             c.exec("LOAD " + literal(extension.toAbsolutePath().toString()));
-            c.exec("ATTACH " + literal(dsn) + " AS " + alias + " (TYPE postgres, READ_ONLY)");
+            c.exec("ATTACH " + literal(connection) + " AS " + alias + " (TYPE " + type + ", READ_ONLY)");
         } finally {
             c.close();
         }

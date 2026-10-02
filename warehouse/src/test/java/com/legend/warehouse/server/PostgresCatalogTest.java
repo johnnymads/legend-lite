@@ -62,8 +62,9 @@ class PostgresCatalogTest {
         DuckLibrary.load(null);
         Path dir = Files.createTempDirectory("pg-no-ext");
         var e = assertThrows(java.io.IOException.class,
-                () -> new Catalogs(dir, List.of("main"), Map.of("sales", "host=nowhere password=secret"), dir));
-        assertTrue(e.getMessage().contains(Postgres.EXTENSION_FILE), e.getMessage());
+                () -> new Catalogs(dir, List.of("main"), Map.of("sales",
+                        new Catalogs.Attach(Attachment.POSTGRES, "host=nowhere password=secret")), dir));
+        assertTrue(e.getMessage().contains(Attachment.POSTGRES.extensionFile), e.getMessage());
         assertFalse(e.getMessage().contains("secret"), "the DSN is never echoed: " + e.getMessage());
     }
 
@@ -71,12 +72,12 @@ class PostgresCatalogTest {
 
     @Test
     void aStatementIsOneLiteralTaggedWithItsId() {
-        assertEquals("SELECT * FROM postgres_query('pg', '/* wh:" + ID + " */ SELECT 1 AS a\n/**/')",
+        assertEquals("SELECT * FROM postgres_query('attached', '/* wh:" + ID + " */ SELECT 1 AS a\n/**/')",
                 Postgres.query("SELECT 1 AS a", ID));
         // quotes are doubled: the client's text never leaves the literal
-        assertEquals("SELECT * FROM postgres_query('pg', '/* wh:" + ID + " */ SELECT ''it''''s'') --\n/**/')",
+        assertEquals("SELECT * FROM postgres_query('attached', '/* wh:" + ID + " */ SELECT ''it''''s'') --\n/**/')",
                 Postgres.query("SELECT 'it''s') --", ID));
-        assertEquals("SELECT * FROM postgres_query('pg', '/* wh:" + ID + " */ SELECT 1\n/**/')",
+        assertEquals("SELECT * FROM postgres_query('attached', '/* wh:" + ID + " */ SELECT 1\n/**/')",
                 Postgres.query("SELECT 1 \n\t ", ID));
     }
 
@@ -90,7 +91,7 @@ class PostgresCatalogTest {
 
     @Test
     void aCancelNamesOnlyTheServersOwnStatementId() {
-        assertEquals("SELECT * FROM postgres_query('pg', 'SELECT pg_cancel_backend(pid) FROM pg_stat_activity"
+        assertEquals("SELECT * FROM postgres_query('attached', 'SELECT pg_cancel_backend(pid) FROM pg_stat_activity"
                 + " WHERE strpos(query, ''/* wh:" + ID + " */'') > 0"
                 + " AND pid <> pg_backend_pid() AND usename = current_user')", Postgres.cancel(ID));
         for (String bad : List.of("x", "%", "' OR true --", ID + "'", ID.toUpperCase(), ID + " */")) {

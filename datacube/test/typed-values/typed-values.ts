@@ -239,7 +239,7 @@ describe('a source\'s columns come from the compiler', () => {
     ];
     const duck = new DuckDbEngine(conn);
     await duck.run(`CREATE TABLE every_type (${declared.map(([n, t]) => `${n} ${t}`).join(', ')})`, 0);
-    const m = inferModel(await catalogColumns(duck, 'every_type'), { table: 'every_type', convertible: true });
+    const m = inferModel(await catalogColumns(duck, 'every_type'), { table: 'every_type', convertible: true, databaseType: 'DuckDB' });
     const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
     const columns = await sourceColumns(own, m.source, [{ name: 'big', kind: 'dimension' }]);
     const family = Object.fromEntries(columns.map((c) => [c.name, familyOf(c.type)]));
@@ -271,10 +271,10 @@ describe('a source\'s columns come from the compiler', () => {
     const duck = new DuckDbEngine(conn);
     await duck.run('CREATE TABLE blobs (id INTEGER, payload BLOB)', 0);
     const blobs = await catalogColumns(duck, 'blobs');
-    assert.deepEqual(inferModel(blobs, { table: 'blobs', convertible: true }).excluded, ['payload']);
+    assert.deepEqual(inferModel(blobs, { table: 'blobs', convertible: true, databaseType: 'DuckDB' }).excluded, ['payload']);
     await duck.run('CREATE TABLE only_blobs (payload BLOB)', 0);
     const onlyBlobs = await catalogColumns(duck, 'only_blobs');
-    assert.throws(() => inferModel(onlyBlobs, { table: 'only_blobs', convertible: true }),
+    assert.throws(() => inferModel(onlyBlobs, { table: 'only_blobs', convertible: true, databaseType: 'DuckDB' }),
       /no column of 'only_blobs' can be read from its source: payload/);
   });
 

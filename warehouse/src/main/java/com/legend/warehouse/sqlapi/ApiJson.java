@@ -214,7 +214,8 @@ public final class ApiJson {
                 Json.Obj col = (Json.Obj) c;
                 columns.add(new SqlApi.CatalogColumn(col.getString("name"), col.getString("type")));
             }
-            out.add(new SqlApi.CatalogObject(o.getString("schema"), o.getString("name"), o.getString("kind"), columns));
+            out.add(new SqlApi.CatalogObject(o.getString("catalog"), o.getString("databaseType"), o.getString("schema"),
+                    o.getString("name"), o.getString("kind"), columns));
         }
         return out;
     }

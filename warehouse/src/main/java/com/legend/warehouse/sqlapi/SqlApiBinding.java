@@ -92,5 +92,8 @@ public interface SqlApiBinding {
     /** What the caller may read in {@code catalog}: tables and views, with their columns. */
     HttpCall objects(String catalog, String token);
 
+    /** What the caller may read in every catalog, each object naming its catalog and database type. */
+    HttpCall allObjects(String token);
+
     java.util.List<SqlApi.CatalogObject> objects(HttpResult result);
 }

@@ -129,6 +129,11 @@ public final class NativeBinding implements SqlApiBinding {
     }
 
     @Override
+    public HttpCall allObjects(String token) {
+        return new HttpCall("GET", "/sql/v1/objects", json(token), null);
+    }
+
+    @Override
     public java.util.List<SqlApi.CatalogObject> objects(HttpResult result) {
         if (result.status() != 200) throw new IllegalStateException(failure(result).message());
         return ApiJson.parseObjects(result.body());

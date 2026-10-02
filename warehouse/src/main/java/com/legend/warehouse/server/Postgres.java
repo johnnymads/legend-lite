@@ -1,6 +1,12 @@
 package com.legend.warehouse.server;
 
+import com.legend.json.Json;
+import com.legend.warehouse.server.duck.Collect;
+import com.legend.warehouse.server.duck.Conn;
+import com.legend.warehouse.server.duck.Result;
+import java.io.IOException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -31,11 +37,25 @@ final class Postgres {
     private Postgres() {
     }
 
-    /** What each Postgres catalog's database calls its attached Postgres database. */
-    static final String ATTACH = "pg";
+    /** The oldest Postgres the dialect is written for (docs/POSTGRES_DIALECT_HOMEWORK_2026_10_01.md, Q7). */
+    static final int MIN_SERVER_VERSION_NUM = 160000;
 
-    /** The extension file a {@code --duckdb-extensions} directory holds. */
-    static final String EXTENSION_FILE = "postgres_scanner.duckdb_extension";
+    /** Refuses, by name, a Postgres older than {@link #MIN_SERVER_VERSION_NUM}, asked on {@code c}. */
+    static void requireSupportedVersion(String catalog, Conn c) throws IOException {
+        try (Result r = c.execute("SELECT * FROM postgres_query('" + Attachment.ALIAS
+                + "', 'SELECT current_setting(''server_version_num'') AS v')")) {
+            List<List<Json.Node>> rows = Collect.json(r, 1);
+            int version = Integer.parseInt(((Json.Str) rows.get(0).get(0)).value());
+            if (version < MIN_SERVER_VERSION_NUM) {
+                throw new IOException("Postgres catalog " + catalog + " is PostgreSQL " + version / 10000
+                        + "; DataCube needs " + MIN_SERVER_VERSION_NUM / 10000 + " or newer");
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("could not read Postgres catalog " + catalog + "'s server version: " + e.getMessage(), e);
+        }
+    }
 
     private static final Pattern STATEMENT_ID = Pattern.compile("[0-9a-f-]{36}");
 
@@ -54,7 +74,7 @@ final class Postgres {
         if (body.indexOf('\0') >= 0) throw new IllegalArgumentException("the statement contains a NUL character");
         // the trailing newline ends a final line comment, and the empty block comment keeps DuckDB from
         // trimming that newline away: otherwise "-- ..." would swallow DuckDB's closing parenthesis
-        return "SELECT * FROM postgres_query('" + ATTACH + "', '" + tag(statementId) + " "
+        return "SELECT * FROM postgres_query('" + Attachment.ALIAS + "', '" + tag(statementId) + " "
                 + body.replace("'", "''") + "\n/**/')";
     }
 
@@ -63,7 +83,7 @@ final class Postgres {
      * catalog's login role runs (a role may cancel its own backends), but its own.
      */
     static String cancel(String statementId) {
-        return "SELECT * FROM postgres_query('" + ATTACH + "', 'SELECT pg_cancel_backend(pid) FROM pg_stat_activity"
+        return "SELECT * FROM postgres_query('" + Attachment.ALIAS + "', 'SELECT pg_cancel_backend(pid) FROM pg_stat_activity"
                 + " WHERE strpos(query, ''" + tag(statementId) + "'') > 0"
                 + " AND pid <> pg_backend_pid() AND usename = current_user')";
     }

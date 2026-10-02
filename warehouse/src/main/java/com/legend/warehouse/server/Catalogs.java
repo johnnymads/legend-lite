@@ -1,19 +1,15 @@
 package com.legend.warehouse.server;
 
 import com.legend.base.Nullable;
-import com.legend.json.Json;
-import com.legend.warehouse.server.duck.Collect;
 import com.legend.warehouse.server.duck.Conn;
 import com.legend.warehouse.server.duck.Database;
-import com.legend.warehouse.server.duck.Result;
 import com.legend.warehouse.server.duck.DuckException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
 
@@ -23,7 +19,7 @@ import java.util.regex.Pattern;
  * opened through DuckDB's C API. Behind this class so DuckLake (W0 Q5) can
  * take its place for on-demand readers without the API noticing.
  *
- * <p>A POSTGRES catalog ({@link Postgres}) is an in-memory DuckDB database with one Postgres database
+ * <p>An ATTACHED catalog ({@link Attachment}) is an in-memory DuckDB database with one other database
  * attached, READ_ONLY, before it is locked down. Both kinds share one namespace of names.
  *
  * <p>Every connection belongs to one principal: what
@@ -35,26 +31,33 @@ public final class Catalogs implements AutoCloseable {
 
     private final Path dataDir;
     private final Map<String, Database> databases = new TreeMap<>();
-    private final Set<String> postgres = new HashSet<>();
+    private final Map<String, Attachment> attached = new HashMap<>();
 
     public Catalogs(Path dataDir, List<String> names) throws IOException, DuckException {
         this(dataDir, names, Map.of(), null);
     }
 
+    /** An attached catalog's kind and the connection string it attaches with. */
+    record Attach(Attachment kind, String dsn) {
+    }
+
     /**
-     * {@code postgresDsns}: Postgres catalogs by name, each a libpq connection string; {@code extensions}:
-     * the directory holding DuckDB's {@code postgres_scanner.duckdb_extension}, required when there are any.
+     * {@code attach}: the attached catalogs by name; {@code extensions}: the directory holding the DuckDB
+     * extension each kind loads, required when there are any.
      */
-    public Catalogs(Path dataDir, List<String> names, Map<String, String> postgresDsns, @Nullable Path extensions)
+    Catalogs(Path dataDir, List<String> names, Map<String, Attach> attach, @Nullable Path extensions)
             throws IOException, DuckException {
         this.dataDir = dataDir;
         Files.createDirectories(dataDir);
         Files.createDirectories(dataDir.resolve("import"));
         try {
             for (String n : names) open(n);
-            for (Map.Entry<String, String> e : postgresDsns.entrySet()) {
-                if (extensions == null) throw new IllegalArgumentException("a Postgres catalog needs --duckdb-extensions");
-                openPostgres(e.getKey(), e.getValue(), extensions);
+            for (Map.Entry<String, Attach> e : attach.entrySet()) {
+                if (extensions == null) {
+                    throw new IllegalArgumentException("an attached catalog needs --duckdb-extensions DIR"
+                            + " (the directory holding " + e.getValue().kind().extensionFile + ")");
+                }
+                openAttached(e.getKey(), e.getValue().kind(), e.getValue().dsn(), extensions);
             }
         } catch (IOException | DuckException | RuntimeException e) {
             close();
@@ -73,59 +76,44 @@ public final class Catalogs implements AutoCloseable {
         databases.put(name, db);
     }
 
-    private void openPostgres(String name, String dsn, Path extensions) throws IOException, DuckException {
+    private void openAttached(String name, Attachment kind, String dsn, Path extensions) throws IOException, DuckException {
         claim(name);
-        Path extension = extensions.resolve(Postgres.EXTENSION_FILE);
+        Path extension = extensions.resolve(kind.extensionFile);
         if (!Files.isRegularFile(extension)) {
-            throw new IOException("DuckDB's postgres extension is not at " + extension + " (--duckdb-extensions)");
+            throw new IOException("DuckDB's " + kind.duckdbType + " extension is not at " + extension + " (--duckdb-extensions)");
         }
-        // every connection the attach makes is in the platform's UTC session (Postgres.SESSION_ZONE)
-        String attached = Postgres.inSessionZone(name, dsn);
+        // the connection string with the session contract pinned in it (the UTC zone)
+        String connection = kind.connectionString(name, dsn);
         Database db = Database.open(null);
         try {
-            db.attachPostgres(extension, attached, Postgres.ATTACH);
+            db.attach(extension, connection, Attachment.ALIAS, kind.duckdbType);
             db.lockDown(null);
-            requireSupportedVersion(name, db);
+            try (Conn c = db.connect(Statements.SERVER)) {
+                kind.requireSupported(name, c);
+            }
         } catch (DuckException | IOException e) {
             db.close();
             // the DSN may carry a password: name the catalog, never echo the connection string
-            String why = String.valueOf(e.getMessage()).replace(attached, "<dsn>").replace(dsn, "<dsn>");
-            throw new AttachFailed(name, why, why.contains(NO_PASSWORD));
+            String why = String.valueOf(e.getMessage()).replace(connection, "<dsn>").replace(dsn, "<dsn>");
+            throw new AttachFailed(name, kind, why, why.contains(NO_PASSWORD));
         }
         databases.put(name, db);
-        postgres.add(name);
+        attached.put(name, kind);
     }
 
     /** libpq's words when it found no password to send (fe-auth.c); a caller with a terminal can ask for one. */
     private static final String NO_PASSWORD = "no password supplied";
 
-    /** The oldest Postgres the dialect is written for (docs/POSTGRES_DIALECT_HOMEWORK_2026_10_01.md, Q7). */
-    static final int MIN_SERVER_VERSION_NUM = 160000;
-
-    private static void requireSupportedVersion(String name, Database db) throws DuckException, IOException {
-        try (Conn c = db.connect(Statements.SERVER);
-             Result r = c.execute("SELECT * FROM postgres_query('" + Postgres.ATTACH + "', 'SELECT current_setting(''server_version_num'') AS v')")) {
-            List<List<Json.Node>> rows = Collect.json(r, 1);
-            int version = Integer.parseInt(((Json.Str) rows.get(0).get(0)).value());
-            if (version < MIN_SERVER_VERSION_NUM) {
-                throw new IOException("Postgres catalog " + name + " is PostgreSQL " + version / 10000
-                        + "; DataCube needs " + MIN_SERVER_VERSION_NUM / 10000 + " or newer");
-            }
-        } catch (DuckException | IOException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IOException("could not read Postgres catalog " + name + "'s server version: " + e.getMessage(), e);
-        }
-    }
-
-    /** A Postgres catalog that could not be attached, by name; whether libpq lacked a password. */
+    /** An attached catalog that could not be attached, by name; whether libpq lacked a password. */
     public static final class AttachFailed extends IOException {
         public final String catalog;
+        final Attachment kind;
         public final boolean missingPassword;
 
-        AttachFailed(String catalog, String why, boolean missingPassword) {
-            super("could not attach Postgres catalog " + catalog + ": " + why);
+        AttachFailed(String catalog, Attachment kind, String why, boolean missingPassword) {
+            super("could not attach " + kind.databaseType + " catalog " + catalog + ": " + why);
             this.catalog = catalog;
+            this.kind = kind;
             this.missingPassword = missingPassword;
         }
     }
@@ -135,9 +123,18 @@ public final class Catalogs implements AutoCloseable {
         if (databases.containsKey(name)) throw new IllegalArgumentException("catalog " + name + " is named twice");
     }
 
-    /** Whether {@code catalog} is a Postgres catalog (its statements are Postgres SQL, passed through). */
-    public synchronized boolean isPostgres(String catalog) {
-        return postgres.contains(catalog);
+    /** A native catalog's database type, as a Pure connection names it: the warehouse's own tables are DuckDB's. */
+    static final String NATIVE_DATABASE_TYPE = "DuckDB";
+
+    /** {@code catalog}'s database type, as a Pure connection names it: the SQL its statements are written in. */
+    public synchronized String databaseType(String catalog) {
+        Attachment a = attached.get(catalog);
+        return a == null ? NATIVE_DATABASE_TYPE : a.databaseType;
+    }
+
+    /** What {@code catalog} is attached to (its statements are that database's SQL, passed through); null when native. */
+    public synchronized @Nullable Attachment attachment(String catalog) {
+        return attached.get(catalog);
     }
 
     /** Where an owner puts files to load: the one directory a catalog may read files from. */
@@ -162,6 +159,6 @@ public final class Catalogs implements AutoCloseable {
     public synchronized void close() {
         for (Database db : databases.values()) db.close();
         databases.clear();
-        postgres.clear();
+        attached.clear();
     }
 }

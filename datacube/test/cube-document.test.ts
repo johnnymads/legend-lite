@@ -173,7 +173,7 @@ describe('a cube over a saved query', () => {
 
 describe('a cube over a warehouse table, or a remote file: where it is, never how to get in', () => {
   const TABLE: WarehouseSource = {
-    _type: 'warehouseTable', name: 'sales.orders', warehouse: 'https://warehouse.example.com',
+    _type: 'warehouseTable', name: 'sales.orders', warehouse: 'https://warehouse.example.com', catalog: 'shop',
     schema: 'sales', table: 'orders', columns: [{ name: 'region', type: 'String' }],
   };
   const REMOTE: RemoteSource = {
@@ -186,6 +186,15 @@ describe('a cube over a warehouse table, or a remote file: where it is, never ho
   it('writes each down and reads it back exactly', () => {
     assert.deepEqual(readCube(cubeToJson(over(TABLE))).source, TABLE);
     assert.deepEqual(readCube(cubeToJson(over(REMOTE))).source, REMOTE);
+  });
+
+  it('reads a warehouse table saved before catalogs were named as main, the only catalog then', () => {
+    const before = JSON.parse(cubeToJson(over(TABLE)));
+    delete before.source.catalog;
+    assert.equal((readCube(before).source as WarehouseSource).catalog, 'main');
+    const empty = JSON.parse(cubeToJson(over(TABLE)));
+    empty.source.catalog = '';
+    assert.throws(() => readCube(empty), /empty catalog/);
   });
 
   it('refuses one missing a part, or one carrying a credential', () => {

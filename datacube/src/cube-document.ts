@@ -91,6 +91,12 @@ export interface WarehouseSource {
   readonly name: string;
   /** The warehouse's address, as its sign-in names it. */
   readonly warehouse: string;
+  /**
+   * The warehouse catalog the table is in (a warehouse serves several: its own DuckDB ones, attached
+   * Postgres ones). A document saved before catalogs were named (2026-10-02) has none, and reads as
+   * `main`: the only catalog DataCube opened then.
+   */
+  readonly catalog: string;
   readonly schema: string;
   readonly table: string;
   readonly columns: readonly { readonly name: string; readonly type: string }[];
@@ -268,7 +274,11 @@ function readWarehouseSource(s: Record<string, unknown>): WarehouseSource {
   }
   if (!hasColumns(s)) throw new CubeDocumentError('the warehouse table source has no columns');
   if ('password' in s || 'token' in s) throw new CubeDocumentError('the warehouse table source carries a credential: it is refused');
-  return s as unknown as WarehouseSource;
+  if ('catalog' in s && (typeof s['catalog'] !== 'string' || s['catalog'] === '')) {
+    throw new CubeDocumentError('the warehouse table source has an empty catalog');
+  }
+  // saved before catalogs were named: `main`, the only catalog DataCube opened then (WarehouseSource.catalog)
+  return { ...s, catalog: typeof s['catalog'] === 'string' ? s['catalog'] : 'main' } as unknown as WarehouseSource;
 }
 
 function readRemoteSource(s: Record<string, unknown>): RemoteSource {

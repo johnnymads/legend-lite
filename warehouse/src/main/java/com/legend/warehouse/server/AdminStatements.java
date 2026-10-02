@@ -30,7 +30,7 @@ final class AdminStatements {
     sealed interface Admin permits CreateRole, DropRole, Select, Usage, Membership, ShowGrants {
     }
 
-    /** GRANT (or REVOKE) USAGE of a whole Postgres catalog: what a reader of one needs ({@link Postgres}). */
+    /** GRANT (or REVOKE) USAGE of a whole attached catalog: what a reader of one needs ({@link Attachment}). */
     record Usage(boolean grant, String catalog, String grantee) implements Admin {
     }
 

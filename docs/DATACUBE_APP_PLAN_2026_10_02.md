@@ -132,6 +132,29 @@ A2's Playwright test.
 - **DataCube:** one listing call. `inferModel` writes `type: <databaseType>`. `CatalogEngine` and
   every `=== 'postgres'` go. Snap's rule is leg C's.
 
+**As built (A4):**
+- `Attachment` (warehouse) is the closed table, one row (`POSTGRES`). Each operation is an
+  exhaustive switch: connection string (UTC pinned), passthrough, cancel and version check, plus its
+  extension file, DuckDB attach type, system schemas and Pure database type.
+- `Catalogs` maps a name to its `Attachment` (`attachment(c)`, `databaseType(c)`). A native
+  catalog's type is `DuckDB` by definition.
+- The attach alias is the neutral `attached`. `Database.attach(extension, connection, alias, type)`
+  is generic.
+- **The API:** `GET /sql/v1/objects` lists every catalog's objects with `catalog` and `databaseType`.
+  `/sql/v1/catalogs` reports `databaseType`; its `engine` field is gone. `SqlApi.CatalogObject` and
+  the binding (`allObjects`) carry both.
+- **DataCube:**
+  - one listing call;
+  - `inferModel` requires `databaseType` (the tab's DuckDB declares its own:
+    `DuckDbEngine.databaseType`);
+  - Snap's interim rule is "the table's database type equals the tab engine's", until leg C;
+  - saved warehouse cubes record `catalog`. A document from before reads as `main`, a rule stated
+    once, at the format boundary (`readWarehouseSource`).
+- **Known placeholder:** a warehouse table's model writes `specification: DuckDB { }` whatever its
+  `type`. The planner reads only `type`, and Pure has no specification meaning "through a warehouse".
+  A made-up `Static` would be a different placeholder, and could disturb legend-engine's planner for
+  DuckDB catalogs.
+
 ### B. `timestamptz` and the column types (agent, after A1's commit; plan reviewed 2026-10-02)
 **The session contract is pinned where reads run.**
 - Every warehouse DuckDB connection runs the dialect's `sessionSetup()` (`SET TimeZone='UTC'`).

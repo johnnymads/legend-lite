@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.legend.json.Json;
 import com.legend.warehouse.server.Statements;
+import com.legend.warehouse.sqlapi.SqlApi;
 import com.legend.warehouse.sqlapi.SqlApi.Column;
 import com.legend.warehouse.sqlapi.SqlApi.ErrorCode;
 import com.legend.warehouse.sqlapi.SqlApi.StatementRequest;
@@ -134,7 +135,7 @@ class WarehousePostgresLiveTest {
     void aReaderNeedsUsageOfTheCatalog() throws Exception {
         assertFailed(dave, "SELECT 1 AS a", ErrorCode.FORBIDDEN, "no USAGE granted on catalog pg");
         // USAGE is for Postgres catalogs; main's objects are granted one by one
-        assertFailedOn("main", alice, "GRANT USAGE ON CATALOG main TO dave", ErrorCode.BAD_REQUEST, "no Postgres catalog main");
+        assertFailedOn("main", alice, "GRANT USAGE ON CATALOG main TO dave", ErrorCode.BAD_REQUEST, "no attached catalog main");
         assertFailedOn("main", alice, "GRANT USAGE ON CATALOG pg TO nobody", ErrorCode.BAD_REQUEST, "no user or role nobody");
         // sessions are DuckDB's
         HttpResult session = sendTo(server, API.openSession("pg", carol));
@@ -145,6 +146,12 @@ class WarehousePostgresLiveTest {
         assertFalse(objects.body().contains("\"schema\":\"pg_catalog\""), objects.body());
         assertFalse(objects.body().contains("\"schema\":\"information_schema\""), objects.body());
         assertEquals(403, sendTo(server, API.objects("pg", dave)).status());
+        // every catalog's at once: an attached one names its database type; one without USAGE is left out
+        List<SqlApi.CatalogObject> all = API.objects(sendTo(server, API.allObjects(alice)));
+        assertTrue(all.stream().filter(o -> o.catalog().equals("pg")).allMatch(o -> o.databaseType().equals("Postgres")),
+                all.toString());
+        assertTrue(all.stream().filter(o -> o.catalog().equals("main")).allMatch(o -> o.databaseType().equals("DuckDB")));
+        assertTrue(API.objects(sendTo(server, API.allObjects(dave))).stream().noneMatch(o -> o.catalog().equals("pg")));
     }
 
     @Test

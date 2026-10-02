@@ -164,8 +164,13 @@ public final class SqlApi {
     }
 
     /** One of the caller's statements, from {@code GET /sql/v1/history}. */
-    /** One table or view the caller may read, from {@code GET /sql/v1/catalogs/{c}/objects}. */
-    public record CatalogObject(String schema, String name, String kind, List<CatalogColumn> columns) {
+    /**
+     * One table or view the caller may read, from {@code GET /sql/v1/objects} (every catalog) or
+     * {@code GET /sql/v1/catalogs/{c}/objects}: its catalog, and that catalog's database type as a Pure
+     * connection names it ({@code DuckDB}, {@code Postgres}) -- the SQL a statement on it is written in.
+     */
+    public record CatalogObject(String catalog, String databaseType, String schema, String name, String kind,
+            List<CatalogColumn> columns) {
         public CatalogObject {
             columns = List.copyOf(columns);
         }

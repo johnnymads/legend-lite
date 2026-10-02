@@ -161,7 +161,9 @@ public final class WarehouseServer implements AutoCloseable {
         launchKey = config.singleUser() == null ? null : identity.launchKey(config.singleUser());
         List<String> owners = config.singleUser() == null ? config.owners() : List.of(config.singleUser());
         site = config.site();
-        catalogs = new Catalogs(config.dataDir(), config.catalogs(), config.postgres(), config.duckdbExtensions());
+        Map<String, Catalogs.Attach> attach = new LinkedHashMap<>();
+        config.postgres().forEach((name, dsn) -> attach.put(name, new Catalogs.Attach(Attachment.POSTGRES, dsn)));
+        catalogs = new Catalogs(config.dataDir(), config.catalogs(), attach, config.duckdbExtensions());
         system = Database.open(config.dataDir().resolve("system.duckdb"));
         system.lockDown(null);
         history = new History(system);
@@ -325,10 +327,12 @@ public final class WarehouseServer implements AutoCloseable {
                 LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
                 f.put("name", Json.str(c));
                 // the SQL a statement on it is written in
-                f.put("engine", Json.str(catalogs.isPostgres(c) ? "postgres" : "duckdb"));
+                f.put("databaseType", Json.str(catalogs.databaseType(c)));
                 out.add(new Json.Obj(f));
             }
             throw new Reply(200, Json.toCompact(new Json.Arr(out)));
+        } else if (path.equals("/sql/v1/objects") && method.equals("GET")) {
+            allObjects(principal);
         } else if ((m = OBJECTS.matcher(path)).matches() && method.equals("GET")) {
             objects(principal, m.group(1));
         } else {
@@ -396,9 +400,11 @@ public final class WarehouseServer implements AutoCloseable {
         } catch (RuntimeException bad) {
             throw Reply.error(400, ErrorCode.BAD_REQUEST, "the body must be {\"catalog\"}");
         }
-        if (catalogs.isPostgres(catalog)) {
-            // a session keeps a DuckDB connection's state; Postgres SQL passed through keeps none
-            throw Reply.error(400, ErrorCode.BAD_REQUEST, catalog + " is a Postgres catalog: it has no sessions");
+        Attachment attachment = catalogs.attachment(catalog);
+        if (attachment != null) {
+            // a session keeps a DuckDB connection's state; SQL passed through to the attached database keeps none
+            throw Reply.error(400, ErrorCode.BAD_REQUEST, catalog + " is attached to " + attachment.databaseType
+                    + ": it has no sessions");
         }
         Sessions.Session s;
         try {
@@ -467,20 +473,44 @@ public final class WarehouseServer implements AutoCloseable {
         return run;
     }
 
+    /** {@code GET /sql/v1/catalogs/{catalog}/objects}: one catalog's; a reader without USAGE of an attached one is refused. */
     private void objects(String principal, String catalog) throws Reply {
-        // Read by the server itself (a reader may not call duckdb_columns()), then filtered to what the
-        // caller may see: an owner everything, a reader what is granted to it.
-        // A Postgres catalog lists the attached database's tables as DuckDB sees them: DuckDB's own type
-        // names, the same a DuckDB catalog answers, so one model writer reads both. Its readers hold USAGE
-        // of the whole catalog (the DSN's role decides the rows), so they see every table.
-        boolean postgres = catalogs.isPostgres(catalog);
-        if (postgres && !statements.isOwner(principal)
-                && !grants.canUseCatalog(grants.principals(principal), catalog)) {
+        if (catalogs.attachment(catalog) != null && !mayUse(principal, catalog)) {
             throw Reply.error(403, ErrorCode.FORBIDDEN, "no USAGE granted on catalog " + catalog);
         }
-        // Postgres' own schemas are not the user's data
-        String which = postgres ? "c.database_name = '" + Postgres.ATTACH + "'"
-                + " AND c.schema_name NOT IN ('pg_catalog', 'information_schema')" : "NOT c.internal";
+        throw new Reply(200, Json.toCompact(new Json.Arr(objectsIn(principal, catalog))));
+    }
+
+    /**
+     * {@code GET /sql/v1/objects}: what the caller may read in EVERY catalog, each object naming its catalog and
+     * its database type ({@link Catalogs#databaseType}), so a client writes a model of any of them from one
+     * listing. An attached catalog the caller holds no USAGE of is left out, not an error.
+     */
+    private void allObjects(String principal) throws Reply {
+        List<Json.Node> out = new ArrayList<>();
+        for (String catalog : catalogs.names()) {
+            if (catalogs.attachment(catalog) != null && !mayUse(principal, catalog)) continue;
+            out.addAll(objectsIn(principal, catalog));
+        }
+        throw new Reply(200, Json.toCompact(new Json.Arr(out)));
+    }
+
+    private boolean mayUse(String principal, String catalog) {
+        return statements.isOwner(principal) || grants.canUseCatalog(grants.principals(principal), catalog);
+    }
+
+    /**
+     * A catalog's tables and views with their columns, read by the server itself (a reader may not call
+     * duckdb_columns()), then filtered to what the caller may see: an owner everything, a reader what is
+     * granted to it. An attached catalog lists its database's tables as DuckDB sees them -- DuckDB's own type
+     * names, as a native catalog answers, so one model writer reads both -- without that database's own
+     * schemas; its readers hold USAGE of the whole catalog (the connection's role decides the rows).
+     */
+    private List<Json.Node> objectsIn(String principal, String catalog) throws Reply {
+        Attachment attachment = catalogs.attachment(catalog);
+        String which = attachment == null ? "NOT c.internal"
+                : "c.database_name = '" + Attachment.ALIAS + "' AND c.schema_name NOT IN ("
+                        + String.join(", ", attachment.systemSchemas.stream().map(n -> "'" + n + "'").toList()) + ")";
         Statements.Run run;
         try {
             run = statements.submit(Statements.SERVER, new StatementRequest("""
@@ -509,10 +539,12 @@ public final class WarehouseServer implements AutoCloseable {
         java.util.Set<String> principals = grants.principals(principal);
         for (List<Json.Node> row : c.rows()) {
             String schema = ((Json.Str) row.get(0)).value(), name = ((Json.Str) row.get(1)).value();
-            if (!owner && !postgres && !grants.canSelect(principals, catalog, schema, name)) continue;
+            if (!owner && attachment == null && !grants.canSelect(principals, catalog, schema, name)) continue;
             String key = schema + "." + name;
             byObject.computeIfAbsent(key, k -> {
                 LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
+                f.put("catalog", Json.str(catalog));
+                f.put("databaseType", Json.str(catalogs.databaseType(catalog)));
                 f.put("schema", row.get(0));
                 f.put("name", row.get(1));
                 f.put("kind", row.get(2));
@@ -536,7 +568,7 @@ public final class WarehouseServer implements AutoCloseable {
             e.getValue().put("columns", new Json.Arr(columns.getOrDefault(e.getKey(), List.of())));
             out.add(new Json.Obj(e.getValue()));
         }
-        throw new Reply(200, Json.toCompact(new Json.Arr(out)));
+        return out;
     }
 
     // -- the site --------------------------------------------------------------
@@ -731,7 +763,7 @@ public final class WarehouseServer implements AutoCloseable {
         String dsn = config.postgres().get(failed.catalog);
         java.io.Console console = System.console();
         if (!failed.missingPassword || console == null || dsn == null || PostgresUrl.isUrl(dsn)) throw failed;
-        char[] password = console.readPassword("Postgres password for %s: ", failed.catalog);
+        char[] password = console.readPassword("%s password for %s: ", failed.kind.databaseType, failed.catalog);
         if (password == null) throw failed;
         LinkedHashMap<String, String> postgres = new LinkedHashMap<>(config.postgres());
         postgres.put(failed.catalog, PostgresUrl.withPassword(dsn, password));
@@ -848,7 +880,7 @@ public final class WarehouseServer implements AutoCloseable {
         if (!postgres.isEmpty() && extensions == null) {
             if (!DuckLibrary.nativeImage()) {
                 throw new IllegalArgumentException("a Postgres catalog needs --duckdb-extensions DIR"
-                        + " (the directory holding " + Postgres.EXTENSION_FILE + ")");
+                        + " (the directory holding " + Attachment.POSTGRES.extensionFile + ")");
             }
             extensions = DuckLibrary.executableDir("--duckdb-extensions");
         }

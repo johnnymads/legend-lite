@@ -6,6 +6,7 @@
 
 import type { QueryEngine } from './engine.ts';
 import type { RawTable } from './engine.ts';
+import type { DuckDbEngine } from './duckdb.ts';
 import type { Scalar } from './result.ts';
 import { inferModel, type InferredModel } from './infer.ts';
 import { catalogColumnsSql, type CatalogColumn } from './catalog-model.ts';
@@ -83,7 +84,8 @@ export async function forgetUpload(engine: QueryEngine, db: DuckDbFiles, fileNam
 }
 
 export async function ingestFile(
-  engine: QueryEngine,
+  // the tab's own DuckDB: what it reads the file into, and the database type its model declares
+  engine: DuckDbEngine,
   db: DuckDbFiles,
   file: { name: string; text(): Promise<string>;
     arrayBuffer(): Promise<ArrayBuffer> },
@@ -142,7 +144,7 @@ export async function ingestFile(
   // nested STRUCT or LIST needs none: it is a Variant as stored
   // (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md). An upload is ours to
   // rewrite, so it is rewritten here.
-  const inferred = inferModel(await catalogColumns(engine, table), { table, convertible: true });
+  const inferred = inferModel(await catalogColumns(engine, table), { table, convertible: true, databaseType: engine.databaseType });
   if (inferred.conversions.length > 0) {
     const replaced = inferred.conversions
       .map((c) => `${c.sql} AS ${dq(c.column)}`).join(', ');

@@ -40,9 +40,10 @@ export interface CatalogObject {
   readonly schema: string;
   readonly name: string;
   readonly kind: string;
-  /** The warehouse catalog it is in, and the SQL that catalog runs: a Postgres catalog runs Postgres SQL. */
+  /** The warehouse catalog it is in. */
   readonly catalog: string;
-  readonly engine: CatalogEngine;
+  /** That catalog's database type, as a Pure connection names it (`DuckDB`, `Postgres`): what its model declares. */
+  readonly databaseType: string;
   /**
    * Its columns, as the warehouse's DuckDB catalog reports them: `type` its own name, and
    * STRUCTURED (catalog-model.ts) its canonical type and a DECIMAL's precision and scale.
@@ -133,41 +134,18 @@ export async function signInWithKey(baseUrl: string, key: string): Promise<Wareh
   return { baseUrl, token: t.token, principal: t.principal, expiresAt: t.expiresAt };
 }
 
-/** The SQL a warehouse catalog runs: DuckDB's own, or Postgres SQL passed through to a Postgres database. */
-export type CatalogEngine = 'duckdb' | 'postgres';
-
-/** The warehouse's catalogs, and the SQL each runs. */
-export async function listCatalogs(session: WarehouseSession): Promise<{ readonly name: string; readonly engine: CatalogEngine }[]> {
-  const r = await fetch(url(session.baseUrl, '/sql/v1/catalogs'), {
-    headers: { Authorization: `Bearer ${session.token}` },
-  });
-  if (!r.ok) throw new Error(`could not list the catalogs — ${await failure(r)}`);
-  return (await r.json() as { name: string; engine?: CatalogEngine }[]).map((c) => ({ name: c.name, engine: c.engine ?? 'duckdb' }));
-}
-
-/** What the user may read in `catalog`: tables and views, with their columns. */
-export async function listObjects(session: WarehouseSession, catalog = 'main', engine: CatalogEngine = 'duckdb'): Promise<CatalogObject[]> {
-  const r = await fetch(url(session.baseUrl, `/sql/v1/catalogs/${catalog}/objects`), {
-    headers: { Authorization: `Bearer ${session.token}` },
-  });
-  if (!r.ok) throw new Error(`could not list the catalog — ${await failure(r)}`);
-  return (await r.json() as Omit<CatalogObject, 'catalog' | 'engine'>[]).map((o) => ({ ...o, catalog, engine }));
-}
-
 /**
- * What the user may read in EVERY catalog of the warehouse: a catalog it holds nothing in (a
- * Postgres catalog without USAGE answers 403) is left out, not an error.
+ * What the user may read in EVERY catalog of the warehouse, in one call: each table or view with its
+ * columns, its catalog, and that catalog's database type -- the SQL its statements are written in,
+ * as a Pure connection names it (`DuckDB`, `Postgres`). An attached catalog the user holds no USAGE of
+ * is not listed.
  */
-export async function listAllObjects(session: WarehouseSession): Promise<CatalogObject[]> {
-  const out: CatalogObject[] = [];
-  for (const c of await listCatalogs(session)) {
-    try {
-      out.push(...await listObjects(session, c.name, c.engine));
-    } catch (e) {
-      if (!String(e).includes('FORBIDDEN')) throw e;
-    }
-  }
-  return out;
+export async function listObjects(session: WarehouseSession): Promise<CatalogObject[]> {
+  const r = await fetch(url(session.baseUrl, '/sql/v1/objects'), {
+    headers: { Authorization: `Bearer ${session.token}` },
+  });
+  if (!r.ok) throw new Error(`could not list the tables — ${await failure(r)}`);
+  return await r.json() as CatalogObject[];
 }
 
 /**
@@ -178,7 +156,7 @@ export async function listAllObjects(session: WarehouseSession): Promise<Catalog
 export async function connect(baseUrl: string, user: string, password: string):
 Promise<{ readonly session: WarehouseSession; readonly objects: CatalogObject[] }> {
   const session = await signIn(baseUrl, user, password);
-  const objects = await listAllObjects(session);
+  const objects = await listObjects(session);
   return { session, objects };
 }
 

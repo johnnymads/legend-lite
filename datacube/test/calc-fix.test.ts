@@ -15,7 +15,7 @@ const m = inferModel([
   { name: 'notional', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false },
   { name: 'qty', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false },
   { name: 'px', dataType: 'DECIMAL(9,2)', logicalType: 'DECIMAL', precision: 9, scale: 2, notNull: false },
-], { table: 't', convertible: true });
+], { table: 't', convertible: true, databaseType: 'DuckDB' });
 const TYPES: Record<string, string> = { notional: 'Float', qty: 'Integer', px: 'Decimal' };
 const planner = plannerFor(m.model, m.runtime);
 const typeOf = async (text: string): Promise<string | undefined> => {

@@ -188,7 +188,7 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
     'the reader sees exactly what it was granted');
   const trades = objects[0]!;
   const m = inferModel(trades.columns.map((c) => ({ ...c, dataType: c.type })),
-    { table: trades.name, schema: trades.schema, convertible: false });
+    { table: trades.name, schema: trades.schema, convertible: false, databaseType: 'DuckDB' });
   assert.deepEqual(m.excluded, []);
   const own = new WasmPlanner({ model: m.model, runtime: m.runtime, assetBaseUrl: MODULE_DIR, cache: false });
   const snapshot = { ...CASES[0]!.snapshot, source: { query: m.source }, rows: ['region'],
