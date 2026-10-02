@@ -121,8 +121,12 @@ public final class WarehouseServer implements AutoCloseable {
         }
     }
 
-    /** The command line: the server's {@link Config}, and what the launcher does once it runs. */
-    public record CommandLine(Config config, boolean open, @Nullable String table) {
+    /**
+     * The command line: the server's {@link Config}, and what the launcher does once it runs. With
+     * {@code --single-user} and no {@code --data}, the data directory is {@code temporaryData}: the app
+     * keeps nothing between runs (no grants, results only while they are fetched), and removes it on exit.
+     */
+    public record CommandLine(Config config, boolean open, @Nullable String table, @Nullable Path temporaryData) {
     }
 
     private final HttpServer http;
@@ -695,6 +699,8 @@ public final class WarehouseServer implements AutoCloseable {
     private static void start(String[] args) throws Exception {
         CommandLine command = commandLine(args);
         Config config = command.config();
+        Path temporary = command.temporaryData();
+        if (temporary != null) Runtime.getRuntime().addShutdownHook(new Thread(() -> deleteTree(temporary)));
         WarehouseServer s;
         while (true) {
             try {
@@ -707,12 +713,13 @@ public final class WarehouseServer implements AutoCloseable {
         List<String> names = new ArrayList<>(config.catalogs());
         names.addAll(new java.util.TreeSet<>(config.postgres().keySet()));
         System.err.println("warehouse listening on 127.0.0.1:" + s.port() + ", catalogs " + names);
-        if (command.open()) {
+        if (config.site() != null && s.launchKey() != null) {
+            // the page's address, with the key that signs it in: printed always, opened with --open
             String url = "http://127.0.0.1:" + s.port() + "/#key=" + s.launchKey()
                     + (command.table() == null ? "" : "&table=" + command.table());
             System.err.println("DataCube: " + url);
             System.err.println("Press Ctrl+C to stop.");
-            openBrowser(url);
+            if (command.open()) openBrowser(url);
         }
     }
 
@@ -729,6 +736,14 @@ public final class WarehouseServer implements AutoCloseable {
         LinkedHashMap<String, String> postgres = new LinkedHashMap<>(config.postgres());
         postgres.put(failed.catalog, PostgresUrl.withPassword(dsn, password));
         return config.withPostgres(postgres, config.duckdbExtensions());
+    }
+
+    private static void deleteTree(Path root) {
+        try (var walk = java.nio.file.Files.walk(root)) {
+            for (Path p : walk.sorted(java.util.Comparator.reverseOrder()).toList()) java.nio.file.Files.deleteIfExists(p);
+        } catch (IOException e) {
+            System.err.println("warehouse: could not remove " + root + ": " + e.getMessage());
+        }
     }
 
     /** The default browser at {@code url}; the address is printed first, so a machine without one still has it. */
@@ -769,6 +784,7 @@ public final class WarehouseServer implements AutoCloseable {
         LinkedHashMap<String, String> postgres = new LinkedHashMap<>();
         Path extensions = null;
         Path site = null;
+        boolean dataGiven = false;
         boolean singleUser = false;
         boolean open = false;
         String table = null;
@@ -804,7 +820,10 @@ public final class WarehouseServer implements AutoCloseable {
                 }
                 case "--duckdb-extensions" -> extensions = Path.of(args[++i]);
                 case "--port" -> port = Integer.parseInt(args[++i]);
-                case "--data" -> data = Path.of(args[++i]);
+                case "--data" -> {
+                    data = Path.of(args[++i]);
+                    dataGiven = true;
+                }
                 case "--catalog" -> cats.add(args[++i]);
                 case "--user" -> users.add(args[++i].split(":", 2));
                 case "--concurrency" -> concurrency = Integer.parseInt(args[++i]);
@@ -844,14 +863,19 @@ public final class WarehouseServer implements AutoCloseable {
         if (open && (site == null || !singleUser)) {
             throw new IllegalArgumentException("--open opens the page: it needs --site and --single-user");
         }
-        if (table != null && (!open || !TABLE.matcher(table).matches())) {
-            throw new IllegalArgumentException("--table takes schema.name, with --open");
+        if (table != null && (site == null || !singleUser || !TABLE.matcher(table).matches())) {
+            throw new IllegalArgumentException("--table takes schema.name, with --site and --single-user");
+        }
+        Path temporaryData = null;
+        if (singleUser && !dataGiven) {
+            temporaryData = java.nio.file.Files.createTempDirectory("datacube-");
+            data = temporaryData;
         }
         Config config = new Config(port, data, cats, users,
                 tokenKeyFile == null ? null : tokenKey(tokenKeyFile), Duration.ofMinutes(tokenMinutes),
                 new Statements.Limits(concurrency, queue, maxRows, Duration.ofMinutes(retainMinutes), resultMemoryMb << 20),
                 library, owners, origins, Duration.ofHours(sessionHours), Map.copyOf(postgres), extensions, site, user);
-        return new CommandLine(config, open, table);
+        return new CommandLine(config, open, table, temporaryData);
     }
 
     /** {@code --table}'s schema.name: what the page's address carries, so nothing that needs escaping there. */

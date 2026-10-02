@@ -88,11 +88,16 @@ class AppModeTest {
         assertEquals(System.getProperty("user.name"), c.config().singleUser());
         assertTrue(c.open());
         assertEquals("sales.orders", c.table());
+        // single-user without --data: a fresh directory, removed on exit
+        assertNotNull(c.temporaryData());
+        assertEquals(c.temporaryData(), c.config().dataDir());
+        assertNull(WarehouseServer.commandLine(new String[] {"--single-user", "--data", "/var/cube"}).temporaryData());
         // a plain warehouse is what it was
         WarehouseServer.CommandLine plain = WarehouseServer.commandLine(new String[] {"--user", "alice:pw"});
         assertNull(plain.config().site());
         assertNull(plain.config().singleUser());
         assertNull(plain.table());
+        assertNull(plain.temporaryData());
     }
 
     @Test
@@ -102,7 +107,7 @@ class AppModeTest {
                 new String[] {"--single-user", "--owner", "alice"},
                 new String[] {"--open", "--site", "/srv/cube"},                     // --open needs --single-user
                 new String[] {"--open", "--single-user"},                           // and --site
-                new String[] {"--site", "/srv/cube", "--single-user", "--table", "sales.orders"},  // --table needs --open
+                new String[] {"--single-user", "--table", "sales.orders"},          // --table needs a page
                 new String[] {"--site", "/s", "--single-user", "--open", "--table", "orders"},     // schema.name
                 new String[] {"postgresql://db/shop", "postgresql://other/shop", "--duckdb-extensions", "/x"},
                 new String[] {"postgresql://db/shop", "--postgres", "shop=host=db", "--duckdb-extensions", "/x"})) {

@@ -7,6 +7,7 @@ load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_library", "js_run_binary"
 load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("//tools/java_run:defs.bzl", "java_run")
+load("//warehouse:defs.bzl", "POSTGRES_EXTENSION", "warehouse_run")
 load("@rules_java//java:defs.bzl", "java_library")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//datacube:esbuild/package_json.bzl", esbuild = "bin")
@@ -704,6 +705,25 @@ js_binary(
         "--experimental-strip-types",
         "--disable-warning=ExperimentalWarning",
     ],
+)
+
+# THE APP (docs/DATACUBE_APP_PLAN_2026_10_02.md): the native warehouse serving this site, one user,
+# the browser opened on the tables of the databases named:
+#   bazel run //datacube:app -- postgresql://bob@db:5432/shop [--table sales.orders]
+warehouse_run(
+    name = "app",
+    args_before = [
+        "--single-user",
+        "--open",
+    ],
+    library = "//warehouse:duckdb_library",
+    postgres_extension_gz = POSTGRES_EXTENSION,
+    server = "//warehouse:server_native",
+    site = ":dist",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
 )
 
 # `bazel build //datacube:dist`: the site as a folder for any static host — no

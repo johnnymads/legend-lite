@@ -58,9 +58,13 @@ no `--user` or `--owner` lists.
   the address's fragment, which a browser never sends, and the server listens on 127.0.0.1 only.
 - Combined with `--user` or `--owner`, the server refuses to start.
 
-**`--open`** prints the address and opens the default browser at
-`http://127.0.0.1:<port>/#key=<launch key>`. The key is in the fragment, which a browser never sends.
+**The address.** With `--site` and `--single-user`, the server prints
+`http://127.0.0.1:<port>/#key=<launch key>`. **`--open`** also opens it in the default browser; the
+tests read the printed address instead. The key is in the fragment, which a browser never sends.
 `--table schema.name` adds `&table=schema.name` to that fragment.
+
+**No `--data`.** Single-user without `--data` uses a fresh temporary directory, removed on exit. The
+app keeps nothing between runs.
 
 **Also:**
 - **Postgres 16 is checked when a catalog attaches.** An older server is refused at start, by name.

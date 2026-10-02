@@ -3,7 +3,7 @@
 load("@rules_graalvm//graalvm:defs.bzl", "native_image")
 load("@rules_java//java:defs.bzl", "java_binary", "java_library")
 load("//tools/junit:defs.bzl", "junit_test")
-load(":defs.bzl", "jar_entry", "warehouse_run")
+load(":defs.bzl", "POSTGRES_EXTENSION", "jar_entry", "warehouse_run")
 load("//tools/nullaway:defs.bzl", "NULLAWAY_OPTS", "NULLAWAY_PLUGIN")
 
 package(default_visibility = ["//visibility:public"])
@@ -197,12 +197,7 @@ junit_test(
 warehouse_run(
     name = "serve",
     library = ":duckdb_library",
-    postgres_extension_gz = select({
-        ":macos_arm64": "@duckdb_postgres_extension_osx_arm64//file",
-        ":macos_x86_64": "@duckdb_postgres_extension_osx_amd64//file",
-        ":linux_x86_64": "@duckdb_postgres_extension_linux_amd64//file",
-        ":linux_aarch64": "@duckdb_postgres_extension_linux_arm64//file",
-    }),
+    postgres_extension_gz = POSTGRES_EXTENSION,
     server = ":server_native",
     target_compatible_with = NOT_ON_WINDOWS,
 )

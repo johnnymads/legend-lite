@@ -37,6 +37,15 @@ jar_entry = rule(
     doc = "Extracts one entry of a Java library's jar as a file named after it.",
 )
 
+# DuckDB's postgres extension for the platform being built, as MODULE.bazel pins it: one choice for
+# every launcher (//warehouse:serve, //datacube:app).
+POSTGRES_EXTENSION = select({
+    "//warehouse:macos_arm64": "@duckdb_postgres_extension_osx_arm64//file",
+    "//warehouse:macos_x86_64": "@duckdb_postgres_extension_osx_amd64//file",
+    "//warehouse:linux_x86_64": "@duckdb_postgres_extension_linux_amd64//file",
+    "//warehouse:linux_aarch64": "@duckdb_postgres_extension_linux_arm64//file",
+})
+
 def _warehouse_run_impl(ctx):
     # DuckDB loads an extension file by name: the download is gzipped, so it is unpacked here, under
     # the exact name the server looks for in --duckdb-extensions
@@ -49,10 +58,18 @@ def _warehouse_run_impl(ctx):
         mnemonic = "GunzipDuckdbExtension",
     )
     server = ctx.executable.server
+    files = [server, ctx.file.library, ext]
+    fixed = ""
+    if ctx.file.site:
+        files.append(ctx.file.site)
+        fixed += " --site \"$here/{}\"".format(ctx.file.site.short_path)
+    for arg in ctx.attr.args_before:
+        fixed += " " + shell_quote(arg)
     script = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.write(script, is_executable = True, content = """#!/usr/bin/env bash
-# The warehouse with everything it loads beside it: DuckDB's library and its postgres extension, from
-# runfiles; then it runs where `bazel run` was started, so a relative --data is the caller's.
+# The warehouse with everything it loads beside it -- DuckDB's library, its postgres extension and,
+# for the app, the DataCube site -- from runfiles; then it runs where `bazel run` was started, so a
+# relative path among the caller's arguments is the caller's.
 set -euo pipefail
 here="${{RUNFILES_DIR:-$0.runfiles}}/_main"
 [[ -d "$here" ]] || here="$(pwd)"
@@ -60,10 +77,13 @@ server="$here/{server}"
 library="$here/{library}"
 extensions="$(dirname "$here/{ext}")"
 cd "${{BUILD_WORKING_DIRECTORY:-.}}"
-exec "$server" --duckdb-library "$library" --duckdb-extensions "$extensions" "$@"
-""".format(server = server.short_path, library = ctx.file.library.short_path, ext = ext.short_path))
-    runfiles = ctx.runfiles(files = [server, ctx.file.library, ext]).merge(ctx.attr.server[DefaultInfo].default_runfiles)
+exec "$server" --duckdb-library "$library" --duckdb-extensions "$extensions"{fixed} "$@"
+""".format(server = server.short_path, library = ctx.file.library.short_path, ext = ext.short_path, fixed = fixed))
+    runfiles = ctx.runfiles(files = files).merge(ctx.attr.server[DefaultInfo].default_runfiles)
     return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+def shell_quote(s):
+    return "'" + s.replace("'", "'\\''") + "'"
 
 warehouse_run = rule(
     implementation = _warehouse_run_impl,
@@ -72,6 +92,8 @@ warehouse_run = rule(
         "server": attr.label(executable = True, cfg = "target", mandatory = True),
         "library": attr.label(allow_single_file = True, mandatory = True),
         "postgres_extension_gz": attr.label(allow_single_file = True, mandatory = True),
+        "site": attr.label(allow_single_file = True, doc = "A directory served as the page (--site)."),
+        "args_before": attr.string_list(doc = "Fixed arguments, before the caller's."),
     },
-    doc = "Runs the native warehouse with DuckDB's library and extensions beside it: one `bazel run`.",
+    doc = "Runs the native warehouse with DuckDB's library and extensions (and a site) beside it: one `bazel run`.",
 )
