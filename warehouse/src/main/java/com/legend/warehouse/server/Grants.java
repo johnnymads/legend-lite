@@ -17,15 +17,28 @@ import java.util.Set;
 
 /**
  * Who may read what (docs/SERVER_PROGRAM_2026_09_26.md §3): roles, their members (users and other
- * roles), and SELECT grants on objects (a table, a view, a table function or a macro, by catalog,
- * schema and name) or on whole schemas. Kept in the warehouse's system database; read from an
+ * roles), SELECT grants on objects (a table, a view, a table function or a macro, by catalog,
+ * schema and name) or on whole schemas, and USAGE grants on whole Postgres catalogs (stored as a
+ * grant with an empty schema and name). Kept in the warehouse's system database; read from an
  * in-memory snapshot, replaced whole after every change. Names compare as DuckDB compares
  * identifiers: without case.
  */
 public final class Grants {
 
-    /** A SELECT grant: on one object ({@code name} set) or on a schema ({@code name} empty). */
+    /**
+     * A SELECT grant: on one object ({@code name} set) or on a schema ({@code name} empty); or, with
+     * {@code schema} and {@code name} both empty, USAGE of a whole Postgres catalog ({@link Postgres}).
+     */
     public record Grant(String catalog, String schema, String name, String grantee) {
+
+        /** USAGE of the whole catalog. */
+        static Grant usage(String catalog, String grantee) {
+            return new Grant(catalog, "", "", grantee);
+        }
+
+        boolean isUsage() {
+            return schema.isEmpty() && name.isEmpty();
+        }
     }
 
     private record Snapshot(Set<String> roles, Map<String, Set<String>> rolesOf, List<Grant> grants) {
@@ -66,7 +79,7 @@ public final class Grants {
     public boolean canSelect(Set<String> principals, String catalog, String schema, String name) {
         String c = norm(catalog), sc = norm(schema), n = norm(name);
         for (Grant g : now.grants()) {
-            if (principals.contains(g.grantee()) && g.catalog().equals(c) && g.schema().equals(sc)
+            if (principals.contains(g.grantee()) && !g.isUsage() && g.catalog().equals(c) && g.schema().equals(sc)
                     && (g.name().isEmpty() || g.name().equals(n))) {
                 return true;
             }
@@ -78,7 +91,21 @@ public final class Grants {
     public boolean canSeeSchema(Set<String> principals, String catalog, String schema) {
         String c = norm(catalog), sc = norm(schema);
         for (Grant g : now.grants()) {
-            if (principals.contains(g.grantee()) && g.catalog().equals(c) && g.schema().equals(sc)) return true;
+            if (principals.contains(g.grantee()) && !g.isUsage() && g.catalog().equals(c) && g.schema().equals(sc)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether any of {@code principals} may use the whole catalog: what a Postgres catalog asks, where the
+     * statement is Postgres SQL no authorizer reads and the DSN's login role decides what is visible.
+     */
+    public boolean canUseCatalog(Set<String> principals, String catalog) {
+        String c = norm(catalog);
+        for (Grant g : now.grants()) {
+            if (principals.contains(g.grantee()) && g.catalog().equals(c) && g.isUsage()) return true;
         }
         return false;
     }

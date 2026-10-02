@@ -82,12 +82,31 @@ public final class Database implements AutoCloseable {
         try {
             // the allowed directories first: they cannot change once external access is off
             if (importDir != null) {
-                c.exec("SET allowed_directories = ['" + importDir.toAbsolutePath().toString().replace("'", "''") + "']");
+                c.exec("SET allowed_directories = [" + literal(importDir.toAbsolutePath().toString()) + "]");
             }
             c.exec("SET enable_external_access = false");
         } finally {
             c.close();
         }
+    }
+
+    /**
+     * Loads DuckDB's {@code postgres} extension from {@code extension} (a file: no download) and attaches
+     * the Postgres database {@code dsn} (a libpq connection string) as {@code alias}, READ_ONLY. Before
+     * {@link #lockDown}: once external access is off, neither LOAD nor ATTACH is allowed again.
+     */
+    public void attachPostgres(Path extension, String dsn, String alias) throws DuckException {
+        Conn c = new Conn(this, rawConnect());
+        try {
+            c.exec("LOAD " + literal(extension.toAbsolutePath().toString()));
+            c.exec("ATTACH " + literal(dsn) + " AS " + alias + " (TYPE postgres, READ_ONLY)");
+        } finally {
+            c.close();
+        }
+    }
+
+    private static String literal(String s) {
+        return "'" + s.replace("'", "''") + "'";
     }
 
     private MemorySegment rawConnect() throws DuckException {

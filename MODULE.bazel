@@ -329,3 +329,18 @@ http_archive(
     strip_prefix = "legend-pure-legend-pure-" + LEGEND_PURE_RELEASE,
     urls = ["https://github.com/finos/legend-pure/archive/refs/tags/legend-pure-" + LEGEND_PURE_RELEASE + ".tar.gz"],
 )
+
+# DuckDB's postgres extension for the warehouse's DuckDB (1.5.5; it must match the library's version
+# exactly), one per platform, pinned by content. `bazel run //warehouse:serve` puts it beside the server.
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+[http_file(
+    name = "duckdb_postgres_extension_" + platform,
+    sha256 = sha,
+    urls = ["http://extensions.duckdb.org/v1.5.5/" + platform + "/postgres_scanner.duckdb_extension.gz"],
+) for platform, sha in {
+    "osx_arm64": "4fb5079e67b00e6643e6ee91545a355010004d1dad50b43f1c060de0cb789c8e",
+    "osx_amd64": "b8764ed496be635fbac3e5e6a6c8e3e3c2dbfcaa862ce0422c21cad6fcc6c353",
+    "linux_amd64": "e0f631a5535f165468bc8a20501f8bc1490adbc877d38fcdff2f8d05531e1e5b",
+    "linux_arm64": "59849e8a4be00fa0ec8c4db0d26707999061d103b902bf32322fa5cde1fc393d",
+}.items()]

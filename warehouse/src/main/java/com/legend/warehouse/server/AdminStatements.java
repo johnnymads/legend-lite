@@ -13,6 +13,7 @@ import java.util.Locale;
  *   GRANT SELECT ON [TABLE|VIEW|FUNCTION] name TO grantee
  *   GRANT SELECT ON SCHEMA [catalog.]schema TO grantee
  *   REVOKE SELECT ON ... FROM grantee
+ *   GRANT USAGE ON CATALOG c TO grantee            REVOKE USAGE ON CATALOG c FROM grantee   (a Postgres catalog)
  *   GRANT r TO member                              REVOKE r FROM member
  *   SHOW GRANTS
  * </pre>
@@ -26,7 +27,11 @@ final class AdminStatements {
     private AdminStatements() {
     }
 
-    sealed interface Admin permits CreateRole, DropRole, Select, Membership, ShowGrants {
+    sealed interface Admin permits CreateRole, DropRole, Select, Usage, Membership, ShowGrants {
+    }
+
+    /** GRANT (or REVOKE) USAGE of a whole Postgres catalog: what a reader of one needs ({@link Postgres}). */
+    record Usage(boolean grant, String catalog, String grantee) implements Admin {
     }
 
     record CreateRole(String role) implements Admin {
@@ -65,6 +70,12 @@ final class AdminStatements {
                 case "GRANT", "REVOKE" -> {
                     boolean grant = first.equals("GRANT");
                     String to = grant ? "TO" : "FROM";
+                    if (t.size() >= 2 && up(t.get(1)).equals("USAGE")) {
+                        // GRANT USAGE ON CATALOG c TO grantee (REVOKE ... FROM grantee)
+                        boolean shaped = t.size() == 7 && up(t.get(2)).equals("ON") && up(t.get(3)).equals("CATALOG")
+                                && up(t.get(5)).equals(to) && !t.get(4).equals(".") && !t.get(6).equals(".");
+                        return shaped ? new Usage(grant, t.get(4), t.get(6)) : null;
+                    }
                     if (t.size() >= 6 && up(t.get(1)).equals("SELECT") && up(t.get(2)).equals("ON")) {
                         int i = 3;
                         boolean schema = false;

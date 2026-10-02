@@ -26,6 +26,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -61,30 +62,41 @@ public final class WarehouseServer implements AutoCloseable {
             @Nullable Path duckdbLibrary,
             List<String> owners,
             List<String> allowedOrigins,
-            Duration sessionLimit) {
+            Duration sessionLimit,
+            Map<String, String> postgres,
+            @Nullable Path duckdbExtensions) {
 
         /** DuckDB's library from the classpath (DuckDB's JDBC jar carries it). */
         public Config(int port, Path dataDir, List<String> catalogs, List<String[]> users,
                 byte @Nullable [] tokenKey, Duration tokenLife, Statements.Limits limits) {
             this(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, null, List.of(), List.of(),
-                    Identity.DEFAULT_SESSION_LIMIT);
+                    Identity.DEFAULT_SESSION_LIMIT, Map.of(), null);
         }
 
         public Config withOwners(List<String> owners) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins, sessionLimit);
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions);
         }
 
         /** The web pages (exact origins, e.g. {@code https://cube.example.com}) whose browsers may call this server. */
         public Config withAllowedOrigins(List<String> allowedOrigins) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins, sessionLimit);
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions);
         }
 
         /** How long one sign-in may be kept alive by refreshing its token (`Identity.refresh`). */
         public Config withSessionLimit(Duration sessionLimit) {
             return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
-                    allowedOrigins, sessionLimit);
+                    allowedOrigins, sessionLimit, postgres, duckdbExtensions);
+        }
+
+        /**
+         * Postgres catalogs ({@link Postgres}), by name, each a libpq connection string, and the directory
+         * holding DuckDB's {@code postgres_scanner.duckdb_extension}.
+         */
+        public Config withPostgres(Map<String, String> postgres, @Nullable Path duckdbExtensions) {
+            return new Config(port, dataDir, catalogs, users, tokenKey, tokenLife, limits, duckdbLibrary, owners,
+                    allowedOrigins, sessionLimit, Map.copyOf(postgres), duckdbExtensions);
         }
     }
 
@@ -115,7 +127,7 @@ public final class WarehouseServer implements AutoCloseable {
             if (u[0].equalsIgnoreCase(Statements.SERVER)) throw new IllegalArgumentException("'" + u[0] + "' is the server's own name");
             identity.addUser(u[0], u[1]);
         }
-        catalogs = new Catalogs(config.dataDir(), config.catalogs());
+        catalogs = new Catalogs(config.dataDir(), config.catalogs(), config.postgres(), config.duckdbExtensions());
         system = Database.open(config.dataDir().resolve("system.duckdb"));
         system.lockDown(null);
         history = new History(system);
@@ -269,6 +281,8 @@ public final class WarehouseServer implements AutoCloseable {
             for (String c : catalogs.names()) {
                 LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
                 f.put("name", Json.str(c));
+                // the SQL a statement on it is written in
+                f.put("engine", Json.str(catalogs.isPostgres(c) ? "postgres" : "duckdb"));
                 out.add(new Json.Obj(f));
             }
             throw new Reply(200, Json.toCompact(new Json.Arr(out)));
@@ -331,6 +345,10 @@ public final class WarehouseServer implements AutoCloseable {
             catalog = c == null ? StatementRequest.DEFAULT_CATALOG : c;
         } catch (RuntimeException bad) {
             throw Reply.error(400, ErrorCode.BAD_REQUEST, "the body must be {\"catalog\"}");
+        }
+        if (catalogs.isPostgres(catalog)) {
+            // a session keeps a DuckDB connection's state; Postgres SQL passed through keeps none
+            throw Reply.error(400, ErrorCode.BAD_REQUEST, catalog + " is a Postgres catalog: it has no sessions");
         }
         Sessions.Session s;
         try {
@@ -402,6 +420,17 @@ public final class WarehouseServer implements AutoCloseable {
     private void objects(String principal, String catalog) throws Reply {
         // Read by the server itself (a reader may not call duckdb_columns()), then filtered to what the
         // caller may see: an owner everything, a reader what is granted to it.
+        // A Postgres catalog lists the attached database's tables as DuckDB sees them: DuckDB's own type
+        // names, the same a DuckDB catalog answers, so one model writer reads both. Its readers hold USAGE
+        // of the whole catalog (the DSN's role decides the rows), so they see every table.
+        boolean postgres = catalogs.isPostgres(catalog);
+        if (postgres && !statements.isOwner(principal)
+                && !grants.canUseCatalog(grants.principals(principal), catalog)) {
+            throw Reply.error(403, ErrorCode.FORBIDDEN, "no USAGE granted on catalog " + catalog);
+        }
+        // Postgres' own schemas are not the user's data
+        String which = postgres ? "c.database_name = '" + Postgres.ATTACH + "'"
+                + " AND c.schema_name NOT IN ('pg_catalog', 'information_schema')" : "NOT c.internal";
         Statements.Run run;
         try {
             run = statements.submit(Statements.SERVER, new StatementRequest("""
@@ -410,11 +439,12 @@ public final class WarehouseServer implements AutoCloseable {
                            c.column_name, c.data_type, t.logical_type, c.numeric_precision, c.numeric_scale,
                            NOT c.is_nullable AS not_null
                     FROM duckdb_columns() c
-                    LEFT JOIN duckdb_views() v ON v.schema_name = c.schema_name AND v.view_name = c.table_name
+                    LEFT JOIN duckdb_views() v ON v.database_name = c.database_name
+                         AND v.schema_name = c.schema_name AND v.view_name = c.table_name
                     LEFT JOIN (SELECT DISTINCT type_oid, logical_type FROM duckdb_types()
                                WHERE internal AND type_oid IS NOT NULL) t ON t.type_oid = c.data_type_id
-                    WHERE NOT c.internal
-                    ORDER BY 1, 2, c.column_index""", catalog, 30_000, 30_000, 1_000_000));
+                    WHERE %s
+                    ORDER BY 1, 2, c.column_index""".formatted(which), catalog, 30_000, 30_000, 1_000_000));
         } catch (Statements.QueueFull full) {
             throw Reply.error(503, ErrorCode.QUEUE_FULL, String.valueOf(full.getMessage()));
         }
@@ -429,7 +459,7 @@ public final class WarehouseServer implements AutoCloseable {
         java.util.Set<String> principals = grants.principals(principal);
         for (List<Json.Node> row : c.rows()) {
             String schema = ((Json.Str) row.get(0)).value(), name = ((Json.Str) row.get(1)).value();
-            if (!owner && !grants.canSelect(principals, catalog, schema, name)) continue;
+            if (!owner && !postgres && !grants.canSelect(principals, catalog, schema, name)) continue;
             String key = schema + "." + name;
             byObject.computeIfAbsent(key, k -> {
                 LinkedHashMap<String, Json.Node> f = new LinkedHashMap<>();
@@ -550,8 +580,24 @@ public final class WarehouseServer implements AutoCloseable {
      * --owner NAME... --allow-origin ORIGIN... --token-key-file FILE --token-minutes N --session-hours N}. An owner may
      * do anything; every other user is a reader (§3 of the server program). With {@code --token-key-file} tokens are
      * signed with the key in FILE (made, owner-only, when absent), so a restart does not sign everyone out.
+     *
+     * <p>{@code --postgres NAME=DSN...} adds a Postgres catalog ({@link Postgres}): DSN is a libpq connection
+     * string, whose login role is what every user of the catalog reads as (give it SELECT only, and
+     * {@code options='-c statement_timeout=<ms>'} as a backstop to the cancel). {@code --duckdb-extensions DIR}
+     * is where {@code postgres_scanner.duckdb_extension} is: beside a native executable by default; on the JVM
+     * it must be given. Without {@code --catalog}, the DuckDB catalog {@code main} is made, Postgres catalogs
+     * or not: grants are managed from a DuckDB catalog.
      */
     public static void main(String[] args) throws Exception {
+        Config config = parse(args);
+        WarehouseServer s = new WarehouseServer(config);
+        List<String> names = new ArrayList<>(config.catalogs());
+        names.addAll(new java.util.TreeSet<>(config.postgres().keySet()));
+        System.err.println("warehouse listening on 127.0.0.1:" + s.port() + ", catalogs " + names);
+    }
+
+    /** The command line, as a {@link Config} (see {@link #main}); throws IllegalArgumentException when it is wrong. */
+    public static Config parse(String[] args) throws IOException {
         int port = 8765;
         Path data = Path.of("warehouse-data");
         List<String> cats = new ArrayList<>();
@@ -567,8 +613,22 @@ public final class WarehouseServer implements AutoCloseable {
         Path tokenKeyFile = null;
         long tokenMinutes = 60;
         long sessionHours = Identity.DEFAULT_SESSION_LIMIT.toHours();
+        LinkedHashMap<String, String> postgres = new LinkedHashMap<>();
+        Path extensions = null;
         for (int i = 0; i < args.length; i++) {
+            if (i + 1 >= args.length) throw new IllegalArgumentException(args[i] + " needs a value");
             switch (args[i]) {
+                case "--postgres" -> {
+                    String[] kv = args[++i].split("=", 2);
+                    if (kv.length != 2 || kv[1].isBlank()) {
+                        throw new IllegalArgumentException(
+                                "--postgres takes NAME=DSN, e.g. sales='host=db dbname=sales user=reader'");
+                    }
+                    if (postgres.put(kv[0], kv[1]) != null) {
+                        throw new IllegalArgumentException("catalog " + kv[0] + " is named twice");
+                    }
+                }
+                case "--duckdb-extensions" -> extensions = Path.of(args[++i]);
                 case "--port" -> port = Integer.parseInt(args[++i]);
                 case "--data" -> data = Path.of(args[++i]);
                 case "--catalog" -> cats.add(args[++i]);
@@ -588,10 +648,20 @@ public final class WarehouseServer implements AutoCloseable {
             }
         }
         if (cats.isEmpty()) cats.add(StatementRequest.DEFAULT_CATALOG);
-        WarehouseServer s = new WarehouseServer(new Config(port, data, cats, users,
+        for (String n : postgres.keySet()) {
+            if (!Catalogs.validName(n)) throw new IllegalArgumentException("bad catalog name: " + n);
+            if (cats.contains(n)) throw new IllegalArgumentException("catalog " + n + " is named twice");
+        }
+        if (!postgres.isEmpty() && extensions == null) {
+            if (!DuckLibrary.nativeImage()) {
+                throw new IllegalArgumentException("a Postgres catalog needs --duckdb-extensions DIR"
+                        + " (the directory holding " + Postgres.EXTENSION_FILE + ")");
+            }
+            extensions = DuckLibrary.executableDir("--duckdb-extensions");
+        }
+        return new Config(port, data, cats, users,
                 tokenKeyFile == null ? null : tokenKey(tokenKeyFile), Duration.ofMinutes(tokenMinutes),
                 new Statements.Limits(concurrency, queue, maxRows, Duration.ofMinutes(retainMinutes), resultMemoryMb << 20),
-                library, owners, origins, Duration.ofHours(sessionHours)));
-        System.err.println("warehouse listening on 127.0.0.1:" + s.port() + ", catalogs " + cats);
+                library, owners, origins, Duration.ofHours(sessionHours), Map.copyOf(postgres), extensions);
     }
 }

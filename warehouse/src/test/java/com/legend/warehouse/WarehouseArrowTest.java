@@ -91,9 +91,14 @@ class WarehouseArrowTest {
 
     /** Runs {@code sql} as JSON and as Arrow, then the comparator over both. The directory it used. */
     static Path check(String sql, int rowsPerChunk) throws Exception {
+        return check(server, token, "main", sql, rowsPerChunk);
+    }
+
+    /** {@link #check(String, int)} on any server and catalog. */
+    static Path check(TestServer server, String token, String catalog, String sql, int rowsPerChunk) throws Exception {
         String python = python();
         Path dir = Files.createTempDirectory("arrow-vs-json");
-        StatementRequest json = new StatementRequest(sql, "main", 60_000, 30_000, rowsPerChunk);
+        StatementRequest json = new StatementRequest(sql, catalog, 60_000, 30_000, rowsPerChunk);
         SqlApiBinding.Done jd = done(WarehouseServerTest.runOn(server, token, json));
         List<List<Json.Node>> rows = WarehouseServerTest.rowsOn(server, token, jd);
         List<Json.Node> types = new ArrayList<>();

@@ -66,6 +66,8 @@ public final class Statements implements AutoCloseable {
         volatile @Nullable Conn running;
         volatile boolean cancelRequested;
         volatile boolean timedOut;
+        /** Set before a Postgres catalog's statement starts: a cancel must then reach Postgres too. */
+        volatile boolean postgres;
         final CompletableFuture<Void> done = new CompletableFuture<>();
 
         Run(String principal, StatementRequest request, Instant submitted) {
@@ -203,9 +205,37 @@ public final class Statements implements AutoCloseable {
         interrupt(run);
     }
 
-    private static void interrupt(Run run) {
+    private void interrupt(Run run) {
         Conn c = run.running;
         if (c != null) c.interrupt();
+        // DuckDB's interrupt stops DuckDB, not the query it sent to Postgres (measured): cancel that there
+        if (run.postgres) Thread.ofVirtual().name("warehouse-pg-cancel").start(() -> cancelInPostgres(run));
+    }
+
+    /**
+     * Cancels, from a second connection, the Postgres backends running {@code run}'s tagged query
+     * ({@link Postgres#cancel}). Retried for a few seconds while nothing matched and the statement is still
+     * running: the cancel may arrive before DuckDB has sent the query.
+     */
+    private void cancelInPostgres(Run run) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            boolean matched = false;
+            try (Conn c = catalogs.connect(run.request.catalog(), SERVER)) {
+                if (c == null) return;
+                try (Result r = c.execute(Postgres.cancel(run.id))) {
+                    matched = !Collect.json(r, Long.MAX_VALUE).isEmpty();
+                }
+            } catch (Exception e) {
+                System.err.println("warehouse: could not cancel statement " + run.id + " in Postgres: " + e.getMessage());
+            }
+            if (matched || run.state.done() || System.nanoTime() > deadline) return;
+            try {
+                Thread.sleep(200);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
     }
 
     /** Thrown when the queue is full. */
@@ -239,7 +269,7 @@ public final class Statements implements AutoCloseable {
                 }
                 run.state = State.RUNNING;
                 run.started = clock.instant();
-                runOn(run, s.connection);
+                runOn(run, s.connection, s.catalog);
             } finally {
                 s.lastUsed = clock.instant();
                 s.lock.unlock();
@@ -261,7 +291,7 @@ public final class Statements implements AutoCloseable {
             return;
         }
         try {
-            runOn(run, c);
+            runOn(run, c, catalog);
         } finally {
             c.close();
         }
@@ -274,12 +304,18 @@ public final class Statements implements AutoCloseable {
     /**
      * One statement (or script) on one connection, which already belongs to the run's principal. An
      * owner's statement runs as written, or manages grants; a reader's must pass the authorizer first.
+     * On a Postgres catalog the statement is Postgres SQL, passed through ({@link #passthrough}).
      */
-    private void runOn(Run run, Conn c) {
+    private void runOn(Run run, Conn c, String catalog) {
         run.running = c;
         try {
             if (run.cancelRequested) throw DuckException.cancelledBeforeStart();
             boolean owner = isOwner(run.principal);
+            // the server's own reads (a catalog's objects) are DuckDB SQL over the attach, never passed through
+            if (catalogs.isPostgres(catalog) && !run.principal.equals(SERVER)) {
+                passthrough(run, c, catalog, owner);
+                return;
+            }
             AdminStatements.Admin admin = AdminStatements.parse(run.request.sql(), run.request.catalog());
             if (admin != null && !owner) {
                 finish(run, State.FAILED, new ApiError(ErrorCode.FORBIDDEN, "only an owner may manage grants"));
@@ -337,6 +373,36 @@ public final class Statements implements AutoCloseable {
         }
     }
 
+    /**
+     * A statement on a Postgres catalog ({@link Postgres}): Postgres SQL, which no authorizer here can
+     * read, so a reader needs USAGE of the whole catalog; then it runs in Postgres, tagged for a cancel.
+     * Grants are managed from a DuckDB catalog, never from this one.
+     */
+    private void passthrough(Run run, Conn c, String catalog, boolean owner) throws Exception {
+        if (!owner && !access.grants().canUseCatalog(access.grants().principals(run.principal), catalog)) {
+            finish(run, State.FAILED, new ApiError(ErrorCode.FORBIDDEN, "no USAGE granted on catalog " + catalog));
+            return;
+        }
+        if (AdminStatements.parse(run.request.sql(), catalog) != null) {
+            finish(run, State.FAILED, new ApiError(ErrorCode.BAD_REQUEST, catalog + " is a Postgres catalog:"
+                    + " roles and grants are managed from a DuckDB catalog"));
+            return;
+        }
+        String sql = Postgres.query(run.request.sql(), run.id);
+        if (run.request.describeOnly()) {
+            // DuckDB binds postgres_query by asking Postgres to prepare the query: its columns, nothing run
+            run.result = new ResultMeta(ResultEncoder.api(c.describe(sql)), 0, 0);
+            finish(run, State.SUCCEEDED, null);
+            return;
+        }
+        run.postgres = true;   // before the check below: a cancel either sees this, or is seen there
+        if (run.cancelRequested) throw DuckException.cancelledBeforeStart();
+        try (Result r = c.execute(sql)) {
+            collect(run, r);
+        }
+        finish(run, State.SUCCEEDED, null);
+    }
+
     private void collect(Run run, Result r) throws Exception {
         List<Column> cols = ResultEncoder.api(r.columns());
         int per = Math.max(1, run.request.rowsPerChunk());
@@ -365,6 +431,19 @@ public final class Statements implements AutoCloseable {
                     g.grantSelect(s.target());
                 } else {
                     g.revokeSelect(s.target());
+                }
+            }
+            case AdminStatements.Usage u -> {
+                Grants.Grant usage = Grants.Grant.usage(u.catalog(), u.grantee());
+                if (u.grant()) {
+                    requireGrantee(u.grantee());
+                    if (!catalogs.isPostgres(Grants.norm(u.catalog()))) {
+                        throw new IllegalArgumentException("no Postgres catalog " + u.catalog()
+                                + " (a DuckDB catalog's objects are granted one by one: GRANT SELECT ON ...)");
+                    }
+                    g.grantSelect(usage);
+                } else {
+                    g.revokeSelect(usage);
                 }
             }
             case AdminStatements.Membership m -> {

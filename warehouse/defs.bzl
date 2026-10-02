@@ -36,3 +36,42 @@ jar_entry = rule(
     },
     doc = "Extracts one entry of a Java library's jar as a file named after it.",
 )
+
+def _warehouse_run_impl(ctx):
+    # DuckDB loads an extension file by name: the download is gzipped, so it is unpacked here, under
+    # the exact name the server looks for in --duckdb-extensions
+    ext = ctx.actions.declare_file(ctx.label.name + "_extensions/postgres_scanner.duckdb_extension")
+    ctx.actions.run_shell(
+        inputs = [ctx.file.postgres_extension_gz],
+        outputs = [ext],
+        command = "gzip -dc \"$1\" > \"$2\"",
+        arguments = [ctx.file.postgres_extension_gz.path, ext.path],
+        mnemonic = "GunzipDuckdbExtension",
+    )
+    server = ctx.executable.server
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(script, is_executable = True, content = """#!/usr/bin/env bash
+# The warehouse with everything it loads beside it: DuckDB's library and its postgres extension, from
+# runfiles; then it runs where `bazel run` was started, so a relative --data is the caller's.
+set -euo pipefail
+here="${{RUNFILES_DIR:-$0.runfiles}}/_main"
+[[ -d "$here" ]] || here="$(pwd)"
+server="$here/{server}"
+library="$here/{library}"
+extensions="$(dirname "$here/{ext}")"
+cd "${{BUILD_WORKING_DIRECTORY:-.}}"
+exec "$server" --duckdb-library "$library" --duckdb-extensions "$extensions" "$@"
+""".format(server = server.short_path, library = ctx.file.library.short_path, ext = ext.short_path))
+    runfiles = ctx.runfiles(files = [server, ctx.file.library, ext]).merge(ctx.attr.server[DefaultInfo].default_runfiles)
+    return [DefaultInfo(executable = script, runfiles = runfiles)]
+
+warehouse_run = rule(
+    implementation = _warehouse_run_impl,
+    executable = True,
+    attrs = {
+        "server": attr.label(executable = True, cfg = "target", mandatory = True),
+        "library": attr.label(allow_single_file = True, mandatory = True),
+        "postgres_extension_gz": attr.label(allow_single_file = True, mandatory = True),
+    },
+    doc = "Runs the native warehouse with DuckDB's library and extensions beside it: one `bazel run`.",
+)

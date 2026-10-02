@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -53,10 +54,20 @@ final class TestServer implements AutoCloseable {
 
     static TestServer start(Path data, List<String[]> users, List<String> owners, Statements.Limits limits,
             List<String> allowedOrigins) throws Exception {
+        return start(data, users, owners, limits, allowedOrigins, Map.of(), null);
+    }
+
+    /**
+     * With Postgres catalogs ({@code postgres}: name to DSN) beside {@code main}; {@code extensions} is where
+     * DuckDB's postgres extension is ({@code --duckdb-extensions}).
+     */
+    static TestServer start(Path data, List<String[]> users, List<String> owners, Statements.Limits limits,
+            List<String> allowedOrigins, Map<String, String> postgres, @Nullable Path extensions) throws Exception {
         String binary = System.getenv("WAREHOUSE_BINARY");
         if (binary == null) {
             WarehouseServer s = new WarehouseServer(new WarehouseServer.Config(0, data, List.of("main"), users, null,
-                    Duration.ofMinutes(5), limits).withOwners(owners).withAllowedOrigins(allowedOrigins));
+                    Duration.ofMinutes(5), limits).withOwners(owners).withAllowedOrigins(allowedOrigins)
+                    .withPostgres(postgres, extensions));
             return new TestServer(s, null, s.port());
         }
         List<String> cmd = new ArrayList<>(List.of(binary, "--port", "0", "--data", data.toString(),
@@ -74,6 +85,14 @@ final class TestServer implements AutoCloseable {
         for (String o : allowedOrigins) {
             cmd.add("--allow-origin");
             cmd.add(o);
+        }
+        for (Map.Entry<String, String> e : postgres.entrySet()) {
+            cmd.add("--postgres");
+            cmd.add(e.getKey() + "=" + e.getValue());
+        }
+        if (extensions != null) {
+            cmd.add("--duckdb-extensions");
+            cmd.add(extensions.toString());
         }
         String library = System.getenv("WAREHOUSE_DUCKDB_LIBRARY");
         if (library != null) {
