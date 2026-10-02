@@ -132,7 +132,9 @@ public final class PctCensusGate {
     // rounded exactly is a computed numeric with no declared precision
     // 57 -> 63 (2026-10-02, lists of scalars as native arrays: 83 more tests' plans now RUN on Postgres --
     // the same classes)
-    private static final long MAX_WIRE_DIVERGE = POSTGRES ? 63 : 0;
+    // 63 -> 76 (2026-10-02, structs and non-scalar lists as jsonb): one new class -- a struct delivered as
+    // jsonb (label STRUCT, wire JSON), Postgres's representation by design -- and more plans of the others
+    private static final long MAX_WIRE_DIVERGE = POSTGRES ? 76 : 0;
     private static final long MAX_ADOPT_PENDING = 0;
     // THE NULLABILITY LEDGER (§4bZ-V E, 2026-08-26 — §4Z ledger #4):
     // this lane carried 6 literal-NullLit DOUBLE value-frames (the

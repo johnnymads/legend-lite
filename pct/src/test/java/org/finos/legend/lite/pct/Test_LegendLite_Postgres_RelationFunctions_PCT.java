@@ -34,19 +34,14 @@ public class Test_LegendLite_Postgres_RelationFunctions_PCT extends PCTReportCon
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // collections and Variant over the jsonb carrier: leg P4
-            one("meta::pure::functions::relation::tests::composition::testCoalesceInPreFilter_Function_1__Boolean_1_", "LIST_LENGTH over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=firstName, type=VARCHAR]]]], nullable=false] reached Postgres: a nested list, a struct"),
-            one("meta::pure::functions::relation::tests::composition::testFilterPostProject_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::relation::tests::composition::testVariantArrayColumn_joinStrings_Function_1__Boolean_1_", "expected: '#TDS\n   id,payload,joined"),
-            one("meta::pure::functions::relation::tests::composition::testVariantMapColumn_values_LateralFlatten_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=JSON], nullable=false] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::relation::tests::project::testSimpleProjectList_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::relation::tests::project::testSimpleProjectWithEmpty_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::relation::tests::project::testSimpleProject_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Extend_Function_1__Boolean_1_", "LIST_LENGTH over a list of Typed[type=Array[element=JSON], nullable=true] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Function_1__Boolean_1_", "UNNEST over a list of Typed[type=Array[element=JSON], nullable=false] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            // every comma and colon -- where Pure (and DuckDB) print the document as written
+            // Postgres's jsonb keeps an object's keys in its OWN order (by length, then bytes), where Pure
+            // (and DuckDB) keep the document's: the values are right, the printed key order is not
+            one("meta::pure::functions::relation::tests::composition::testVariantMapColumn_values_LateralFlatten_Function_1__Boolean_1_", "#TDS"),
             one("meta::pure::functions::relation::tests::extend::testVariantColumn_keyExtraction_Function_1__Boolean_1_", "expected: '#TDS\n   id,payload,booleanKey,integerKey,stringKey"),
-            one("meta::pure::functions::relation::tests::filter::testVariantColumn_filterOnKeyExtractionValue_Function_1__Boolean_1_", "expected: '#TDS\n   id,payload")
+            one("meta::pure::functions::relation::tests::filter::testVariantColumn_filterOnKeyExtractionValue_Function_1__Boolean_1_", "expected: '#TDS\n   id,payload"),
+            // a HARNESS limit, as on DuckDB (its pin, verbatim): the result wire cannot represent an EMPTY
+            // STRING cell; joinStrings over the empty collection is '' -- right in SQL, null on the wire
+            one("meta::pure::functions::relation::tests::composition::testVariantArrayColumn_joinStrings_Function_1__Boolean_1_", "\"\nexpected: '#TDS\n   id,payload,joined\n   1,\\'[1,2,3]\\',1,2,3\n   2,\\'[4,5,6]\\',4,5,6\n   3,\\'[7,8,9]\\',7,8,9\n   4,\\'null\\',\n#'\nactual:   '#TDS\n   id,payload,joined\n   1,\\'[1,2,3]\\',1,2,3\n   2,\\'[4,5,6]\\',4,5,6\n   3,\\'[7,8,9]\\',7,8,9\n   4,\\'null\\',null\n#'\"")
     );
 
     public static Test suite() {

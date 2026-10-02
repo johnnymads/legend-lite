@@ -34,26 +34,9 @@ public class Test_LegendLite_Postgres_StandardFunctions_PCT extends PCTReportCon
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // collections and Variant over the jsonb carrier: leg P4
-            one("meta::pure::functions::collection::tests::greatest::testGreatest_Boolean_Function_1__Boolean_1_", "ERROR: function max(boolean) does not exist"),
-            one("meta::pure::functions::collection::tests::greatest::testGreatest_Empty_Function_1__Boolean_1_", "LIST_MAX over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::collection::tests::in::testInNonPrimitive_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::collection::tests::least::testLeast_Boolean_Function_1__Boolean_1_", "ERROR: function min(boolean) does not exist"),
-            one("meta::pure::functions::collection::tests::least::testLeast_Empty_Function_1__Boolean_1_", "LIST_MIN over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::date::tests::max::testMax_DateArray_Function_1__Boolean_1_", "LIST_MAX over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::date::tests::max::testMax_DateTimeArray_Function_1__Boolean_1_", "LIST_MAX over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::date::tests::max::testMax_StrictDateArray_Function_1__Boolean_1_", "LIST_MAX over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::date::tests::min::testMin_DateArray_Function_1__Boolean_1_", "LIST_MIN over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::date::tests::min::testMin_DateTimeArray_Function_1__Boolean_1_", "LIST_MIN over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::date::tests::min::testMin_StrictDateArray_Function_1__Boolean_1_", "LIST_MIN over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::math::tests::max::testMax_FloatsArray_Function_1__Boolean_1_", "LIST_MAX over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::math::tests::max::testMax_IntegersArray_Function_1__Boolean_1_", "LIST_MAX over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::math::tests::max::testMax_NumbersArray_Function_1__Boolean_1_", "LIST_MAX over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::math::tests::maxBy::testMaxBy_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::math::tests::min::testMin_FloatsArray_Function_1__Boolean_1_", "LIST_MIN over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::math::tests::min::testMin_IntegersArray_Function_1__Boolean_1_", "LIST_MIN over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::math::tests::min::testMin_NumbersArray_Function_1__Boolean_1_", "LIST_MIN over a list of Bottom[] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::math::tests::minBy::testMinBy_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
+            // WRONG ANSWERS: a result Pure does not give -- a dialect defect
+            one("meta::pure::functions::math::tests::maxBy::testMaxBy_Function_1__Boolean_1_", "expected: 2\nactual:   1"),
+            one("meta::pure::functions::math::tests::minBy::testMinBy_Function_1__Boolean_1_", "expected: 2020\nactual:   1001"),
             one("meta::pure::functions::math::tests::stdDev::testFloatStdDev_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
             one("meta::pure::functions::math::tests::stdDev::testIntStdDev_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
             one("meta::pure::functions::math::tests::stdDev::testMixedStdDev_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
@@ -63,6 +46,24 @@ public class Test_LegendLite_Postgres_StandardFunctions_PCT extends PCTReportCon
             one("meta::pure::functions::math::tests::variance::testVarianceSample_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
             one("meta::pure::functions::math::tests::variance::testVariance_Population_Function_1__Boolean_1_", "expected: 0.25\nactual:   0.25000000000000000000D"),
             one("meta::pure::functions::math::tests::variance::testVariance_Sample_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
+            // Postgres raises differently (its own error, or a different position or wording)
+            one("meta::pure::functions::collection::tests::greatest::testGreatest_Boolean_Function_1__Boolean_1_", "ERROR: function max(boolean) does not exist"),
+            one("meta::pure::functions::collection::tests::least::testLeast_Boolean_Function_1__Boolean_1_", "ERROR: function min(boolean) does not exist"),
+            // collections over the jsonb carrier: leg P4
+            one("meta::pure::functions::collection::tests::greatest::testGreatest_Empty_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::collection::tests::least::testLeast_Empty_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::date::tests::max::testMax_DateArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::date::tests::max::testMax_DateTimeArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::date::tests::max::testMax_StrictDateArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::date::tests::min::testMin_DateArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::date::tests::min::testMin_DateTimeArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::date::tests::min::testMin_StrictDateArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::math::tests::max::testMax_FloatsArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::math::tests::max::testMax_IntegersArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::math::tests::max::testMax_NumbersArray_Function_1__Boolean_1_", "LIST_MAX over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::math::tests::min::testMin_FloatsArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::math::tests::min::testMin_IntegersArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
+            one("meta::pure::functions::math::tests::min::testMin_NumbersArray_Function_1__Boolean_1_", "LIST_MIN over Bottom[] reached Postgres: a list of unknown element type"),
             // refused by name: a construct the Postgres dialect does not spell yet
             one("meta::pure::functions::hashCode::tests::testHashCode_Function_1__Boolean_1_", "signed 64-bit hashCode reached a dialect without a spelling"),
             one("meta::pure::functions::math::hashCode::tests::testHashCodeAggregate_Function_1__Boolean_1_", "signed 64-bit hashCode reached a dialect without a spelling")

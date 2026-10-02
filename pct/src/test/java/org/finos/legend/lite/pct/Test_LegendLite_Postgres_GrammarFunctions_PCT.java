@@ -34,24 +34,20 @@ public class Test_LegendLite_Postgres_GrammarFunctions_PCT extends PCTReportConf
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // collections and Variant over the jsonb carrier: leg P4
-            one("meta::pure::functions::boolean::tests::equality::eq::testEqNonPrimitive_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::boolean::tests::equality::eq::testEqVarIdentity_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::boolean::tests::equality::equal::testEqualNonPrimitive_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::boolean::tests::equality::equal::testEqualVarIdentity_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::collection::tests::filter::testFilterInstance_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::collection::tests::first::testFirstComplex_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::collection::tests::map::testMapInstance_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=locations, type=Array[element=Struct[fields=[Field[name=place, type=VARCHAR], Field"),
-            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToMany_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToOne_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::lang::tests::letFn::testAssignNewInstance_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::string::tests::plus::testPlusInCollect_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=firstName, type=VARCHAR]]]], nullable=false] reached Postgres: a nested list, a str"),
-            one("meta::pure::functions::string::tests::plus::testPlusInIterate_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=firstName, type=VARCHAR]]]], nullable=false] reached Postgres: a nested list, a str"),
+            // WRONG ANSWERS: a result Pure does not give -- a dialect defect
+            one("meta::pure::functions::boolean::tests::equality::eq::testEqNonPrimitive_Function_1__Boolean_1_", "Assert failed"),
+            one("meta::pure::functions::boolean::tests::equality::equal::testEqualNonPrimitive_Function_1__Boolean_1_", "Assert failed"),
+            // Postgres raises differently (its own error, or a different position or wording)
+            one("meta::pure::functions::collection::tests::filter::testFilterInstance_Function_1__Boolean_1_", "ERROR: missing FROM-clause entry for table \"p"),
             // refused by name: a construct the Postgres dialect does not spell yet
             one("meta::pure::functions::boolean::tests::equality::eq::testEqPrimitiveExtension_Function_1__Boolean_1_", "unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger"),
             one("meta::pure::functions::boolean::tests::equality::equal::testEqualPrimitiveExtension_Function_1__Boolean_1_", "unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger"),
+            one("meta::pure::functions::collection::tests::first::testFirstComplex_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject (type=ClassType[fqn=meta::pure::functions::collection::tests::model::CO_Firm])"),
             one("meta::pure::functions::collection::tests::getAll::testBasic_Function_1__Boolean_1_", "system database: no in-memory engine for a 'PostgreSQL' session"),
-            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromOneToOne_Function_1__Boolean_1_", "unbound variable '$address'")
+            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToMany_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject (type=ClassType[fqn=meta::pure::functions::collection::tests::map::model::M_Location])"),
+            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToOne_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject (type=ClassType[fqn=meta::pure::functions::collection::tests::map::model::M_Address])"),
+            one("meta::pure::functions::collection::tests::map::testMapRelationshipFromOneToOne_Function_1__Boolean_1_", "unbound variable '$address'"),
+            one("meta::pure::functions::lang::tests::letFn::testAssignNewInstance_Function_1__Boolean_1_", "no typed conversion for org.postgresql.util.PGobject (type=ClassType[fqn=meta::pure::functions::lang::tests::model::LA_Person])")
     );
 
     public static Test suite() {
