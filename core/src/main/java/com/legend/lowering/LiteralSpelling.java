@@ -384,7 +384,7 @@ public final class LiteralSpelling {
     static SqlExpr declaredDouble(SqlExpr v) {
         // a wire the platform's typing already knows is a DOUBLE needs no
         // cast; the facts are the platform's and every dialect DELIVERS
-        // them (H2 makes its DECFLOAT avg a DOUBLE itself: H2AvgDelivers)
+        // them (H2 makes its DECFLOAT avg a DOUBLE itself: AggregatesDeliverDouble)
         if (v.type() instanceof com.legend.sql.TypeFact.Typed t
                 && (t.type() == SqlType.Scalar.DOUBLE
                         || t.type() == SqlType.Scalar.VARCHAR

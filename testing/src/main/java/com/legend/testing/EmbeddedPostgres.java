@@ -29,6 +29,8 @@ public final class EmbeddedPostgres {
     public static final String USER = "postgres";
 
     private static EmbeddedPostgres shared;
+    /** Why the one start failed: every later {@link #shared()} says so instead of starting again. */
+    private static IllegalStateException failed;
 
     private final Path bin;
     private final Path data;
@@ -42,8 +44,16 @@ public final class EmbeddedPostgres {
 
     /** This JVM's server, started on first use and stopped at exit. */
     public static synchronized EmbeddedPostgres shared() {
+        if (failed != null) {
+            throw failed;
+        }
         if (shared == null) {
-            shared = start();
+            try {
+                shared = start();
+            } catch (IllegalStateException e) {
+                failed = e;
+                throw e;
+            }
             EmbeddedPostgres started = shared;
             Runtime.getRuntime().addShutdownHook(new Thread(started::stop, "embedded-postgres-stop"));
         }
@@ -85,11 +95,18 @@ public final class EmbeddedPostgres {
             EmbeddedPostgres pg = new EmbeddedPostgres(root.resolve("bin"), data, port);
             pg.run(List.of(pg.tool("initdb"), "-D", cluster.toString(), "-U", USER, "-A", "trust", "-E", "UTF8",
                     "--no-locale", "--no-sync"));
+            // the settings go in the cluster's own configuration, never through pg_ctl's -o: that string
+            // reaches postgres through a shell, and cmd.exe keeps quotes (unix_socket_directories=''
+            // became the directory '' on Windows, CI 2026-10-02)
+            Files.writeString(cluster.resolve("postgresql.conf"), String.join("\n", "",
+                    "port = " + port,
+                    "listen_addresses = '127.0.0.1'",
+                    "unix_socket_directories = ''",
+                    "fsync = off",
+                    "TimeZone = 'UTC'",
+                    "max_connections = 200", ""), StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.APPEND);
             pg.run(List.of(pg.tool("pg_ctl"), "-D", cluster.toString(), "-l", data.resolve("postgres.log").toString(),
-                    "-w", "-t", "120", "-o", String.join(" ", "-p", String.valueOf(port),
-                            "-c", "listen_addresses=127.0.0.1", "-c", "unix_socket_directories=''",
-                            "-c", "fsync=off", "-c", "TimeZone=UTC", "-c", "max_connections=200"),
-                    "start"));
+                    "-w", "-t", "120", "start"));
             return pg;
         } catch (IOException e) {
             throw new IllegalStateException("the embedded Postgres did not start: " + e.getMessage(), e);

@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The dialect DELIVERS the platform's type facts on its wire (the {@link H2AvgDelivers} doctrine),
+ * The dialect DELIVERS the platform's type facts on its wire (the {@link AggregatesDeliverDouble} doctrine),
  * here at the statement's boundary. Postgres keeps no precision on a COMPUTED numeric (its typmod is
  * gone: {@code 1.5 * 2} reports numeric with precision 0, probed on 16.15, 2026-10-02) and has no
  * 128-bit integer ({@code sum(bigint)} is a bare numeric), so a root column the platform types

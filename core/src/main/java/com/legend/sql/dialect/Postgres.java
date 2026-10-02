@@ -160,7 +160,7 @@ public final class Postgres extends AnsiSqlRenderer {
         return List.of(new CarrierStrategies(CarrierStrategies.Caps.POSTGRES),
                 new StarExceptToColumns(),
                 new WholePartitionOrderedSets(),
-                new SubstringClamp(), new H2AvgDelivers(), new QualifyToSubselect(true),
+                new SubstringClamp(), new AggregatesDeliverDouble(DOUBLE_AGGREGATES), new QualifyToSubselect(true),
                 new ConstantKeysAsExpressions(), new RootNumericTypes());
     }
 
@@ -478,7 +478,10 @@ public final class Postgres extends AnsiSqlRenderer {
         SqlAgg.Reducer agg = new SqlAgg.Reducer(rc.reducer(), args, false,
                 rc.reducer() == SqlAgg.Fn.STRING_AGG ? List.of(new com.legend.sql.SqlSelect.SortKey(
                         SqlExpr.Column.derived(null, "__o"), true, null, null)) : List.of());
-        return "(SELECT " + reducer(agg) + " FROM unnest(" + xs + ") WITH ORDINALITY AS __u(" + param("__x")
+        // avg and the moments over a list are a Float too, cast over their exact result as the grouped ones are
+        String reduced = DOUBLE_AGGREGATES.contains(rc.reducer())
+                ? "CAST(" + reducer(agg) + " AS DOUBLE PRECISION)" : reducer(agg);
+        return "(SELECT " + reduced + " FROM unnest(" + xs + ") WITH ORDINALITY AS __u(" + param("__x")
                 + ", " + param("__o") + "))";
     }
 
@@ -1221,17 +1224,11 @@ public final class Postgres extends AnsiSqlRenderer {
             // ANY_VALUE is Postgres 16+; ordered aggregates keep the base's spelling —
             // Postgres' default null placement (ASC last, DESC first) IS the
             // reference's NULL-largest
-            case SUM, COUNT, AVG, MIN, MAX, ANY_VALUE, STRING_AGG, BOOL_AND, BOOL_OR,
-                 ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST,
+            // (avg and the moments are a Float: AggregatesDeliverDouble casts them, windowCall in a window)
+            case SUM, COUNT, AVG, MIN, MAX, ANY_VALUE, STDDEV_SAMP, STDDEV_POP, VAR_SAMP,
+                 VAR_POP, STRING_AGG, CORR, COVAR_SAMP, COVAR_POP, BOOL_AND, BOOL_OR,
+                 VARIANCE, STDDEV, ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST,
                  NTILE, LAG, LEAD, FIRST_VALUE, LAST_VALUE, NTH_VALUE -> super.reducer(r);
-            // the moments are a Float, computed in double (DuckDB's); Postgres's over an integer or a
-            // numeric is numeric (stdDev of 1, 2, 3 delivered as 1.00000000000000000000, the Postgres
-            // PCT lane, 2026-10-02), so they read their arguments as double precision -- in a window
-            // too, where this is the function before OVER
-            case STDDEV_SAMP, STDDEV_POP, VAR_SAMP, VAR_POP, VARIANCE, STDDEV, CORR, COVAR_SAMP,
-                 COVAR_POP -> r.fn() + "(" + (r.distinct() ? "DISTINCT " : "") + r.args().stream()
-                         .map(x -> "CAST(" + expr(x, 0) + " AS DOUBLE PRECISION)")
-                         .collect(java.util.stream.Collectors.joining(", ")) + ")";
             // DuckDB's median interpolates numbers; a median of anything else walls
             case MEDIAN -> {
                 if (r.args().size() != 1 || r.distinct() || !r.orderBy().isEmpty()
@@ -1304,10 +1301,16 @@ public final class Postgres extends AnsiSqlRenderer {
             throw new DialectCapability(r.fn() + " over a window reached Postgres, where"
                     + " ordered-set aggregates take no OVER clause");
         }
-        // a windowed avg is numeric here too, and the avg pass sees only grouped ones
-        return w.fn() instanceof SqlAgg.Reducer r && r.fn() == SqlAgg.Fn.AVG
+        // a windowed avg or moment is numeric here too, and the pass sees only grouped ones
+        return w.fn() instanceof SqlAgg.Reducer r && DOUBLE_AGGREGATES.contains(r.fn())
                 ? "CAST(" + super.windowCall(w) + " AS DOUBLE PRECISION)" : super.windowCall(w);
     }
+
+    /** The Float aggregates Postgres answers as numeric over an integer or a numeric: cast over their exact
+     *  result (AggregatesDeliverDouble), grouped or windowed. */
+    private static final java.util.Set<SqlAgg.Fn> DOUBLE_AGGREGATES = java.util.Set.of(SqlAgg.Fn.AVG,
+            SqlAgg.Fn.STDDEV_SAMP, SqlAgg.Fn.STDDEV_POP, SqlAgg.Fn.STDDEV, SqlAgg.Fn.VAR_SAMP, SqlAgg.Fn.VAR_POP,
+            SqlAgg.Fn.VARIANCE, SqlAgg.Fn.CORR, SqlAgg.Fn.COVAR_SAMP, SqlAgg.Fn.COVAR_POP);
 
     /** Interval frame offsets in the SQL-standard quoted SINGULAR form
      * ({@code INTERVAL '3' DAY}; {@code '3' DAYS} and {@code 3 DAY} are syntax errors,
