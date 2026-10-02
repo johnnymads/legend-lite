@@ -757,6 +757,7 @@ _HARNESS_HELPERS = [
     "demo/trades.pure",
     "demo/trades-h2.pure",
     "demo/typed-view.mjs",
+    "demo/warehouse-source.mjs",
 ]
 
 _HARNESSES = [

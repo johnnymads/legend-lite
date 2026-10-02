@@ -13,6 +13,8 @@
 //
 //   bazel run //datacube:verify_features            (generates its own sample)
 //   DATA=/abs/file.csv bazel run //datacube:verify_features
+//   WAREHOUSE=http://127.0.0.1:8772 PORT=8022 bazel run //datacube:verify_features
+//                                                  (the sample, LIVE on a warehouse: warehouse-source.mjs)
 
 import { createServer } from 'node:http';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
@@ -28,6 +30,7 @@ import { isNumeric } from '../src/types.ts';
 import { sampleCsv } from '../src/samples.ts';
 import { fileURLToPath } from 'node:url';
 import { servedPath } from './static-files.ts';
+import { WAREHOUSE, openWarehouseTable } from './warehouse-source.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -110,7 +113,8 @@ const server = createServer(async (req, res) => {
     res.end(body);
   } catch { res.writeHead(404).end('not found'); }
 });
-await new Promise((r) => server.listen(0, '127.0.0.1', r));
+// PORT: a fixed one, for a warehouse that must allow this page's origin (warehouse-source.mjs)
+await new Promise((r) => server.listen(Number(process.env.PORT ?? 0), '127.0.0.1', r));
 const { port } = server.address();
 const URL_BASE = `http://127.0.0.1:${port}`;
 
@@ -590,6 +594,8 @@ async function openThroughPicker(file) {
   await page.locator('.dc-picker-tab[data-section="files"]').click();
   await page.setInputFiles('.dc-picker-file', file);
 }
+/** The harness's source: its file, or the same sample as a warehouse's table, live there. */
+const openSource = () => (WAREHOUSE ? openWarehouseTable(page) : openThroughPicker(DATA));
 async function freshCube() {
   // AFTER THE FIRST, A FRESH CUBE, NOT A FRESH PAGE: the file opened again, as a person would,
   // gives a new cube with the default configuration -- what a check that asks for a clean one
@@ -602,7 +608,7 @@ async function freshCube() {
     const accept = (d) => { if (/unsaved changes/.test(d.message())) void d.accept(); };
     page.on('dialog', accept);
     try {
-      await openThroughPicker(DATA);
+      await openSource();
       // a NEW cube on the page: the status line may read the same as before, so not that
       await page.waitForFunction(
         () => (window.__dataCube !== window.__freshFrom
@@ -627,7 +633,7 @@ async function freshCube() {
   // a page that was fine (2026-09-25). Wait for the line to CHANGE,
   // and for rows to be on screen.
   const before = await statusNow();
-  await openThroughPicker(DATA);
+  await openSource();
   await page.waitForFunction(
     (was) => {
       const line = document.querySelector('.dc-status-timing')?.textContent ?? '';
@@ -643,7 +649,7 @@ async function freshCube() {
 
 try {
   await freshCube();
-  if (DATA) loaded = DATA.split('/').pop();
+  if (DATA) loaded = WAREHOUSE ? `${WAREHOUSE.object}, live on ${WAREHOUSE.url}` : DATA.split('/').pop();
   const start = await state();
   console.log(`\nloaded ${loaded}: ${start.rows.length} rows,`
     + ` ${start.headers.length} headers\n`);
