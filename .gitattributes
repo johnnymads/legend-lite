@@ -1,0 +1,6 @@
+# Every file is checked out exactly as committed, on every platform. Git for Windows defaults to
+# core.autocrlf=true, which rewrites LF to CRLF on checkout -- and the tests read their inputs byte
+# for byte: the .pure corpus (parser parity is byte-exact), the generated files (each diff-tested
+# against its generator), the goldens. Nor are endings normalized on commit: a few committed files
+# carry CRLF or mixed endings (core's prelude.pure among them), and normalizing would change them.
+* -text

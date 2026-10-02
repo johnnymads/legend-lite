@@ -256,6 +256,20 @@ counterpart that supersedes it. See `AGENTS.md`.
   sources the tests read as the spec (pinned by sha256).
 - An IDE: IntelliJ with the Bazel plugin opens the BUILD files as the project.
 
+**On Windows**, three more things, once:
+
+- **Developer Mode** on (Settings → System → For developers). Bazel makes real symlinks for
+  the tests' runfiles (`.bazelrc`), which Windows allows only in Developer Mode or as admin.
+- **[Git for Windows](https://git-scm.com/download/win)** at its default path. Bazel runs its
+  bash (`.bazelrc` names `C:/Program Files/Git/usr/bin/bash.exe`); if yours is elsewhere,
+  repeat those two `.bazelrc` lines with your path in `%USERPROFILE%\.bazelrc`.
+- **Bazelisk** as `bazel`: `winget install Bazel.Bazelisk` installs it as `bazelisk`, then, in
+  a new PowerShell,
+  `New-Item -ItemType SymbolicLink -Path "$env:LOCALAPPDATA\Microsoft\WinGet\Links\bazel.exe" -Target (Get-Command bazelisk).Source`.
+
+Line endings need nothing: `.gitattributes` checks every file out exactly as committed,
+whatever `core.autocrlf` says (the corpus and the generated files are compared byte for byte).
+
 ### Build & Test
 
 ```bash
