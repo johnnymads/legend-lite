@@ -170,6 +170,208 @@ public final class Postgres extends AnsiSqlRenderer {
         return c.materialized() ? " AS MATERIALIZED (" : " AS (";
     }
 
+    // ==================================================================
+    // Lists: a list of scalars is a NATIVE ARRAY (BIGINT[], VARCHAR[] ...). The IR types every
+    // list (SqlType.Array(element)): one level deep and one type, so Postgres's rectangular arrays
+    // hold it exactly, and JDBC reads it back as DuckDB's (java.sql.Array). Lambdas, sorts and
+    // reductions run over its elements: unnest(xs) WITH ORDINALITY, the lambda's parameter the
+    // element's column. A nested list, a struct or a mixed list is the jsonb carrier (the next step):
+    // refused by name, never guessed.
+    // ==================================================================
+
+    /** The element type of a list of scalars, or null. */
+    private static @com.legend.base.Nullable SqlType scalarElement(SqlExpr e) {
+        return e.type() instanceof com.legend.sql.TypeFact.Typed t && t.type() instanceof SqlType.Array a
+                && (a.element() instanceof SqlType.Decimal
+                        || a.element() instanceof SqlType.Scalar sc && sc != SqlType.Scalar.JSON) ? a.element() : null;
+    }
+
+    /** {@code list}, rendered, when it is a list of scalars; refused by name otherwise. */
+    private String scalarList(SqlExpr list, Object what) {
+        if (scalarElement(list) == null) {
+            throw new DialectCapability(what + " over a list of " + list.type() + " reached Postgres:"
+                    + " a nested list, a struct or a mixed list is the jsonb carrier (leg P4)");
+        }
+        return expr(list, 0);
+    }
+
+    /** A reference to a lambda parameter (or the element/index of an unnest), spelled as the body
+     *  spells it -- so the alias that binds it and every use agree. */
+    private String param(String name) {
+        return expr(SqlExpr.Column.derived(null, name), 0);
+    }
+
+    /** {@code ARRAY(SELECT select FROM unnest(xs) WITH ORDINALITY AS __u(elem, idx) [WHERE where] ORDER BY
+     *  order)}, NULL for a NULL list (DuckDB's list functions answer NULL there). */
+    private String overElements(String xs, String elem, String idx, String select,
+            @com.legend.base.Nullable String where, String order) {
+        return "(CASE WHEN " + xs + " IS NULL THEN NULL ELSE ARRAY(SELECT " + select + " FROM unnest(" + xs
+                + ") WITH ORDINALITY AS __u(" + elem + ", " + idx + ")" + (where == null ? "" : " WHERE " + where)
+                + " ORDER BY " + order + ") END)";
+    }
+
+    /** A lambda's element and index parameters, spelled; the index is a fresh name when the lambda has one. */
+    private String[] lambdaParams(SqlExpr.Lambda l) {
+        return new String[] {param(l.params().get(0)), l.params().size() > 1 ? param(l.params().get(1)) : "__o"};
+    }
+
+    @Override
+    protected String listCall(SqlFn fnName, List<SqlExpr> args) {
+        String xs = scalarList(args.get(0), fnName);
+        String x = param("__x");
+        return switch (fnName) {
+            case LIST_FILTER, LIST_TRANSFORM -> {
+                SqlExpr.Lambda l = (SqlExpr.Lambda) args.get(1);
+                String[] p = lambdaParams(l);
+                yield fnName == SqlFn.LIST_FILTER
+                        ? overElements(xs, p[0], p[1], p[0], expr(l.body(), 0), p[1])
+                        : overElements(xs, p[0], p[1], expr(l.body(), 0), null, p[1]);
+            }
+            // NULL || xs is xs, as DuckDB's list_concat
+            case LIST_CONCAT -> "(" + String.join(" || ", args.stream().map(e -> scalarList(e, fnName)).toList()) + ")";
+            // 1-based, negative from the end, out of range NULL (DuckDB's list_extract)
+            case LIST_GET -> "(CASE WHEN " + expr(args.get(1), 0) + " < 0 THEN (" + xs + ")[cardinality(" + xs
+                    + ") + 1 + " + expr(args.get(1), 6) + "] ELSE (" + xs + ")[" + expr(args.get(1), 0) + "] END)";
+            case LIST_POSITION -> "array_position(" + xs + ", " + expr(args.get(1), 0) + ")";
+            // DuckDB's list_distinct drops NULLs; first occurrence order
+            case LIST_DISTINCT -> "(CASE WHEN " + xs + " IS NULL THEN NULL ELSE ARRAY(SELECT " + x + " FROM unnest("
+                    + xs + ") WITH ORDINALITY AS __u(" + x + ", __o) WHERE " + x + " IS NOT NULL GROUP BY " + x
+                    + " ORDER BY min(__o)) END)";
+            case LIST_APPEND -> "array_append(" + xs + ", " + expr(args.get(1), 0) + ")";
+            case LIST_SORT -> overElements(xs, x, "__o", x, null, x);
+            case LIST_SORT_DESC -> overElements(xs, x, "__o", x, null, x + " DESC");
+            case LIST_REVERSE -> overElements(xs, x, "__o", x, null, "__o DESC");
+            case LIST_TAIL -> "(" + xs + ")[2:]";
+            case LIST_INIT -> "(" + xs + ")[:cardinality(" + xs + ") - 1]";
+            // DuckDB's array_slice: 1-based, both ends inclusive
+            case LIST_SLICE -> "(" + xs + ")[" + expr(args.get(1), 0) + ":" + expr(args.get(2), 0) + "]";
+            case LIST_SUM -> overReduce(xs, "sum(" + x + ")");
+            case LIST_MIN -> overReduce(xs, "min(" + x + ")");
+            case LIST_MAX -> overReduce(xs, "max(" + x + ")");
+            case LIST_AVG -> overReduce(xs, "CAST(avg(" + x + ") AS DOUBLE PRECISION)");
+            case LIST_MEDIAN -> overReduce(xs, "percentile_cont(0.5) WITHIN GROUP (ORDER BY " + x + ")");
+            case LIST_MODE -> overReduce(xs, "mode() WITHIN GROUP (ORDER BY " + x + ")");
+            case LIST_BOOL_AND -> overReduce(xs, "bool_and(" + x + ")");
+            case LIST_BOOL_OR -> overReduce(xs, "bool_or(" + x + ")");
+            default -> throw new IllegalStateException("not a list call: " + fnName);
+        };
+    }
+
+    @Override
+    protected String call(SqlExpr.Call c, int parentPrec) {
+        // the list-making calls whose first argument is no list
+        return switch (c.fn()) {
+            // DuckDB's range: [start, stop) by step (start 0, step 1 by default)
+            case RANGE_FN -> {
+                List<SqlExpr> a = c.args();
+                String start = a.size() == 1 ? "0" : expr(a.get(0), 0);
+                String stop = expr(a.get(a.size() == 1 ? 0 : 1), 0);
+                String step = a.size() > 2 ? expr(a.get(2), 0) : "1";
+                yield "ARRAY(SELECT g FROM generate_series(CAST(" + start + " AS BIGINT), CAST(" + stop
+                        + " AS BIGINT), CAST(" + step + " AS BIGINT)) AS g WHERE CASE WHEN " + step + " > 0 THEN g < "
+                        + stop + " ELSE g > " + stop + " END)";
+            }
+            case REPEAT_VALUE -> "array_fill(" + expr(c.args().get(0), 0) + ", ARRAY[CAST("
+                    + expr(c.args().get(1), 0) + " AS INTEGER)])";
+            default -> postgresCall(c, parentPrec);
+        };
+    }
+
+    /** exists([]) is false, forAll([]) is true: Pure's empty-collection semantics. */
+    @Override
+    protected String listExists(List<SqlExpr> args) {
+        return listPredicate(args, "bool_or", "FALSE");
+    }
+
+    @Override
+    protected String listForAll(List<SqlExpr> args) {
+        return listPredicate(args, "bool_and", "TRUE");
+    }
+
+    private String listPredicate(List<SqlExpr> args, String agg, String empty) {
+        String xs = scalarList(args.get(0), "exists/forAll");
+        SqlExpr.Lambda l = (SqlExpr.Lambda) args.get(1);
+        String[] p = lambdaParams(l);
+        return "coalesce((SELECT " + agg + "(" + expr(l.body(), 0) + ") FROM unnest(" + xs
+                + ") WITH ORDINALITY AS __u(" + p[0] + ", " + p[1] + ")), " + empty + ")";
+    }
+
+    /** No duplicates iff the distinct count is the count (a NULL element is a duplicate-free miss, as
+     *  DuckDB's len(list_distinct(x)) = len(x)); an empty or NULL list is distinct. */
+    @Override
+    protected String allDistinct(List<SqlExpr> args) {
+        String xs = scalarList(args.get(0), "isDistinct");
+        String x = param("__x");
+        return "coalesce((SELECT count(*) = count(DISTINCT " + x + ") FROM unnest(" + xs + ") AS __u(" + x
+                + ")), TRUE)";
+    }
+
+    /** DuckDB's list_contains: NULL for a NULL list; found by IS NOT DISTINCT FROM, as array_position. */
+    @Override
+    protected String membership(SqlExpr.Membership m) {
+        String xs = scalarList(m.collection(), "membership");
+        return "(CASE WHEN " + xs + " IS NULL THEN NULL ELSE array_position(" + xs + ", " + expr(m.needle(), 0)
+                + ") IS NOT NULL END)";
+    }
+
+    /** A named aggregate over a list's elements, in list order. */
+    @Override
+    protected String reduceCollection(SqlExpr.ReduceCollection rc) {
+        String xs = scalarList(rc.collection(), rc.reducer());
+        SqlType element = java.util.Objects.requireNonNull(scalarElement(rc.collection()));
+        SqlExpr x = SqlExpr.Column.of(null, "__x", element, true, com.legend.sql.OutputCol.Origin.DERIVED);
+        List<SqlExpr> args = new java.util.ArrayList<>();
+        args.add(x);
+        args.addAll(rc.extras());
+        SqlAgg.Reducer agg = new SqlAgg.Reducer(rc.reducer(), args, false,
+                rc.reducer() == SqlAgg.Fn.STRING_AGG ? List.of(new com.legend.sql.SqlSelect.SortKey(
+                        SqlExpr.Column.derived(null, "__o"), true, null, null)) : List.of());
+        return "(SELECT " + reducer(agg) + " FROM unnest(" + xs + ") WITH ORDINALITY AS __u(" + param("__x")
+                + ", " + param("__o") + "))";
+    }
+
+    /** An array literal of scalars: typed, so an empty one has a type. */
+    private String arrayLiteral(SqlExpr.ArrayLit a) {
+        SqlType element = scalarElement(a);
+        if (element == null) {
+            throw new DialectCapability("a list literal of " + a.type() + " reached Postgres: a nested list,"
+                    + " a struct or a mixed list is the jsonb carrier (leg P4)");
+        }
+        return "CAST(ARRAY[" + a.elements().stream().map(e -> expr(e, 0)).collect(Collectors.joining(", "))
+                + "] AS " + castTypeName(element) + "[])";
+    }
+
+    /** A list exploded to rows in the select list: unnest keeps the list's order. */
+    @Override
+    protected String unnestProjection(List<SqlExpr> args) {
+        return "unnest(" + scalarList(args.get(0), "UNNEST") + ")";
+    }
+
+    /** fold(xs, {element, accumulator | body}, init): a correlated recursive walk over the elements, the
+     *  accumulator typed as the fold's result (Postgres types a recursive column by its first term). */
+    @Override
+    protected String foldCall(SqlExpr.FoldCall f) {
+        if (f.accIsList() || !(f.type() instanceof com.legend.sql.TypeFact.Typed t)
+                || !(t.type() instanceof SqlType.Scalar || t.type() instanceof SqlType.Decimal)) {
+            throw new DialectCapability("a fold into a " + f.type() + " reached Postgres: a list accumulator"
+                    + " is the jsonb carrier (leg P4)");
+        }
+        String xs = scalarList(f.source(), "fold");
+        String type = castTypeName(t.type());
+        String elem = param(f.lambda().params().get(0));
+        String acc = param(f.lambda().params().get(1));
+        return "(WITH RECURSIVE __f(__i, __acc) AS (SELECT 0, CAST(" + expr(f.init(), 0) + " AS " + type + ")"
+                + " UNION ALL SELECT __f.__i + 1, CAST(" + expr(f.lambda().body(), 0) + " AS " + type + ")"
+                + " FROM __f CROSS JOIN LATERAL (SELECT (" + xs + ")[__f.__i + 1] AS " + elem + ", __f.__acc AS "
+                + acc + ") AS __b WHERE __f.__i < coalesce(cardinality(" + xs + "), 0))"
+                + " SELECT __acc FROM __f ORDER BY __i DESC LIMIT 1)";
+    }
+
+    /** A reduction of a list's elements: {@code (SELECT agg FROM unnest(xs) AS __u(__x))}. */
+    private String overReduce(String xs, String agg) {
+        return "(SELECT " + agg + " FROM unnest(" + xs + ") AS __u(" + param("__x") + "))";
+    }
+
     /** Postgres also reads a nested value as {@code jsonb}, the one nested type it can group,
      *  compare and navigate alike: a {@code json} column has no equality operator ({@code GROUP BY}
      *  refuses it), and an array or a composite is not JSON at all (measured on Postgres 17,
@@ -239,6 +441,9 @@ public final class Postgres extends AnsiSqlRenderer {
 
     @Override
     protected String expr(SqlExpr e, int parentPrec) {
+        if (e instanceof SqlExpr.ArrayLit a) {
+            return arrayLiteral(a);
+        }
         if (e instanceof SqlExpr.OrderedListAgg) {
             throw new DialectCapability("an ordered list aggregate reached Postgres before"
                     + " the jsonb collection carrier (leg P4)");
@@ -277,7 +482,15 @@ public final class Postgres extends AnsiSqlRenderer {
     /** Composite casts other than DECIMAL are the collection carrier's (leg P4). */
     @Override
     protected String variantAwareCast(SqlExpr.Cast c) {
-        if (c.target() instanceof SqlType.Array || c.target() instanceof SqlType.Map) {
+        if (c.target() instanceof SqlType.Array arr) {
+            return listCast(c, arr);
+        }
+        // Map<String, ...> of a Variant: the jsonb object itself (keys and values read by MAP_KEYS / MAP_VALUES)
+        if (c.target() instanceof SqlType.Map && isJson(c.value())) {
+            String v = expr(c.value(), 0);
+            return "(CASE WHEN jsonb_typeof(" + v + ") = 'object' THEN " + v + " END)";
+        }
+        if (c.target() instanceof SqlType.Map) {
             throw new DialectCapability("a cast to " + c.target() + " reached Postgres before"
                     + " the jsonb collection carrier (leg P4)");
         }
@@ -298,8 +511,39 @@ public final class Postgres extends AnsiSqlRenderer {
             if (isJson(c.value()) && c.target() != SqlType.Scalar.VARCHAR) {
                 return "CAST((" + expr(c.value(), 8) + " #>> '{}') AS " + castTypeName(c.target()) + ")";
             }
+            if (isJson(c.value())) {
+                return compactJson("CAST(" + expr(c.value(), 0) + " AS VARCHAR)");
+            }
         }
         return super.variantAwareCast(c);
+    }
+
+    /** A value to a list of scalars: a Variant array's elements read as the element type, in order (a
+     *  JSON null or a non-array is a NULL list, as DuckDB's cast); a list of another element type cast
+     *  element-wise. */
+    private String listCast(SqlExpr.Cast c, SqlType.Array target) {
+        if (!(target.element() instanceof SqlType.Decimal
+                || target.element() instanceof SqlType.Scalar sc && sc != SqlType.Scalar.JSON)) {
+            throw new DialectCapability("a cast to " + target + " reached Postgres: a nested list, a struct or"
+                    + " a mixed list is the jsonb carrier (leg P4)");
+        }
+        String element = castTypeName(target.element());
+        if (isJson(c.value())) {
+            String v = expr(c.value(), 0);
+            return "(CASE WHEN jsonb_typeof(" + v + ") = 'array' THEN ARRAY(SELECT CAST((__e #>> '{}') AS " + element
+                    + ") FROM jsonb_array_elements(" + v + ") WITH ORDINALITY AS __j(__e, __o) ORDER BY __o) END)";
+        }
+        if (scalarElement(c.value()) != null) {
+            return "CAST(" + expr(c.value(), 0) + " AS " + element + "[])";
+        }
+        throw new DialectCapability("a cast of " + c.value().type() + " to " + target + " reached Postgres");
+    }
+
+    /** jsonb's text, compact as Pure and DuckDB print JSON: jsonb puts a space after every ',' and ':'
+     *  outside a string, and only there -- so a string-aware replace drops exactly those (a string, with
+     *  its escapes, is matched whole and kept). Keys stay in jsonb's own order. */
+    private static String compactJson(String text) {
+        return "regexp_replace(" + text + ", '(\"(?:[^\"\\\\]|\\\\.)*\")|([,:]) ', '\\1\\2', 'g')";
     }
 
     /** VARIANT navigation over jsonb: a key or a 0-based index (-1 the last, past the end NULL --
@@ -321,8 +565,8 @@ public final class Postgres extends AnsiSqlRenderer {
     // Scalar functions — every SqlFn decided here
     // ==================================================================
 
-    @Override
-    protected String call(SqlExpr.Call c, int parentPrec) {
+    /** Every SqlFn but the list-making ones ({@link #call}). */
+    private String postgresCall(SqlExpr.Call c, int parentPrec) {
         List<SqlExpr> a = c.args();
         return switch (c.fn()) {
             // ---- portable: the base arm (or a Spellings.POSTGRES row) is Postgres SQL
@@ -502,14 +746,25 @@ public final class Postgres extends AnsiSqlRenderer {
             case JSON_PRETTY -> "jsonb_pretty(" + expr(a.get(0), 0) + ")";
             case JSON_MERGE_PATCH, VARIANT_ELEMENTS ->
                     throw wall(c.fn(), "variant over jsonb is leg P4");
+            // ---- lists: a list of scalars is a native array (listCall and its siblings below)
             case LIST_FILTER, LIST_TRANSFORM, LIST_CONCAT, LIST_GET, LIST_POSITION,
-                 LIST_EXISTS, LIST_FOR_ALL, STRUCT_INSERT, UNNEST, LIST_FLATTEN,
-                 REGEXP_EXTRACT_ALL, MAP_FROM_LISTS, MAP_FROM_ENTRIES, MAP_EMPTY, MAP_EXTRACT,
-                 MAP_KEYS, MAP_VALUES, MAP_CONCAT, SPLIT, PURE_SPLIT_PART, LIST_LENGTH,
-                 LIST_ZIP, LIST_DISTINCT, LIST_APPEND, LIST_SUM, LIST_MIN, LIST_MAX, LIST_AVG,
-                 LIST_MEDIAN, LIST_MODE, LIST_SORT, LIST_SORT_DESC, LIST_TAIL, LIST_INIT,
-                 RANGE_FN, LIST_PRODUCT, LIST_REDUCE, LIST_SLICE, REPEAT_VALUE,
-                 LIST_BOOL_AND, LIST_BOOL_OR, ALL_DISTINCT, LIST_REVERSE, TYPEOF ->
+                 LIST_EXISTS, LIST_FOR_ALL, UNNEST, LIST_DISTINCT, LIST_APPEND, LIST_SUM, LIST_MIN,
+                 LIST_MAX, LIST_AVG, LIST_MEDIAN, LIST_MODE, LIST_SORT, LIST_SORT_DESC, LIST_TAIL,
+                 LIST_INIT, RANGE_FN, LIST_SLICE, REPEAT_VALUE, LIST_BOOL_AND, LIST_BOOL_OR,
+                 ALL_DISTINCT, LIST_REVERSE -> super.call(c, parentPrec);
+            case LIST_LENGTH -> "cardinality(" + scalarList(a.get(0), c.fn()) + ")";
+            // DuckDB's string_split('', d) is [''], Postgres's string_to_array is {}
+            case SPLIT -> "(CASE WHEN " + expr(a.get(0), 0) + " = '' THEN ARRAY[''] ELSE string_to_array("
+                    + expr(a.get(0), 0) + ", " + expr(a.get(1), 0) + ") END)";
+            case REGEXP_EXTRACT_ALL -> "ARRAY(SELECT m[1] FROM regexp_matches(" + expr(a.get(0), 0) + ", "
+                    + expr(a.get(1), 0) + ", 'g') AS m)";
+            // a map is a jsonb object (a Variant read as Map<String, ...>): its keys and values, in
+            // jsonb's own key order
+            case MAP_KEYS -> "ARRAY(SELECT k FROM jsonb_object_keys(" + expr(a.get(0), 0) + ") AS k)";
+            case MAP_VALUES -> "ARRAY(SELECT v FROM jsonb_each(" + expr(a.get(0), 0) + ") AS e(k, v))";
+            // the jsonb carrier for nested lists, structs and mixed lists is the next step
+            case STRUCT_INSERT, LIST_FLATTEN, MAP_FROM_LISTS, MAP_FROM_ENTRIES, MAP_EMPTY, MAP_EXTRACT,
+                 MAP_CONCAT, PURE_SPLIT_PART, LIST_ZIP, LIST_PRODUCT, LIST_REDUCE, TYPEOF ->
                     throw wall(c.fn(), "collections over the jsonb carrier are leg P4");
         };
     }
@@ -529,8 +784,11 @@ public final class Postgres extends AnsiSqlRenderer {
         String position = a.size() > 1 ? expr(a.get(1), 0) + " || chr(30) || " : "";
         String text = "CAST(CAST(chr(31) || " + position + "(" + expr(a.get(0), 0)
                 + ") || chr(31) AS TIMESTAMPTZ) AS VARCHAR)";
-        return slot instanceof SqlType.Scalar || slot instanceof SqlType.Decimal
-                ? "CAST(" + text + " AS " + castTypeName(slot) + ")" : text;
+        // typed as its slot (never evaluated: the TIMESTAMPTZ cast raises first) -- a list of scalars too
+        boolean typed = slot instanceof SqlType.Scalar || slot instanceof SqlType.Decimal
+                || slot instanceof SqlType.Array arr && (arr.element() instanceof SqlType.Scalar
+                        || arr.element() instanceof SqlType.Decimal);
+        return typed && slot != null ? "CAST(" + text + " AS " + castTypeName(slot) + ")" : text;
     }
 
     /** The base CASE, with a branch that IS error() raised in the CASE's own type. */

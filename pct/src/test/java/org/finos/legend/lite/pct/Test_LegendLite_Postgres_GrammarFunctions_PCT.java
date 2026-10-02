@@ -34,8 +34,6 @@ public class Test_LegendLite_Postgres_GrammarFunctions_PCT extends PCTReportConf
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // Postgres raises differently (its own error, or a different position or wording)
-            one("meta::pure::functions::collection::tests::range::testRangeStepError_Function_1__Boolean_1_", "Execution error message mismatch.\nThe actual message was \"UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             // collections and Variant over the jsonb carrier: leg P4
             one("meta::pure::functions::boolean::tests::equality::eq::testEqNonPrimitive_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
             one("meta::pure::functions::boolean::tests::equality::eq::testEqVarIdentity_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
@@ -43,19 +41,12 @@ public class Test_LegendLite_Postgres_GrammarFunctions_PCT extends PCTReportConf
             one("meta::pure::functions::boolean::tests::equality::equal::testEqualVarIdentity_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
             one("meta::pure::functions::collection::tests::filter::testFilterInstance_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
             one("meta::pure::functions::collection::tests::first::testFirstComplex_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::collection::tests::map::testMapInstance_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::collection::tests::map::testMapInstance_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=locations, type=Array[element=Struct[fields=[Field[name=place, type=VARCHAR], Field"),
             one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToMany_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
             one("meta::pure::functions::collection::tests::map::testMapRelationshipFromManyToOne_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::collection::tests::range::testRangeWithStartStopEqual_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::collection::tests::range::testRangeWithStep_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::collection::tests::range::testRangeWithVariables_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::collection::tests::range::testRange_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::collection::tests::range::testReverseRangeWithPositiveStep_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::collection::tests::range::testReverseRangeWithStep_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::collection::tests::range::testReverseRange_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::lang::tests::letFn::testAssignNewInstance_Function_1__Boolean_1_", "a struct literal reached a dialect without struct support"),
-            one("meta::pure::functions::string::tests::plus::testPlusInCollect_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::string::tests::plus::testPlusInIterate_Function_1__Boolean_1_", "fold reached a dialect without a fold encoding"),
+            one("meta::pure::functions::string::tests::plus::testPlusInCollect_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=firstName, type=VARCHAR]]]], nullable=false] reached Postgres: a nested list, a str"),
+            one("meta::pure::functions::string::tests::plus::testPlusInIterate_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=firstName, type=VARCHAR]]]], nullable=false] reached Postgres: a nested list, a str"),
             // refused by name: a construct the Postgres dialect does not spell yet
             one("meta::pure::functions::boolean::tests::equality::eq::testEqPrimitiveExtension_Function_1__Boolean_1_", "unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger"),
             one("meta::pure::functions::boolean::tests::equality::equal::testEqualPrimitiveExtension_Function_1__Boolean_1_", "unknown type 'meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger' in @meta::pure::functions::boolean::tests::equalitymodel::ExtendedInteger"),

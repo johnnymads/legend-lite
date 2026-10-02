@@ -40,13 +40,8 @@ public class Test_LegendLite_Postgres_UnclassifiedFunctions_PCT extends PCTRepor
             // Postgres raises differently (its own error, or a different position or wording)
             one("meta::pure::functions::string::tests::char::testEmptyChar_Function_1__Boolean_1_", "ERROR: null character not permitted"),
             // collections and Variant over the jsonb carrier: leg P4
-            one("meta::pure::functions::string::tests::regexpCount::testRegexpCount_CaseInsensitive_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::string::tests::regexpCount::testRegexpCount_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtractAll_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtract_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::string::tests::regexpIndexOf::testRegexpIndexOf_Function_1__Boolean_1_", "LIST_GET reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::string::tests::regexpIndexOf::testRegexpIndexOf_GroupNumber_Function_1__Boolean_1_", "LIST_GET reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::string::tests::regexpIndexOf::testRegexpIndexOf_NoMatch_Function_1__Boolean_1_", "LIST_GET reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtractAll_Function_1__Boolean_1_", "expected: ['ab', 'cb', 'cb']\nactual:   ['a', 'c', 'c']"),
+            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtract_Function_1__Boolean_1_", "expected: 'ab'\nactual:   'a'"),
             one("meta::pure::functions::string::tests::splitPart::testSplitPartEmptyString_Function_1__Boolean_1_", "PURE_SPLIT_PART reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::string::tests::splitPart::testSplitPartTypicalToken_Function_1__Boolean_1_", "PURE_SPLIT_PART reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::string::tests::splitPart::testSplitPartWithNoSplit_Function_1__Boolean_1_", "PURE_SPLIT_PART reached Postgres: collections over the jsonb carrier are leg P4"),

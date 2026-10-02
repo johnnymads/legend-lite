@@ -35,31 +35,15 @@ public class Test_LegendLite_Postgres_RelationFunctions_PCT extends PCTReportCon
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
             // collections and Variant over the jsonb carrier: leg P4
-            one("meta::pure::functions::relation::tests::composition::testCoalesceInPreFilter_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::relation::tests::composition::testCoalesceInPreFilter_Function_1__Boolean_1_", "LIST_LENGTH over a list of Typed[type=Array[element=Struct[fields=[Field[name=lastName, type=VARCHAR], Field[name=firstName, type=VARCHAR]]]], nullable=false] reached Postgres: a nested list, a struct"),
             one("meta::pure::functions::relation::tests::composition::testFilterPostProject_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::relation::tests::composition::testVariantArrayColumn_joinStrings_Function_1__Boolean_1_", "collection reduction 'STRING_AGG' reached a dialect without a list encoding"),
-            one("meta::pure::functions::relation::tests::composition::testVariantArrayColumn_reverse_Function_1__Boolean_1_", "LIST_REVERSE reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantArrayColumn_sort_Function_1__Boolean_1_", "LIST_SORT reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantColumn_contains_Function_1__Boolean_1_", "collection membership reached a dialect without a list encoding [collection: Cast]"),
-            one("meta::pure::functions::relation::tests::composition::testVariantColumn_distinct_removeDuplicates_Function_1__Boolean_1_", "LIST_SORT reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantColumn_functionComposition_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantColumn_indexOf_Function_1__Boolean_1_", "LIST_POSITION reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantColumn_isEmpty_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantColumn_isNotEmpty_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantColumn_slice_Function_1__Boolean_1_", "LIST_SLICE reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantMapColumn_keys_LateralFlatten_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::composition::testVariantMapColumn_values_LateralFlatten_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::extend::testVariantColumn_filter_Function_1__Boolean_1_", "LIST_FILTER reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::extend::testVariantColumn_fold_Function_1__Boolean_1_", "fold reached a dialect without a fold encoding"),
-            one("meta::pure::functions::relation::tests::extend::testVariantColumn_map_Function_1__Boolean_1_", "LIST_TRANSFORM reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::tests::filter::testVariantColumn_filterOutputFromLambda_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::relation::tests::composition::testVariantArrayColumn_joinStrings_Function_1__Boolean_1_", "expected: '#TDS\n   id,payload,joined"),
+            one("meta::pure::functions::relation::tests::composition::testVariantMapColumn_values_LateralFlatten_Function_1__Boolean_1_", "LIST_TRANSFORM over a list of Typed[type=Array[element=JSON], nullable=false] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
             one("meta::pure::functions::relation::tests::project::testSimpleProjectList_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
             one("meta::pure::functions::relation::tests::project::testSimpleProjectWithEmpty_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
             one("meta::pure::functions::relation::tests::project::testSimpleProject_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
-            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Extend_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
-            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
-            // Postgres's jsonb prints its OWN canonical text -- keys by length, then bytes; a space after
+            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Extend_Function_1__Boolean_1_", "LIST_LENGTH over a list of Typed[type=Array[element=JSON], nullable=true] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
+            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Function_1__Boolean_1_", "UNNEST over a list of Typed[type=Array[element=JSON], nullable=false] reached Postgres: a nested list, a struct or a mixed list is the jsonb carrier (leg P4)"),
             // every comma and colon -- where Pure (and DuckDB) print the document as written
             one("meta::pure::functions::relation::tests::extend::testVariantColumn_keyExtraction_Function_1__Boolean_1_", "expected: '#TDS\n   id,payload,booleanKey,integerKey,stringKey"),
             one("meta::pure::functions::relation::tests::filter::testVariantColumn_filterOnKeyExtractionValue_Function_1__Boolean_1_", "expected: '#TDS\n   id,payload")
