@@ -59,7 +59,7 @@ public record Spellings(Map<SqlFn, String> fnNames) {
                 SqlFn.CBRT, SqlFn.CHR, SqlFn.COALESCE, SqlFn.COS, SqlFn.COSH, SqlFn.COT,
                 SqlFn.DEGREES, SqlFn.FLOOR_RAW, SqlFn.GREATEST, SqlFn.LEAST,
                 SqlFn.LEFT, SqlFn.LOWER, SqlFn.LTRIM, SqlFn.MD5,
-                SqlFn.POW, SqlFn.RADIANS, SqlFn.REGEXP_REPLACE, SqlFn.REPEAT_STR,
+                SqlFn.POW, SqlFn.RADIANS, SqlFn.REPEAT_STR,
                 SqlFn.REPLACE, SqlFn.REVERSE_STRING, SqlFn.RIGHT, SqlFn.RTRIM, SqlFn.SIN,
                 SqlFn.SINH, SqlFn.SPLIT_PART, SqlFn.STARTS_WITH, SqlFn.STRPOS,
                 SqlFn.SUBSTRING, SqlFn.TAN, SqlFn.TANH, SqlFn.TIMEZONE, SqlFn.TRIM,

@@ -34,11 +34,6 @@ public class Test_LegendLite_Postgres_UnclassifiedFunctions_PCT extends PCTRepor
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // WRONG ANSWERS: a result Pure does not give -- a dialect defect
-            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtractAll_Function_1__Boolean_1_", "expected: ['ab', 'cb', 'cb']\nactual:   ['a', 'c', 'c']"),
-            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtract_Function_1__Boolean_1_", "expected: 'ab'\nactual:   'a'"),
-            one("meta::pure::functions::string::tests::regexpLike::testRegexpLike_CaseInsensitive_Multiline_NonNewlineSensitive_Function_1__Boolean_1_", "Assert failed"),
-            one("meta::pure::functions::string::tests::regexpLike::testRegexpLike_Multiline_NonNewlineSensitive_Function_1__Boolean_1_", "Assert failed"),
             // Postgres raises differently (its own error, or a different position or wording)
             one("meta::pure::functions::string::tests::char::testEmptyChar_Function_1__Boolean_1_", "ERROR: null character not permitted"),
             // collections over the jsonb carrier: leg P4

@@ -34,10 +34,6 @@ public class Test_LegendLite_Postgres_EssentialFunctions_PCT extends PCTReportCo
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // WRONG ANSWERS: a result Pure does not give -- a dialect defect
-            one("meta::pure::functions::collection::tests::sort::testSimpleSortWithFunctionVariables_Function_1__Boolean_1_", "expected: ['Smith', 'Doe', 'Branche']\nactual:   ['Doe', 'Smith', 'Branche']"),
-            one("meta::pure::functions::collection::tests::sort::testSimpleSortWithKey_Function_1__Boolean_1_", "expected: ['Smith', 'Doe', 'Branche']\nactual:   ['Doe', 'Smith', 'Branche']"),
-            // ENGINE PARITY, as DuckDB pins it: string indexOf is 1-based (the engine's locate()), and a big
             // Float is a double (numeric charter Rule 2) -- deliberate, on every dialect
             one("meta::pure::functions::collection::tests::indexof::testIndexOfOneElement_Function_1__Boolean_1_", "expected: 0\nactual:   1"),
             one("meta::pure::functions::math::tests::abs::testBigFloatAbs_Function_1__Boolean_1_", "expected: 123456789123456789.99\nactual:   123456789123456780.0"),

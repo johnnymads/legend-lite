@@ -34,7 +34,9 @@ public class Test_LegendLite_Postgres_GrammarFunctions_PCT extends PCTReportConf
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // WRONG ANSWERS: a result Pure does not give -- a dialect defect
+            // INSTANCE IDENTITY (as on DuckDB): eq/== on class instances is REFERENCE equality in real pure;
+            // the harness inlines captured instances BY VALUE, so eq($x,$x) and eq($x,$y) arrive as identical
+            // text -- identity is erased before the wire
             one("meta::pure::functions::boolean::tests::equality::eq::testEqNonPrimitive_Function_1__Boolean_1_", "Assert failed"),
             one("meta::pure::functions::boolean::tests::equality::equal::testEqualNonPrimitive_Function_1__Boolean_1_", "Assert failed"),
             // Postgres raises differently (its own error, or a different position or wording)

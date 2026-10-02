@@ -318,6 +318,20 @@ public final class Postgres extends AnsiSqlRenderer {
                 + " ORDER BY " + order + ") END)";
     }
 
+    /** The ORDER BY of a list's elements, each {@code x} of type {@code t}: a struct orders by its fields
+     *  in their declared order, as DuckDB's does -- jsonb's own order compares an object's keys in its
+     *  storage order (shorter keys first), which sorted {@code {k, i, v}} by {@code i}; anything else
+     *  by itself. */
+    private String sortKey(String x, SqlType t, String direction) {
+        if (t instanceof SqlType.Struct st) {
+            return st.fields().stream().map(f -> sortKey(f.type() instanceof SqlType.Struct
+                    ? "(" + x + " -> " + stringLit(f.name()) + ")"
+                    : decode("(" + x + " -> " + stringLit(f.name()) + ")", f.type(), 0), f.type(), direction))
+                    .collect(java.util.stream.Collectors.joining(", "));
+        }
+        return x + direction;
+    }
+
     /** A lambda's element and index parameters, spelled; the index is a fresh name when the lambda has one. */
     private String[] lambdaParams(SqlExpr.Lambda l) {
         return new String[] {param(l.params().get(0)), l.params().size() > 1 ? param(l.params().get(1)) : "__o"};
@@ -356,8 +370,10 @@ public final class Postgres extends AnsiSqlRenderer {
             case LIST_APPEND -> "array_append(" + xs + ", " + encode(expr(args.get(1), 0),
                     java.util.Objects.requireNonNull(listElement(args.get(0)))) + ")";
             // reorderings move elements as the list holds them (an inner list stays jsonb)
-            case LIST_SORT -> overElements(xs, held(args.get(0)), x, "__o", x, null, x);
-            case LIST_SORT_DESC -> overElements(xs, held(args.get(0)), x, "__o", x, null, x + " DESC");
+            case LIST_SORT -> overElements(xs, held(args.get(0)), x, "__o", x, null,
+                    sortKey(x, java.util.Objects.requireNonNull(listElement(args.get(0))), ""));
+            case LIST_SORT_DESC -> overElements(xs, held(args.get(0)), x, "__o", x, null,
+                    sortKey(x, java.util.Objects.requireNonNull(listElement(args.get(0))), " DESC"));
             case LIST_REVERSE -> overElements(xs, held(args.get(0)), x, "__o", x, null, "__o DESC");
             case LIST_TAIL -> "(" + xs + ")[2:]";
             case LIST_INIT -> "(" + xs + ")[:cardinality(" + xs + ") - 1]";
@@ -731,7 +747,7 @@ public final class Postgres extends AnsiSqlRenderer {
                  // Spellings.POSTGRES rows
                  ABS, ASCII_CODE, ATAN, ATAN2, CBRT, CHR, COALESCE, COS, COSH, COT, DEGREES,
                  FLOOR_RAW, GREATEST, LEAST, LEFT, LOWER, LTRIM, MD5,
-                 RADIANS, REGEXP_REPLACE, REPEAT_STR, REPLACE, REVERSE_STRING, RIGHT, RTRIM,
+                 RADIANS, REPEAT_STR, REPLACE, REVERSE_STRING, RIGHT, RTRIM,
                  SIN, SINH, SPLIT_PART, STARTS_WITH, STRPOS, SUBSTRING, TAN, TANH,
                  TIMEZONE, TRIM, UPPER -> super.call(c, parentPrec);
             // a Float, as DuckDB's answers; each of these has a numeric overload on Postgres, which a
@@ -789,16 +805,17 @@ public final class Postgres extends AnsiSqlRenderer {
                     + ")) = " + expr(a.get(1), 0) + ")";
             // MATCHES is the PARTIAL test, Postgres' ~ (never regexp_matches: set-
             // returning, it deletes rows in a projection, POSTGRES_BACKEND.md §4.1)
-            case MATCHES -> "(" + expr(a.get(0), 7) + " ~ " + expr(a.get(1), 7) + ")";
-            // full match: ~ is partial on Postgres (§4.2), so the pattern anchors
-            case REGEXP_FULL_MATCH -> "(" + expr(a.get(0), 7) + " ~ "
-                    + (a.get(1) instanceof SqlExpr.StringLit p
-                            ? stringLit("^(?:" + p.value() + ")$")
-                            : "('^(?:' || " + expr(a.get(1), 0) + " || ')$')") + ")";
+            case MATCHES -> "(" + expr(a.get(0), 7) + " ~ " + pattern(a.get(1), "", "") + ")";
+            // full match: ~ is partial on Postgres (§4.2), so the pattern anchors (after its options)
+            case REGEXP_FULL_MATCH -> "(" + expr(a.get(0), 7) + " ~ " + pattern(a.get(1), "^(?:", ")$") + ")";
             // regexp_extract(s, p[, g]) is '' on a miss; regexp_substr is NULL
             case REGEXP_EXTRACT -> "coalesce(regexp_substr(" + expr(a.get(0), 0) + ", "
-                    + expr(a.get(1), 0) + ", 1, 1, '', "
+                    + pattern(a.get(1), "", "") + ", 1, 1, '', "
                     + (a.size() > 2 ? expr(a.get(2), 0) : "0") + "), '')";
+            // regexp_replace(s, p, r[, options]): DuckDB's 'g' is Postgres's
+            case REGEXP_REPLACE -> "regexp_replace(" + expr(a.get(0), 0) + ", " + pattern(a.get(1), "", "")
+                    + a.subList(2, a.size()).stream().map(x -> ", " + expr(x, 0))
+                            .collect(java.util.stream.Collectors.joining()) + ")";
             // Postgres' base64 wraps lines at 76 characters
             case ENCODE_BASE64 -> "replace(encode(convert_to(" + expr(a.get(0), 0)
                     + ", 'UTF8'), 'base64'), chr(10), '')";
@@ -923,8 +940,16 @@ public final class Postgres extends AnsiSqlRenderer {
             // DuckDB's string_split('', d) is [''], Postgres's string_to_array is {}
             case SPLIT -> "(CASE WHEN " + expr(a.get(0), 0) + " = '' THEN ARRAY[''] ELSE string_to_array("
                     + expr(a.get(0), 0) + ", " + expr(a.get(1), 0) + ") END)";
-            case REGEXP_EXTRACT_ALL -> "ARRAY(SELECT m[1] FROM regexp_matches(" + expr(a.get(0), 0) + ", "
-                    + expr(a.get(1), 0) + ", 'g') AS m)";
+            // DuckDB's regexp_extract_all(s, p[, g]): group g (0, the whole match, by default) of every
+            // match -- the n-th match's group by regexp_substr, as REGEXP_EXTRACT reads one (regexp_matches
+            // answers the capture groups alone once a pattern has any: its m[1] is group 1)
+            case REGEXP_EXTRACT_ALL -> {
+                String str = expr(a.get(0), 0);
+                String pat = pattern(a.get(1), "", "");
+                yield "ARRAY(SELECT regexp_substr(" + str + ", " + pat + ", 1, __n, '', "
+                        + (a.size() > 2 ? expr(a.get(2), 0) : "0") + ") FROM generate_series(1, regexp_count("
+                        + str + ", " + pat + ")) AS __g(__n) ORDER BY __n)";
+            }
             // a map is a jsonb object (a Variant read as Map<String, ...>): its keys and values, in
             // jsonb's own key order
             case MAP_KEYS -> "ARRAY(SELECT k FROM jsonb_object_keys(" + expr(a.get(0), 0) + ") AS k)";
@@ -1135,6 +1160,40 @@ public final class Postgres extends AnsiSqlRenderer {
             case BIT_SHIFT_RIGHT -> "(" + x + " >> CAST(" + y + " AS INTEGER))";
             default -> throw new IllegalStateException("not a bit op: " + fnName);
         };
+    }
+
+    /** RE2's inline flags, as the lowering prefixes a pattern with them (RegexpRules.inlineFlags). */
+    private static final java.util.regex.Pattern RE2_FLAGS = java.util.regex.Pattern.compile("\\(\\?([ims]+)\\)");
+
+    /**
+     * A pattern in Postgres's own flavour (ARE), wrapped in {@code open}/{@code close}: the platform's
+     * patterns are RE2's (DuckDB's), whose inline flags Postgres reads otherwise -- its {@code m} is
+     * NEWLINE-SENSITIVE, and its default lets {@code .} match a newline, which RE2's never does. So the
+     * RE2 flags become ARE options, always spelled, at the very front (where ARE takes them): RE2's
+     * default (. stops at a newline, ^ and $ at the ends) is {@code p}, MULTILINE {@code n},
+     * NON_NEWLINE_SENSITIVE {@code s}, both {@code w}; CASE_INSENSITIVE {@code i} (probed on 16.15,
+     * 2026-10-02).
+     */
+    private String pattern(SqlExpr p, String open, String close) {
+        String flags = "";
+        String literal = p instanceof SqlExpr.StringLit lit ? lit.value() : null;   // the body, when literal
+        SqlExpr body = p;
+        java.util.regex.Matcher m;
+        if (literal != null && (m = RE2_FLAGS.matcher(literal)).lookingAt()) {
+            flags = m.group(1);
+            literal = literal.substring(m.end());
+        } else if (p instanceof SqlExpr.Call c && c.fn() == SqlFn.CONCAT && c.args().size() == 2
+                && c.args().get(0) instanceof SqlExpr.StringLit lit && (m = RE2_FLAGS.matcher(lit.value())).matches()) {
+            flags = m.group(1);
+            body = c.args().get(1);
+        }
+        boolean multiline = flags.contains("m");
+        boolean dotAll = flags.contains("s");
+        String options = "(?" + (flags.contains("i") ? "i" : "")
+                + (multiline ? (dotAll ? "w" : "n") : (dotAll ? "s" : "p")) + ")";
+        return literal != null
+                ? stringLit(options + open + literal + close)
+                : "('" + options + open + "' || " + expr(body, 0) + (close.isEmpty() ? "" : " || '" + close + "'") + ")";
     }
 
     // ==================================================================

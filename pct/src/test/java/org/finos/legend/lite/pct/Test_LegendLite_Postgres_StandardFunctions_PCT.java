@@ -34,9 +34,6 @@ public class Test_LegendLite_Postgres_StandardFunctions_PCT extends PCTReportCon
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // WRONG ANSWERS: a result Pure does not give -- a dialect defect
-            one("meta::pure::functions::math::tests::maxBy::testMaxBy_Function_1__Boolean_1_", "expected: 2\nactual:   1"),
-            one("meta::pure::functions::math::tests::minBy::testMinBy_Function_1__Boolean_1_", "expected: 2020\nactual:   1001"),
             // Postgres raises differently (its own error, or a different position or wording)
             one("meta::pure::functions::collection::tests::greatest::testGreatest_Boolean_Function_1__Boolean_1_", "ERROR: function max(boolean) does not exist"),
             one("meta::pure::functions::collection::tests::least::testLeast_Boolean_Function_1__Boolean_1_", "ERROR: function min(boolean) does not exist"),
