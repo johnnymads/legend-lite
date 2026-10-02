@@ -59,16 +59,29 @@ export type EditorTab =
   | 'General Properties'
   | 'Column Properties';
 
-/** DataCube's own order, which is not its enum's declaration order. */
-export const EDITOR_TABS: readonly EditorTab[] = [
-  'Columns',
-  'Horizontal Pivots',
-  'Vertical Pivots',
-  'Dimensions',
-  'Sorts',
-  'General Properties',
-  'Column Properties',
+/**
+ * The rail's sections, in its order (the user, 2026-10-01): the LAYOUT -- named as the drop zones
+ * name it, Row Groups and Column Labels, not upstream's Vertical / Horizontal Pivots -- then the
+ * PROPERTIES. The ids stay upstream's tab names.
+ */
+export const EDITOR_GROUPS: readonly { readonly title: string; readonly tabs: readonly EditorTab[] }[] = [
+  { title: 'Layout', tabs: ['Columns', 'Vertical Pivots', 'Horizontal Pivots', 'Sorts', 'Dimensions'] },
+  { title: 'Properties', tabs: ['Column Properties', 'General Properties'] },
 ];
+
+/** Every section, in the rail's order. */
+export const EDITOR_TABS: readonly EditorTab[] = EDITOR_GROUPS.flatMap((g) => g.tabs);
+
+/** What the rail calls a section. */
+export const TAB_LABELS: Readonly<Record<EditorTab, string>> = {
+  'Columns': 'Columns',
+  'Vertical Pivots': 'Row Groups',
+  'Horizontal Pivots': 'Column Labels',
+  'Sorts': 'Sorts',
+  'Dimensions': 'Dimensions',
+  'Column Properties': 'Column Properties',
+  'General Properties': 'General Properties',
+};
 
 export interface EditorOptions {
   /**
@@ -119,14 +132,19 @@ export class CubeEditor {
     root.setAttribute('aria-label', 'Cube properties');
 
     this.#tabStrip = this.#doc.createElement('div');
-    this.#tabStrip.className = 'dc-editor-tabs';
+    this.#tabStrip.className = 'dc-editor-tabs dc-pe-rail';
     this.#tabStrip.setAttribute('role', 'tablist');
+    this.#tabStrip.setAttribute('aria-orientation', 'vertical');
 
     this.#body = this.#doc.createElement('div');
     this.#body.className = 'dc-editor-body';
     this.#body.setAttribute('role', 'tabpanel');
 
-    root.replaceChildren(this.#tabStrip, this.#body, this.#footer());
+    const main = this.#doc.createElement('div');
+    main.className = 'dc-pe-main';
+    main.append(this.#tabStrip, this.#body);
+    root.classList.add('dc-pe');
+    root.replaceChildren(main, this.#footer());
     this.#renderTabs();
     this.refresh();
   }
@@ -219,29 +237,40 @@ export class CubeEditor {
   }
 
   #renderTabs(): void {
-    const tabs = EDITOR_TABS.map((tab) => {
-      const b = this.#doc.createElement('button');
-      b.type = 'button';
-      b.className = 'dc-editor-tab';
-      b.textContent = tab;
-      b.setAttribute('role', 'tab');
-      const current = tab === this.#tab;
-      b.setAttribute('aria-selected', String(current));
-      b.classList.toggle('dc-on', current);
-      // Roving tabindex: the strip is ONE stop and arrows move within
-      // it. Seven tab stops in front of the panel is how a keyboard
-      // user gives up on a settings dialog.
-      b.tabIndex = current ? 0 : -1;
-      b.addEventListener('click', () => this.setTab(tab));
-      b.addEventListener('keydown', (event) => this.#tabKey(event, tab));
-      return b;
-    });
-    this.#tabStrip.replaceChildren(...tabs);
+    const parts: HTMLElement[] = [];
+    for (const group of EDITOR_GROUPS) {
+      const title = this.#doc.createElement('div');
+      title.className = 'dc-pe-rail-title';
+      title.textContent = group.title;
+      parts.push(title);
+      for (const tab of group.tabs) parts.push(this.#tabButton(tab));
+    }
+    this.#tabStrip.replaceChildren(...parts);
+  }
+
+  #tabButton(tab: EditorTab): HTMLElement {
+    const b = this.#doc.createElement('button');
+    b.type = 'button';
+    b.className = 'dc-editor-tab';
+    b.dataset['tab'] = tab;
+    b.textContent = TAB_LABELS[tab];
+    b.setAttribute('role', 'tab');
+    const current = tab === this.#tab;
+    b.setAttribute('aria-selected', String(current));
+    b.classList.toggle('dc-on', current);
+    // Roving tabindex: the strip is ONE stop and arrows move within
+    // it. Seven tab stops in front of the panel is how a keyboard
+    // user gives up on a settings dialog.
+    b.tabIndex = current ? 0 : -1;
+    b.addEventListener('click', () => this.setTab(tab));
+    b.addEventListener('keydown', (event) => this.#tabKey(event, tab));
+    return b;
   }
 
   #tabKey(event: KeyboardEvent, tab: EditorTab): void {
     const step =
-      event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+      event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1
+        : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
     if (step === 0) return;
     event.preventDefault();
     const i = EDITOR_TABS.indexOf(tab);
@@ -249,7 +278,7 @@ export class CubeEditor {
       (i + step + EDITOR_TABS.length) % EDITOR_TABS.length
     ] as EditorTab;
     this.setTab(next);
-    (this.#tabStrip.children[EDITOR_TABS.indexOf(next)] as HTMLElement).focus();
+    this.#tabStrip.querySelector<HTMLElement>(`.dc-editor-tab[data-tab="${next}"]`)?.focus();
   }
 
   #footer(): HTMLElement {
@@ -350,7 +379,7 @@ const horizontalPivotsPanel: PanelBuilder = (ctx) => {
         ),
     },
   );
-  return panelShell(ctx.doc, 'Horizontal Pivots', body);
+  return panelShell(ctx.doc, TAB_LABELS['Horizontal Pivots'], body);
 };
 
 const verticalPivotsPanel: PanelBuilder = (ctx) => {
@@ -363,7 +392,7 @@ const verticalPivotsPanel: PanelBuilder = (ctx) => {
       ctx.setSnapshot({ ...s, rows: [...rows] });
     },
   );
-  return panelShell(ctx.doc, 'Vertical Pivots', body);
+  return panelShell(ctx.doc, TAB_LABELS['Vertical Pivots'], body);
 };
 
 /**

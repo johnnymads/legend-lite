@@ -1921,6 +1921,14 @@ try {
   // again.
 
   /** Open Properties and select a tab by name. */
+  /** Column Properties' columns, in the list beside the form (src/ui/panel-column.ts). */
+  const columnChoices = () => page.locator('.dc-app-overlay .dc-pe-col')
+    .evaluateAll((els) => els.map((e) => e.dataset.column));
+  /** Choose a column there, as a person does. */
+  const chooseColumn = async (name) => {
+    await page.locator(`.dc-app-overlay .dc-pe-col[data-column="${name}"]`).click();
+  };
+
   async function editorTab(name) {
     await menu(['Properties...'], { requery: false });
     const tab = page.locator('.dc-editor-tab', { hasText: name });
@@ -2138,8 +2146,11 @@ try {
     rows: [...document.querySelectorAll('.dc-row')].slice(0, 4).map((r) =>
       [...r.querySelectorAll('.dc-cell')].map(
         (c) => c.textContent?.trim() ?? '').join(',')).join(' // '),
-    colour: [...document.querySelectorAll('.dc-cell')]
-      .filter((c) => c.style.backgroundColor).length,
+    // WHICH cells, in WHAT colour: a count could not tell a heatmap from a colour another
+    // check left on every cell of the same rows.
+    colour: [...document.querySelectorAll('.dc-row')].slice(0, 8).map((r) =>
+      [...r.querySelectorAll('.dc-cell')].map((c) => c.style.backgroundColor || '-').join(','))
+      .join(' // '),
   }));
 
   const firstDifference = (a, b) => {
@@ -2159,14 +2170,26 @@ try {
     ['a row group', ['Pivot', /^Vertical Pivot on/], { col: 3 }],
     ['hiding a column', [/^Hide /], {}],
     ['pinning a column', ['Pin', 'Pin Left'], {}],
-    ['a heatmap', ['Heatmap', /^Add Heatmap/], { col: heatCol }],
+    // a NUMERIC column as the grid shows it NOW: the index the heatmap check found is stale
+    // once a later check has reordered the columns
+    ['a heatmap', ['Heatmap', /^Add Heatmap/], async () => {
+      const view = await readView(page);
+      return { col: (await headerNames()).findIndex((n) => isNumeric(view.find((c) => c.name === n)?.type)) };
+    }],
   ]) {
     await check(`undo restores everything after ${what}`, async () => {
+      const at = typeof opts === 'function' ? await opts() : opts;
+      if (at.col !== undefined && at.col < 0) throw new Error('no numeric column to shade');
       const before = await fullState();
-      await menu(path, opts);
-      const changed = await fullState();
+      await menu(path, at);
+      // a cosmetic change paints after the query settles: give it the frames it needs
+      let changed = await fullState();
+      for (let i = 0; i < 10 && firstDifference(before, changed) === null; i += 1) {
+        await page.waitForTimeout(100);
+        changed = await fullState();
+      }
       if (firstDifference(before, changed) === null) {
-        throw new Error('the operation changed nothing at all');
+        throw new Error(`the operation changed nothing at all (colour ${before.colour.slice(0, 120)})`);
       }
       await burger('Undo');
       const after = await fullState();
@@ -2185,17 +2208,14 @@ try {
     // GENERATED AGGREGATE, not the label in the panel.
     await menu(['Pivot', 'Clear All Vertical Pivots']).catch(() => {});
     await editorTab('Column Properties');
-    const chooser = page.locator('.dc-field', { hasText: 'Column:' })
-      .first().locator('select').first();
-    if (!(await chooser.count())) throw new Error('no column chooser');
-    const opts = await chooser.evaluate((e) =>
-      [...e.options].map((o) => o.value));
+    const opts = await columnChoices();
+    if (opts.length === 0) throw new Error('no column list');
     // An INTEGER column, by the compiler's type: numeric, so a measure by default (D3,
     // upstream's rule) -- and the first one is the id, which a person makes a dimension.
     const view = await readView(page);
     const want = opts.find((n) => view.find((c) => c.name === n)?.type === 'Integer');
     if (!want) throw new Error(`no Integer column among ${opts.join(',')}`);
-    await chooser.selectOption(want);
+    await chooseColumn(want);
     await page.waitForTimeout(250);
     // the kind is always shown (the user, 2026-09-30): upstream's one ADVANCED setting, no
     // checkbox to open first
@@ -2238,12 +2258,9 @@ try {
     // renamed column keeps its identity, which is exactly why the
     // invariant compares headers by position rather than by text.
     await editorTab('Column Properties');
-    const chooser = page.locator('.dc-field', { hasText: 'Column:' })
-      .first().locator('select').first();
-    const opts = await chooser.evaluate((e) =>
-      [...e.options].map((o) => o.value));
+    const opts = await columnChoices();
     const want = opts[opts.length - 1];
-    await chooser.selectOption(want);
+    await chooseColumn(want);
     await page.waitForTimeout(250);
     const nameField = page.locator('.dc-field', { hasText: 'Display Name' })
       .first().locator('input').first();
@@ -2788,8 +2805,7 @@ try {
       // Float shows the number section with upstream's 2 decimals.
       await page.click('.dc-status-properties');
       await page.locator('.dc-app-overlay .dc-editor-tab', { hasText: 'Column Properties' }).click();
-      await page.locator('.dc-app-overlay .dc-field:has(> .dc-field-label:text-is("Choose Column:")) select')
-        .selectOption('uplift');
+      await page.locator('.dc-app-overlay .dc-pe-col[data-column="uplift"]').click();
       // The Decimals field holds the number AND the commas and parens
       // boxes, so the number input by its type.
       const decimalsField = page.locator('.dc-app-overlay .dc-field:has(> .dc-field-label:text-is("Decimals:")) input[type=number]');
@@ -3118,6 +3134,8 @@ try {
         expr: (document.querySelector('.dc-coleditor .dc-xc-prefix')?.textContent ?? '')
           + (document.querySelector('.dc-coleditor .dc-calc-input-expr')?.value ?? ''),
         problem: document.querySelector('.dc-coleditor .dc-calc-check')?.textContent ?? '',
+        prefixes: [...document.querySelectorAll('.dc-coleditor .dc-xc-prefix')].map((e) => e.textContent),
+        kind: document.querySelector('.dc-coleditor .dc-xc-kind[aria-pressed="true"], .dc-coleditor .dc-xc-kind.dc-active')?.dataset.kind ?? null,
       }));
       await closeCalc();
       await clearCalcs();
@@ -4612,7 +4630,7 @@ try {
       await page.waitForSelector(`${O} .dc-editor`, { timeout: 5000 });
       await page.locator(`${O} .dc-editor-tab`, { hasText: tab }).first().click();
       if (column) {
-        await fieldOf('Choose Column:').locator('select').selectOption(column);
+        await page.locator(`${O} .dc-pe-col[data-column="${column}"]`).click();
       }
     };
     const okEditor = async () => {

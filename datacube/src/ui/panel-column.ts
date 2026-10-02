@@ -134,6 +134,10 @@ const WIDTH_MODES: readonly { value: WidthMode; label: string }[] = [
 /** Which column the panel shows. */
 export interface ColumnPanelUi {
   chosen: string | null;
+  /** The column list's search, kept as the panel rebuilds. */
+  filter?: string;
+  /** Section titles folded away, kept as the panel rebuilds. */
+  folded?: string[];
 }
 
 /**
@@ -197,23 +201,13 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
     });
   };
 
-  const chooser = field(
-    doc,
-    'Choose Column:',
-    dropdown(
-      doc,
-      name,
-      columns.map((c) => ({ value: c.name, label: c.name })),
-      (next) => {
-        // Every control below is bound to the chosen column, so this
-        // is the one change that rebuilds the panel.
-        uiState.chosen = next ?? null;
-        ctx.refresh();
-      },
-      { width: 260 },
-    ),
-    badge(doc, spec?.type ?? derivedRow?.type ?? ''),
-  );
+  // THE COLUMN, chosen from the list beside the form (`columnList`): its name and type, at the top
+  const chooser = doc.createElement('div');
+  chooser.className = 'dc-pe-colhead';
+  const chosenName = doc.createElement('span');
+  chosenName.className = 'dc-pe-colname';
+  chosenName.textContent = name;
+  chooser.append(chosenName, badge(doc, spec?.type ?? derivedRow?.type ?? ''));
 
   const c = cfg();
   // the declared kind, else the default for the compiler's type (a calculated
@@ -577,8 +571,122 @@ export const columnPropertiesPanel: PanelBuilder = (ctx) => {
   parts.push(display, colouring);
   if (dataType === undefined || dataType === 'text') parts.push(links);
 
-  return panelShell(doc, 'Column Properties', ...parts);
+  // EACH SECTION folds away, and says when it holds a change from the defaults
+  const raw = columnConfig(draft.config, name);
+  const changed = (keys: readonly string[], formatKeys: readonly string[] = []): boolean =>
+    keys.some((k) => (raw as Record<string, unknown>)[k] !== undefined)
+    || formatKeys.some((k) => (raw.format as Record<string, unknown> | undefined)?.[k] !== undefined);
+  foldable(doc, uiState, aggregation, changed(['aggregateFn', 'aggregationParameters', 'excludedFromPivot',
+    'pivotStatisticColumnFunction', 'pivotSortDirection']));
+  foldable(doc, uiState, formatting, changed([], ['kind', 'currency', 'nullText', 'fontCase']));
+  foldable(doc, uiState, numbers, changed([], ['decimals', 'displayCommas', 'negativeParens', 'numberScale', 'unit']));
+  foldable(doc, uiState, display, changed(['blurred', 'hidden', 'pinned', 'widthMode', 'width', 'minWidth', 'maxWidth']));
+  foldable(doc, uiState, links, changed(['displayAsLink', 'linkLabelParameter']));
+  foldable(doc, uiState, colouring, changed(['heatmap', 'appearance']));
+
+  const form = doc.createElement('div');
+  form.className = 'dc-pe-form';
+  form.append(...parts);
+  const split = doc.createElement('div');
+  split.className = 'dc-pe-split';
+  split.append(columnList(ctx, uiState, columns.map((c) => c.name), name), form);
+  return panelShell(doc, 'Column Properties', split);
 };
+
+/**
+ * THE COLUMNS, beside the form (the user, 2026-10-01): searchable, each its type and a mark when
+ * its settings are not the defaults. Choosing one shows its settings: the one change that rebuilds
+ * the panel, since every control is bound to the chosen column.
+ */
+function columnList(ctx: Parameters<PanelBuilder>[0], ui: ColumnPanelUi, names: readonly string[], chosen: string): HTMLElement {
+  const doc = ctx.doc;
+  const draft = ctx.draft();
+  const box = doc.createElement('div');
+  box.className = 'dc-pe-colist';
+  const search = doc.createElement('input');
+  search.type = 'search';
+  search.className = 'dc-pe-colsearch';
+  search.placeholder = 'Find a column';
+  search.setAttribute('aria-label', 'Find a column');
+  search.value = ui.filter ?? '';
+  const list = doc.createElement('div');
+  list.className = 'dc-pe-cols';
+  list.setAttribute('role', 'listbox');
+  list.setAttribute('aria-label', 'Columns');
+  const typeOf = (n: string): string => draft.snapshot.columns.find((c) => c.name === n)?.type
+    ?? [...rowColumns(draft.snapshot), ...(draft.snapshot.groupDerived ?? [])].find((x) => x.name === n)?.type ?? '';
+  const paint = (): void => {
+    const q = search.value.trim().toLowerCase();
+    list.replaceChildren();
+    for (const n of names.filter((x) => q === '' || x.toLowerCase().includes(q))) {
+      const b = doc.createElement('button');
+      b.type = 'button';
+      b.className = 'dc-pe-col';
+      b.dataset['column'] = n;
+      b.setAttribute('role', 'option');
+      const on = n === chosen;
+      b.setAttribute('aria-selected', String(on));
+      b.classList.toggle('dc-on', on);
+      const label = doc.createElement('span');
+      label.className = 'dc-pe-col-name';
+      label.textContent = n;
+      const type = doc.createElement('span');
+      type.className = 'dc-pe-col-type';
+      type.textContent = typeOf(n);
+      b.append(label, type);
+      if (Object.keys(columnConfig(draft.config, n)).length > 0) {
+        const mark = doc.createElement('span');
+        mark.className = 'dc-pe-changed';
+        mark.title = 'Its settings are not the defaults';
+        b.append(mark);
+      }
+      b.addEventListener('click', () => {
+        if (n === ui.chosen) return;
+        ui.chosen = n;
+        ctx.refresh();
+      });
+      list.append(b);
+    }
+  };
+  search.addEventListener('input', () => {
+    ui.filter = search.value;
+    paint();
+  });
+  paint();
+  box.append(search, list);
+  return box;
+}
+
+/** A section whose title folds it, marked when it holds a change. */
+function foldable(doc: Document, ui: ColumnPanelUi, section: HTMLElement, changed: boolean): void {
+  const title = section.querySelector<HTMLElement>(':scope > .dc-section-title');
+  if (!title) return;
+  const key = title.textContent ?? '';
+  section.classList.add('dc-pe-fold');
+  const folded = ui.folded?.includes(key) === true;
+  section.classList.toggle('dc-folded', folded);
+  title.setAttribute('role', 'button');
+  title.tabIndex = 0;
+  title.setAttribute('aria-expanded', String(!folded));
+  if (changed) {
+    const mark = doc.createElement('span');
+    mark.className = 'dc-pe-changed';
+    mark.title = 'Changed from the defaults';
+    title.append(mark);
+  }
+  const toggle = (): void => {
+    const now = !section.classList.contains('dc-folded');
+    section.classList.toggle('dc-folded', now);
+    title.setAttribute('aria-expanded', String(!now));
+    const set = new Set(ui.folded ?? []);
+    if (now) set.add(key); else set.delete(key);
+    ui.folded = [...set];
+  };
+  title.addEventListener('click', toggle);
+  title.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+  });
+}
 
 /** The kind control, with upstream's reason when a pivot locks it. */
 function lockedKind(control: HTMLSelectElement, locked: boolean): HTMLSelectElement {

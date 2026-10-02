@@ -96,8 +96,9 @@ const tool = async (label) => {
   await rightClick();
   await pick(viaMenu[label] ?? label);
 };
-const tab = (label) =>
-  page.locator('.dc-editor-tab', { hasText: label }).first().click();
+/** A Properties section, by its id (upstream's tab name; the rail shows its own label). */
+const tab = (id) =>
+  page.locator(`.dc-editor-tab[data-tab="${id}"]`).first().click();
 const field = (label) =>
   page
     .locator('.dc-field')
@@ -195,7 +196,7 @@ try {
 
   // -- a heatmap, set the way a user would ------------------------------
   await tab('Column Properties');
-  await field('Choose Column:').locator('select').selectOption('notional');
+  await page.locator('.dc-pe-col[data-column="notional"]').click();
   await field('Heatmap:').locator('input[type="checkbox"]').check();
   await shot('editor-heatmap-on', '.dc-app-overlay');
   await page

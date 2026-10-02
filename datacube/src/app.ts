@@ -2941,6 +2941,9 @@ export class CubeApp {
           ...(column !== undefined ? { initialColumn: column } : {}),
         },
       );
+    }, {
+      // the rail of sections, and Column Properties' columns beside its form
+      size: { width: 980, height: 660, minWidth: 640, minHeight: 400 },
     });
   }
 

@@ -5,6 +5,7 @@ import { JSDOM } from 'jsdom';
 import {
   CubeEditor,
   EDITOR_TABS,
+  TAB_LABELS,
   draftFor,
   sortLabel,
   type CubeDraft,
@@ -36,19 +37,31 @@ const CUBE: CubeSnapshot = {
   epoch: 3,
 };
 
-describe('the tab strip', () => {
-  it("is DataCube's seven tabs, in DataCube's order", () => {
+describe('the rail', () => {
+  it("is DataCube's seven sections: the layout, named as the drop zones name it, then the properties", () => {
     assert.deepEqual(EDITOR_TABS, [
       'Columns',
-      'Horizontal Pivots',
       'Vertical Pivots',
-      'Dimensions',
+      'Horizontal Pivots',
       'Sorts',
-      'General Properties',
+      'Dimensions',
       'Column Properties',
+      'General Properties',
     ]);
+    assert.equal(TAB_LABELS['Vertical Pivots'], 'Row Groups');
+    assert.equal(TAB_LABELS['Horizontal Pivots'], 'Column Labels');
   });
 });
+
+/** The column Column Properties shows: the one marked in its list. */
+const chosenColumn = (within: ParentNode): string | undefined =>
+  within.querySelector<HTMLElement>('.dc-pe-col.dc-on')?.dataset['column'];
+/** Choose a column from Column Properties' list, as a person does. */
+const chooseColumn = (within: ParentNode, name: string): void => {
+  const b = within.querySelector<HTMLButtonElement>(`.dc-pe-col[data-column="${name}"]`);
+  assert.ok(b, `no column ${name} in the list`);
+  b.click();
+};
 
 describe('sortLabel', () => {
   it('reads a pivoted column back as its dimension values', () => {
@@ -89,9 +102,7 @@ describe('the editor', () => {
   });
 
   const tabButton = (tab: EditorTab): HTMLButtonElement =>
-    [...root.querySelectorAll('.dc-editor-tab')].find(
-      (b) => b.textContent === tab,
-    ) as HTMLButtonElement;
+    root.querySelector(`.dc-editor-tab[data-tab="${tab}"]`) as HTMLButtonElement;
   const go = (tab: EditorTab): void => {
     tabButton(tab).click();
   };
@@ -126,7 +137,8 @@ describe('the editor', () => {
         bubbles: true,
       }),
     );
-    assert.equal(editor.tab, 'Horizontal Pivots');
+    // the rail's order: the layout's Row Groups next
+    assert.equal(editor.tab, 'Vertical Pivots');
   });
 
   it('wraps at the ends rather than dead-ending', () => {
@@ -136,7 +148,7 @@ describe('the editor', () => {
         bubbles: true,
       }),
     );
-    assert.equal(editor.tab, 'Column Properties');
+    assert.equal(editor.tab, 'General Properties');
   });
 
   it('changes NOTHING until Apply', () => {
@@ -295,10 +307,7 @@ describe('the editor', () => {
 
   it('Column Properties rebinds every control when the column changes', () => {
     go('Column Properties');
-    const chooser = fieldWithLabel('Choose Column:').querySelector(
-      'select',
-    ) as HTMLSelectElement;
-    assert.equal(chooser.value, 'region');
+    assert.equal(chosenColumn(root), 'region');
 
     const name = fieldWithLabel('Display Name:').querySelector(
       'input',
@@ -307,8 +316,7 @@ describe('the editor', () => {
     name.dispatchEvent(new dom.window.Event('change'));
     assert.equal(columnConfig(editor.draft.config, 'region').displayName, 'Region');
 
-    chooser.value = 'notional';
-    chooser.dispatchEvent(new dom.window.Event('change'));
+    chooseColumn(root, 'notional');
     const after = fieldWithLabel('Display Name:').querySelector(
       'input',
     ) as HTMLInputElement;
@@ -324,21 +332,13 @@ describe('the editor', () => {
       ) as HTMLSelectElement;
     assert.equal(agg().disabled, true, 'region is a dimension');
 
-    const chooser = fieldWithLabel('Choose Column:').querySelector(
-      'select',
-    ) as HTMLSelectElement;
-    chooser.value = 'notional';
-    chooser.dispatchEvent(new dom.window.Event('change'));
+    chooseColumn(root, 'notional');
     assert.equal(agg().disabled, false);
   });
 
   it('offers a weight column only for a weighted average', () => {
     go('Column Properties');
-    const chooser = fieldWithLabel('Choose Column:').querySelector(
-      'select',
-    ) as HTMLSelectElement;
-    chooser.value = 'notional';
-    chooser.dispatchEvent(new dom.window.Event('change'));
+    chooseColumn(root, 'notional');
 
     const weight = (): HTMLSelectElement =>
       fieldWithLabel('Weight column:').querySelector(
@@ -396,11 +396,7 @@ describe('the editor', () => {
   describe('Column Properties follows the column type', () => {
     const choose = (name: string): void => {
       go('Column Properties');
-      const chooser = fieldWithLabel('Choose Column:').querySelector(
-        'select',
-      ) as HTMLSelectElement;
-      chooser.value = name;
-      chooser.dispatchEvent(new dom.window.Event('change'));
+      chooseColumn(root, name);
     };
     // the kind is always shown now: nothing to open first
     const advanced = (): void => {};
@@ -484,11 +480,7 @@ describe('the editor', () => {
     // Module-level state would make the second editor jump to
     // whatever column the first was showing.
     go('Column Properties');
-    const chooser = fieldWithLabel('Choose Column:').querySelector(
-      'select',
-    ) as HTMLSelectElement;
-    chooser.value = 'notional';
-    chooser.dispatchEvent(new dom.window.Event('change'));
+    chooseColumn(root, 'notional');
 
     const other = dom.window.document.createElement('div');
     new CubeEditor(other, draftFor(CUBE), {
@@ -496,8 +488,7 @@ describe('the editor', () => {
       onClose: () => {},
       initialTab: 'Column Properties',
     });
-    const otherChooser = other.querySelector('select') as HTMLSelectElement;
-    assert.equal(otherChooser.value, 'region');
+    assert.equal(chosenColumn(other), 'region');
   });
 
   it('Dimensions adds, renames and deletes a hierarchy', () => {

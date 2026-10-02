@@ -793,10 +793,8 @@ describe('the app', () => {
     const active = win.querySelector('.dc-editor-tab[aria-selected="true"]');
     assert.equal(active?.textContent, 'Column Properties');
     // `total` is a measure over `notional`: the panel shows the column.
-    const chooser = [...win.querySelectorAll('.dc-field')]
-      .find((f) => f.querySelector('.dc-field-label')?.textContent === 'Choose Column:')
-      ?.querySelector('select') as HTMLSelectElement;
-    assert.equal(chooser.value, 'notional');
+    // the column shown: the one marked in Column Properties' list
+    assert.equal(win.querySelector<HTMLElement>('.dc-pe-col.dc-on')?.dataset['column'], 'notional');
   });
 
   it('Properties... from a CELL opens Column Properties on its column too (the user, 2026-09-30)', () => {
@@ -805,10 +803,8 @@ describe('the app', () => {
     const win = root.querySelector('[data-window="Properties"]') as HTMLElement;
     const active = win.querySelector('.dc-editor-tab[aria-selected="true"]');
     assert.equal(active?.textContent, 'Column Properties');
-    const chooser = [...win.querySelectorAll('.dc-field')]
-      .find((f) => f.querySelector('.dc-field-label')?.textContent === 'Choose Column:')
-      ?.querySelector('select') as HTMLSelectElement;
-    assert.equal(chooser.value, 'notional');
+    // the column shown: the one marked in Column Properties' list
+    assert.equal(win.querySelector<HTMLElement>('.dc-pe-col.dc-on')?.dataset['column'], 'notional');
   });
 
   it('keeps several windows open at once, as upstream\'s layout', () => {
