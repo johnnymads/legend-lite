@@ -19,6 +19,8 @@ import { suggest } from '../app/probe.ts';
 import { renderConstants } from './constants.ts';
 import { renderParameters } from './params.ts';
 import { openQueryDialog, save, saveAs } from './queries.ts';
+import { toQuery } from '../app/persist.ts';
+import { queryFragment } from '../../../query-store/src/share.ts';
 import { Results } from './results.ts';
 import { textDialog } from './text.ts';
 
@@ -146,11 +148,24 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
   };
   const stacked = (name: 'undo' | 'redo', label: string, title: string, enabled: boolean, onclick: () => void): HTMLElement =>
     h('button', { class: 'q-undo', title, disabled: !enabled, onclick }, icon(name), h('span', null, label));
+  // A SHARE LINK: the query itself in the URL (query-store/src/share.ts) -- for someone without this
+  // store; it opens unsaved, and their Save keeps their own copy
+  const copyShareLink = async (): Promise<void> => {
+    try {
+      const q = await toQuery(app, session, { id: session.saved?.id ?? '', name: session.saved?.name ?? session.sharedAs ?? 'Shared query' });
+      const link = `${location.origin}${location.pathname}${location.search}${formatRoute({ kind: 'shared', link: await queryFragment(q) })}`;
+      await navigator.clipboard.writeText(link);
+      toast(`Share link copied (${link.length.toLocaleString()} characters): it holds the query, never its rows`);
+    } catch (e) {
+      toast(`Could not make the share link: ${(e as Error).message}`, 6000);
+    }
+  };
   const drawHeader = (): void => {
     const saved = session.saved;
     mount(header,
       h('div', { class: 'q-builder__status' },
-        h('span', { class: 'q-builder__title', title: saved?.id ?? '' }, saved?.name ?? 'Unsaved Query'),
+        h('span', { class: 'q-builder__title', title: saved?.id ?? '' }, saved?.name ?? session.sharedAs ?? 'Unsaved Query'),
+        !saved && session.sharedAs ? h('span', { class: 'q-chip q-chip--status', title: 'Opened from a share link: Save keeps your own copy' }, 'shared link') : null,
         session.changed ? h('span', { class: 'q-chip q-chip--status', title: 'Unsaved changes' }, 'unsaved') : null,
         saved && saved.owner && saved.owner !== app.user ? h('span', { class: 'q-chip q-chip--status' }, `owned by ${saved.owner}`) : null),
       h('span', { class: 'q-spacer' }),
@@ -170,6 +185,7 @@ export function renderEditor(root: HTMLElement, app: AppContext, session: Sessio
         { label: 'About this query', action: () => infoDialog(app, session) },
         { label: 'History and versions', action: () => void historyDialog(app, session), disabled: !session.saved },
         { label: 'Copy link', action: () => void navigator.clipboard?.writeText(location.href).then(() => toast('Link copied')) },
+        { label: 'Copy share link', action: () => void copyShareLink() },
       ], { class: 'q-header-pill' }),
       menuButton(['Help...', icon('caretDown')], () => [
         { label: 'Keyboard shortcuts', action: () => toast('Ctrl+Enter run · Ctrl+S save · Ctrl+Z undo · Ctrl+Shift+Z redo', 6000) },

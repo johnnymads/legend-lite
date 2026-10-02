@@ -31,6 +31,7 @@ export async function save(app: AppContext, session: Session): Promise<void> {
 export function saveAs(app: AppContext, session: Session): void {
   const src = session.query.source;
   const suggested = session.saved ? `Copy of ${session.saved.name}`
+    : session.sharedAs ? session.sharedAs
     : src.dataSpace ? `New query for ${simpleName(src.dataSpace.path)}[${src.dataSpace.context}]` : `New query on ${simpleName(src.class)}`;
   const name = h('input', { class: 'q-input', value: suggested, style: 'width:100%' });
   const description = h('textarea', { class: 'q-textarea', rows: 3, placeholder: 'What does this query answer? (optional)' });

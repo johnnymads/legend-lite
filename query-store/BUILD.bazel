@@ -33,6 +33,21 @@ js_test(
     node_options = _NODE_OPTIONS,
 )
 
+# A saved query's share link, round trip over the shared fixture records.
+js_test(
+    name = "share_test",
+    size = "small",
+    chdir = package_name(),
+    data = [
+        ":query_store",
+        "test/share.test.ts",
+        "//datacube:strict_reporter",
+        "//fixtures/saved-queries:records",
+    ],
+    entry_point = "test/share.test.ts",
+    node_options = _NODE_OPTIONS,
+)
+
 # The same suite against legend-lite's server, started here with a fresh store.
 js_test(
     name = "lite_test",

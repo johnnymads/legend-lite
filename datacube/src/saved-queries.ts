@@ -48,7 +48,10 @@ export function enumerationsOf(elements: readonly ModelElement[]): ReadonlySet<s
 }
 
 /** Rule 1: the mapping and runtime a saved query runs on. */
-export function contextOf(q: Query, elements: readonly ModelElement[]): { readonly mapping: string; readonly runtime: string } {
+export function contextOf(
+  q: Pick<Query, 'executionContext' | 'groupId' | 'artifactId' | 'versionId'>,
+  elements: readonly ModelElement[],
+): { readonly mapping: string; readonly runtime: string } {
   const ctx = q.executionContext;
   if (ctx?._type === 'explicitExecutionContext' && ctx.mapping && ctx.runtime) {
     return { mapping: ctx.mapping, runtime: ctx.runtime };

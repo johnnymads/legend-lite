@@ -70,7 +70,11 @@ export function contextOf(project: LoadedProject, q: Query): { mapping: string; 
 }
 
 /** A saved query opened: in the form when it can be, else as text; parameter values restored. */
-export async function openQuery(app: AppContext, q: Query, urlParams: ReadonlyMap<string, string>): Promise<Session> {
+/**
+ * A saved query as a session to edit. `asSaved: false` (a share link): the record is the query,
+ * not a copy in this store -- the session is unsaved, and Save makes the person's own.
+ */
+export async function openQuery(app: AppContext, q: Query, urlParams: ReadonlyMap<string, string>, asSaved = true): Promise<Session> {
   const project = app.projects.find((p) => p.config.groupId === q.groupId && p.config.artifactId === q.artifactId);
   if (!project) throw new Error(`the query belongs to ${q.groupId}:${q.artifactId}, which is not configured here`);
   const ctx = contextOf(project, q);
@@ -78,13 +82,14 @@ export async function openQuery(app: AppContext, q: Query, urlParams: ReadonlyMa
   const loaded = loadLambda(project.graph, lambda, ctx);
   let session: Session;
   if (loaded.ok) {
-    session = new Session(project, loaded.query, q);
+    session = new Session(project, loaded.query, asSaved ? q : undefined);
   } else {
     // the form cannot show it: a text-only session, its source what the context says
     const cls = q.taggedValues?.find((t) => t.tag.profile === QUERY_PROFILE && t.tag.value === 'class')?.value ?? '';
     const source: ClassSource = { kind: 'class', class: cls, mapping: ctx.mapping, runtime: ctx.runtime, ...(ctx.dataSpace ? { dataSpace: ctx.dataSpace } : {}) };
-    session = new Session(project, { ...emptyQuery(source), parameters: parametersOf(lambda) }, q, { lambda, reason: loaded.reason });
+    session = new Session(project, { ...emptyQuery(source), parameters: parametersOf(lambda) }, asSaved ? q : undefined, { lambda, reason: loaded.reason });
   }
+  if (!asSaved) session.sharedAs = q.name;
   for (const pv of q.defaultParameterValues ?? []) {
     try {
       const parsed = await app.engine.lambdaJson(`|${pv.content}`);

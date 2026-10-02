@@ -53,12 +53,13 @@ import {
 } from '../src/page-document.ts';
 import { inferModel } from '../src/infer.ts';
 import { pageConfig, type PageConfig, type ProjectConfig } from './page-config.ts';
-import {
-  contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf, type ModelElement,
-} from '../src/saved-queries.ts';
-import {
-  BrowserRecords as BrowserQueryRecords, LOCAL_API, localQueryServer, QueryStoreClient, watchBrowserStore, type Query, type QueryReader,
-} from '../../query-store/src/index.ts';
+import type { ModelElement } from '../src/saved-queries.ts';
+import type { Query, QueryReader } from '../../query-store/src/index.ts';
+
+// SAVED QUERIES' CODE, fetched the first time it is needed -- the Saved queries section, a query
+// link -- as charts are: a grid-only page never downloads it (test/bundle-budget.test.ts).
+const savedQueries = () => import('../src/saved-queries.ts');
+const queryStores = () => import('../../query-store/src/index.ts');
 import {
   connect,
   WarehouseEngine,
@@ -1294,7 +1295,12 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       config.projects.find((p) => p.groupId === q.groupId && p.artifactId === q.artifactId && p.versionId === q.versionId);
 
     async function openedQuery(config: PageConfig, store: QueryReader, id: string): Promise<OpenedQuery> {
-      const q = await store.get(id);
+      return openedRecord(config, await store.get(id));
+    }
+
+    /** A saved query's record -- from a store, or as a share link carries it -- as a cube's source. */
+    async function openedRecord(config: PageConfig, q: Pick<Query, 'name' | 'groupId' | 'artifactId' | 'versionId' | 'content' | 'executionContext' | 'defaultParameterValues'>): Promise<OpenedQuery> {
+      const { contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf } = await savedQueries();
       const project = projectFor(config, q);
       if (!project) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, which this page has no model for (config.json projects[])`);
       const key = projectOf(q);
@@ -1392,16 +1398,17 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // THE QUERY STORE, through the one client (query-store/README.md): the server config.json names,
     // or -- none named -- the same API answered in this page from this origin's browser store, the
     // one Legend Query keeps its saved queries in when it runs without a server.
-    let stores: { readonly url: string; readonly store: QueryReader; readonly where: string } | undefined;
-    const queryStore = (config: PageConfig): { readonly store: QueryReader; readonly where: string } => {
+    let stores: { readonly url: string; readonly store: Promise<QueryReader>; readonly where: string } | undefined;
+    const queryStore = (config: PageConfig): { readonly store: Promise<QueryReader>; readonly where: string } => {
       if (stores?.url !== config.queryStore) {
-        stores = config.queryStore
-          ? { url: config.queryStore, store: new QueryStoreClient(config.queryStore), where: new URL(config.queryStore).host }
-          : {
-            url: '',
-            store: new QueryStoreClient(LOCAL_API, localQueryServer({ records: new BrowserQueryRecords(), user: config.user }).fetch),
-            where: 'this browser',
-          };
+        const url = config.queryStore;
+        stores = {
+          url,
+          where: url ? new URL(url).host : 'this browser',
+          store: queryStores().then((m) => (url
+            ? new m.QueryStoreClient(url)
+            : new m.QueryStoreClient(m.LOCAL_API, m.localQueryServer({ records: new m.BrowserRecords(), user: config.user }).fetch))),
+        };
       }
       return stores;
     };
@@ -1442,8 +1449,15 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         saved: {
           where: queryStore(config).where,
           // the browser's store: a query saved in another tab (Legend Query) appears without reopening
-          ...(config.queryStore ? {} : { watch: (changed: () => void) => watchBrowserStore(changed) }),
-          search: async (text, mineOnly) => (await queryStore(config).store.search({
+          ...(config.queryStore ? {} : {
+            watch: (changed: () => void) => {
+              let stop = (): void => undefined;
+              let stopped = false;
+              void queryStores().then((m) => { if (!stopped) stop = m.watchBrowserStore(changed); });
+              return () => { stopped = true; stop(); };
+            },
+          }),
+          search: async (text, mineOnly) => (await (await queryStore(config).store).search({
             ...(text ? { searchTermSpecification: { searchTerm: text, includeOwner: true } } : {}),
             showCurrentUserQueriesOnly: mineOnly,
             sortByOption: 'SORT_BY_UPDATE',
@@ -1455,11 +1469,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
               name: q.name,
               ...(q.owner ? { owner: q.owner } : {}),
               ...(q.lastUpdatedAt ? { modified: new Date(q.lastUpdatedAt).toLocaleDateString() } : {}),
-              project: project?.title ?? projectOf(q),
+              project: project?.title ?? `${q.groupId}:${q.artifactId}:${q.versionId}`,
               ...(project ? {} : { unusable: 'This page has no model for its project' }),
             };
           }),
-          open: async (id) => act({ kind: 'saved', query: await openedQuery(config, queryStore(config).store, id) }),
+          open: async (id) => act({ kind: 'saved', query: await openedQuery(config, await queryStore(config).store, id) }),
         },
         database: {
           ...((config.warehouse || rememberedWarehouse()) ? { url: config.warehouse || rememberedWarehouse() } : {}),
@@ -1554,6 +1568,21 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // a file asked for). Then the link is taken out of the address: a reload never reopens it over
     // what the person has done since. Last in the setup: opening one reaches everything above
     // (a sample's rebuild included).
+    // A SAVED QUERY'S SHARE LINK (query-store/src/share.ts): `#q1.<data>`, or Legend Query's own
+    // `#/shared/q1.<data>` -- the query, opened as the cube's source; taken out of the address, as above
+    const queryLink = location.hash.replace(/^#\/shared\//, '#');
+    const links = queryLink.length > 1 ? await queryStores() : undefined;
+    if (links?.isQueryFragment(queryLink)) {
+      history.replaceState(null, '', location.pathname + location.search);
+      try {
+        const config = await pageConfig();
+        await openInPlace({ kind: 'saved', query: await openedRecord(config, await links.readQueryFragment(queryLink)) });
+      } catch (e) {
+        harnessSignal.changes += 1;
+        status.textContent = e instanceof Error ? e.message : String(e);
+        status.classList.add('bad');
+      }
+    }
     if (isPageFragment(location.hash)) {
       const fragment = location.hash;
       history.replaceState(null, '', location.pathname + location.search);

@@ -9,5 +9,6 @@ js_library(
     visibility = [
         "//datacube:__pkg__",
         "//query:__pkg__",
+        "//query-store:__pkg__",
     ],
 )

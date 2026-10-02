@@ -10,6 +10,8 @@ export type Route =
   | { readonly kind: 'manual'; readonly gav: string; readonly mapping: string; readonly runtime: string; readonly class?: string }
   | { readonly kind: 'service'; readonly gav: string; readonly service: string }
   | { readonly kind: 'edit'; readonly id: string; readonly parameters: ReadonlyMap<string, string> }
+  /** A saved query's share link (query-store/src/share.ts): the query itself, `q1.<data>`. */
+  | { readonly kind: 'shared'; readonly link: string }
   | { readonly kind: 'notFound'; readonly hash: string };
 
 const enc = encodeURIComponent;
@@ -33,6 +35,7 @@ export function formatRoute(r: Route): string {
       const q = [...r.parameters].map(([k, v]) => `p:${enc(k)}=${enc(v)}`).join('&');
       return `#/edit/${enc(r.id)}${q ? `?${q}` : ''}`;
     }
+    case 'shared': return `#/shared/${r.link}`;
     case 'notFound': return r.hash;
   }
 }
@@ -71,5 +74,6 @@ export function parseRoute(hash: string): Route {
     for (const [k, v] of query) if (k.startsWith('p:')) parameters.set(k.slice(2), v);
     return { kind: 'edit', id: seg[1]!, parameters };
   }
+  if (seg[0] === 'shared' && seg.length === 2) return { kind: 'shared', link: seg[1]! };
   return { kind: 'notFound', hash };
 }

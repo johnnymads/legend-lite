@@ -35,6 +35,8 @@ export class Session {
   readonly #undo: QueryState[] = [];
   readonly #redo: QueryState[] = [];
   readonly paramValues = new Map<string, Value>();
+  /** Opened from a share link: its name, offered when it is saved (it is not saved anywhere yet). */
+  sharedAs: string | undefined;
   #run: RunState = { status: 'idle' };
   readonly #listeners = new Set<(c: Change) => void>();
 

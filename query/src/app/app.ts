@@ -15,6 +15,7 @@ import { openQuery } from './persist.ts';
 import { formatRoute, parseRoute, type Route } from './routes.ts';
 import { Session } from './session.ts';
 import { findAll, isFunction, type Lambda } from '../../../pure-protocol/src/index.ts';
+import { readQueryFragment } from '../../../query-store/src/share.ts';
 import { followTheme, theme, toggleTheme } from '../ui/theme.ts';
 
 export class App {
@@ -138,6 +139,12 @@ export class App {
         const ex = svc?.execution;
         if (!svc || !ex?.func || !ex.mapping || !ex.runtime?.runtime) throw new Error(`the service ${r.service} has no single execution with a mapping and runtime`);
         this.#edit(this.#sessionFrom(p, ex.func, { mapping: ex.mapping, runtime: ex.runtime.runtime }));
+        return;
+      }
+      case 'shared': {
+        // the query as the link carries it, unsaved: Save keeps a copy in this person's store
+        const shared = await readQueryFragment(r.link);
+        this.#edit(await openQuery(app, { ...shared, id: '' }, new Map(), false));
         return;
       }
       case 'edit': {

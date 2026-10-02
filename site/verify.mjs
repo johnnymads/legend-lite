@@ -37,7 +37,7 @@ await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const ORIGIN = `http://127.0.0.1:${server.address().port}`;
 
 const browser = await chromium.launch();
-const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] });
 const errors = [];
 let failed = false;
 const name = `Shared sells ${Date.now().toString(36)}`;
@@ -89,6 +89,46 @@ try {
   if (cols.join() !== 'Trade Id,Side,Quantity') throw new Error(`DataCube shows columns ${cols.join(', ')}`);
   if (sides.length !== ranTo || sides.some((s) => s !== 'SELL')) throw new Error(`DataCube shows ${JSON.stringify(sides)}, Query ran to ${ranTo} SELL rows`);
   console.log(`DataCube: listed from this browser, opened as a grid of ${sides.length} rows, Side as SELL`);
+
+  // ---- THE SHARE LINK: copied in Query, opened by someone else (a fresh browser: an empty store)
+  await query.bringToFront();
+  await query.click('.q-header-pill:has-text("Advanced")');
+  await query.click(".q-menu button:has-text('Copy share link')");
+  await query.waitForSelector('.q-toast:has-text("Share link copied")', { timeout: 15_000 });
+  const link = await query.evaluate(() => navigator.clipboard.readText());
+  if (!/#\/shared\/q1\.[A-Za-z0-9_-]+$/.test(link)) throw new Error(`the share link is ${link}`);
+  const other = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  try {
+    // in Query: the query, unsaved, named as shared; it runs to the same rows, and Save keeps their own copy
+    const theirs = await other.newPage();
+    theirs.on('pageerror', (e) => errors.push(`query (shared): ${e.message}`));
+    await theirs.goto(link);
+    await theirs.waitForSelector('.q-chip:has-text("shared link")', { timeout: 90_000 });
+    const title = await theirs.textContent('.q-builder__title');
+    if (title !== name) throw new Error(`the shared query opened as "${title}"`);
+    await theirs.click('button.q-run');
+    await theirs.waitForFunction(() => /\d+ rows? in \d+ ms/.test(document.querySelector('.q-results-bar')?.textContent ?? ''), undefined, { timeout: 60_000 });
+    const theirRows = await theirs.$$eval('.q-grid tbody tr', (trs) => trs.length);
+    if (theirRows !== ranTo) throw new Error(`the shared query ran to ${theirRows} rows, not ${ranTo}`);
+    await theirs.click('button[title="Save (Ctrl+S)"]');
+    if ((await theirs.inputValue('.q-dialog input.q-input')) !== name) throw new Error('Save does not offer the shared name');
+    await theirs.click('.q-dialog button.primary');
+    await theirs.waitForFunction(() => location.hash.startsWith('#/edit/'), undefined, { timeout: 30_000 });
+    console.log(`share link (${link.length} characters): opened unsaved in another browser, ran to ${theirRows} rows, saved as their own`);
+    // in DataCube: the same link's query as the cube's source
+    const cubeLink = `${ORIGIN}/datacube/demo/index.html#${link.slice(link.indexOf('#/shared/') + '#/shared/'.length)}`;
+    const theirCube = await other.newPage();
+    theirCube.on('pageerror', (e) => errors.push(`datacube (shared): ${e.message}`));
+    await theirCube.goto(cubeLink);
+    await theirCube.waitForFunction(() => [...document.querySelectorAll('.dc-th')].map((e) => e.textContent?.trim()).join() === 'Trade Id,Side,Quantity',
+      undefined, { timeout: 120_000 });
+    const cubeRows = await theirCube.locator('.dc-row').count();
+    if (cubeRows !== ranTo) throw new Error(`DataCube opened the link to ${cubeRows} rows`);
+    if (await theirCube.evaluate(() => location.hash) !== '') throw new Error('the link stayed in the address');
+    console.log(`DataCube: the link opened as the cube's source, ${cubeRows} rows`);
+  } finally {
+    await other.close();
+  }
 } catch (e) {
   failed = true;
   console.log(`FAIL: ${String(e.message ?? e).split('\n')[0]}`);

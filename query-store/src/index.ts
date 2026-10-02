@@ -4,3 +4,6 @@ export * from './wire.ts';
 export * from './client.ts';
 export { BrowserRecords, MemoryRecords, DATABASE, CHANNEL, watchBrowserStore, type Records } from './records.ts';
 export { localQueryServer, LOCAL_API, type LocalServer, type LocalServerOptions } from './local-server.ts';
+export {
+  QUERY_LINK_VERSION, QueryLinkError, isQueryFragment, queryFragment, readQueryFragment, type SharedQuery,
+} from './share.ts';
