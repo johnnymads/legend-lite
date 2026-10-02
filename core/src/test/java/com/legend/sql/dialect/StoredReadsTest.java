@@ -55,6 +55,8 @@ class StoredReadsTest {
         assertEquals("SELECT CAST(t0.V AS VARCHAR) AS V\nFROM T AS t0", new DuckDb().render(other));
         assertTrue(new Postgres().render(other).startsWith("SELECT CAST(\"t0\".\"V\" AS VARCHAR) AS \"V\""),
                 new Postgres().render(other));
+        // the engine-text printer spells what legend-engine would: every column bare (S26)
+        assertTrue(!new EngineStyleH2().render(other).contains("CAST"), new EngineStyleH2().render(other));
         // an array cannot be cast to jsonb on Postgres: it is converted; DuckDB reads it as stored
         SqlQuery array = selectV(table(Map.of("V", ARRAY)));
         assertTrue(new Postgres().render(array).startsWith("SELECT to_jsonb(\"t0\".\"V\") AS \"V\""),

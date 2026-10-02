@@ -100,7 +100,7 @@ public final class Postgres extends AnsiSqlRenderer {
 
     @Override
     protected String storedRead(com.legend.sql.SqlExpr.StoredRead r) {
-        String ref = columnRef(r.column());
+        String ref = expr(r.column(), 0);
         return switch (jsonbRead(r.stored())) {
             case CAST -> "CAST(" + ref + " AS JSONB)";
             case CONVERT -> "to_jsonb(" + ref + ")";

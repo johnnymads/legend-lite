@@ -124,10 +124,11 @@ public class AnsiSqlRenderer implements SqlDialect {
         return readsAsText(t);
     }
 
-    /** The read of a column whose stored type {@link #readsStored} names: base, as text. */
+    /** The read of a column whose stored type {@link #readsStored} names: base, as text. The
+     *  column renders as any reference does here (the dialect's aliasing and quoting). */
     protected String storedRead(SqlExpr.StoredRead r) {
         if (readsAsText(r.stored())) {
-            return "CAST(" + columnRef(r.column()) + " AS " + castTypeName(com.legend.sql.SqlType.Scalar.VARCHAR) + ")";
+            return "CAST(" + expr(r.column(), 0) + " AS " + castTypeName(com.legend.sql.SqlType.Scalar.VARCHAR) + ")";
         }
         throw new DialectCapability("this dialect reads a column stored as " + r.stored()
                 + " as the database holds it: a stored read of it is a pass defect");

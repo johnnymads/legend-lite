@@ -814,6 +814,14 @@ public class EngineStyleH2 extends AnsiSqlRenderer {
 
     // == single-line lowercase clause assembly ==========================
 
+    /** The engine's text reads every column as stored: legend-engine renders a column bare
+     *  whatever its declared type, and reads OTHER as text only in its Java result reader
+     *  (SEMANTICS_REGISTER S26). This printer spells what the engine would. */
+    @Override
+    protected boolean readsStored(com.legend.sql.SqlDdl.ColumnType t) {
+        return false;
+    }
+
     /** No MIR passes: engine-text goldens have NO QUALIFY spelling — the
      * select wall below stays LOUD rather than inventing one. */
     @Override
