@@ -126,6 +126,26 @@ try {
     if (cubeRows !== ranTo) throw new Error(`DataCube opened the link to ${cubeRows} rows`);
     if (await theirCube.evaluate(() => location.hash) !== '') throw new Error('the link stayed in the address');
     console.log(`DataCube: the link opened as the cube's source, ${cubeRows} rows`);
+
+    // DataCube's own Copy link, beside the saved query's row: the same query, opened by the other browser
+    await cube.bringToFront();
+    await cube.click('.dc-titlebar-menu');
+    await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+    await cube.locator('.dc-menu .dc-menu-item', { has: cube.locator(':scope > .dc-menu-label:text-is("Data Source\u2026")') }).click();
+    await cube.locator('.dc-picker-tab[data-section="saved"]').click();
+    await cube.locator('.dc-picker-entry', { hasText: name }).locator('.dc-picker-row-link').click();
+    await cube.waitForSelector('.dc-picker-status.dc-done', { timeout: 15_000 });
+    const cubeOwn = await cube.evaluate(() => navigator.clipboard.readText());
+    await cube.keyboard.press('Escape');
+    if (!/\/datacube\/demo\/index\.html#q1\.[A-Za-z0-9_-]+$/.test(cubeOwn)) throw new Error(`DataCube's link is ${cubeOwn}`);
+    const viaCube = await other.newPage();
+    viaCube.on('pageerror', (e) => errors.push(`datacube (its link): ${e.message}`));
+    await viaCube.goto(cubeOwn);
+    await viaCube.waitForFunction(() => [...document.querySelectorAll('.dc-th')].map((e) => e.textContent?.trim()).join() === 'Trade Id,Side,Quantity',
+      undefined, { timeout: 120_000 });
+    const viaRows = await viaCube.locator('.dc-row').count();
+    if (viaRows !== ranTo) throw new Error(`DataCube's own link opened to ${viaRows} rows`);
+    console.log(`DataCube: its own Copy link (${cubeOwn.length} characters) opened in the other browser, ${viaRows} rows`);
   } finally {
     await other.close();
   }

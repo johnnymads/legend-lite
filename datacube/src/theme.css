@@ -58,6 +58,7 @@
   --tw-red-600: #dc2626;
   --tw-amber-500: #f59e0b;
   --tw-green-500: #22c55e;
+  --tw-green-700: #15803d;
   --tw-orange-500: #f97316;
 
   /* ---- type: their CUSTOM scale, not Tailwind's ---- */
@@ -208,6 +209,7 @@
   --tw-amber-700: #f0c55e;
   --tw-green-500: #4ade80;
   --tw-green-600: #6ee7a0;
+  --tw-green-700: #86efac;
   --tw-blue-600: #7aa7f5;
   --tw-orange-500: #fb923c;
 

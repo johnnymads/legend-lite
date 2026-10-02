@@ -163,6 +163,30 @@ describe('the source picker', () => {
     assert.equal(await chosen, 'query 1');
   });
 
+  it('a saved query row copies its link beside it, and the window stays open saying so', async () => {
+    const asked: string[] = [];
+    const chosen = pickSource<string>(doc, {
+      purpose: 'add',
+      sections: { saved: {
+        where: 'in this browser',
+        search: async () => [{ id: '1', name: 'Big trades' }],
+        open: async (id) => `query ${id}`,
+        copyLink: async (id) => { asked.push(id); return 'Link copied (500 characters)'; },
+      } },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    await settle();
+    assert.match($('.dc-picker-panel').textContent ?? '', /Saved in this browser/);
+    $<HTMLButtonElement>('.dc-picker-row-link[data-query-link="1"]').click();
+    await settle();
+    assert.deepEqual(asked, ['1']);
+    assert.ok(doc.querySelector('.dc-picker'), 'the window stays open');
+    assert.equal($('.dc-picker-status').textContent, 'Link copied (500 characters)');
+    assert.match($('.dc-picker-status').className, /dc-done/);
+    $<HTMLButtonElement>('.dc-picker-row[data-query="1"]').click();
+    assert.equal(await chosen, 'query 1');
+  });
+
   it('the arrow keys move between sections', async () => {
     const chosen = pickSource<string>(doc, {
       purpose: 'add',

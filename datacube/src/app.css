@@ -2912,6 +2912,11 @@
   cursor: pointer;
 }
 .dc-picker-row:last-child { border-bottom: 0; }
+/* a saved query's row, with its share link beside it */
+.dc-picker-entry { display: flex; align-items: center; border-bottom: 1px solid var(--tw-neutral-100); background: var(--tw-white); }
+.dc-picker-entry:last-child { border-bottom: 0; }
+.dc-picker-entry > .dc-picker-row { flex: 1; min-width: 0; border-bottom: 0; }
+.dc-picker-row-link { flex: none; margin-right: 8px; font-size: 11px; }
 .dc-picker-row:hover:not(:disabled), .dc-picker-row:focus-visible { background: var(--tw-sky-50); outline: none; }
 .dc-picker-row:disabled { cursor: default; opacity: 0.7; }
 .dc-picker-row-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
@@ -3398,7 +3403,8 @@
 .dc-picker-row { padding: 7px 12px; border-left: 2px solid transparent; }
 .dc-picker-row:hover:not(:disabled), .dc-picker-row:focus-visible { background: var(--tw-neutral-50); border-left-color: var(--tw-sky-700); }
 .dc-picker-choice { padding: 10px 20px; margin: 14px -20px -16px; }
-.dc-picker-status.dc-working, .dc-picker-status.dc-failed { padding: 8px 18px; }
+.dc-picker-status.dc-working, .dc-picker-status.dc-failed, .dc-picker-status.dc-done { padding: 8px 18px; }
+.dc-picker-status.dc-done { color: var(--tw-green-700); }
 
 /* Save */
 .dc-save-body { padding: 14px 18px 4px; }

@@ -1404,7 +1404,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         const url = config.queryStore;
         stores = {
           url,
-          where: url ? new URL(url).host : 'this browser',
+          where: url ? `on ${new URL(url).host}` : 'in this browser',
           store: queryStores().then((m) => (url
             ? new m.QueryStoreClient(url)
             : new m.QueryStoreClient(m.LOCAL_API, m.localQueryServer({ records: new m.BrowserRecords(), user: config.user }).fetch))),
@@ -1474,6 +1474,13 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             };
           }),
           open: async (id) => act({ kind: 'saved', query: await openedQuery(config, await queryStore(config).store, id) }),
+          // a link to this page that opens the query as its source (query-store/src/share.ts)
+          copyLink: async (id) => {
+            const [store, { queryFragment }] = await Promise.all([queryStore(config).store, queryStores()]);
+            const link = `${location.origin}${location.pathname}${location.search}#${await queryFragment(await store.get(id))}`;
+            await navigator.clipboard.writeText(link);
+            return `Link copied (${link.length.toLocaleString()} characters): it opens the query as the cube’s source, and holds the query, never its rows.`;
+          },
         },
         database: {
           ...((config.warehouse || rememberedWarehouse()) ? { url: config.warehouse || rememberedWarehouse() } : {}),

@@ -79,10 +79,12 @@ export interface PickerSections<T> {
   readonly saved?: {
     /** Set when the page has no query store: said instead of a search that cannot answer. */
     readonly unavailable?: string;
-    /** Where the list comes from, for the person: "this browser", "localhost:8080". */
+    /** Where the list comes from, for the person: "in this browser", "on localhost:8080". */
     readonly where?: string;
     /** Told when the store changes (another tab saved a query): the list is read again. Returns how to stop. */
     watch?(changed: () => void): () => void;
+    /** Copy a share link to the query (the host owns the clipboard): what to say once it is copied. */
+    copyLink?(id: string): Promise<string>;
     search(text: string, mineOnly: boolean): Promise<readonly SavedQueryCard[]>;
     open(id: string): Promise<T>;
   };
@@ -382,7 +384,7 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
       saved: (host) => {
         const saved = options.sections.saved!;
         heading(host, 'Open a saved query', saved.where
-          ? `Saved in ${saved.where}. Its rows become the cube’s source, typed by the compiler.`
+          ? `Saved ${saved.where}. Its rows become the cube’s source, typed by the compiler.`
           : 'Its rows become the cube’s source, typed by the compiler.');
         if (saved.unavailable) {
           el(doc, 'div', 'dc-picker-note', host, saved.unavailable);
@@ -420,7 +422,9 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
             return;
           }
           for (const q of found) {
-            const row = el(doc, 'button', 'dc-picker-row', list) as HTMLButtonElement;
+            // the row opens it; beside it (a button cannot hold one), its share link
+            const entry = el(doc, 'div', 'dc-picker-entry', list);
+            const row = el(doc, 'button', 'dc-picker-row', entry) as HTMLButtonElement;
             row.type = 'button';
             row.setAttribute('role', 'listitem');
             row.dataset['query'] = q.id;
@@ -433,6 +437,25 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
               el(doc, 'span', 'dc-picker-row-why', row, q.unusable);
             } else {
               row.addEventListener('click', () => void attempt(`Opening ${q.name}…`, () => saved.open(q.id)));
+            }
+            if (saved.copyLink) {
+              const copy = saved.copyLink;
+              const link = el(doc, 'button', 'dc-picker-button dc-quiet dc-picker-row-link', entry, 'Copy link') as HTMLButtonElement;
+              link.type = 'button';
+              link.dataset['queryLink'] = q.id;
+              link.title = `A link to “${q.name}”: it holds the query, never its rows`;
+              link.addEventListener('click', () => {
+                if (busy) return;
+                status.className = 'dc-picker-status dc-working';
+                status.textContent = `Copying a link to ${q.name}…`;
+                void copy(q.id).then((said) => {
+                  status.className = 'dc-picker-status dc-done';
+                  status.textContent = said;
+                }, (e: unknown) => {
+                  status.className = 'dc-picker-status dc-failed';
+                  status.textContent = e instanceof Error ? e.message : String(e);
+                });
+              });
             }
           }
         };
