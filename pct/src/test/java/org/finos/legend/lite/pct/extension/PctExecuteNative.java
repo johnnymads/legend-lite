@@ -110,14 +110,8 @@ public class PctExecuteNative extends NativeFunction {
 
         System.out.println("[LegendLite PCT] Executing: " + pureExpression);
 
-        // LEGENDLITE_PCT_BACKEND=h2 runs the SAME suite on the H2
-        // execution dialect (env, not -D: it must survive the surefire
-        // fork) — the session mirrors the portability sweep's settings.
-        boolean h2 = "h2".equalsIgnoreCase(
-                String.valueOf(System.getenv("LEGENDLITE_PCT_BACKEND")));
-        try (Connection connection = DriverManager.getConnection(h2
-                ? "jdbc:h2:mem:" + com.legend.exec.H2Settings.SETTINGS
-                : "jdbc:duckdb:", h2 ? "sa" : null, h2 ? "" : null)) {
+        // LEGENDLITE_PCT_BACKEND chooses the database the SAME suite runs on (PctBackend)
+        try (Connection connection = PctBackend.connect()) {
             // B6: session settings are DIALECT-OWNED — the platform
             // applies them at its connection-dialect seam
             // (SqlDialect.sessionSetup, executed at Compiler.dialectOf's seam); the

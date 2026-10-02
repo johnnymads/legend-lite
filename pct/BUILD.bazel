@@ -143,6 +143,45 @@ junit_test(
     ],
 )
 
+# GATE 7P — the five suites on POSTGRES 16 (leg P2; LEGENDLITE_PCT_BACKEND=postgres selects the
+# Postgres execution dialect), on a real server this JVM starts from the pinned binaries Bazel unpacked
+# (@embedded_postgres, //testing EmbeddedPostgres): no Docker. Each suite carries Postgres's OWN expected
+# failures (Test_LegendLite_Postgres_*Functions_PCT), legend-engine's shape, as gate 7's H2: a fix, or a
+# failure swapping for another, fails the run. Postgres's JDBC driver is the one the upstream pool already
+# holds (the engine's), so no second copy of any jar.
+_POSTGRES_DATA = [
+    "@embedded_postgres//:postgres",
+    "@embedded_postgres//:pg/PG_ROOT",
+]
+
+_POSTGRES_FLAGS = ["-Dembedded.postgres.root=$(rlocationpath @embedded_postgres//:pg/PG_ROOT)"]
+
+_POSTGRES_DEPS = [
+    ":pct_tests_lib",
+    "@maven_upstream//:org_postgresql_postgresql",
+]
+
+junit_test(
+    name = "pct_postgres",
+    data = _POSTGRES_DATA,
+    env = {"LEGENDLITE_PCT_BACKEND": "postgres"},
+    jvm_flags = _POSTGRES_FLAGS,
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_Postgres_%sFunctions_PCT" % s for s in _SUITES],
+    tags = ["resources:memory:9216"],
+    runtime_deps = _POSTGRES_DEPS,
+)
+
+# ONE JVM PER SUITE, for the 7 GB macOS runner, as :pct_duckdb_<suite>. Manual: //... runs :pct_postgres.
+[junit_test(
+    name = "pct_postgres_" + s.lower(),
+    data = _POSTGRES_DATA,
+    env = {"LEGENDLITE_PCT_BACKEND": "postgres"},
+    jvm_flags = _POSTGRES_FLAGS,
+    select = ["--select-class=org.finos.legend.lite.pct.Test_LegendLite_Postgres_%sFunctions_PCT" % s],
+    tags = ["manual", "resources:memory:4096"],
+    runtime_deps = _POSTGRES_DEPS,
+) for s in _SUITES]
+
 # GATE 9 — channel B: lite's own compiler runs the PCT sources straight from the
 # pinned legend-pure / legend-engine trees, and its verdicts are diffed against
 # channel A's ledgers and the engine's manifests.

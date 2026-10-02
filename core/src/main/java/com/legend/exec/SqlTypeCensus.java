@@ -632,12 +632,34 @@ public final class SqlTypeCensus {
         if (n.startsWith("MAP")) {
             return "MAP";
         }
-        if (n.endsWith("[]") || n.startsWith("ARRAY")) {
+        // (Postgres's JDBC driver names an array by its element type's internal name: _int4)
+        if (n.endsWith("[]") || n.startsWith("ARRAY") || n.startsWith("_")) {
             return "ARRAY";
         }
         // driver spelling families -> our scalar names
         if (n.equals("CHARACTER VARYING") || n.startsWith("VARCHAR")) {
             return "VARCHAR";
+        }
+        // Postgres's driver reports its own internal type names (leg P2): the same types, other spellings
+        switch (n) {
+            case "INT2":
+                return "SMALLINT";
+            case "INT4":
+                return "INTEGER";
+            case "INT8":
+                return "BIGINT";
+            case "FLOAT4":
+                return "FLOAT";
+            case "FLOAT8":
+                return "DOUBLE";
+            case "BOOL":
+                return "BOOLEAN";
+            case "TEXT", "BPCHAR", "NAME":
+                return "VARCHAR";
+            case "JSONB":
+                return "JSON";
+            default:
+                break;
         }
         if (n.startsWith("DECIMAL") || n.startsWith("NUMERIC")) {
             return n.replace("NUMERIC", "DECIMAL").replace(" ", "");

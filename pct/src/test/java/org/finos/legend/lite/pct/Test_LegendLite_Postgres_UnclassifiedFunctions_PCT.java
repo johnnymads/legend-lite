@@ -1,0 +1,89 @@
+// Copyright 2026 Legend Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+package org.finos.legend.lite.pct;
+
+import junit.framework.Test;
+import org.eclipse.collections.api.factory.Lists;
+import org.eclipse.collections.api.list.MutableList;
+import org.finos.legend.pure.code.core.CoreUnclassifiedFunctionsCodeRepositoryProvider;
+import org.finos.legend.pure.m3.pct.reports.config.PCTReportConfiguration;
+import org.finos.legend.pure.m3.pct.reports.config.exclusion.ExclusionSpecification;
+import org.finos.legend.pure.m3.pct.reports.model.Adapter;
+import org.finos.legend.pure.m3.pct.shared.model.ReportScope;
+import org.finos.legend.pure.runtime.java.interpreted.testHelper.PureTestBuilderInterpreted;
+import static org.finos.legend.engine.test.shared.framework.PureTestHelperFramework.wrapSuite;
+
+/**
+ * The unclassified PCT suite on Postgres 16 (leg P2, docs/POSTGRES_DIALECT_HOMEWORK_2026_10_01.md Q5): the
+ * SAME tests as {@link Test_LegendLite_UnclassifiedFunctions_PCT}, through the same adapter, on this JVM's
+ * embedded Postgres ({@code LEGENDLITE_PCT_BACKEND=postgres}, pct/BUILD.bazel), with Postgres's OWN
+ * expected failures -- legend-engine's shape, as {@link Test_LegendLite_H2_RelationFunctions_PCT}: every
+ * expected failure named and pinned by the text it fails with, and a pinned test that starts passing fails
+ * the run, so a fix is recorded by deleting its row.
+ *
+ * <p>First measured 2026-10-02 on Postgres 16.15 (19 rows): the rows are grouped by why -- wrong answers
+ * (dialect defects, fixed first), Postgres's own errors, the collections and Variant of leg P4, and
+ * constructs the dialect refuses by name.
+ */
+public class Test_LegendLite_Postgres_UnclassifiedFunctions_PCT extends PCTReportConfiguration {
+
+    private static final ReportScope reportScope = CoreUnclassifiedFunctionsCodeRepositoryProvider.unclassifiedFunctions;
+    private static final Adapter adapter = LegendLitePCTReportProvider.LegendLiteAdapter;
+    private static final String platform = "interpreted";
+
+    // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
+    private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
+            // WRONG ANSWERS: a result Pure does not give -- a dialect defect, fixed before P4 closes
+            one("meta::pure::functions::string::tests::regexpLike::testRegexpLike_CaseInsensitive_Multiline_NonNewlineSensitive_Function_1__Boolean_1_", "Assert failed"),
+            one("meta::pure::functions::string::tests::regexpLike::testRegexpLike_Multiline_NonNewlineSensitive_Function_1__Boolean_1_", "Assert failed"),
+            // Postgres raises differently (its own error, or a different position or wording)
+            one("meta::pure::functions::string::tests::char::testEmptyChar_Function_1__Boolean_1_", "ERROR: null character not permitted"),
+            // collections and Variant over the jsonb carrier: leg P4
+            one("meta::pure::functions::string::tests::regexpCount::testRegexpCount_CaseInsensitive_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::regexpCount::testRegexpCount_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtractAll_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::regexpExtract::testRegexpExtract_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::regexpIndexOf::testRegexpIndexOf_Function_1__Boolean_1_", "LIST_GET reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::regexpIndexOf::testRegexpIndexOf_GroupNumber_Function_1__Boolean_1_", "LIST_GET reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::regexpIndexOf::testRegexpIndexOf_NoMatch_Function_1__Boolean_1_", "LIST_GET reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::splitPart::testSplitPartEmptyString_Function_1__Boolean_1_", "PURE_SPLIT_PART reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::splitPart::testSplitPartTypicalToken_Function_1__Boolean_1_", "PURE_SPLIT_PART reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::splitPart::testSplitPartWithNoSplit_Function_1__Boolean_1_", "PURE_SPLIT_PART reached Postgres: collections over the jsonb carrier are leg P4"),
+            one("meta::pure::functions::string::tests::splitPart::testSplitPart_Function_1__Boolean_1_", "PURE_SPLIT_PART reached Postgres: collections over the jsonb carrier are leg P4"),
+            // refused by name: a construct the Postgres dialect does not spell yet
+            one("meta::pure::functions::hash::tests::testSHA1Hash_Function_1__Boolean_1_", "SHA1 reached Postgres: an extension function (pgcrypto/fuzzystrmatch)"),
+            one("meta::pure::functions::string::tests::jaroWinklerSimilarity::testJaroWinklerSimilarityEqual_Function_1__Boolean_1_", "JARO_WINKLER reached Postgres: an extension function (pgcrypto/fuzzystrmatch)"),
+            one("meta::pure::functions::string::tests::jaroWinklerSimilarity::testJaroWinklerSimilarityNotEqual_Function_1__Boolean_1_", "JARO_WINKLER reached Postgres: an extension function (pgcrypto/fuzzystrmatch)"),
+            one("meta::pure::functions::string::tests::levenshteinDistance::testLevenshteinDistanceEqual_Function_1__Boolean_1_", "LEVENSHTEIN reached Postgres: an extension function (pgcrypto/fuzzystrmatch)"),
+            one("meta::pure::functions::string::tests::levenshteinDistance::testLevenshteinDistanceNotEqual_Function_1__Boolean_1_", "LEVENSHTEIN reached Postgres: an extension function (pgcrypto/fuzzystrmatch)")
+    );
+
+    public static Test suite() {
+        return PctCensusGate.wrap("Unclassified", wrapSuite(
+                () -> true,
+                () -> PureTestBuilderInterpreted.buildPCTTestSuite(reportScope, expectedFailures, adapter),
+                () -> false,
+                Lists.mutable.empty()));
+    }
+
+    @Override
+    public MutableList<ExclusionSpecification> expectedFailures() {
+        return expectedFailures;
+    }
+
+    @Override
+    public ReportScope getReportScope() {
+        return reportScope;
+    }
+
+    @Override
+    public Adapter getAdapter() {
+        return adapter;
+    }
+
+    @Override
+    public String getPlatform() {
+        return platform;
+    }
+}

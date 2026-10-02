@@ -90,7 +90,9 @@ class JavaEvalLedgerTest {
             // DEBUG-ONLY census recorder (PctCaseRecorder: a no-op unless
             // LL_PCT_CASES is set; tools/census/README.md) -- records the
             // case, evaluates nothing in Java
-            Map.entry("pct/src/test/java/org/finos/legend/lite/pct/extension/PctExecuteNative.java", 110),
+            // 110 -> 106 (leg P2, 2026-10-02): the database a lane runs on moved to PctBackend
+            // (DuckDB, H2, Postgres), one call here
+            Map.entry("pct/src/test/java/org/finos/legend/lite/pct/extension/PctExecuteNative.java", 106),
             // 250 -> 259 (B4): the no-shadowing WALL — a fixture function
             // colliding with a lite-native name refuses injection loudly;
             // guard growth, anti-compensation

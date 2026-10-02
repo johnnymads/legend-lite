@@ -45,10 +45,12 @@ jobs:
           set -eu
           if [ "$LOW_MEMORY" = "true" ]; then
             pct6='//pct:pct_duckdb_essential //pct:pct_duckdb_grammar //pct:pct_duckdb_relation //pct:pct_duckdb_standard //pct:pct_duckdb_unclassified //pct:pct_discipline'
+            pct7p='//pct:pct_postgres_essential //pct:pct_postgres_grammar //pct:pct_postgres_relation //pct:pct_postgres_standard //pct:pct_postgres_unclassified'
           else
             pct6='//pct:pct_duckdb'
+            pct7p='//pct:pct_postgres'
           fi
-          all=$(jq -nc --arg pct6 "$pct6" '[
+          all=$(jq -nc --arg pct6 "$pct6" --arg pct7p "$pct7p" '[
             {"key":"1",      "name":"gate 1 core suite",               "targets":"//core:core_tests"},
             {"key":"checks", "name":"generated files, dependency guards, source checks", "targets":"GENERATED //tools/deps:all //core:guardrails //core:census"},
             {"key":"3",      "name":"gate 3 spec parity",              "targets":"//spec:spec_tests"},
@@ -56,6 +58,7 @@ jobs:
             {"key":"5",      "name":"gate 5 H2 corpus, both judges",   "targets":"//spec:corpus_h2"},
             {"key":"6",      "name":"gate 6 PCT DuckDB",               "targets":$pct6},
             {"key":"7",      "name":"gate 7 PCT H2 relation",          "targets":"//pct:pct_h2"},
+            {"key":"7p",     "name":"gate 7P PCT Postgres 16",         "targets":$pct7p},
             {"key":"8",      "name":"gate 8 parser equivalence",       "targets":"//parser-equivalence:parser_parity"},
             {"key":"9",      "name":"gate 9 Channel B dual-verdict",   "targets":"//pct:pct_channel_b"},
             {"key":"10",     "name":"gate 10 stress corpus",           "targets":"//core:stress_suites"},

@@ -17,6 +17,7 @@ commands (`mvn`, `tools/allgates.sh`, `-Dx.generate=1`) no longer exist.
 | 5 | `//spec:corpus_h2` | the relational corpus on H2, both judges and their per-assert join — :corpus_duckdb's shape (joined since 2026-09-23; `rcorpus/h2-database-untriaged-register.txt` lists what the first join found and has yet to be explained) |
 | 6 | `//pct:pct_duckdb` | the five PCT suites on DuckDB, one JVM (per suite: `//pct:pct_duckdb_<suite>`) |
 | 7 | `//pct:pct_h2` | PCT relation on H2 2.4.240: 469 tests, H2's 27 expected failures each pinned by message (`Test_LegendLite_H2_RelationFunctions_PCT`) |
+| 7P | `//pct:pct_postgres` | PCT, all five suites, on Postgres 16.15 started by the test JVM from pinned binaries (`@embedded_postgres`, no Docker): 1,249 tests, Postgres's 267 expected failures each pinned by message (`Test_LegendLite_Postgres_*Functions_PCT`), grouped as wrong answers (10), Postgres's own errors (18), leg P4's collections and Variant (190) and named refusals (49); its census divergence ceiling measured per lane (53) |
 | 8 | `//parser-equivalence:parser_parity` | byte parity with legend-engine's parser |
 | 9 | `//pct:pct_channel_b` | Channel B dual-verdict suites |
 | 10 | `//core:stress_suites` | the stress corpus |

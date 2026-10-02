@@ -119,7 +119,15 @@ public final class PctCensusGate {
     // the (1-p) transform diverged in float ULPs from the engine's
     // WITHIN GROUP DESC path (testPercentile_Relation_Window's
     // byte-compare refereed).
-    private static final long MAX_WIRE_DIVERGE = 0;
+    // THE POSTGRES LANE (gate 7P, leg P2) is its own JVM with its own numbers, as G7's were: MEASURED
+    // 2026-10-02 on Postgres 16.15, the five suites in one JVM, final teardown: diverge=53, all a
+    // computed Postgres numeric the label names otherwise -- DECIMAL(p,s) where Postgres keeps no
+    // precision on a computed numeric (34), DOUBLE where avg or a division delivers numeric (11), HUGEINT
+    // where sum(bigint) is numeric (8) -- and the Variant carrier delivered as text (STRUCT <- VARCHAR, 3:
+    // leg P4). Its driver's own spellings (int8, text, bool ...) are names, not divergence
+    // (SqlTypeCensus.normalizeMeta). Every other pin holds at its DuckDB/H2 value on this lane too.
+    private static final boolean POSTGRES = "postgres".equals(System.getenv("LEGENDLITE_PCT_BACKEND"));
+    private static final long MAX_WIRE_DIVERGE = POSTGRES ? 53 : 0;
     private static final long MAX_ADOPT_PENDING = 0;
     // THE NULLABILITY LEDGER (§4bZ-V E, 2026-08-26 — §4Z ledger #4):
     // this lane carried 6 literal-NullLit DOUBLE value-frames (the
