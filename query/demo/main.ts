@@ -16,7 +16,7 @@ import { AppContext, gavOf, type AppConfig, type CubeRows, type LoadedProject } 
 import { App } from '../src/app/app.ts';
 import { BrowserEngine } from '../src/backend/browser-engine.ts';
 import { HttpEngine, RoutedEngine, type Engine, type Grammar, type QueryStore } from '../src/backend/engine.ts';
-import { BrowserRecords, LocalQueryStore } from '../src/backend/local-store.ts';
+import { BrowserRecords, LOCAL_API, localQueryServer, QueryStoreClient } from '../../query-store/src/index.ts';
 import { WasmGrammar, WorkerPort } from '../src/backend/wasm-grammar.ts';
 import { ModelGraph } from '../src/model/graph.ts';
 import { h, mount } from '../src/ui/dom.ts';
@@ -92,7 +92,7 @@ async function boot(): Promise<void> {
     engine = planner ? new RoutedEngine(planner, http!) : http!;
     // the server answers pure/v1 at its root; the config names its /api
     cubeRows = { kind: 'server', baseUrl: exec.engine.replace(/\/api\/?$/, '') };
-    store = http!;
+    store = new QueryStoreClient(exec.engine);
     user = await http!.currentUser();
   } else {
     let runner: QueryEngine;
@@ -113,7 +113,8 @@ async function boot(): Promise<void> {
     }
     engine = new BrowserEngine(planner!, runner, isEnumeration, user);
     cubeRows = { kind: 'sql', engine: runner };
-    store = new LocalQueryStore(new BrowserRecords(), user);
+    // no server: the same API, answered in this page from this origin's IndexedDB (query-store)
+    store = new QueryStoreClient(LOCAL_API, localQueryServer({ records: new BrowserRecords(), user }).fetch);
   }
   const ctx = new AppContext(config, engine, store, planner, projects, user, cubeRows);
   // warm the planner on the first model while the person looks at the landing page

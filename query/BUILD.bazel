@@ -22,6 +22,8 @@ js_library(
     srcs = glob(["src/**/*.ts", "src/**/*.css"]) + ["package.json", "tsconfig.json"],
     deps = [
         "//pure-protocol:pure_protocol",
+        # saved queries: the one client, and the store answered in the page (query-store/README.md)
+        "//query-store:query_store",
         # DataCube's engines: queries run in the browser on DuckDB-WASM or the warehouse
         "//datacube:src",
     ],
@@ -154,7 +156,7 @@ _WASM_TESTS = [
         # the saved-query records Query writes and DataCube reads (fixtures/saved-queries/README.md)
         "//fixtures/saved-queries:records",
     ] + glob(["test/*.ts"], exclude = ["test/*.test.ts"]) + glob(["demo/models/*.pure"]) + (
-        ["//pure-protocol:pure_protocol", "//wasm:planner"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
+        ["//pure-protocol:pure_protocol", "//query-store:query_store", "//wasm:planner"] if t[len("test/"):-len(".test.ts")] in _WASM_TESTS else []
     ),
     entry_point = t,
     node_options = [
@@ -181,6 +183,7 @@ typescript.tsc_test(
         "package.json",
         "tsconfig.json",
         "//pure-protocol:pure_protocol",
+        "//query-store:query_store",
         "//datacube:src",
         ":node_modules/@duckdb/duckdb-wasm",
         ":node_modules/@types/jsdom",

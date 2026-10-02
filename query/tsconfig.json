@@ -23,5 +23,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src", "test", "demo", "../pure-protocol/src"]
+  "include": ["src", "test", "demo", "../pure-protocol/src", "../query-store/src"]
 }

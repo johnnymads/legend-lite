@@ -6,8 +6,7 @@ import type { Lambda } from '../../../pure-protocol/src/index.ts';
 import { toJson } from '../../../pure-protocol/src/index.ts';
 import type { PureModelContextData } from '../model/pmcd.ts';
 import type {
-  CompileResult, ExecuteInput, ExecutionResult, PureModelContext, Query,
-  QuerySearchSpecification, RelationTypeAnswer,
+  CompileResult, ExecuteInput, ExecutionResult, PureModelContext, RelationTypeAnswer,
 } from './wire.ts';
 
 /** A refusal from the engine, in its error shape (`{code, errorType?, message, status}`). */
@@ -49,17 +48,8 @@ export interface Engine extends Grammar {
   currentUser(): Promise<string>;
 }
 
-/** The query store, `pure/v1/query`. */
-export interface QueryStore {
-  search(spec: QuerySearchSpecification): Promise<Query[]>;
-  batch(ids: readonly string[]): Promise<Query[]>;
-  get(id: string): Promise<Query>;
-  history(id: string): Promise<Query[]>;
-  create(query: Query): Promise<Query>;
-  update(query: Query): Promise<Query>;
-  patch(id: string, fields: Partial<Query>): Promise<Query>;
-  delete(id: string): Promise<void>;
-}
+/** The query store, `pure/v1/query`: the one client (query-store/src/client.ts), wherever the store is. */
+export type { QueryStore } from '../../../query-store/src/client.ts';
 
 /** legend-engine refuses an ExecuteInput without its execution context (measured, 4.145.0: a 500). */
 function withContext(input: ExecuteInput): ExecuteInput {
@@ -67,7 +57,7 @@ function withContext(input: ExecuteInput): ExecuteInput {
 }
 
 /** An engine at a base URL (`http://host:port/api`): legend-lite's server or legend-engine. */
-export class HttpEngine implements Engine, QueryStore {
+export class HttpEngine implements Engine {
   readonly #base: string;
   readonly #fetch: typeof fetch;
 
@@ -138,42 +128,6 @@ export class HttpEngine implements Engine, QueryStore {
 
   currentUser(): Promise<string> {
     return this.#json('GET', '/server/v1/currentUser');
-  }
-
-  // -- the query store
-
-  search(spec: QuerySearchSpecification): Promise<Query[]> {
-    return this.#json('POST', '/pure/v1/query/search', spec);
-  }
-
-  batch(ids: readonly string[]): Promise<Query[]> {
-    if (ids.length === 0) return Promise.resolve([]);
-    const qs = ids.map((id) => `queryIds=${encodeURIComponent(id)}`).join('&');
-    return this.#json('GET', `/pure/v1/query/batch?${qs}`);
-  }
-
-  get(id: string): Promise<Query> {
-    return this.#json('GET', `/pure/v1/query/${encodeURIComponent(id)}`);
-  }
-
-  history(id: string): Promise<Query[]> {
-    return this.#json('GET', `/pure/v1/query/${encodeURIComponent(id)}/history`);
-  }
-
-  create(query: Query): Promise<Query> {
-    return this.#json('POST', '/pure/v1/query', query);
-  }
-
-  update(query: Query): Promise<Query> {
-    return this.#json('PUT', `/pure/v1/query/${encodeURIComponent(query.id)}`, query);
-  }
-
-  patch(id: string, fields: Partial<Query>): Promise<Query> {
-    return this.#json('PUT', `/pure/v1/query/${encodeURIComponent(id)}/patchQuery`, fields);
-  }
-
-  async delete(id: string): Promise<void> {
-    await this.#call('DELETE', `/pure/v1/query/${encodeURIComponent(id)}`);
   }
 }
 
