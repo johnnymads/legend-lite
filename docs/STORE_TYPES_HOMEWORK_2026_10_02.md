@@ -182,14 +182,49 @@ What must stay loud (decision 4):
 5. **Then the per-database catalog reading** (plan step 2): `OTHER` for whatever cannot be mapped, by
    name, and `json`/`jsonb` as semi-structured. This is what makes DataCube use all of the above.
 
-## 8. Decisions
+## 8. Decisions (ruled by the user, 2026-10-02)
 
-1. **Cast at every reference** (§4.4: internally consistent, no index use), or only in the output
-   list (keeps indexes, but string functions in filters break)? Recommended: every reference.
-2. **`DISTINCT` → String**, as upstream, alongside `OTHER`? Recommended: yes.
-3. **The read node:** a dedicated `StoredRead` MIR record (recommended), or widen `Cast` with a
-   Postgres `JSONB` target?
-4. **What stays loud:** milestoning columns declared `OTHER` are refused by name (recommended); primary
-   keys and join keys are allowed (consistent text semantics).
-5. **The upstream divergence:** record cast-on-read in `SEMANTICS_REGISTER` as deliberate.
-   Recommended: yes.
+1. **The read applies at every reference** (select, where, join on, group by, order by, partition
+   by), so a Pure String behaves as a string in the database. Output-only would leave
+   `strpos(inet)` and `GROUP BY json` failing.
+2. **`OTHER` and `DISTINCT` are Pure Strings, read as text.** `DISTINCT` is the SQL-standard
+   user-defined distinct type; upstream maps it to String (`databaseHelperFunctions.pure:196`).
+3. **`ARRAY` and `OBJECT` are Pure Variants,** like semi-structured columns. DuckDB's catalog already
+   declares every nested type that way (`DuckDb.java:179-183`). Upstream's compiler never produces
+   these column types, so there is nothing to diverge from. The read rules:
+   - DuckDB: as stored;
+   - Postgres: `json` → `CAST(… AS JSONB)`, an array → `to_jsonb(…)` (Postgres cannot cast an array
+     to jsonb).
+4. **The read is a dedicated typed MIR record, `SqlExpr.StoredRead(column, declared type)`**, rendered
+   by each dialect. A `Cast` cannot express `to_jsonb`. The Postgres dialect deliberately refuses casts
+   to JSON until P4, and `Cast` already carries meaning elsewhere (the conform flag, the decimal and
+   variant render rules, `SqlTyping.castType`). Cost: one arm in each exhaustive switch over
+   expressions, found by the compiler.
+5. **What stays loud:** a milestoning date column declared `OTHER` is refused by name. Primary keys
+   and join keys are allowed: both sides read the same way.
+6. **The divergence from upstream** (reading by declared type, where upstream renders the column bare)
+   gets a `SEMANTICS_REGISTER` row.
+
+## 9. Steps (each one commit, gated by `bazel test //...` before the next)
+
+0. **Probe:** a test pins today's refusal of a table with an unused `OTHER` column, through the
+   accessor and through a class mapping.
+1. **Typing:**
+   - `OTHER`/`DISTINCT` → String, `ARRAY`/`OBJECT` → Variant (`StoreCompiler`, `RelationalKinds`,
+     `ViewSignatures`);
+   - milestoning over `OTHER` is refused by name;
+   - the step 0 test flips.
+2. **One owner** for the declared → `SqlDdl.ColumnType` mapping, moved from `exec/Ddl` into
+   `StoreCompiler`.
+3. **The stamp:**
+   - `TypedTableReference.storedTypes`, computed next to `quotedColumns`;
+   - `SqlSource.Table.storedTypes`, carried by its 4 rebuild sites.
+4. **The read:**
+   - the `StoredRead` record;
+   - a `readOf(declared type)` dialect method;
+   - the `StoredReads` pass, last in `passes()`, rewriting references and expanding stars.
+5. **The render census:** before against after, on every corpus, PCT and stress query, for DuckDB,
+   H2, EngineStyleH2 and Postgres. Zero diffs outside the new cases.
+6. **The `SEMANTICS_REGISTER` row.**
+7. **The per-database catalog reading,** with conformance tests and the live run.
+8. **Separately:** the planned-frame CTE keeps quoted column names.
