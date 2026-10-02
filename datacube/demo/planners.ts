@@ -43,9 +43,9 @@ async function inTab(model: string): Promise<Engine> {
     snapTarget: SNAP_TARGET,
     label: 'local',
     models: {
-      // legend-lite types BIT Boolean itself: no BIT columns to read (relation-type.ts, S23)
-      use: (next, runtime) => planner.useModel(next, runtime),
-      another: (next, runtime) => planner.withModel(next, runtime),
+      use: (next, runtime, how) => planner.useModel(next, runtime, how),
+      another: (next, runtime, how) => planner.withModel(next, runtime, how),
+      elements: (text) => planner.modelElements(text),
     },
   };
 }
@@ -69,8 +69,9 @@ async function onServer(model: string, which: 'remote' | 'engine'): Promise<Engi
     snapTarget: SNAP_TARGET,
     label: which,
     models: {
-      use: (next, runtime, bitColumns) => planner.useModel(next, runtime, bitColumns),
-      another: (next, runtime, bitColumns) => planner.withModel(next, runtime, bitColumns),
+      use: (next, runtime, how) => planner.useModel(next, runtime, how),
+      another: (next, runtime, how) => planner.withModel(next, runtime, how),
+      elements: (text) => planner.modelElements(text),
     },
   };
 }

@@ -22,6 +22,16 @@ export interface UpstreamPlannerOptions extends PureV1Options {
   readonly cache?: boolean;
 }
 
+/** How a planner reads a model besides its text and runtime. */
+export interface ModelOptions {
+  /** The columns the model declares BIT (relation-type.ts, ENGINE DEFECT S23). */
+  readonly bitColumns?: readonly string[];
+  /** The mapping a class source reads through: the query goes `->from(mapping, runtime)` (pure-v1.ts). */
+  readonly mapping?: string;
+  /** The model's enumerations: a column typed by one is said so (relation-type.ts `PlanColumn.enumeration`). */
+  readonly enumerations?: readonly string[];
+}
+
 export class PlanError extends Error {
   /** What was asked: the query (a tree), or, for a parse, the text a person typed. */
   readonly subject: Lambda | string;
@@ -44,6 +54,8 @@ export class UpstreamPlanner implements Planner {
   readonly #types = new Map<string, PlanColumn[]>();
   /** The model's BIT columns: engine types them TinyInt (relation-type.ts, ENGINE DEFECT S23). */
   #bitColumns: ReadonlySet<string> = new Set();
+  /** The model's enumerations (ModelOptions). */
+  #enumerations: ReadonlySet<string> = new Set();
 
   readonly #options: UpstreamPlannerOptions;
 
@@ -57,9 +69,9 @@ export class UpstreamPlanner implements Planner {
    * A planner over ANOTHER model -- another source on the page -- on the same server, with caches
    * of its own. Every request carries its model, so the server holds nothing for either.
    */
-  withModel(model: string, runtime: string, bitColumns: readonly string[] = []): UpstreamPlanner {
+  withModel(model: string, runtime: string, how: ModelOptions = {}): UpstreamPlanner {
     const other = new UpstreamPlanner({ ...this.#options, model, runtime });
-    other.useModel(model, runtime, bitColumns);
+    other.useModel(model, runtime, how);
     return other;
   }
 
@@ -67,9 +79,10 @@ export class UpstreamPlanner implements Planner {
    * Plan against another model from now on (a file opened in this tab joins it). Every request
    * carries the model, so the server holds nothing; what was planned against the old one goes.
    */
-  useModel(model: string, runtime: string, bitColumns: readonly string[] = []): void {
-    this.#client.useModel(model, runtime);
-    this.#bitColumns = new Set(bitColumns);
+  useModel(model: string, runtime: string, how: ModelOptions = {}): void {
+    this.#client.useModel(model, runtime, how.mapping);
+    this.#bitColumns = new Set(how.bitColumns ?? []);
+    this.#enumerations = new Set(how.enumerations ?? []);
     this.#cache.clear();
     this.#types.clear();
   }
@@ -92,7 +105,7 @@ export class UpstreamPlanner implements Planner {
     const key = toJson(query);
     const hit = this.#useCache ? this.#types.get(key) : undefined;
     if (hit !== undefined) return hit;
-    const columns = relationColumns(await this.#client.lambdaRelationType(query, signal), this.#bitColumns);
+    const columns = relationColumns(await this.#client.lambdaRelationType(query, signal), this.#bitColumns, this.#enumerations);
     if (this.#useCache) this.#types.set(key, columns);
     return columns;
   }
@@ -100,6 +113,11 @@ export class UpstreamPlanner implements Planner {
   /** E1: what a person typed, as its lambda. */
   parse(text: string, signal?: AbortSignal): Promise<Lambda> {
     return this.#client.parse(text, signal);
+  }
+
+  /** A model's elements, as the compiler reads its text (a project's data spaces, enumerations). */
+  modelElements(text: string, signal?: AbortSignal): Promise<unknown[]> {
+    return this.#client.modelElements(text, signal);
   }
 
   /** E4: a query as Pure text, for a person to read. */

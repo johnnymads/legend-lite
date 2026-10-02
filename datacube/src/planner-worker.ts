@@ -13,8 +13,8 @@
 // for rendering, and the two startups genuinely run at once.
 //
 // This worker deliberately contains no planning logic of its own: it
-// forwards to the module's `planOrError`, `relationTypeOrError`, `databaseFromCatalogOrError`
-// and `warmModel` exports and
+// forwards to the module's `planOrError`, `relationTypeOrError`, `databaseFromCatalogOrError`,
+// `modelJsonOrError` and `warmModel` exports and
 // returns what they say. A second planner is the one thing this whole
 // design exists to avoid.
 
@@ -27,6 +27,7 @@ interface TeavmModule {
     relationTypeJsonOrError(model: string, lambdaJson: string): string;
     composeLambdaOrError(lambdaJson: string, style: string): string;
     lambdaJsonOrError(text: string): string;
+    modelJsonOrError(text: string): string;
     warmModel(model: string): number;
   };
 }
@@ -52,7 +53,8 @@ export type Request =
   }
   | { readonly id: number; readonly kind: 'relationTypeJson'; readonly model: string; readonly lambda: string }
   | { readonly id: number; readonly kind: 'compose'; readonly lambda: string; readonly style: string }
-  | { readonly id: number; readonly kind: 'lambdaJson'; readonly text: string };
+  | { readonly id: number; readonly kind: 'lambdaJson'; readonly text: string }
+  | { readonly id: number; readonly kind: 'modelJson'; readonly text: string };
 
 /** What it gets back. `answer` is the export's raw tagged string. */
 export type Response =
@@ -87,6 +89,7 @@ function answerOf(module: TeavmModule, msg: Request): string {
     case 'relationTypeJson': return module.exports.relationTypeJsonOrError(msg.model, msg.lambda);
     case 'compose': return module.exports.composeLambdaOrError(msg.lambda, msg.style);
     case 'lambdaJson': return module.exports.lambdaJsonOrError(msg.text);
+    case 'modelJson': return module.exports.modelJsonOrError(msg.text);
     case 'plan': return module.exports.planOrError(msg.model, msg.query, msg.runtime);
   }
 }

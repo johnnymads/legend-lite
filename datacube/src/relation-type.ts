@@ -17,6 +17,13 @@ import { plainType } from './types.ts';
 export interface PlanColumn {
   readonly name: string;
   readonly type: string;
+  /**
+   * The model's ENUMERATION the compiler typed it with, when it is one (a saved query's
+   * `Side: x|$x.side`). Its `type` is then String: what DataCube can read of it is its value's
+   * name, and the source must say so first -- `->toString()` in its projection
+   * (saved-queries.ts `enumsAsStrings`), without which legend-lite cannot plan it on DuckDB.
+   */
+  readonly enumeration?: string;
 }
 
 /** A planned query: the SQL to run, and the type of what it returns. */
@@ -54,9 +61,19 @@ function typeOf(name: string, path: string, bitColumns: ReadonlySet<string>): st
 }
 
 const NO_BIT: ReadonlySet<string> = new Set();
+const NONE: ReadonlySet<string> = new Set();
+
+/** A column of `path`: an enumeration of the model is said so, any other type read as above. */
+function columnOf(name: string, path: string, bitColumns: ReadonlySet<string>, enumerations: ReadonlySet<string>): PlanColumn {
+  return enumerations.has(path) ? { name, type: 'String', enumeration: path } : { name, type: typeOf(name, path, bitColumns) };
+}
 
 /** legend-engine's `RelationType` JSON (`lambdaRelationType`'s answer) as columns. */
-export function relationColumns(relationType: unknown, bitColumns: ReadonlySet<string> = NO_BIT): PlanColumn[] {
+export function relationColumns(
+  relationType: unknown,
+  bitColumns: ReadonlySet<string> = NO_BIT,
+  enumerations: ReadonlySet<string> = NONE,
+): PlanColumn[] {
   const columns = (relationType as { columns?: unknown }).columns;
   if (!Array.isArray(columns)) {
     throw new Error('the relation type carries no columns');
@@ -67,7 +84,7 @@ export function relationColumns(relationType: unknown, bitColumns: ReadonlySet<s
     if (typeof col.name !== 'string' || typeof path !== 'string') {
       throw new Error(`a relation type column without a name and a type: ${JSON.stringify(c)}`);
     }
-    return { name: col.name, type: typeOf(col.name, path, bitColumns) };
+    return columnOf(col.name, path, bitColumns, enumerations);
   });
 }
 

@@ -42,6 +42,12 @@ export interface PureV1Options {
   readonly model: string;
   /** The runtime the query reads through, e.g. `trades::h2::RT`. */
   readonly runtime: string;
+  /**
+   * The mapping a CLASS source reads through (a saved query's `Trade.all()->project(...)`): the
+   * query then goes as `->from(mapping, runtime)`, as Query sends it -- legend-engine finds no
+   * mapping from the runtime alone. A store source (`#>{db.t}#`) has none.
+   */
+  readonly mapping?: string;
   /** Defaults to the global fetch; injectable for tests. */
   readonly fetch?: typeof fetch;
 }
@@ -70,13 +76,19 @@ export class PureV1Client {
     return this.#options.baseUrl.replace(/\/$/, '');
   }
 
-  /** The query as the server runs it: its relation read from the runtime, `->from(runtime)`. */
+  /**
+   * The query as the server runs it: its relation read from the runtime, `->from(runtime)` -- or,
+   * over a mapping, `->from(mapping, runtime)`.
+   */
   fromRuntime(query: Lambda): Lambda {
     const body = query.body[0];
     if (query.body.length !== 1 || body === undefined || query.parameters.length > 0) {
       throw this.#fail('a cube query is one relation expression with no parameters', query);
     }
-    return lambda([], fn('from', body, element(this.#options.runtime)));
+    const { mapping, runtime } = this.#options;
+    return lambda([], mapping === undefined
+      ? fn('from', body, element(runtime))
+      : fn('from', body, element(mapping), element(runtime)));
   }
 
   /** E1 `grammar/grammarToJson/lambda`: what a person typed, as its lambda. */
@@ -102,8 +114,17 @@ export class PureV1Client {
    * Compile against another model from now on: the page's model grows as it opens a file (each
    * request carries the model, so the server holds nothing to update).
    */
-  useModel(model: string, runtime: string): void {
-    this.#options = { ...this.#options, model, runtime };
+  useModel(model: string, runtime: string, mapping?: string): void {
+    const { mapping: _was, ...rest } = this.#options;
+    this.#options = { ...rest, model, runtime, ...(mapping === undefined ? {} : { mapping }) };
+  }
+
+  /** `grammar/grammarToJson/model`: a model's elements, as the compiler reads its text. */
+  async modelElements(text: string, signal?: AbortSignal): Promise<unknown[]> {
+    const raw = await this.#post('/grammar/grammarToJson/model?returnSourceInformation=false', text, text, signal, 'text');
+    const elements = (parseExact(raw) as { elements?: unknown }).elements;
+    if (!Array.isArray(elements)) throw this.#fail('the model came back without elements', text);
+    return elements;
   }
 
   /** E9 `execution/generatePlan`: the execution plan for a query. */

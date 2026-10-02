@@ -2,7 +2,7 @@
 //
 // `config.json`, served beside the page, names them; a deployment ships its
 // own. A URL parameter overrides the file for one visit (`?legendLite=`,
-// `?engine=`, `?warehouse=`), so a page can be pointed at another server
+// `?engine=`, `?warehouse=`, `?queryStore=`), so a page can be pointed at another server
 // without rebuilding or editing anything. The file in the repository names the
 // local development servers (`bazel run //core:server`, a legend-engine on its
 // default port); the warehouse has none by default -- its URL is typed, or
@@ -15,9 +15,48 @@ export interface PageConfig {
   readonly legendEngine: string;
   /** The warehouse the Data window offers first. Empty: none. */
   readonly warehouse: string;
+  /** Where saved queries are kept: upstream's `/api/pure/v1/query`, on legend-lite (`--query-store`) or legend-engine. Empty: none. */
+  readonly queryStore: string;
+  /** The projects a saved query can belong to, as the Query app's config.json names them. */
+  readonly projects: readonly ProjectConfig[];
 }
 
-const EMPTY: PageConfig = { legendLite: '', legendEngine: '', warehouse: '' };
+/**
+ * A project: what a saved query's `groupId:artifactId:versionId` compiles against (`models`, Pure
+ * text joined in order), and -- the cube runs in this tab's DuckDB -- the SQL that puts its rows
+ * there (`seed`, one statement per line). URLs relative to config.json.
+ */
+export interface ProjectConfig {
+  readonly groupId: string;
+  readonly artifactId: string;
+  readonly versionId: string;
+  readonly title: string;
+  readonly models: readonly string[];
+  readonly seed: readonly string[];
+}
+
+const EMPTY: PageConfig = { legendLite: '', legendEngine: '', warehouse: '', queryStore: '', projects: [] };
+
+const texts = (v: unknown): string[] => (Array.isArray(v) ? v.map(text).filter((t) => t !== '') : []);
+
+/** The well-formed entries of `projects[]`: a malformed one is left out, not guessed at. */
+function projects(v: unknown, base: string): ProjectConfig[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((p: unknown) => {
+    if (typeof p !== 'object' || p === null) return [];
+    const o = p as Record<string, unknown>;
+    const [groupId, artifactId, versionId] = [text(o['groupId']), text(o['artifactId']), text(o['versionId'])];
+    const models = texts(o['models']);
+    if (!groupId || !artifactId || !versionId || models.length === 0) return [];
+    const at = (u: string): string => new URL(u, base).href;
+    return [{
+      groupId, artifactId, versionId,
+      title: text(o['title']) || `${groupId}:${artifactId}`,
+      models: models.map(at),
+      seed: texts(o['seed']).map(at),
+    }];
+  });
+}
 
 function text(v: unknown): string {
   return typeof v === 'string' ? v.trim() : '';
@@ -32,10 +71,14 @@ function text(v: unknown): string {
 export async function pageConfig(location: Location = window.location): Promise<PageConfig> {
   let file: PageConfig = EMPTY;
   try {
-    const r = await fetch(new URL('config.json', location.href), { cache: 'no-cache' });
+    const url = new URL('config.json', location.href);
+    const r = await fetch(url, { cache: 'no-cache' });
     if (r.ok) {
       const raw = await r.json() as Record<string, unknown>;
-      file = { legendLite: text(raw['legendLite']), legendEngine: text(raw['legendEngine']), warehouse: text(raw['warehouse']) };
+      file = {
+        legendLite: text(raw['legendLite']), legendEngine: text(raw['legendEngine']), warehouse: text(raw['warehouse']),
+        queryStore: text(raw['queryStore']), projects: projects(raw['projects'], url.href),
+      };
     }
   } catch {
     // no configuration file: every setting is empty
@@ -45,5 +88,7 @@ export async function pageConfig(location: Location = window.location): Promise<
     legendLite: text(q.get('legendLite')) || file.legendLite,
     legendEngine: text(q.get('engine')) || file.legendEngine,
     warehouse: text(q.get('warehouse')) || file.warehouse,
+    queryStore: text(q.get('queryStore')) || file.queryStore,
+    projects: file.projects,
   };
 }

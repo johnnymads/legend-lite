@@ -24,10 +24,10 @@
 // Pure prelude, which is why `warmUp()` exists and why the demo calls
 // it while the user is still looking at an empty grid.
 
-import { fromJson, readLambda, readValueSpecification, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
+import { element, fn, fromJson, lambda, readLambda, readValueSpecification, toJson, type Lambda } from '../../pure-protocol/src/index.ts';
 import type { Planner } from './cube.ts';
 import type { CatalogDatabase, CatalogTable } from './catalog-model.ts';
-import { PlanError } from './planner.ts';
+import { PlanError, type ModelOptions } from './planner.ts';
 import type { PrintStyle } from './pure-v1.ts';
 import { relationColumns, type Plan, type PlanColumn } from './relation-type.ts';
 
@@ -41,6 +41,7 @@ interface TeavmModule {
     relationTypeJsonOrError(model: string, lambdaJson: string): string;
     composeLambdaOrError(lambdaJson: string, style: string): string;
     lambdaJsonOrError(text: string): string;
+    modelJsonOrError(text: string): string;
     warmModel(model: string): number;
   };
 }
@@ -60,6 +61,10 @@ export interface WasmPlannerOptions {
   readonly model: string;
   /** Runtime to plan against, e.g. 'trades::RT'. */
   readonly runtime: string;
+  /** The mapping a class source reads through: planned as `->from(mapping, runtime)` (ModelOptions). */
+  readonly mapping?: string;
+  /** The model's enumerations (ModelOptions). */
+  readonly enumerations?: readonly string[];
   /**
    * Directory holding `classes.wasm` and `wasm-gc-module-runtime.js`,
    * as `bazel build //datacube:site` copies them. Trailing slash optional.
@@ -134,8 +139,8 @@ export class WasmPlanner implements Planner {
    * A planner over ANOTHER model -- another source on the page (page/cube-page.ts) -- on the
    * same module and worker as this one, with caches of its own. Nothing is loaded twice.
    */
-  withModel(model: string, runtime: string): WasmPlanner {
-    const other = new WasmPlanner({ ...this.#options, model, runtime });
+  withModel(model: string, runtime: string, how: ModelOptions = {}): WasmPlanner {
+    const other = new WasmPlanner({ ...readsOf(this.#options), model, runtime, ...readsHow(how) });
     other.#t = this.#t;
     other.#borrowed = true;
     return other;
@@ -378,7 +383,7 @@ export class WasmPlanner implements Planner {
 
   /** E9's twin: a query (a protocol tree) planned -- its SQL and the compiler's result type. */
   async plan(query: Lambda, signal?: AbortSignal): Promise<Plan> {
-    const json = toJson(query);
+    const json = toJson(this.#overMapping(query));
     const useCache = this.#options.cache !== false;
     const hit = useCache ? this.#cache.get(json) : undefined;
     if (hit !== undefined) return hit;
@@ -407,7 +412,7 @@ export class WasmPlanner implements Planner {
       ? await this.#ask({ kind: 'relationTypeJson', model: this.#options.model, lambda: json })
       : (await this.#load()).exports.relationTypeJsonOrError(this.#options.model, json);
     if (signal?.aborted) throw signal.reason ?? new Error('aborted');
-    const columns = relationColumns(JSON.parse(decode(answer, query)));
+    const columns = relationColumns(JSON.parse(decode(answer, query)), undefined, new Set(this.#options.enumerations ?? []));
     if (useCache) this.#types.set(json, columns);
     return columns;
   }
@@ -424,6 +429,27 @@ export class WasmPlanner implements Planner {
   /** A query printed for a person to read (the Planner's `print`): PRETTY unless asked. */
   print(query: Lambda, style: PrintStyle = 'PRETTY'): Promise<string> {
     return this.compose(query, style);
+  }
+
+  /**
+   * Over a mapping, the query as Query sends it: `->from(mapping, runtime)` outermost. Without
+   * one the runtime travels beside the query, as it always has here.
+   */
+  #overMapping(query: Lambda): Lambda {
+    const mapping = this.#options.mapping;
+    const body = query.body[0];
+    if (mapping === undefined || body === undefined || query.body.length !== 1) return query;
+    return lambda(query.parameters, fn('from', body, element(mapping), element(this.#options.runtime)));
+  }
+
+  /** A model's elements, as the compiler reads its text (a project's data spaces, enumerations). */
+  async modelElements(text: string): Promise<unknown[]> {
+    const answer = this.#useWorker()
+      ? await this.#ask({ kind: 'modelJson', text })
+      : (await this.#load()).exports.modelJsonOrError(text);
+    const elements = (JSON.parse(decode(answer, text)) as { elements?: unknown }).elements;
+    if (!Array.isArray(elements)) throw new PlanError('the model came back without elements', text);
+    return elements;
   }
 
   /** E1's twin: what a person typed, as its lambda, numbers exact. */
@@ -466,8 +492,8 @@ export class WasmPlanner implements Planner {
    * costs one graph build rather than another 4 MB download and
    * ~600ms of boot.
    */
-  useModel(model: string, runtime: string): void {
-    this.#options = { ...this.#options, model, runtime };
+  useModel(model: string, runtime: string, how: ModelOptions = {}): void {
+    this.#options = { ...readsOf(this.#options), model, runtime, ...readsHow(how) };
     this.#cache.clear();
     this.#types.clear();
   }
@@ -548,6 +574,20 @@ function onWindows(): boolean {
  * wasm/README.md. A refusal keeps the compiler's own message: the same text the
  * HTTP planner surfaces, so the two transports are indistinguishable.
  */
+/** A planner's options without what its model said: another model brings its own. */
+function readsOf(o: WasmPlannerOptions): WasmPlannerOptions {
+  const { mapping: _mapping, enumerations: _enumerations, ...rest } = o;
+  return rest;
+}
+
+/** What a model says beside its text, as options (legend-lite types BIT Boolean itself: no bitColumns, S23). */
+function readsHow(how: ModelOptions): Partial<WasmPlannerOptions> {
+  return {
+    ...(how.mapping === undefined ? {} : { mapping: how.mapping }),
+    ...(how.enumerations === undefined ? {} : { enumerations: how.enumerations }),
+  };
+}
+
 function decode(answer: string, subject: Lambda | string): string {
   const nl = answer.indexOf('\n');
   const tag = nl < 0 ? answer : answer.slice(0, nl);

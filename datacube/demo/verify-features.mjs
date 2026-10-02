@@ -15,7 +15,7 @@
 //   DATA=/abs/file.csv bazel run //datacube:verify_features
 
 import { createServer } from 'node:http';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { extname, join } from 'node:path';
 import { chromium } from 'playwright';
@@ -76,7 +76,30 @@ const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm',
   '.pure': 'text/plain', '.css': 'text/css', '.csv': 'text/csv',
 };
+// THE QUERY STORE, as legend-lite answers it: the fixture records ARE its answers
+// (fixtures/saved-queries/README.md), so this needs no server of its own -- CI runs it.
+const STORED = join(ROOT, '..', 'fixtures', 'saved-queries');
+const storedQueries = async () => Promise.all((await readdir(STORED)).filter((f) => f.endsWith('.json'))
+  .map(async (f) => JSON.parse(await readFile(join(STORED, f), 'utf8'))));
+const queryStore = async (req, res) => {
+  const json = (status, body) => {
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify(body));
+  };
+  const all = await storedQueries();
+  if (req.method === 'POST' && req.url === '/api/pure/v1/query/search') {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const term = (JSON.parse(raw || '{}').searchTermSpecification?.searchTerm ?? '').toLowerCase();
+    return json(200, all.filter((q) => q.name.toLowerCase().includes(term)));
+  }
+  const id = decodeURIComponent(req.url.slice('/api/pure/v1/query/'.length));
+  const found = all.find((q) => q.id === id);
+  return found ? json(200, found) : json(404, { message: `no query ${id}` });
+};
+
 const server = createServer(async (req, res) => {
+  if (req.url.startsWith('/api/pure/v1/query')) return queryStore(req, res);
   const file = servedPath(ROOT, req.url);
   try {
     if (!file) throw new Error('not under the root');
@@ -593,7 +616,7 @@ async function freshCube() {
     await settle();
     return;
   }
-  await page.goto(`${URL_BASE}/demo/index.html${PLANNER ? `?planner=${PLANNER}` : ''}`);
+  await page.goto(`${URL_BASE}/demo/index.html?queryStore=${encodeURIComponent(URL_BASE)}${PLANNER ? `&planner=${PLANNER}` : ''}`);
   await page.waitForSelector('.dc-row', { timeout: 90_000 });
   pageLoaded = true;
   if (!DATA) return;
@@ -5048,6 +5071,40 @@ try {
     const main = await page.locator('[data-tile="grid"] .dc-row').count();
     if (!main) throw new Error('the cube\'s own grid lost its rows');
     return `"${head.trim()}": the first 1,000 of 1,500 rows; the cube's grid still shows ${main} rows`;
+  });
+
+  // A SAVED QUERY (src/saved-queries.ts): the store's records listed, a graph fetch refused in the
+  // window with its reason, a data space's query opened as a grid -- its context resolved, its
+  // enumeration read as names, the rows its README says (fixtures/saved-queries: Sells, 5 rows).
+  await check('New > Data Source > Saved queries: a data space query opens as a grid, its enumeration as names', async () => {
+    const pick = async () => {
+      await page.click('.dc-titlebar-menu');
+      await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+      await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("Data Source\u2026")') }).click();
+      await page.locator('.dc-picker').waitFor({ timeout: 5000 });
+      await page.locator('.dc-picker-tab[data-section="saved"]').click();
+      await page.locator('.dc-picker-row[data-query]').first().waitFor({ timeout: 10_000 });
+    };
+    await pick();
+    const listed = await page.$$eval('.dc-picker-row[data-query]', (els) => els.map((e) => e.dataset.query).sort());
+    const want = ['fixture-data-space-context', 'fixture-default-parameter-values', 'fixture-explicit-context', 'fixture-graph-fetch'];
+    if (listed.join() !== want.join()) throw new Error(`listed ${listed.join(', ')}`);
+    await page.click('.dc-picker-row[data-query="fixture-graph-fetch"]');
+    await page.locator('.dc-picker-status.dc-failed').waitFor({ timeout: 30_000 });
+    const why = (await page.textContent('.dc-picker-status')) ?? '';
+    if (!/objects, not rows/.test(why)) throw new Error(`the graph fetch said "${why}"`);
+    const tiles = await page.locator('[data-tile^="grid-"]').count();
+    await page.click('.dc-picker-row[data-query="fixture-data-space-context"]');
+    await page.locator('.dc-picker').waitFor({ state: 'detached', timeout: 60_000 });
+    const tile = page.locator('[data-tile^="grid-"]').nth(tiles);
+    await tile.locator('.dc-row').first().waitFor({ timeout: 60_000 });
+    const head = (await tile.locator('.dc-tile-cube').textContent()) ?? '';
+    if (!/Sells/.test(head)) throw new Error(`its header says "${head}"`);
+    const cols = (await tile.locator('.dc-th').allTextContents()).map((t) => t.trim());
+    if (cols.join() !== 'Trade Id,Side,Quantity') throw new Error(`columns ${cols.join(', ')}`);
+    const sides = await tile.locator('.dc-row').evaluateAll((rows) => rows.map((r) => r.querySelectorAll('.dc-cell')[1]?.textContent?.trim()));
+    if (sides.length !== 5 || sides.some((v) => v !== 'SELL')) throw new Error(`Side read ${JSON.stringify(sides)}`);
+    return `4 listed; the graph fetch refused ("${why.trim()}"); "Sells": 5 rows, Side as SELL`;
   });
 } catch (e) {
   record('the run itself', false, String(e.message ?? e).split('\n')[0]);

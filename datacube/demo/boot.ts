@@ -13,6 +13,7 @@ import {
   type CubeConfiguration,
 } from '../src/config.ts';
 import type { Planner } from '../src/cube.ts';
+import type { ModelOptions } from '../src/planner.ts';
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import { inferFormat, mountRemote, type S3Credentials } from '../src/remote.ts';
 import { catalogColumns, forgetUpload, formatOf, ingestFile, tableNameOf } from '../src/upload.ts';
@@ -51,7 +52,10 @@ import {
   type SavedDocument,
 } from '../src/page-document.ts';
 import { inferModel } from '../src/infer.ts';
-import { pageConfig } from './page-config.ts';
+import { pageConfig, type PageConfig, type ProjectConfig } from './page-config.ts';
+import {
+  contextOf, enumerationsOf, enumsAsStrings, projectOf, QueryStore, sourceOf, type ModelElement, type SavedQuery,
+} from '../src/saved-queries.ts';
 import {
   connect,
   WarehouseEngine,
@@ -70,7 +74,7 @@ import type { ColumnFormat } from '../src/format.ts';
 import type { CubeSnapshot } from '../src/snapshot.ts';
 import type { TreeState } from '../src/tree.ts';
 import { sourceColumns } from '../src/source-columns.ts';
-import { accessor, type ValueSpecification } from '../../pure-protocol/src/index.ts';
+import { accessor, lambda, type ValueSpecification } from '../../pure-protocol/src/index.ts';
 import type { SnapTarget } from '../src/snap.ts';
 
 const ROWS = 200_000;
@@ -217,9 +221,11 @@ export interface Engine {
    * offers no file to open -- the capability and the affordance are the same fact.
    */
   readonly models?: {
-    use(model: string, runtime: string, bitColumns: readonly string[]): void;
+    use(model: string, runtime: string, how?: ModelOptions): void;
     /** ANOTHER source on the page: a planner over its model, on the same worker or server. */
-    another(model: string, runtime: string, bitColumns: readonly string[]): Planner;
+    another(model: string, runtime: string, how?: ModelOptions): Planner;
+    /** A model's elements as the compiler reads them: a saved query's project (data spaces, enumerations). */
+    elements(text: string): Promise<unknown[]>;
   };
   /**
    * What the status line should say about this planner.
@@ -703,7 +709,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       // converted to be declared cannot be, so it is left out, and named.
       const m = inferModel(chosen.columns.map((c) => ({ ...c, dataType: c.type })),
         { table: chosen.name, schema: chosen.schema, convertible: false });
-      local.use(m.model, m.runtime, m.bitColumns);
+      local.use(m.model, m.runtime, { bitColumns: m.bitColumns });
       const columns = await sourceColumns(planner, m.source);
       const live = track(new WarehouseEngine(signedIn));
       app.dispose();
@@ -808,7 +814,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           }
           return [];
         }
-        local.use(opened.model, opened.runtime, opened.bitColumns);
+        local.use(opened.model, opened.runtime, { bitColumns: opened.bitColumns });
         const columns = await sourceColumns(planner, opened.source);
         const source = await fileSource(file, formatOf(file.name), columns, how.sample);
         if (!newest()) return [];
@@ -1210,7 +1216,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     type Chosen =
       | { readonly kind: 'file'; readonly file: File; readonly handle?: FileHandle; readonly sample?: { readonly id: string; readonly rows: number } }
       | { readonly kind: 'table'; readonly session: WarehouseSession; readonly object: CatalogObject }
-      | { readonly kind: 'remote'; readonly url: string; readonly s3?: S3Credentials };
+      | { readonly kind: 'remote'; readonly url: string; readonly s3?: S3Credentials }
+      | { readonly kind: 'saved'; readonly query: OpenedQuery };
     /** The picker's warehouse sign-in, kept between openings of the window. */
     let signedIn: { readonly session: WarehouseSession; readonly objects: readonly CatalogObject[] } | undefined;
     /** Tables this page's added sources read: none may replace another's, or the cube's. */
@@ -1247,11 +1254,82 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       return inferModel(await catalogColumns(engine, name), { table: name, convertible: false });
     }
 
+    // A SAVED QUERY (the picker's Saved queries; the user, 2026-10-01: "load from a saved Query"):
+    // read from the query store as upstream serves it, never from Query's browser storage, by the
+    // rules Query writes it by (src/saved-queries.ts, tested against fixtures/saved-queries). Its
+    // project (config.json `projects[]`) gives the model it compiles against and the rows it reads,
+    // seeded into this tab's DuckDB once; the planner reads it `->from(mapping, runtime)`.
+    type OpenedQuery = {
+      readonly label: string;
+      readonly model: string;
+      readonly runtime: string;
+      readonly how: ModelOptions;
+      readonly source: ValueSpecification;
+      readonly columns: CubeSnapshot['columns'];
+      /** A planner over its model, the one that typed it. */
+      readonly planner: Planner;
+    };
+    const fetchText = async (url: string): Promise<string> => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`${url} answered ${r.status}`);
+      return r.text();
+    };
+    /** Each project's model text, fetched once. */
+    const projectModels = new Map<string, Promise<string>>();
+    /** Each project's rows, in this tab's DuckDB once. */
+    const seeded = new Map<string, Promise<void>>();
+    const once = <T,>(cache: Map<string, Promise<T>>, key: string, make: () => Promise<T>): Promise<T> => {
+      let p = cache.get(key);
+      if (!p) {
+        p = make();
+        cache.set(key, p);
+        p.catch(() => cache.delete(key));
+      }
+      return p;
+    };
+    const projectFor = (config: PageConfig, q: Pick<SavedQuery, 'groupId' | 'artifactId' | 'versionId'>): ProjectConfig | undefined =>
+      config.projects.find((p) => p.groupId === q.groupId && p.artifactId === q.artifactId && p.versionId === q.versionId);
+
+    async function openedQuery(config: PageConfig, store: QueryStore, id: string): Promise<OpenedQuery> {
+      const q = await store.get(id);
+      const project = projectFor(config, q);
+      if (!project) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, which this page has no model for (config.json projects[])`);
+      const key = projectOf(q);
+      const model = await once(projectModels, key, async () => (await Promise.all(project.models.map(fetchText))).join('\n'));
+      const elements = await local.elements(model) as ModelElement[];
+      const context = contextOf(q, elements);
+      const lambdaOf = await planner.parse(q.content);
+      const values = new Map<string, ValueSpecification>();
+      for (const v of q.defaultParameterValues ?? []) {
+        const parsed = await planner.parse(`|${v.content}`);
+        if (parsed.body[0]) values.set(v.name, parsed.body[0]);
+      }
+      let source = sourceOf(lambdaOf, values);
+      await once(seeded, key, async () => {
+        for (const url of project.seed) {
+          for (const line of (await fetchText(url)).split('\n')) {
+            const sql = line.trim();
+            if (sql && !sql.startsWith('--')) await engine.run(sql, 0);
+          }
+        }
+      });
+      const how: ModelOptions = { mapping: context.mapping, enumerations: [...enumerationsOf(elements)] };
+      const own = local.another(model, context.runtime, how);
+      // rule 4: an enumeration column is read as its value's name
+      const named = new Set((await own.relationType(lambda([], source))).filter((c) => c.enumeration).map((c) => c.name));
+      if (named.size > 0) source = enumsAsStrings(source, named);
+      return { label: q.name, model, runtime: context.runtime, how, source, columns: await sourceColumns(own, source), planner: own };
+    }
+
     /** A grid over the chosen source, beside the others: its own planner over its own model. */
     async function gridOver(chosen: Chosen): Promise<GridSource> {
+      if (chosen.kind === 'saved') {
+        const o = chosen.query;
+        return { snapshot: rawRows(o.source, o.columns), place: { engine, planner: o.planner }, label: o.label };
+      }
       if (chosen.kind === 'file') {
         const opened = await ingestFile(engine, db, chosen.file, { table: freshTable(tableNameOf(chosen.file.name)) });
-        const own = local.another(opened.model, opened.runtime, opened.bitColumns);
+        const own = local.another(opened.model, opened.runtime, { bitColumns: opened.bitColumns });
         return {
           snapshot: rawRows(opened.source, await sourceColumns(own, opened.source)),
           place: { engine, planner: own },
@@ -1262,7 +1340,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       if (chosen.kind === 'table') {
         const o = chosen.object;
         const m = inferModel(o.columns.map((c) => ({ ...c, dataType: c.type })), { table: o.name, schema: o.schema, convertible: false });
-        const own = local.another(m.model, m.runtime, m.bitColumns);
+        const own = local.another(m.model, m.runtime, { bitColumns: m.bitColumns });
         return {
           snapshot: rawRows(m.source, await sourceColumns(own, m.source)),
           place: { engine, planner: own, live: track(new WarehouseEngine(chosen.session)) },
@@ -1271,7 +1349,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         };
       }
       const m = await mountedRemote(chosen.url, chosen.s3, freshTable('remote'));
-      const own = local.another(m.model, m.runtime, m.bitColumns);
+      const own = local.another(m.model, m.runtime, { bitColumns: m.bitColumns });
       return {
         snapshot: rawRows(m.source, await sourceColumns(own, m.source)),
         place: { engine, planner: own },
@@ -1281,6 +1359,14 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
     /** The chosen source IN PLACE of the cube. */
     async function openInPlace(chosen: Chosen): Promise<void> {
+      if (chosen.kind === 'saved') {
+        const o = chosen.query;
+        local.use(o.model, o.runtime, o.how);
+        app.dispose();
+        app = makeApp(rawRows(o.source, o.columns), { ...DEFAULT_CONFIGURATION, reportTitle: o.label }, []);
+        await app.open();
+        return;
+      }
       if (chosen.kind === 'file') {
         await openFile(chosen.file, {
           ...(chosen.sample ? { sample: chosen.sample } : {}),
@@ -1293,12 +1379,19 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         return;
       }
       const m = await mountedRemote(chosen.url, chosen.s3, freshTable('remote'));
-      local.use(m.model, m.runtime, m.bitColumns);
+      local.use(m.model, m.runtime, { bitColumns: m.bitColumns });
       const columns = await sourceColumns(planner, m.source);
       app.dispose();
       app = makeApp(rawRows(m.source, columns), { ...DEFAULT_CONFIGURATION, reportTitle: lastSegment(chosen.url) }, []);
       await app.open();
     }
+
+    /** The query store config.json names, one client per address. */
+    let stores: { readonly url: string; readonly store: QueryStore } | undefined;
+    const queryStore = (config: PageConfig): QueryStore => {
+      if (stores?.url !== config.queryStore) stores = { url: config.queryStore, store: new QueryStore(config.queryStore) };
+      return stores.store;
+    };
 
     picker = async (purpose: 'add' | 'open'): Promise<GridSource | undefined> => {
       const config = await pageConfig();
@@ -1332,6 +1425,24 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             a.click();
             URL.revokeObjectURL(url);
           },
+        },
+        saved: config.queryStore ? {
+          search: async (text, mineOnly) => (await queryStore(config).search(text, mineOnly)).map((q) => {
+            const project = projectFor(config, q);
+            return {
+              id: q.id,
+              name: q.name,
+              ...(q.owner ? { owner: q.owner } : {}),
+              ...(q.lastUpdatedAt ? { modified: new Date(q.lastUpdatedAt).toLocaleDateString() } : {}),
+              project: project?.title ?? projectOf(q),
+              ...(project ? {} : { unusable: 'This page has no model for its project' }),
+            };
+          }),
+          open: async (id) => act({ kind: 'saved', query: await openedQuery(config, queryStore(config), id) }),
+        } : {
+          unavailable: 'This page has no query store: set "queryStore" in config.json (legend-lite started with --query-store, or legend-engine).',
+          search: async () => [],
+          open: () => Promise.reject(new Error('no query store')),
         },
         database: {
           ...((config.warehouse || rememberedWarehouse()) ? { url: config.warehouse || rememberedWarehouse() } : {}),

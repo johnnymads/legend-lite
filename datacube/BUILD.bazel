@@ -63,6 +63,8 @@ _EXTRA_DATA = {
     "bundle-budget": [":bundle_bundle"],
     # legend-lite's own answers for the TypeScript Database writer to match
     "catalog-model": ["test/generated/catalog-corpus.ts"],
+    # the saved queries Query writes, and the project they compile against
+    "saved-queries": ["//fixtures/saved-queries:records", ":projects"],
     # the in-memory source the Ad Hoc Analysis tests query
     "adhoc-session": ["test/adhoc-fixture.ts"],
     "adhoc-mode": ["test/adhoc-fixture.ts"],
@@ -116,6 +118,7 @@ _WASM_TESTS = [
     "window-columns",
     "json-shape",
     "column-editor",
+    "saved-queries",
 ]
 
 # node:test files run TypeScript directly (--experimental-strip-types), from the
@@ -656,6 +659,19 @@ copy_to_directory(
     },
 )
 
+# The projects a saved query compiles against (config.json `projects[]`): the Query app's trading
+# demo, its model and seed served as they are there, never copied into this package.
+copy_to_directory(
+    name = "projects",
+    srcs = [
+        "//query:demo/models/runtime-duckdb.pure",
+        "//query:demo/models/trading-seed.sql",
+        "//query:demo/models/trading.pure",
+    ],
+    out = "demo/projects/trading",
+    root_paths = ["query/demo/models"],
+)
+
 # Everything a browser fetches: pages, styles, models, bundles, runtimes.
 filegroup(
     name = "site",
@@ -665,7 +681,7 @@ filegroup(
         "demo/*.json",
         "demo/*.pure",
         "src/**/*.css",
-    ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [":vendor"],
+    ]) + [":bundle_" + out[len("demo/"):-len(".js")].replace("-", "_") for out in _BUNDLES.values()] + [":vendor", ":projects"],
 )
 
 # `bazel run //datacube:serve [-- --data FILE] [-- --open]`: the site, on loopback.
@@ -760,7 +776,7 @@ _CI_HARNESSES = [
         ":node_modules/playwright",
         ":site",
         ":src",
-    ],
+    ] + (["//fixtures/saved-queries:records"] if h == "verify-features" else []),
     entry_point = "demo/" + h + ".mjs",
     node_options = [
         "--experimental-strip-types",
