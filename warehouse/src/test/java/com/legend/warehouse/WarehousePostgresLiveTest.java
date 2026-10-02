@@ -115,6 +115,21 @@ class WarehousePostgresLiveTest {
                 new StatementRequest("SELECT 1::int8 AS a -- the end", "pg", 60_000, 30_000, 100)))).get(0).get(0)));
     }
 
+    /**
+     * The catalog's Postgres session is UTC whatever the server's configuration (leg B,
+     * docs/DATACUBE_APP_PLAN_2026_10_02.md): a timestamptz's year, a comparison with a timestamp literal and
+     * its text are its UTC instant's. The DSN under test sets no zone; the attach adds it.
+     */
+    @Test
+    void aZonedTimestampReadsAsItsUtcInstant() throws Exception {
+        List<List<Json.Node>> rows = rowsOn(server, carol, done(runOn(server, carol, new StatementRequest(
+                "SELECT current_setting('TimeZone') AS z, (SELECT source FROM pg_settings WHERE name = 'TimeZone') AS src,"
+                        + " extract(year FROM TIMESTAMPTZ '2024-12-31 23:30:00-05')::int8 AS y,"
+                        + " (TIMESTAMPTZ '2024-12-31 23:30:00-05' >= TIMESTAMP '2025-01-01 04:30:00')::text AS at_utc",
+                "pg", 60_000, 30_000, 100))));
+        assertEquals(List.of("UTC", "client", "2025", "true"), rows.get(0).stream().map(WarehouseServerTest::str).toList());
+    }
+
     @Test
     void aReaderNeedsUsageOfTheCatalog() throws Exception {
         assertFailed(dave, "SELECT 1 AS a", ErrorCode.FORBIDDEN, "no USAGE granted on catalog pg");

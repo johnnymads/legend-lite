@@ -24,6 +24,18 @@ record PostgresUrl(String catalog, String dsn) {
     }
 
     static PostgresUrl parse(String url) {
+        Map<String, String> params = params(url);
+        String database = java.util.Objects.requireNonNull(params.get("dbname"), "params() always names the database");
+        if (!Catalogs.validName(database)) {
+            throw new IllegalArgumentException("the database '" + database + "' is not a catalog name ([a-z][a-z0-9_]*):"
+                    + " name it with --postgres NAME=DSN");
+        }
+        params.putIfAbsent("options", DEFAULT_TIMEOUT);
+        return new PostgresUrl(database, keyValues(params));
+    }
+
+    /** A Postgres URL's connection parameters, in libpq's key=value names ({@code host}, {@code dbname}, ...). */
+    static Map<String, String> params(String url) {
         URI u;
         try {
             u = new URI(url);
@@ -38,15 +50,10 @@ record PostgresUrl(String catalog, String dsn) {
         if (path == null || path.length() < 2 || path.indexOf('/', 1) >= 0) {
             throw new IllegalArgumentException("a Postgres URL names its database, as postgresql://user@host:5432/db");
         }
-        String database = decode(path.substring(1));
-        if (!Catalogs.validName(database)) {
-            throw new IllegalArgumentException("the database '" + database + "' is not a catalog name ([a-z][a-z0-9_]*):"
-                    + " name it with --postgres NAME=DSN");
-        }
         Map<String, String> params = new LinkedHashMap<>();
         if (u.getHost() != null) params.put("host", u.getHost().replaceAll("^\\[|\\]$", ""));
         if (u.getPort() != -1) params.put("port", Integer.toString(u.getPort()));
-        params.put("dbname", database);
+        params.put("dbname", decode(path.substring(1)));
         String userInfo = u.getRawUserInfo();
         if (userInfo != null) {
             int colon = userInfo.indexOf(':');
@@ -63,27 +70,21 @@ record PostgresUrl(String catalog, String dsn) {
                 params.put(key, decode(pair.substring(eq + 1)));
             }
         }
-        params.putIfAbsent("options", DEFAULT_TIMEOUT);
-        return new PostgresUrl(database, keyValues(params));
+        return params;
     }
 
     /** The connection string with {@code password} added: what the terminal was asked for. */
     static String withPassword(String dsn, char[] password) {
-        return dsn + " password=" + quote(new String(password));
+        return dsn + " password=" + Postgres.quote(new String(password));
     }
 
-    private static String keyValues(Map<String, String> params) {
+    static String keyValues(Map<String, String> params) {
         StringBuilder b = new StringBuilder();
         for (Map.Entry<String, String> e : params.entrySet()) {
             if (!b.isEmpty()) b.append(' ');
-            b.append(e.getKey()).append('=').append(quote(e.getValue()));
+            b.append(e.getKey()).append('=').append(Postgres.quote(e.getValue()));
         }
         return b.toString();
-    }
-
-    /** A libpq connection-string value: single-quoted, its quotes and backslashes escaped. */
-    private static String quote(String value) {
-        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'";
     }
 
     private static String decode(String s) {

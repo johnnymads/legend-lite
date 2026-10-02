@@ -61,7 +61,7 @@ import {
   type PageDocument,
   type SavedDocument,
 } from '../src/page-document.ts';
-import { inferModel } from '../src/infer.ts';
+import { inferModel, type InferredModel } from '../src/infer.ts';
 import { pageConfig, type PageConfig, type ProjectConfig } from './page-config.ts';
 import type { ModelElement } from '../src/saved-queries.ts';
 import type { Query, QueryReader } from '../../query-store/src/index.ts';
@@ -299,6 +299,7 @@ export const SOURCE = accessor('trades::DB', 'TRADES');
 export const SNAP_TARGET: SnapTarget = {
   table: 'TRADES_SNAP',
   source: accessor('trades::DB', 'TRADES_SNAP'),
+  conversions: [],
 };
 export const RUNTIME = 'trades::RT';
 
@@ -754,8 +755,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      * A warehouse table's Snap (a copy into this tab's DuckDB, the same plan run there): only a DuckDB
      * catalog's. A Postgres catalog's plan is Postgres SQL, which this tab's DuckDB cannot run.
      */
-    const snapOf = (o: CatalogObject, source: SnapTarget['source']): { snapTarget?: SnapTarget } =>
-      o.engine === 'postgres' ? {} : { snapTarget: { schema: o.schema, table: o.name, source } };
+    const snapOf = (o: CatalogObject, m: InferredModel): { snapTarget?: SnapTarget } =>
+      o.engine === 'postgres' ? {} : { snapTarget: { schema: o.schema, table: o.name, source: m.source, conversions: m.conversions } };
 
     /** A warehouse table IN PLACE of the cube: Live there as the user, Snap into this tab. */
     async function openTable(signedIn: WarehouseSession, chosen: CatalogObject, saved?: Saved): Promise<{
@@ -776,7 +777,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       };
       const notes = await landCube({
         relation: m.source, columns, label: name, cubeSource,
-        place: { live, ...snapOf(chosen, m.source) },
+        place: { live, ...snapOf(chosen, m) },
         ...(saved ? { saved } : {}),
       });
       status.textContent = `live on the warehouse as ${signedIn.principal}`;
@@ -1466,7 +1467,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         return {
           snapshot: rawRows(m.source, await sourceColumns(own, m.source)),
           place: { engine, planner: own, live: track(new WarehouseEngine(chosen.session, o.catalog)) },
-          ...snapOf(o, m.source),
+          ...snapOf(o, m),
           label: `${o.schema}.${o.name}`,
         };
       }

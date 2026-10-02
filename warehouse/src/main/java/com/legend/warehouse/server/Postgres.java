@@ -1,5 +1,8 @@
 package com.legend.warehouse.server;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -63,6 +66,93 @@ final class Postgres {
         return "SELECT * FROM postgres_query('" + ATTACH + "', 'SELECT pg_cancel_backend(pid) FROM pg_stat_activity"
                 + " WHERE strpos(query, ''" + tag(statementId) + "'') > 0"
                 + " AND pid <> pg_backend_pid() AND usename = current_user')";
+    }
+
+    /**
+     * THE session zone of every Postgres connection a catalog makes: UTC, as Postgres's own
+     * {@code -c TimeZone} option. The platform's temporal contract is naive UTC (legend-lite's Postgres
+     * dialect sets the same zone where it holds the connection, {@code Postgres.sessionSetup}); a
+     * {@code timestamptz} column then reads as its UTC instant -- its year and month, a comparison with
+     * a timestamp literal -- whatever the server's configuration says (docs/DATACUBE_APP_PLAN_2026_10_02.md,
+     * leg B). Neither DuckDB's extension nor libpq sets it (measured 2026-10-02: the zone came from the
+     * server's configuration file).
+     */
+    static final String SESSION_ZONE = "UTC";
+
+    private static final Pattern TIME_ZONE_OPTION =
+            Pattern.compile("(?i)(?:^|\\s)(?:-c\\s*|--)timezone=(\\S*)");
+
+    /**
+     * The connection string a catalog attaches with: {@code dsn} (libpq key=value pairs, or a
+     * {@code postgresql://} URL, read into them) as key=value pairs, with {@link #SESSION_ZONE} added to its
+     * {@code options} after any option it already gives. A DSN that sets another zone is refused, by name:
+     * its catalog would read zoned timestamps in that zone.
+     */
+    static String inSessionZone(String catalog, String dsn) {
+        Map<String, String> params = PostgresUrl.isUrl(dsn.strip()) ? PostgresUrl.params(dsn.strip()) : keyValues(catalog, dsn);
+        String options = params.getOrDefault("options", "");
+        Matcher m = TIME_ZONE_OPTION.matcher(options);
+        if (m.find()) {
+            if (!m.group(1).equalsIgnoreCase(SESSION_ZONE)) {
+                throw new IllegalArgumentException("Postgres catalog " + catalog + " sets TimeZone=" + m.group(1)
+                        + " in its options; a catalog reads in " + SESSION_ZONE + ": remove it");
+            }
+        } else {
+            params.put("options", (options.isBlank() ? "" : options.strip() + " ") + "-c TimeZone=" + SESSION_ZONE);
+        }
+        return PostgresUrl.keyValues(params);
+    }
+
+    /**
+     * A libpq key=value connection string's pairs, in order, as libpq reads them (fe-connect.c
+     * {@code conninfo_parse}): {@code key = value}, a value bare up to white space or single-quoted, a
+     * backslash escaping the next character in either. A key given twice keeps its last value, as in libpq.
+     */
+    static Map<String, String> keyValues(String catalog, String dsn) {
+        Map<String, String> out = new LinkedHashMap<>();
+        int i = 0;
+        int n = dsn.length();
+        while (true) {
+            while (i < n && Character.isWhitespace(dsn.charAt(i))) i++;
+            if (i >= n) return out;
+            int keyStart = i;
+            while (i < n && dsn.charAt(i) != '=' && !Character.isWhitespace(dsn.charAt(i))) i++;
+            String key = dsn.substring(keyStart, i);
+            while (i < n && Character.isWhitespace(dsn.charAt(i))) i++;
+            if (key.isEmpty() || i >= n || dsn.charAt(i) != '=') {
+                throw new IllegalArgumentException("Postgres catalog " + catalog
+                        + ": its connection string is not key=value pairs (at '" + (key.isEmpty() ? "=" : key) + "')");
+            }
+            i++;
+            while (i < n && Character.isWhitespace(dsn.charAt(i))) i++;
+            StringBuilder value = new StringBuilder();
+            if (i < n && dsn.charAt(i) == '\'') {
+                i++;
+                while (true) {
+                    if (i >= n) {
+                        throw new IllegalArgumentException("Postgres catalog " + catalog
+                                + ": its connection string has an unterminated quoted value for '" + key + "'");
+                    }
+                    char ch = dsn.charAt(i++);
+                    if (ch == '\'') break;
+                    if (ch == '\\' && i < n) ch = dsn.charAt(i++);
+                    value.append(ch);
+                }
+            } else {
+                while (i < n && !Character.isWhitespace(dsn.charAt(i))) {
+                    char ch = dsn.charAt(i++);
+                    if (ch == '\\' && i < n) ch = dsn.charAt(i++);
+                    value.append(ch);
+                }
+            }
+            out.remove(key);
+            out.put(key, value.toString());
+        }
+    }
+
+    /** A libpq connection-string value: single-quoted, its quotes and backslashes escaped. */
+    static String quote(String value) {
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'";
     }
 
     /** The comment a statement's Postgres query leads with; only ever a server-made statement id. */

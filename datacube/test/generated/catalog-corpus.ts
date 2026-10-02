@@ -488,7 +488,7 @@ export const CATALOG_CORPUS: readonly {
   {
     name: 'type BLOB',
     input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'c', dataType: 'BLOB', logicalType: 'BLOB', precision: null, scale: null, notNull: false }], convertible: true },
-    expected: { error: 'column \'c\': a column of DuckDB type \'BLOB\' cannot be declared in a Pure Database (bytes: no Pure Database type holds them)' },
+    expected: { error: 'no column of \'t\' can be read from its source: c' },
   },
   {
     name: 'mixed, no schema',
@@ -516,11 +516,11 @@ export const CATALOG_CORPUS: readonly {
     name: 'mixed, read-only',
     input: { path: 'local::DB', schema: 'sales', table: 'v_orders', columns: [{ name: 'region', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'trade date', dataType: 'DATE', logicalType: 'DATE', precision: null, scale: null, notNull: false }, { name: 'amount', dataType: 'DECIMAL(18,2)', logicalType: 'DECIMAL', precision: 18, scale: 2, notNull: false }, { name: 'big', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }, { name: 'at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: false }, { name: 'id', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'payload', dataType: 'STRUCT(a INTEGER)', logicalType: 'STRUCT', precision: null, scale: null, notNull: false }, { name: 'say "hi"', dataType: 'VARCHAR', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }, { name: 'back\\slash', dataType: 'INTEGER', logicalType: 'INTEGER', precision: 32, scale: 0, notNull: false }, { name: '_ok9', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: false }, { name: '9lead', dataType: 'DOUBLE', logicalType: 'DOUBLE', precision: 53, scale: 0, notNull: false }, { name: 'doc', dataType: 'JSON', logicalType: 'VARCHAR', precision: null, scale: null, notNull: false }], convertible: false },
     expected: {
-      text: '###Relational\nDatabase local::DB\n(\n    Schema sales\n    (\n        Table v_orders\n        (\n            region VARCHAR(4096),\n            "trade date" DATE,\n            amount DECIMAL(18,2),\n            payload SEMISTRUCTURED,\n            "say \\"hi\\"" VARCHAR(4096),\n            "back\\\\slash" INTEGER,\n            _ok9 BIGINT,\n            "9lead" DOUBLE,\n            doc SEMISTRUCTURED\n        )\n    )\n)\n',
+      text: '###Relational\nDatabase local::DB\n(\n    Schema sales\n    (\n        Table v_orders\n        (\n            region VARCHAR(4096),\n            "trade date" DATE,\n            amount DECIMAL(18,2),\n            at TIMESTAMP,\n            payload SEMISTRUCTURED,\n            "say \\"hi\\"" VARCHAR(4096),\n            "back\\\\slash" INTEGER,\n            _ok9 BIGINT,\n            "9lead" DOUBLE,\n            doc SEMISTRUCTURED\n        )\n    )\n)\n',
       accessor: '#>{local::DB.sales.v_orders}#',
       source: {"_type":"classInstance","type":">","value":{"path":["local::DB","sales","v_orders"]}},
-      conversions: [],
-      excluded: ['big', 'at', 'id'],
+      conversions: [{ column: 'at', sql: 'CAST(timezone(\'UTC\', "at") AS TIMESTAMP)' }],
+      excluded: ['big', 'id'],
     },
   },
   {
@@ -580,7 +580,34 @@ export const CATALOG_CORPUS: readonly {
   {
     name: 'every column needs a conversion, read-only',
     input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'u', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }, { name: 'h', dataType: 'HUGEINT', logicalType: 'HUGEINT', precision: 128, scale: 0, notNull: false }], convertible: false },
-    expected: { error: 'every column of \'t\' needs a conversion its source cannot apply: u, h' },
+    expected: { error: 'no column of \'t\' can be read from its source: u, h' },
+  },
+  {
+    name: 'a zoned timestamp and bytes, read-only',
+    input: { path: 'local::DB', schema: 'sales', table: 'orders', columns: [{ name: 'id', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: true }, { name: 'ordered_at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: true }, { name: 'photo', dataType: 'BLOB', logicalType: 'BLOB', precision: null, scale: null, notNull: false }, { name: 'ref', dataType: 'UUID', logicalType: 'UUID', precision: null, scale: null, notNull: false }], convertible: false },
+    expected: {
+      text: '###Relational\nDatabase local::DB\n(\n    Schema sales\n    (\n        Table orders\n        (\n            id BIGINT NOT NULL,\n            ordered_at TIMESTAMP NOT NULL\n        )\n    )\n)\n',
+      accessor: '#>{local::DB.sales.orders}#',
+      source: {"_type":"classInstance","type":">","value":{"path":["local::DB","sales","orders"]}},
+      conversions: [{ column: 'ordered_at', sql: 'CAST(timezone(\'UTC\', "ordered_at") AS TIMESTAMP)' }],
+      excluded: ['photo', 'ref'],
+    },
+  },
+  {
+    name: 'a zoned timestamp and bytes, convertible',
+    input: { path: 'local::DB', schema: null, table: 'orders', columns: [{ name: 'id', dataType: 'BIGINT', logicalType: 'BIGINT', precision: 64, scale: 0, notNull: true }, { name: 'ordered_at', dataType: 'TIMESTAMP WITH TIME ZONE', logicalType: 'TIMESTAMP WITH TIME ZONE', precision: null, scale: null, notNull: true }, { name: 'photo', dataType: 'BLOB', logicalType: 'BLOB', precision: null, scale: null, notNull: false }], convertible: true },
+    expected: {
+      text: '###Relational\nDatabase local::DB\n(\n    Table orders\n    (\n        id BIGINT NOT NULL,\n        ordered_at TIMESTAMP NOT NULL\n    )\n)\n',
+      accessor: '#>{local::DB.orders}#',
+      source: {"_type":"classInstance","type":">","value":{"path":["local::DB","orders"]}},
+      conversions: [{ column: 'ordered_at', sql: 'CAST(timezone(\'UTC\', "ordered_at") AS TIMESTAMP)' }],
+      excluded: ['photo'],
+    },
+  },
+  {
+    name: 'only bytes',
+    input: { path: 'local::DB', schema: null, table: 't', columns: [{ name: 'b', dataType: 'BLOB', logicalType: 'BLOB', precision: null, scale: null, notNull: false }], convertible: true },
+    expected: { error: 'no column of \'t\' can be read from its source: b' },
   },
   {
     name: 'no columns',

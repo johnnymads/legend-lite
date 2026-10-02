@@ -61,9 +61,14 @@ public final class CatalogFacts {
 
     private static String rules() {
         StringBuilder out = new StringBuilder(HEAD);
-        out.append("\n/** How a Database declares a column of a canonical DuckDB type, and the SQL over `%s` that converts it at\n"
-                + " *  the source (null: none). */\n"
-                + "export interface CatalogType {\n  readonly declared: string;\n  readonly conversion: string | null;\n}\n\n");
+        out.append("\n/** How a source reads a column (CatalogType.Read): as stored; converted to be read at all; read as stored\n"
+                + " *  in place (the UTC session) and converted only in a copy; or left out, no Database type holding it. */\n"
+                + "export type CatalogRead = " + String.join(" | ", java.util.Arrays.stream(CatalogType.Read.values())
+                        .map(r -> str(r.name())).toList()) + ";\n\n");
+        out.append("/** How a Database declares a column of a canonical DuckDB type (null: left out), the SQL over `%s` that\n"
+                + " *  converts it at the source (null: none), and why it is left out (null: it is not). */\n"
+                + "export interface CatalogType {\n  readonly read: CatalogRead;\n  readonly declared: string | null;\n"
+                + "  readonly conversion: string | null;\n  readonly reason: string | null;\n}\n\n");
         out.append("/** Every canonical DuckDB type a Database declares (DECIMAL apart: from its precision and scale). */\n");
         out.append("export const CATALOG_TYPES: Readonly<Record<string, CatalogType>> = {\n");
         for (Map.Entry<String, CatalogType> e : DuckDb.CATALOG_TYPES.entrySet()) {
@@ -86,7 +91,12 @@ public final class CatalogFacts {
     }
 
     private static String type(CatalogType t) {
-        return "{ declared: " + str(t.declared()) + ", conversion: " + (t.conversion() == null ? "null" : str(t.conversion())) + " }";
+        return "{ read: " + str(t.read().name()) + ", declared: " + nullable(t.declared())
+                + ", conversion: " + nullable(t.conversion()) + ", reason: " + nullable(t.reason()) + " }";
+    }
+
+    private static String nullable(String s) {
+        return s == null ? "null" : str(s);
     }
 
     /**
@@ -128,6 +138,12 @@ public final class CatalogFacts {
         cases.add(real("a dot in the table", "local::DB", null, "a.b", "c INTEGER", true));
         cases.add(real("a brace in the schema", "local::DB", "s{", "t", "c INTEGER", true));
         cases.add(real("every column needs a conversion, read-only", "local::DB", null, "t", "u UUID, h HUGEINT", false));
+        // a Postgres table as the warehouse lists it: a zoned timestamp read in place, bytes left out, by name
+        cases.add(real("a zoned timestamp and bytes, read-only", "local::DB", "sales", "orders",
+                "id BIGINT NOT NULL, ordered_at TIMESTAMPTZ NOT NULL, photo BLOB, ref UUID", false));
+        cases.add(real("a zoned timestamp and bytes, convertible", "local::DB", null, "orders",
+                "id BIGINT NOT NULL, ordered_at TIMESTAMPTZ NOT NULL, photo BLOB", true));
+        cases.add(real("only bytes", "local::DB", null, "t", "b BLOB", true));
         cases.add(new Case("no columns", "local::DB", null, "t", null, List.of(), true));
         cases.add(new Case("two columns a case apart", "local::DB", null, "t", null, List.of(
                 new CatalogModel.Column("Amount", "INTEGER", "INTEGER", 32, 0, false),

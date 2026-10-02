@@ -155,7 +155,7 @@ it('every cube case answers the same live on the warehouse and snapped in the ta
   // SNAP: exactly the rows the reader may read, through the real SnapManager
   const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
   const snaps = new SnapManager(local, live);
-  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE } });
+  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
   assert.equal(info.rowCount, 10, 'the snap holds every row the reader may read');
 
   const refused: string[] = [];
@@ -197,7 +197,7 @@ it('a person\'s path: the catalog, a model from it, the same answer on both engi
   const liveOut = await new PlanThenRun(own, live).run(pure, snapshot);
   const snaps = new SnapManager(local, live);
   await snaps.snap((await own.plan(from(m.source).select(COLUMNS).lambda())).sql, 0,
-    { target: { schema: trades.schema, table: trades.name, source: m.source } });
+    { target: { schema: trades.schema, table: trades.name, source: m.source, conversions: m.conversions } });
   const localOut = await new PlanThenRun(own, local).run(pure, snapshot);
   assert.equal(shape(localOut.rows, true), shape(liveOut.rows, true));
   assert.equal(liveOut.rows.rowCount, 4);
@@ -224,7 +224,7 @@ it('every live answer carries the server\'s receipt, and the server confirms it;
 
   const sourceSql = (await planner.plan(from(SOURCE).select(COLUMNS).lambda())).sql;
   const snaps = new SnapManager(local, live);
-  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE } });
+  const info = await snaps.snap(sourceSql, 0, { target: { table: 'TRADES', source: SOURCE, conversions: [] } });
   assert.equal(info.pulledBy?.as, 'rita');
   assert.match(await info.pulledBy!.check!(), /^On the warehouse's record for rita/);
   // snapped, the tab's own engine answers, and its receipt says so

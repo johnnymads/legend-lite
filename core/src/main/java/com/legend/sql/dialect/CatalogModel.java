@@ -43,8 +43,9 @@ public final class CatalogModel {
 
     /**
      * The Database element's text; the relation accessor that reads the table
-     * ({@code #>{db.schema.table}#}); the conversions its declarations need; and the columns
-     * left out because their source cannot convert them.
+     * ({@code #>{db.schema.table}#}); the conversions a COPY of the table applies so it holds
+     * the declared types (an upload's rewrite at ingest, a Snap into the tab); and the columns
+     * left out, because their source cannot convert them or no Database type holds them.
      */
     public record Database(String text, String accessor, List<Conversion> conversions, List<String> excluded) {
     }
@@ -56,7 +57,13 @@ public final class CatalogModel {
      *
      * @param convertible whether the source can apply a conversion (an upload rewritten at
      *                    ingest can; a read-only table cannot). When it cannot, a column that
-     *                    needs one is left out of the Database and named in {@code excluded}.
+     *                    needs one to be read at all ({@link CatalogType.Read#CONVERTED}) is left
+     *                    out of the Database and named in {@code excluded}; one that needs it only
+     *                    in a copy ({@link CatalogType.Read#COPY_CONVERTED}: a zoned timestamp,
+     *                    read under the UTC session) is declared and read as stored in place, its
+     *                    conversion still listed for a copy of the table to apply. A column no
+     *                    Database type holds ({@link CatalogType.Read#LEFT_OUT}) is left out and
+     *                    named on every source.
      */
     public static Database database(String path, @com.legend.base.Nullable String schema, String table,
             List<Column> columns, SqlDialect dialect, boolean convertible) {
@@ -80,19 +87,26 @@ public final class CatalogModel {
             } catch (DialectCapability e) {
                 throw new DialectCapability("column '" + c.name() + "': " + e.getMessage());
             }
-            if (t.conversion() != null && !convertible) {
+            boolean read = switch (t.read()) {
+                // a COPY_CONVERTED column (a zoned timestamp) reads as stored in place: the UTC session
+                case AS_STORED, COPY_CONVERTED -> true;
+                case CONVERTED -> convertible;
+                case LEFT_OUT -> false;
+            };
+            if (!read) {
                 excluded.add(c.name());
                 continue;
             }
             lines.add(ident(c.name()) + " " + t.declared() + (c.notNull() ? " NOT NULL" : ""));
+            // what a copy applies: every declared column's conversion (on a read-only source only the
+            // COPY_CONVERTED ones are declared; the source itself reads them as stored)
             if (t.conversion() != null) {
-                conversions.add(new Conversion(c.name(),
-                        t.conversion().replace("%s", sqlIdent(c.name()))));
+                conversions.add(new Conversion(c.name(), t.conversion().replace("%s", sqlIdent(c.name()))));
             }
         }
         if (lines.isEmpty()) {
-            throw new IllegalArgumentException("every column of '" + table
-                    + "' needs a conversion its source cannot apply: " + String.join(", ", excluded));
+            throw new IllegalArgumentException("no column of '" + table
+                    + "' can be read from its source: " + String.join(", ", excluded));
         }
         String tableBlock = "Table " + ident(table) + "\n    (\n        "
                 + String.join(",\n        ", lines) + "\n    )";

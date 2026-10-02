@@ -77,11 +77,12 @@ public final class DuckDb extends AnsiSqlRenderer {
      * parsed): its canonical type ({@code duckdb_types().logical_type}, joined on the column's
      * {@code data_type_id}), and a DECIMAL's precision and scale as numbers. Every type the DDL can
      * say is declared as itself; a type it cannot is converted at the source, explicitly -- the
-     * unsigned and 128-bit integers to exact decimals, a zoned timestamp to UTC, a time of day, a
-     * UUID, an interval, an enum and a bit string to their canonical text; a nested value (STRUCT,
-     * LIST, MAP, UNION, ARRAY) is a Variant as stored; JSON (an ALIAS of VARCHAR, so known by its
-     * alias name) is a Variant. Every other canonical type is refused, by a decision recorded in
-     * {@link #CATALOG_REFUSED} -- never guessed.
+     * unsigned and 128-bit integers to exact decimals, a time of day, a UUID, an interval, an enum
+     * and a bit string to their canonical text; a zoned timestamp is its UTC instant, read in place
+     * under the UTC session and converted only in a copy ({@link CatalogType.Read#COPY_CONVERTED}); a
+     * nested value (STRUCT, LIST, MAP, UNION, ARRAY) is a Variant as stored; JSON (an ALIAS of VARCHAR,
+     * so known by its alias name) is a Variant; bytes are left out, by name. Every other canonical
+     * type is refused, by a decision recorded in {@link #CATALOG_REFUSED} -- never guessed.
      */
     @Override
     public CatalogType catalogType(CatalogModel.Column column) {
@@ -95,7 +96,7 @@ public final class DuckDb extends AnsiSqlRenderer {
                 throw new DialectCapability("a DECIMAL column whose catalog gives no precision and scale ('"
                         + column.dataType() + "') cannot be declared");
             }
-            return new CatalogType("DECIMAL(" + column.precision() + "," + column.scale() + ")", null);
+            return CatalogType.asStored("DECIMAL(" + column.precision() + "," + column.scale() + ")");
         }
         CatalogType known = logical == null ? null : CATALOG_TYPES.get(logical);
         if (known != null) {
@@ -135,36 +136,37 @@ public final class DuckDb extends AnsiSqlRenderer {
 
     /** Type ALIASES (a column's own type name, upper-cased) that are not their canonical type's: JSON. */
     public static final java.util.Map<String, CatalogType> CATALOG_ALIASES =
-            java.util.Map.of("JSON", new CatalogType("SEMISTRUCTURED", null));
+            java.util.Map.of("JSON", CatalogType.asStored("SEMISTRUCTURED"));
 
     /** Canonical types refused, each with its reason. */
     public static final java.util.Map<String, String> CATALOG_REFUSED = catalogRefused();
 
     private static java.util.Map<String, CatalogType> catalogTypes() {
         java.util.Map<String, CatalogType> m = new java.util.LinkedHashMap<>();
-        CatalogType text = new CatalogType("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
-        CatalogType variant = new CatalogType("SEMISTRUCTURED", null);
-        m.put("VARCHAR", new CatalogType("VARCHAR(4096)", null));
-        m.put("BOOLEAN", new CatalogType("BIT", null));
-        m.put("TINYINT", new CatalogType("TINYINT", null));
-        m.put("SMALLINT", new CatalogType("SMALLINT", null));
-        m.put("INTEGER", new CatalogType("INTEGER", null));
-        m.put("BIGINT", new CatalogType("BIGINT", null));
+        CatalogType text = CatalogType.converted("VARCHAR(4096)", "CAST(%s AS VARCHAR)");
+        CatalogType variant = CatalogType.asStored("SEMISTRUCTURED");
+        m.put("VARCHAR", CatalogType.asStored("VARCHAR(4096)"));
+        m.put("BOOLEAN", CatalogType.asStored("BIT"));
+        m.put("TINYINT", CatalogType.asStored("TINYINT"));
+        m.put("SMALLINT", CatalogType.asStored("SMALLINT"));
+        m.put("INTEGER", CatalogType.asStored("INTEGER"));
+        m.put("BIGINT", CatalogType.asStored("BIGINT"));
         // an unsigned or 128-bit integer holds values its signed width cannot: the next width, or exact decimals
-        m.put("UTINYINT", new CatalogType("SMALLINT", null));
-        m.put("USMALLINT", new CatalogType("INTEGER", null));
-        m.put("UINTEGER", new CatalogType("BIGINT", null));
-        m.put("UBIGINT", new CatalogType("DECIMAL(20,0)", "CAST(%s AS DECIMAL(20,0))"));
-        m.put("HUGEINT", new CatalogType("DECIMAL(38,0)", "CAST(%s AS DECIMAL(38,0))"));
-        m.put("FLOAT", new CatalogType("REAL", null));
-        m.put("DOUBLE", new CatalogType("DOUBLE", null));
-        m.put("DATE", new CatalogType("DATE", null));
-        m.put("TIMESTAMP", new CatalogType("TIMESTAMP", null));
-        m.put("TIMESTAMP_S", new CatalogType("TIMESTAMP", null));
-        m.put("TIMESTAMP_MS", new CatalogType("TIMESTAMP", null));
-        m.put("TIMESTAMP_NS", new CatalogType("TIMESTAMP", null));
-        // a zoned timestamp is its UTC instant: read as stored, in UTC
-        m.put("TIMESTAMP WITH TIME ZONE", new CatalogType("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)"));
+        m.put("UTINYINT", CatalogType.asStored("SMALLINT"));
+        m.put("USMALLINT", CatalogType.asStored("INTEGER"));
+        m.put("UINTEGER", CatalogType.asStored("BIGINT"));
+        m.put("UBIGINT", CatalogType.converted("DECIMAL(20,0)", "CAST(%s AS DECIMAL(20,0))"));
+        m.put("HUGEINT", CatalogType.converted("DECIMAL(38,0)", "CAST(%s AS DECIMAL(38,0))"));
+        m.put("FLOAT", CatalogType.asStored("REAL"));
+        m.put("DOUBLE", CatalogType.asStored("DOUBLE"));
+        m.put("DATE", CatalogType.asStored("DATE"));
+        m.put("TIMESTAMP", CatalogType.asStored("TIMESTAMP"));
+        m.put("TIMESTAMP_S", CatalogType.asStored("TIMESTAMP"));
+        m.put("TIMESTAMP_MS", CatalogType.asStored("TIMESTAMP"));
+        m.put("TIMESTAMP_NS", CatalogType.asStored("TIMESTAMP"));
+        // a zoned timestamp is its UTC instant: read in place under the UTC session (every reading
+        // session's, sessionSetup), and a copy holds its UTC wall time, whatever zone later reads it
+        m.put("TIMESTAMP WITH TIME ZONE", CatalogType.copyConverted("TIMESTAMP", "CAST(timezone('UTC', %s) AS TIMESTAMP)"));
         m.put("TIME", text);
         m.put("TIME WITH TIME ZONE", text);
         m.put("UUID", text);
@@ -179,12 +181,13 @@ public final class DuckDb extends AnsiSqlRenderer {
         m.put("MAP", variant);
         m.put("UNION", variant);
         m.put("ARRAY", variant);
+        // bytes: the column is left out, by name, and the table still opens (a Postgres bytea is one)
+        m.put("BLOB", CatalogType.leftOut("bytes: no Pure Database type holds them"));
         return java.util.Collections.unmodifiableMap(m);
     }
 
     private static java.util.Map<String, String> catalogRefused() {
         java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
-        m.put("BLOB", "bytes: no Pure Database type holds them");
         m.put("GEOMETRY", "a spatial value: no Pure Database type holds it");
         m.put("UHUGEINT", "not yet decided");
         m.put("TIME_NS", "not yet decided");

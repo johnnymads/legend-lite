@@ -11,7 +11,7 @@ import { element } from '../../pure-protocol/src/index.ts';
 
 /** The live source, and where a snap goes: the model would declare both. */
 const LIVE = element('trades');
-const target = (table: string) => ({ table, source: element(table) });
+const target = (table: string) => ({ table, source: element(table), conversions: [] });
 import {
   SnapManager,
   SnapRefusal,

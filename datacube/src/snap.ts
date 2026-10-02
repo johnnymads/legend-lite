@@ -86,6 +86,13 @@ export interface SnapTarget {
   readonly schema?: string;
   readonly table: string;
   readonly source: ValueSpecification;
+  /**
+   * What the COPY applies so it holds the model's declared types (the catalog model's
+   * `conversions`, CatalogModel.database): a zoned timestamp read in place under the source's
+   * UTC session is copied as its UTC wall time, so the tab's store, in whatever zone, reads the
+   * same values (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B). Applied where the rows are read.
+   */
+  readonly conversions: readonly { readonly column: string; readonly sql: string }[];
 }
 
 export type PlaneState =
@@ -233,6 +240,12 @@ export class SnapManager {
     const bare = options.target.table;
     const table = qualified(schema, bare);
     const engine = this.#localStore();
+    // the copy's rows, converted where they are read (the source's session, not the tab's): the
+    // same rewrite an upload applies at ingest (upload.ts)
+    const conversions = options.target.conversions;
+    const copied = conversions.length === 0 ? sourceSql
+      : `SELECT * REPLACE (${conversions.map((c) => `${c.sql} AS ${quoteIdent(c.column)}`).join(', ')}) `
+        + `FROM (${sourceSql}) AS ${quoteIdent('snap_source')}`;
     if (this.#remote) {
       // The rows live on the server: stream its Arrow chunks into a local
       // table of the same name, so the model -- and the planned SQL -- read
@@ -242,9 +255,9 @@ export class SnapManager {
         throw new SnapRefusal('the local store cannot load Arrow data, so a remote live plane cannot be snapped');
       }
       await loader.loadArrow({ ...(schema ? { schema } : {}), table: bare },
-        this.#remote.arrowChunks(sourceSql, undefined, (r) => { pulledBy = r; }));
+        this.#remote.arrowChunks(copied, undefined, (r) => { pulledBy = r; }));
     } else {
-      await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${sourceSql}`, epoch);
+      await engine.run(`CREATE OR REPLACE TABLE ${table} AS ${copied}`, epoch);
     }
 
     const takenAt = new Date();

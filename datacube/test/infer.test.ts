@@ -95,14 +95,26 @@ describe('inferModel', () => {
     ], { table: 't', convertible: true }), /two columns named/);
   });
 
-  it('names what the source must convert, or what a read-only source leaves out', async () => {
-    const cols = [col_('id', 'BIGINT'), col_('at', 'TIMESTAMP WITH TIME ZONE')];
+  it('names what a copy must convert, and what a read-only source leaves out', async () => {
+    const cols = [col_('id', 'BIGINT'), col_('at', 'TIMESTAMP WITH TIME ZONE'), col_('ref', 'UUID')];
     const upload = inferModel(cols, { table: 't', convertible: true });
-    assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
+    assert.deepEqual(upload.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` },
+      { column: 'ref', sql: `CAST("ref" AS VARCHAR)` }]);
     assert.match(upload.model, /at TIMESTAMP/);
+    // a zoned timestamp is read in place, as its UTC instant under the UTC session; its conversion is
+    // still the copy's (a Snap). A UUID must be converted to be read at all: left out, by name.
     const warehouse = inferModel(cols, { table: 't', schema: 's', convertible: false });
-    assert.deepEqual(warehouse.excluded, ['at']);
-    assert.doesNotMatch(warehouse.model, / at /);
+    assert.deepEqual(warehouse.excluded, ['ref']);
+    assert.match(warehouse.model, / at TIMESTAMP/);
+    assert.deepEqual(warehouse.conversions, [{ column: 'at', sql: `CAST(timezone('UTC', "at") AS TIMESTAMP)` }]);
+  });
+
+  it('leaves bytes out by name, on every source, and opens the rest', async () => {
+    for (const convertible of [true, false]) {
+      const m = inferModel([col_('id', 'BIGINT'), col_('photo', 'BLOB')], { table: 't', convertible });
+      assert.deepEqual([m.excluded, m.conversions], [['photo'], []]);
+      assert.doesNotMatch(m.model, /photo/);
+    }
   });
 
   it('declares a nested column a Variant as stored, on any source (docs/VARIANT_STORAGE_CENSUS_2026_09_27.md)', async () => {

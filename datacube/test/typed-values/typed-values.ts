@@ -267,11 +267,15 @@ describe('a source\'s columns come from the compiler', () => {
     assert.deepEqual(undecided, []);
   });
 
-  it('a type the dialect cannot declare is refused, naming the column', async () => {
+  it('a type no Database holds is left out, naming the column', async () => {
     const duck = new DuckDbEngine(conn);
-    await duck.run('CREATE TABLE blobs (payload BLOB)', 0);
+    await duck.run('CREATE TABLE blobs (id INTEGER, payload BLOB)', 0);
     const blobs = await catalogColumns(duck, 'blobs');
-    assert.throws(() => inferModel(blobs, { table: 'blobs', convertible: true }), /payload.*BLOB/s);
+    assert.deepEqual(inferModel(blobs, { table: 'blobs', convertible: true }).excluded, ['payload']);
+    await duck.run('CREATE TABLE only_blobs (payload BLOB)', 0);
+    const onlyBlobs = await catalogColumns(duck, 'only_blobs');
+    assert.throws(() => inferModel(onlyBlobs, { table: 'only_blobs', convertible: true }),
+      /no column of 'only_blobs' can be read from its source: payload/);
   });
 
   it('refuses a declared column the source does not have', async () => {

@@ -152,12 +152,50 @@ class CatalogModelTest {
 
     @Test
     void aReadOnlySourceLeavesOutWhatItCannotConvert_namingIt() {
-        CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", catalog("id BIGINT, \"at\" TIMESTAMPTZ"), new DuckDb(), false);
-        assertEquals(List.of("at"), db.excluded());
+        CatalogModel.Database db = CatalogModel.database("t::DB", null, "orders", catalog("id BIGINT, ref UUID, big UBIGINT"), new DuckDb(), false);
+        assertEquals(List.of("ref", "big"), db.excluded());
         assertEquals(List.of(), db.conversions());
-        assertTrue(!db.text().contains("at "), db.text());
-        assertThrows(IllegalArgumentException.class, () -> CatalogModel.database("t::DB", null, "T",
-                catalog("\"at\" TIMESTAMPTZ"), new DuckDb(), false));
+        assertTrue(!db.text().contains("ref ") && !db.text().contains("big "), db.text());
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> CatalogModel.database("t::DB", null, "T",
+                catalog("ref UUID"), new DuckDb(), false));
+        assertTrue(e.getMessage().contains("ref"), e.getMessage());
+    }
+
+    /**
+     * A zoned timestamp is its UTC instant (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B): a read-only
+     * source declares it TIMESTAMP and reads it as stored, under the UTC session every reader runs
+     * ({@link SqlDialect#sessionSetup}); a copy is converted to its UTC wall time.
+     */
+    @Test
+    void aZonedTimestampIsReadInPlaceOnAReadOnlySource_andConvertedInACopy() {
+        List<CatalogModel.Column> columns = catalog("id BIGINT, \"at\" TIMESTAMPTZ NOT NULL");
+        CatalogModel.Database readOnly = CatalogModel.database("t::DB", "sales", "orders", columns, new DuckDb(), false);
+        assertEquals(List.of(), readOnly.excluded());
+        // read in place as stored; listed for a copy (a Snap) to apply
+        assertEquals(List.of(new CatalogModel.Conversion("at", "CAST(timezone('UTC', \"at\") AS TIMESTAMP)")), readOnly.conversions());
+        assertTrue(readOnly.text().contains(" at TIMESTAMP NOT NULL"), readOnly.text());
+        CatalogModel.Database copy = CatalogModel.database("t::DB", "sales", "orders", columns, new DuckDb(), true);
+        assertEquals(List.of(new CatalogModel.Conversion("at", "CAST(timezone('UTC', \"at\") AS TIMESTAMP)")), copy.conversions());
+        assertEquals(readOnly.text(), copy.text());
+    }
+
+    /**
+     * The same model on a Postgres runtime (a warehouse's Postgres catalog): the zoned column is read as
+     * stored, compared with a timestamp literal and grouped by its year and month in Postgres's own SQL --
+     * which the session's UTC zone makes its UTC instant's.
+     */
+    @Test
+    void aZonedTimestampOnPostgres_filtersAndGroupsByDatePartsAsStored() {
+        CatalogModel.Database db = CatalogModel.database("t::DB", "sales", "orders",
+                catalog("id BIGINT, ordered_at TIMESTAMPTZ NOT NULL"), new DuckDb(), false);
+        String model = db.text() + WRAPPER.replace("type: DuckDB", "type: Postgres");
+        String sql = com.legend.Compiler.plan(model, db.accessor()
+                + "->filter(r|$r.ordered_at >= %2025-01-01T00:00:00)"
+                + "->extend(~[y: r|$r.ordered_at->year(), m: r|$r.ordered_at->monthNumber()])"
+                + "->groupBy(~[y, m], ~n: r|$r.id: c|$c->count())", "t::RT").sql();
+        assertTrue(sql.contains("FROM \"sales\".\"orders\""), sql);
+        assertTrue(sql.contains("\"ordered_at\" >= "), sql);
+        assertTrue(!sql.contains("timezone("), sql);
     }
 
     @Test
@@ -190,11 +228,26 @@ class CatalogModelTest {
         assertTrue(e.getMessage().contains("a.b"), e.getMessage());
     }
 
+    /** Bytes (a Postgres bytea) are left out, by name, on every source; the rest of the table opens. */
     @Test
-    void aBlobIsRefused_namingTheColumn() {
-        DialectCapability e = assertThrows(DialectCapability.class, () -> CatalogModel.database("t::DB", null, "T",
+    void aBlobIsLeftOut_namingTheColumn() {
+        for (boolean convertible : List.of(true, false)) {
+            CatalogModel.Database db = CatalogModel.database("t::DB", null, "T", catalog("id INTEGER, payload BLOB"), new DuckDb(), convertible);
+            assertEquals(List.of("payload"), db.excluded());
+            assertEquals(List.of(), db.conversions());
+            assertTrue(db.text().contains("id INTEGER") && !db.text().contains("payload"), db.text());
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> CatalogModel.database("t::DB", null, "T",
                 catalog("payload BLOB"), new DuckDb(), true));
-        assertTrue(e.getMessage().contains("payload") && e.getMessage().contains("BLOB"), e.getMessage());
+        assertTrue(e.getMessage().contains("payload"), e.getMessage());
+    }
+
+    @Test
+    void aCatalogTypeSaysExactlyWhatItsReadNeeds() {
+        assertThrows(IllegalArgumentException.class, () -> new CatalogType(CatalogType.Read.AS_STORED, "INTEGER", "CAST(%s AS INTEGER)", null));
+        assertThrows(IllegalArgumentException.class, () -> new CatalogType(CatalogType.Read.COPY_CONVERTED, "TIMESTAMP", null, null));
+        assertThrows(IllegalArgumentException.class, () -> new CatalogType(CatalogType.Read.LEFT_OUT, "VARCHAR", null, "why"));
+        assertThrows(IllegalArgumentException.class, () -> new CatalogType(CatalogType.Read.LEFT_OUT, null, null, null));
     }
 
     @Test

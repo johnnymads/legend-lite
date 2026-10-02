@@ -79,15 +79,17 @@ public final class Catalogs implements AutoCloseable {
         if (!Files.isRegularFile(extension)) {
             throw new IOException("DuckDB's postgres extension is not at " + extension + " (--duckdb-extensions)");
         }
+        // every connection the attach makes is in the platform's UTC session (Postgres.SESSION_ZONE)
+        String attached = Postgres.inSessionZone(name, dsn);
         Database db = Database.open(null);
         try {
-            db.attachPostgres(extension, dsn, Postgres.ATTACH);
+            db.attachPostgres(extension, attached, Postgres.ATTACH);
             db.lockDown(null);
             requireSupportedVersion(name, db);
         } catch (DuckException | IOException e) {
             db.close();
             // the DSN may carry a password: name the catalog, never echo the connection string
-            String why = String.valueOf(e.getMessage()).replace(dsn, "<dsn>");
+            String why = String.valueOf(e.getMessage()).replace(attached, "<dsn>").replace(dsn, "<dsn>");
             throw new AttachFailed(name, why, why.contains(NO_PASSWORD));
         }
         databases.put(name, db);

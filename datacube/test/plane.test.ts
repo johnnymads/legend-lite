@@ -80,7 +80,7 @@ function selectOf(q: Lambda): { readonly source: unknown; readonly columns: read
 }
 
 /** Where these cubes snap: a table the model would declare. */
-const SNAP_TARGET = { table: 'TRADES_SNAP', source: accessor('trades::DB', 'TRADES_SNAP') };
+const SNAP_TARGET = { table: 'TRADES_SNAP', source: accessor('trades::DB', 'TRADES_SNAP'), conversions: [] };
 
 class RecordingEngine extends FakeEngine {
   readonly name = 'recording';
@@ -180,6 +180,32 @@ describe('snapping goes through the planner', () => {
   });
 });
 
+describe('a snap is a copy: it holds the declared types', () => {
+  it('reads the source through the copy conversions, where the rows are read', async () => {
+    // A zoned timestamp is read in place under the source's UTC session; the tab's store has
+    // no such session, so the copy holds its UTC wall time (leg B, docs/DATACUBE_APP_PLAN_2026_10_02.md)
+    const engine = new RecordingEngine();
+    const conversions = [{ column: 'at', sql: 'CAST(timezone(\'UTC\', "at") AS TIMESTAMP)' }];
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: { ...SNAP_TARGET, conversions } });
+    await c.run(at(SNAPSHOT));
+    engine.sql.length = 0;
+    await c.snap(SNAPSHOT, 'test');
+    const created = engine.sql.find((q) => /CREATE OR REPLACE TABLE "TRADES_SNAP"/.test(q));
+    assert.ok(created, engine.sql.join(' ;; '));
+    assert.match(created, /AS SELECT \* REPLACE \(CAST\(timezone\('UTC', "at"\) AS TIMESTAMP\) AS "at"\) FROM \(/);
+  });
+
+  it('copies the rows as they are when nothing needs converting', async () => {
+    const engine = new RecordingEngine();
+    const c = new CubeController(engine, new RecordingPlanner(), { snapTarget: SNAP_TARGET });
+    await c.run(at(SNAPSHOT));
+    engine.sql.length = 0;
+    await c.snap(SNAPSHOT, 'test');
+    assert.ok(engine.sql.some((q) => /CREATE OR REPLACE TABLE "TRADES_SNAP" AS /.test(q) && !q.includes('REPLACE (')),
+      engine.sql.join(' ;; '));
+  });
+});
+
 describe('the snapped plane actually redirects', () => {
   it('reads the SNAP after snapping, not the live source', async () => {
     // `sourceFor` existed and nothing called it, so the snap was
@@ -191,6 +217,7 @@ describe('the snapped plane actually redirects', () => {
       snapTarget: {
         table: 'TRADES_SNAP',
         source: accessor('trades::DB', 'TRADES_SNAP'),
+        conversions: [],
       },
     });
     const ran: CubeSnapshot = SNAPSHOT;
@@ -212,6 +239,7 @@ describe('the snapped plane actually redirects', () => {
       snapTarget: {
         table: 'TRADES_SNAP',
         source: accessor('trades::DB', 'TRADES_SNAP'),
+        conversions: [],
       },
     });
     const ran: CubeSnapshot = SNAPSHOT;

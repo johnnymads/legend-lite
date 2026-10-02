@@ -3,56 +3,62 @@
 // real DuckDB's catalog for the corpus) -- DO NOT EDIT. Regenerate:
 // bazel run //datacube:update_generated; its diff test fails the build if this copy drifts.
 
-/** How a Database declares a column of a canonical DuckDB type, and the SQL over `%s` that converts it at
- *  the source (null: none). */
+/** How a source reads a column (CatalogType.Read): as stored; converted to be read at all; read as stored
+ *  in place (the UTC session) and converted only in a copy; or left out, no Database type holding it. */
+export type CatalogRead = 'AS_STORED' | 'CONVERTED' | 'COPY_CONVERTED' | 'LEFT_OUT';
+
+/** How a Database declares a column of a canonical DuckDB type (null: left out), the SQL over `%s` that
+ *  converts it at the source (null: none), and why it is left out (null: it is not). */
 export interface CatalogType {
-  readonly declared: string;
+  readonly read: CatalogRead;
+  readonly declared: string | null;
   readonly conversion: string | null;
+  readonly reason: string | null;
 }
 
 /** Every canonical DuckDB type a Database declares (DECIMAL apart: from its precision and scale). */
 export const CATALOG_TYPES: Readonly<Record<string, CatalogType>> = {
-  'VARCHAR': { declared: 'VARCHAR(4096)', conversion: null },
-  'BOOLEAN': { declared: 'BIT', conversion: null },
-  'TINYINT': { declared: 'TINYINT', conversion: null },
-  'SMALLINT': { declared: 'SMALLINT', conversion: null },
-  'INTEGER': { declared: 'INTEGER', conversion: null },
-  'BIGINT': { declared: 'BIGINT', conversion: null },
-  'UTINYINT': { declared: 'SMALLINT', conversion: null },
-  'USMALLINT': { declared: 'INTEGER', conversion: null },
-  'UINTEGER': { declared: 'BIGINT', conversion: null },
-  'UBIGINT': { declared: 'DECIMAL(20,0)', conversion: 'CAST(%s AS DECIMAL(20,0))' },
-  'HUGEINT': { declared: 'DECIMAL(38,0)', conversion: 'CAST(%s AS DECIMAL(38,0))' },
-  'FLOAT': { declared: 'REAL', conversion: null },
-  'DOUBLE': { declared: 'DOUBLE', conversion: null },
-  'DATE': { declared: 'DATE', conversion: null },
-  'TIMESTAMP': { declared: 'TIMESTAMP', conversion: null },
-  'TIMESTAMP_S': { declared: 'TIMESTAMP', conversion: null },
-  'TIMESTAMP_MS': { declared: 'TIMESTAMP', conversion: null },
-  'TIMESTAMP_NS': { declared: 'TIMESTAMP', conversion: null },
-  'TIMESTAMP WITH TIME ZONE': { declared: 'TIMESTAMP', conversion: 'CAST(timezone(\'UTC\', %s) AS TIMESTAMP)' },
-  'TIME': { declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)' },
-  'TIME WITH TIME ZONE': { declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)' },
-  'UUID': { declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)' },
-  'INTERVAL': { declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)' },
-  'BIT': { declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)' },
-  'BIGNUM': { declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)' },
-  'ENUM': { declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)' },
-  'STRUCT': { declared: 'SEMISTRUCTURED', conversion: null },
-  'LIST': { declared: 'SEMISTRUCTURED', conversion: null },
-  'MAP': { declared: 'SEMISTRUCTURED', conversion: null },
-  'UNION': { declared: 'SEMISTRUCTURED', conversion: null },
-  'ARRAY': { declared: 'SEMISTRUCTURED', conversion: null },
+  'VARCHAR': { read: 'AS_STORED', declared: 'VARCHAR(4096)', conversion: null, reason: null },
+  'BOOLEAN': { read: 'AS_STORED', declared: 'BIT', conversion: null, reason: null },
+  'TINYINT': { read: 'AS_STORED', declared: 'TINYINT', conversion: null, reason: null },
+  'SMALLINT': { read: 'AS_STORED', declared: 'SMALLINT', conversion: null, reason: null },
+  'INTEGER': { read: 'AS_STORED', declared: 'INTEGER', conversion: null, reason: null },
+  'BIGINT': { read: 'AS_STORED', declared: 'BIGINT', conversion: null, reason: null },
+  'UTINYINT': { read: 'AS_STORED', declared: 'SMALLINT', conversion: null, reason: null },
+  'USMALLINT': { read: 'AS_STORED', declared: 'INTEGER', conversion: null, reason: null },
+  'UINTEGER': { read: 'AS_STORED', declared: 'BIGINT', conversion: null, reason: null },
+  'UBIGINT': { read: 'CONVERTED', declared: 'DECIMAL(20,0)', conversion: 'CAST(%s AS DECIMAL(20,0))', reason: null },
+  'HUGEINT': { read: 'CONVERTED', declared: 'DECIMAL(38,0)', conversion: 'CAST(%s AS DECIMAL(38,0))', reason: null },
+  'FLOAT': { read: 'AS_STORED', declared: 'REAL', conversion: null, reason: null },
+  'DOUBLE': { read: 'AS_STORED', declared: 'DOUBLE', conversion: null, reason: null },
+  'DATE': { read: 'AS_STORED', declared: 'DATE', conversion: null, reason: null },
+  'TIMESTAMP': { read: 'AS_STORED', declared: 'TIMESTAMP', conversion: null, reason: null },
+  'TIMESTAMP_S': { read: 'AS_STORED', declared: 'TIMESTAMP', conversion: null, reason: null },
+  'TIMESTAMP_MS': { read: 'AS_STORED', declared: 'TIMESTAMP', conversion: null, reason: null },
+  'TIMESTAMP_NS': { read: 'AS_STORED', declared: 'TIMESTAMP', conversion: null, reason: null },
+  'TIMESTAMP WITH TIME ZONE': { read: 'COPY_CONVERTED', declared: 'TIMESTAMP', conversion: 'CAST(timezone(\'UTC\', %s) AS TIMESTAMP)', reason: null },
+  'TIME': { read: 'CONVERTED', declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)', reason: null },
+  'TIME WITH TIME ZONE': { read: 'CONVERTED', declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)', reason: null },
+  'UUID': { read: 'CONVERTED', declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)', reason: null },
+  'INTERVAL': { read: 'CONVERTED', declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)', reason: null },
+  'BIT': { read: 'CONVERTED', declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)', reason: null },
+  'BIGNUM': { read: 'CONVERTED', declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)', reason: null },
+  'ENUM': { read: 'CONVERTED', declared: 'VARCHAR(4096)', conversion: 'CAST(%s AS VARCHAR)', reason: null },
+  'STRUCT': { read: 'AS_STORED', declared: 'SEMISTRUCTURED', conversion: null, reason: null },
+  'LIST': { read: 'AS_STORED', declared: 'SEMISTRUCTURED', conversion: null, reason: null },
+  'MAP': { read: 'AS_STORED', declared: 'SEMISTRUCTURED', conversion: null, reason: null },
+  'UNION': { read: 'AS_STORED', declared: 'SEMISTRUCTURED', conversion: null, reason: null },
+  'ARRAY': { read: 'AS_STORED', declared: 'SEMISTRUCTURED', conversion: null, reason: null },
+  'BLOB': { read: 'LEFT_OUT', declared: null, conversion: null, reason: 'bytes: no Pure Database type holds them' },
 };
 
 /** Type ALIASES (a column's own type name, upper-cased) that are not their canonical type's. */
 export const CATALOG_ALIASES: Readonly<Record<string, CatalogType>> = {
-  'JSON': { declared: 'SEMISTRUCTURED', conversion: null },
+  'JSON': { read: 'AS_STORED', declared: 'SEMISTRUCTURED', conversion: null, reason: null },
 };
 
 /** Canonical types refused, each with its reason. */
 export const CATALOG_REFUSED: Readonly<Record<string, string>> = {
-  'BLOB': 'bytes: no Pure Database type holds them',
   'GEOMETRY': 'a spatial value: no Pure Database type holds it',
   'UHUGEINT': 'not yet decided',
   'TIME_NS': 'not yet decided',

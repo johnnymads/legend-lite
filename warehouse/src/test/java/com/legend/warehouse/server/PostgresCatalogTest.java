@@ -141,4 +141,49 @@ class PostgresCatalogTest {
             }
         }
     }
+
+    // -- the UTC session (docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B) ------------------------------
+
+    @Test
+    void theAttachConnectsInUtc_addedToTheOptionsTheDsnGives() {
+        assertEquals("host='db' dbname='sales' user='reader' options='-c TimeZone=UTC'",
+                Postgres.inSessionZone("sales", "host=db dbname=sales user=reader"));
+        assertEquals("host='db' dbname='sales' options='-c statement_timeout=5000 -c TimeZone=UTC'",
+                Postgres.inSessionZone("sales", "host=db dbname = sales options='-c statement_timeout=5000'"));
+        // quoted values with escapes keep their text; a key given twice keeps its last value, as libpq does
+        assertEquals("password='it\\'s a \\\\ secret' host='db' options='-c TimeZone=UTC'",
+                Postgres.inSessionZone("sales", "host=db password='it\\'s a \\\\ secret' host=db"));
+        // a positional URL's connection string (A1), its default timeout kept
+        assertEquals("host='db' port='5432' dbname='shop' user='bob' options='-c statement_timeout=60000 -c TimeZone=UTC'",
+                Postgres.inSessionZone("shop", PostgresUrl.parse("postgresql://bob@db:5432/shop").dsn()));
+        // a URL given to --postgres reads the same way
+        assertEquals("host='db' dbname='hr' user='reader' options='-c statement_timeout=60000 -c TimeZone=UTC'",
+                Postgres.inSessionZone("hr", "postgresql://reader@db/hr?options=-c%20statement_timeout%3D60000"));
+        // the zone already UTC: kept as given
+        assertEquals("host='db' options='--TimeZone=utc'", Postgres.inSessionZone("sales", "host=db options='--TimeZone=utc'"));
+    }
+
+    @Test
+    void aDsnThatSetsAnotherZoneOrIsNotKeyValuesIsRefusedByName() {
+        IllegalArgumentException zone = assertThrows(IllegalArgumentException.class,
+                () -> Postgres.inSessionZone("sales", "host=db options='-c timezone=America/New_York'"));
+        assertTrue(zone.getMessage().contains("sales") && zone.getMessage().contains("America/New_York"), zone.getMessage());
+        for (String bad : List.of("host", "host=db =x", "host='db")) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> Postgres.inSessionZone("sales", bad), bad);
+            assertTrue(e.getMessage().contains("sales"), e.getMessage());
+        }
+    }
+
+    @Test
+    void everyWarehouseConnectionIsInTheUtcSession() throws Exception {
+        DuckLibrary.load(null);
+        try (Database db = Database.open(null);
+             com.legend.warehouse.server.duck.Conn c = db.connect("alice");
+             com.legend.warehouse.server.duck.Result r = c.execute("SELECT current_setting('TimeZone') AS z,"
+                     + " CAST(year(TIMESTAMPTZ '2024-12-31 23:30:00-05') AS VARCHAR) AS y")) {
+            List<List<com.legend.json.Json.Node>> rows = com.legend.warehouse.server.duck.Collect.json(r, 1);
+            assertEquals("UTC", ((com.legend.json.Json.Str) rows.get(0).get(0)).value());
+            assertEquals("2025", ((com.legend.json.Json.Str) rows.get(0).get(1)).value(), "the instant's UTC year");
+        }
+    }
 }

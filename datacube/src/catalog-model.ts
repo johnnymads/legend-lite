@@ -11,7 +11,7 @@
 // Nothing parses a type string: a column's canonical type and a DECIMAL's precision and scale come
 // from the catalog as data; JSON (an alias of VARCHAR) is known by its alias name.
 
-import { CATALOG_ALIASES, CATALOG_COLUMNS_SQL, CATALOG_REFUSED, CATALOG_TYPES, type CatalogType } from './generated/catalog-facts.ts';
+import { CATALOG_ALIASES, CATALOG_COLUMNS_SQL, CATALOG_REFUSED, CATALOG_TYPES, type CatalogRead, type CatalogType } from './generated/catalog-facts.ts';
 import type { ValueSpecification } from '../../pure-protocol/src/index.ts';
 
 /** One column, as DuckDB's catalog describes it (the catalog question's row). */
@@ -37,7 +37,8 @@ export interface CatalogTable {
   readonly columns: readonly CatalogColumn[];
   /**
    * Whether the source can apply a conversion: an upload, rewritten at ingest, can; a read-only
-   * warehouse table cannot, and a column that needs one is left out.
+   * warehouse table cannot, and a column that needs one to be read at all is left out (a zoned
+   * timestamp needs one only in a copy: read in place, it is its UTC instant under the UTC session).
    */
   readonly convertible: boolean;
 }
@@ -48,9 +49,12 @@ export interface CatalogDatabase {
   readonly text: string;
   /** The relation that reads the table (`#>{local::DB.t}#`), as protocol. */
   readonly source: ValueSpecification;
-  /** SQL over a column the source must apply so it holds its declared type. */
+  /**
+   * SQL over a column that a COPY of the table applies so it holds its declared type: an upload's
+   * rewrite, a Snap. A read-only source reads such a column (a zoned timestamp) as stored.
+   */
   readonly conversions: readonly { readonly column: string; readonly sql: string }[];
-  /** Columns left out because the source cannot convert them. */
+  /** Columns left out: the source cannot convert them, or no Database type holds them (bytes). */
   readonly excluded: readonly string[];
 }
 
@@ -78,7 +82,7 @@ export function catalogType(column: CatalogColumn): CatalogType {
     if (column.precision === null || column.scale === null) {
       throw new CatalogRefusal(`a DECIMAL column whose catalog gives no precision and scale ('${column.dataType}') cannot be declared`);
     }
-    return { declared: `DECIMAL(${column.precision},${column.scale})`, conversion: null };
+    return { read: 'AS_STORED', declared: `DECIMAL(${column.precision},${column.scale})`, conversion: null, reason: null };
   }
   const known = logical === null ? undefined : CATALOG_TYPES[logical];
   if (known) return known;
@@ -112,15 +116,18 @@ export function databaseFromCatalog(t: CatalogTable): CatalogDatabase {
     } catch (e) {
       throw new CatalogRefusal(`column '${c.name}': ${e instanceof Error ? e.message : String(e)}`);
     }
-    if (type.conversion !== null && !t.convertible) {
+    if (!readsFrom(type.read, t.convertible) || type.declared === null) {
       excluded.push(c.name);
       continue;
     }
     lines.push(`${ident(c.name)} ${type.declared}${c.notNull ? ' NOT NULL' : ''}`);
-    if (type.conversion !== null) conversions.push({ column: c.name, sql: type.conversion.replace('%s', sqlIdent(c.name)) });
+    // what a copy applies (CatalogModel.database): every declared column's conversion
+    if (type.conversion !== null) {
+      conversions.push({ column: c.name, sql: type.conversion.replace('%s', sqlIdent(c.name)) });
+    }
   }
   if (lines.length === 0) {
-    throw new CatalogRefusal(`every column of '${t.table}' needs a conversion its source cannot apply: ${excluded.join(', ')}`);
+    throw new CatalogRefusal(`no column of '${t.table}' can be read from its source: ${excluded.join(', ')}`);
   }
   const tableBlock = `Table ${ident(t.table)}\n    (\n        ${lines.join(',\n        ')}\n    )`;
   const body = schema === null ? `    ${tableBlock}`
@@ -133,6 +140,23 @@ export function databaseFromCatalog(t: CatalogTable): CatalogDatabase {
     conversions,
     excluded,
   };
+}
+
+/**
+ * Whether a column read this way is declared on a source that can (or cannot) convert
+ * (CatalogModel.database): a COPY_CONVERTED column (a zoned timestamp) reads as stored in place,
+ * under the UTC session.
+ */
+function readsFrom(read: CatalogRead, convertible: boolean): boolean {
+  switch (read) {
+    case 'AS_STORED':
+    case 'COPY_CONVERTED':
+      return true;
+    case 'CONVERTED':
+      return convertible;
+    case 'LEFT_OUT':
+      return false;
+  }
 }
 
 /**

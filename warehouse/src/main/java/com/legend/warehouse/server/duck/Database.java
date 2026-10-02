@@ -54,15 +54,25 @@ public final class Database implements AutoCloseable {
     }
 
     /**
+     * The session every connection starts in: the platform's naive-UTC temporal contract, the same
+     * statement legend-lite's DuckDB dialect sets up ({@code DuckDb.sessionSetup}; the warehouse does not
+     * reach core). A zoned timestamp then reads as its UTC instant -- its year, its month, a comparison
+     * with a timestamp literal -- whatever zone the machine is in (measured 2026-10-02: unpinned, a
+     * session took the machine's {@code America/New_York}; docs/DATACUBE_APP_PLAN_2026_10_02.md, leg B).
+     * SESSION scope: an owner may still set their own session's zone, and no other session sees it.
+     */
+    static final String SESSION_SETUP = "SET SESSION TimeZone = 'UTC'";
+
+    /**
      * A connection belonging to {@code principal}: what {@code authenticated_user()} answers on it, and
-     * what its {@code current_user} and {@code session_user} show.
+     * what its {@code current_user} and {@code session_user} show; in the UTC session ({@link #SESSION_SETUP}).
      */
     public Conn connect(String principal) throws DuckException {
         MemorySegment c = rawConnect();
         Conn conn = new Conn(this, c);
         AuthenticatedUser.bind(number, conn.id, principal);
         try {
-            conn.exec("CREATE TEMP MACRO current_user() AS system.main." + AuthenticatedUser.NAME + "();"
+            conn.exec(SESSION_SETUP + "; CREATE TEMP MACRO current_user() AS system.main." + AuthenticatedUser.NAME + "();"
                     + " CREATE TEMP MACRO session_user() AS system.main." + AuthenticatedUser.NAME + "()");
         } catch (DuckException e) {
             conn.close();
