@@ -61,8 +61,11 @@ try {
       if (s) window.__status(s.textContent ?? '');
     }).observe(document, { subtree: true, childList: true, characterData: true });
   });
-  const live = () => page.waitForFunction(() => /live on the warehouse as /.test(document.body.innerText), undefined,
-    { timeout: 120_000 });
+  // Live: the title bar's plane button says so, and the status bar's receipt names the warehouse
+  const live = () => page.waitForFunction(() =>
+    document.querySelector('.dc-titlebar-toggle')?.textContent?.trim() === 'Live'
+    && /the warehouse/.test(document.querySelector('.dc-status-receipt')?.textContent ?? ''), undefined,
+  { timeout: 120_000 });
 
   // 1. THE TABLE ASKED FOR, opened Live, and nothing generated first
   await page.goto(`${address}&table=${TABLE}`);

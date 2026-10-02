@@ -546,18 +546,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     const created: CubeApp = new CubeApp(host, snap, {
       engine,
       planner,
+      // Where the rows are (Live on a warehouse, or Snapped in this tab) is the title bar's plane
+      // button, and who read them the status bar's receipt: the host's word stays the planner's
+      // (local / remote / engine), one word in a 20px strip.
       ...(place.live ? { live: place.live } : {}),
-      // With a warehouse, the host's text says where the rows are: live
-      // there as the signed-in user, or a snap in this tab.
-      ...(place.live ? {
-        onPlane: () => {
-          const live = place.live as WarehouseEngine;
-          const state = created.controller.snaps.state;
-          status.textContent = state.mode === 'snapped'
-            ? `snapped: ${state.snap.rowCount.toLocaleString()} rows in this tab (${live.principal})`
-            : `live on the warehouse as ${live.principal}`;
-        },
-      } : {}),
       configuration: config,
       // Snap only where the place says what to copy: no other source's target stands in for it
       ...(place.snapTarget ? { snapTarget: place.snapTarget } : {}),
@@ -790,7 +782,6 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
         place: { live, ...snapOf(chosen, m) },
         ...(saved ? { saved } : {}),
       });
-      status.textContent = `live on the warehouse as ${signedIn.principal}`;
       return { live, excluded: m.excluded, notes };
     }
 

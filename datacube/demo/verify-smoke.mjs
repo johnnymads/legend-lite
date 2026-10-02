@@ -9,7 +9,7 @@
 // 1,612,828,800,000. None of those are about which menu entry was
 // clicked; they are about what the data looked like.
 //
-// Each sample is loaded through the real <input type="file">, then the
+// Each sample is loaded through the source picker's <input type="file">, then the
 // grid invariants run, then it is grouped by its first dimension from
 // the columns panel -- a different code path from the context menu, on
 // purpose -- and the invariants run again.
@@ -88,6 +88,22 @@ const page = await context.newPage();
 let pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
+/**
+ * The file opened in place of the cube, as a person does now: New ▸ Blank Page, "Add a data source",
+ * the picker's Files section and ITS file input (src/ui/source-picker.ts). The page no longer has an
+ * input of its own for data files -- the one left is the saved cubes' import.
+ */
+async function openThroughPicker(file) {
+  await page.click('.dc-titlebar-menu');
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("New")') }).hover();
+  await page.locator('.dc-menu .dc-menu-item', { has: page.locator(':scope > .dc-menu-label:text-is("Blank Page")') }).click();
+  await page.locator('.dc-blank').waitFor({ timeout: 10_000 });
+  await page.click('.dc-blank .dc-primary');
+  await page.locator('.dc-picker').waitFor({ timeout: 10_000 });
+  await page.locator('.dc-picker-tab[data-section="files"]').click();
+  await page.setInputFiles('.dc-picker-file', file);
+}
+
 const failures = [];
 function fail(sample, where, detail) {
   failures.push({ sample, where, detail });
@@ -126,7 +142,7 @@ try {
     // checked the built-in cube in its place. Wait for the line to CHANGE.
     const before = await page.evaluate(() =>
       document.querySelector('.dc-status-timing')?.textContent ?? '');
-    await page.setInputFiles('input[type=file]', file);
+    await openThroughPicker(file);
     await page.waitForFunction(
       (was) => {
         const line = document.querySelector('.dc-status-timing')?.textContent ?? '';

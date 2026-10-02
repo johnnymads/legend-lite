@@ -80,7 +80,7 @@ try {
   await settle();
   const before = await rows();
 
-  /** Right-click > Insert > `what` (Chart or Grid), on a cell of the grid in `scope`. */
+  /** Right-click > Insert > `what` (Visualization or Copy of Grid), on a cell of the grid in `scope`. */
   const insert = async (what, scope = '[data-tile="grid"], .dc-app') => {
     await page.locator(scope).first().locator('.dc-row').nth(1).locator('.dc-cell').nth(2).click({ button: 'right' });
     await page.locator('.dc-menu-item:has(> .dc-menu-label:text-is("Insert"))').first().hover();
@@ -88,7 +88,7 @@ try {
     await settle();
   };
   const addChart = async () => {
-    await insert('Chart');
+    await insert('Visualization');
     await drawn();
   };
   /** A chart's Dynamic / Frozen / Detached pill. */
@@ -149,13 +149,13 @@ try {
 
   await check('Insert > Grid adds a grid tile of its own; its Insert > Chart charts it; removing it detaches a frozen chart', async () => {
     const tilesBefore = await page.locator('[data-tile^="chart-"]').count();
-    await insert('Grid', '[data-tile="grid"]');
+    await insert('Copy of Grid', '[data-tile="grid"]');
     const grid = page.locator('[data-tile^="grid-"]').first();
     await grid.locator('.dc-row').first().waitFor({ timeout: 20_000 });
     await settle();
     const gridId = await grid.getAttribute('data-tile');
-    await insert('Chart', `[data-tile="${gridId}"]`);
-    await insert('Chart', `[data-tile="${gridId}"]`);
+    await insert('Visualization', `[data-tile="${gridId}"]`);
+    await insert('Visualization', `[data-tile="${gridId}"]`);
     await page.waitForFunction((n) => document.querySelectorAll('[data-tile^="chart-"]').length === n + 2, tilesBefore, { timeout: 20_000 });
     await drawn();
     const ids = await page.locator('[data-tile^="chart-"]').evaluateAll((els) => els.map((e) => e.dataset.tile));
