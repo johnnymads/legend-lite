@@ -18,6 +18,7 @@ import {
   sha256,
   writeCube,
   type FileSource,
+  type QuerySource,
 } from '../src/cube-document.ts';
 import { DEFAULT_CONFIGURATION, type CubeConfiguration } from '../src/config.ts';
 import type { ColumnSpec, CubeSnapshot } from '../src/snapshot.ts';
@@ -132,6 +133,39 @@ describe('writing and reading a cube', () => {
     noSource.source = { _type: 'pointer' };
     assert.throws(() => readCube(noSource), CubeDocumentError);
     assert.equal(doc().kind, CUBE_KIND);
+  });
+});
+
+describe('a cube over a saved query', () => {
+  // the query itself, as a share link carries it (query-store sharedPart): no store identity
+  const QUERY_SOURCE: QuerySource = {
+    _type: 'savedQuery',
+    name: 'Sells',
+    query: {
+      name: 'Sells', groupId: 'demo', artifactId: 'trading', versionId: '0.0.0',
+      executionContext: { _type: 'dataSpaceExecutionContext', dataSpacePath: 'demo::trading::TradingDataSpace', executionKey: 'Production' },
+      content: "|demo::trading::Trade.all()->project(~[side: x|$x.side])",
+      defaultParameterValues: [],
+    },
+    columns: [{ name: 'side', type: 'String' }],
+  };
+  const over = () => writeCube({
+    name: 'Sells by side', source: QUERY_SOURCE, snapshot: EVERY, configuration: CONFIG, tree: TreeState.fromPaths([]),
+  });
+
+  it('writes the query as its source, and reads it back exactly', () => {
+    const back = readCube(cubeToJson(over()));
+    assert.deepEqual(back.source, QUERY_SOURCE);
+    assert.doesNotMatch(JSON.stringify(JSON.parse(cubeToJson(over())).source), /"id"|"owner"|"lastUpdatedAt"|"version"/, 'the store identity is not the query');
+  });
+
+  it('refuses an incomplete saved query source, naming what is missing', () => {
+    const noContent = JSON.parse(cubeToJson(over()));
+    delete noContent.source.query.content;
+    assert.throws(() => readCube(noContent), /the saved query source has no content/);
+    const noColumns = JSON.parse(cubeToJson(over()));
+    delete noColumns.source.columns;
+    assert.throws(() => readCube(noColumns), /saved query source is incomplete/);
   });
 });
 

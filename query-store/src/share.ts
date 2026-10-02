@@ -28,10 +28,16 @@ export class QueryLinkError extends Error {
 const SHARED = ['name', 'description', 'groupId', 'artifactId', 'versionId', 'originalVersionId', 'executionContext',
   'content', 'taggedValues', 'stereotypes', 'defaultParameterValues', 'gridConfig'] as const;
 
-/** A saved query (or one about to be) as a link's fragment, without the `#`: `q1.<data>`. */
-export async function queryFragment(q: SharedQuery): Promise<string> {
+/** What of a saved query is the query itself, shared: its record without the store's own fields. */
+export function sharedPart(q: SharedQuery): SharedQuery {
   const kept: Record<string, unknown> = {};
   for (const f of SHARED) if (q[f] !== undefined && q[f] !== null) kept[f] = q[f];
+  return kept as unknown as SharedQuery;
+}
+
+/** A saved query (or one about to be) as a link's fragment, without the `#`: `q1.<data>`. */
+export async function queryFragment(q: SharedQuery): Promise<string> {
+  const kept = sharedPart(q);
   return `${QUERY_LINK_VERSION}.${toBase64Url(await squeeze(new TextEncoder().encode(JSON.stringify(kept)), 'compress'))}`;
 }
 

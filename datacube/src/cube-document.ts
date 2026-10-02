@@ -38,6 +38,7 @@ import type {
 } from './snapshot.ts';
 import { TreeState, parsePathKey, type RowPath } from './tree.ts';
 import type { UploadFormat } from './upload.ts';
+import type { SharedQuery } from '../../query-store/src/share.ts';
 
 /** What this document is, so a file of anything else is refused by name. */
 export const CUBE_KIND = 'datacube.cube';
@@ -64,8 +65,23 @@ export interface FileSource {
   readonly sample?: { readonly id: string; readonly rows: number };
 }
 
-/** Where a cube's rows come from. Step 1: files; model-backed sources follow the model home. */
-export type CubeSource = FileSource;
+/**
+ * A SAVED QUERY the cube was built over, by WHAT IT IS -- not where it is stored: its record as a
+ * share link carries it (query-store `sharedPart`: project, execution context, content, saved
+ * parameter values). Reopening reads it again through the page's model for its project, so the
+ * cube opens wherever that project is known, with or without the store it was saved in.
+ */
+export interface QuerySource {
+  readonly _type: 'savedQuery';
+  /** The query's name: what a person calls this source. */
+  readonly name: string;
+  readonly query: SharedQuery;
+  /** What it answered when the cube was saved. */
+  readonly columns: readonly { readonly name: string; readonly type: string }[];
+}
+
+/** Where a cube's rows come from: a file, or a saved query. */
+export type CubeSource = FileSource | QuerySource;
 
 /** The cube's definition: a snapshot without its runtime state (source relation, epoch, row window). */
 export type SavedQuery = Omit<CubeSnapshot, 'source' | 'epoch' | 'window'>;
@@ -187,6 +203,7 @@ export function readCube(input: string | unknown): CubeDocument {
 function readSource(raw: unknown): CubeSource {
   const s = plain(raw);
   if (!isObject(s)) throw new CubeDocumentError("missing 'source'");
+  if (s['_type'] === 'savedQuery') return readQuerySource(s);
   if (s['_type'] !== 'file') {
     throw new CubeDocumentError(`a source of kind ${JSON.stringify(s['_type'] ?? null)} is not supported yet`);
   }
@@ -206,6 +223,19 @@ function readSource(raw: unknown): CubeSource {
     throw new CubeDocumentError(`an unknown file format ${JSON.stringify(s['format'])}`);
   }
   return s as unknown as FileSource;
+}
+
+function readQuerySource(s: Record<string, unknown>): QuerySource {
+  const q = s['query'];
+  const columns = s['columns'];
+  if (typeof s['name'] !== 'string' || !isObject(q) || !Array.isArray(columns)
+    || !columns.every((c) => isObject(c) && typeof c['name'] === 'string' && typeof c['type'] === 'string')) {
+    throw new CubeDocumentError('the saved query source is incomplete (name, query, columns)');
+  }
+  for (const f of ['name', 'groupId', 'artifactId', 'versionId', 'content']) {
+    if (typeof q[f] !== 'string' || q[f] === '') throw new CubeDocumentError(`the saved query source has no ${f}`);
+  }
+  return s as unknown as QuerySource;
 }
 
 /**

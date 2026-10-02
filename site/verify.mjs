@@ -146,6 +146,51 @@ try {
     const viaRows = await viaCube.locator('.dc-row').count();
     if (viaRows !== ranTo) throw new Error(`DataCube's own link opened to ${viaRows} rows`);
     console.log(`DataCube: its own Copy link (${cubeOwn.length} characters) opened in the other browser, ${viaRows} rows`);
+
+    // A CUBE BUILT ON IT, shared and saved: grouped by Side, then ☰ ▸ Share… and ☰ ▸ Save
+    const menuOf = async (p, ...path) => {
+      for (const [i, label] of path.entries()) {
+        const item = p.locator('.dc-menu .dc-menu-item', { has: p.locator(`:scope > .dc-menu-label:text-is(${JSON.stringify(label)})`) }).first();
+        if (i < path.length - 1) await item.hover(); else await item.click();
+      }
+    };
+    const grouped = (p) => p.waitForFunction(() => {
+      const rows = [...document.querySelectorAll('.dc-row')].map((r) => r.textContent ?? '');
+      return rows.length === 1 && rows[0].includes('SELL');
+    }, undefined, { timeout: 60_000 });
+    await viaCube.locator('.dc-row').first().locator('.dc-cell').nth(1).click({ button: 'right' });
+    await viaCube.locator('.dc-menu .dc-menu-item', { has: viaCube.locator(':scope > .dc-menu-label:text-is("Pivot")') }).first().hover();
+    await viaCube.locator('.dc-menu .dc-menu-item').filter({ hasText: /^Vertical Pivot on/ }).filter({ hasNot: viaCube.locator('.dc-submenu') }).first().click();
+    await grouped(viaCube);
+    await viaCube.click('.dc-titlebar-menu');
+    await menuOf(viaCube, 'Share\u2026');
+    await viaCube.waitForFunction(() => (document.getElementById('sharelink')?.value ?? '').includes('#p1.'), undefined, { timeout: 15_000 });
+    const pageLink = await viaCube.inputValue('#sharelink');
+    const third = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    try {
+      const fresh = await third.newPage();
+      fresh.on('pageerror', (e) => errors.push(`datacube (shared cube): ${e.message}`));
+      await fresh.goto(pageLink);
+      await grouped(fresh);
+      console.log(`DataCube: Share… of a cube over the saved query (${pageLink.length} characters) opened grouped by Side in a third browser`);
+    } finally {
+      await third.close();
+    }
+    await viaCube.keyboard.press('Escape');
+    await viaCube.click('.dc-titlebar-menu');
+    await menuOf(viaCube, 'Save');
+    await viaCube.locator('.dc-save').waitFor({ timeout: 10_000 });
+    await viaCube.fill('.dc-save-input', 'Sells by side');
+    if (!/runs the saved query/.test((await viaCube.textContent('.dc-save')) ?? '')) throw new Error('the Save window does not say the query runs again');
+    await viaCube.click('.dc-save .dc-primary');
+    await viaCube.locator('.dc-save').waitFor({ state: 'detached', timeout: 15_000 });
+    await viaCube.goto(`${ORIGIN}/datacube/demo/index.html`);
+    await viaCube.waitForSelector('.dc-row', { timeout: 120_000 });
+    await viaCube.click('.dc-titlebar-menu');
+    await menuOf(viaCube, 'Open\u2026');
+    await viaCube.locator('.dc-lib-row', { hasText: 'Sells by side' }).locator('button', { hasText: 'Open' }).click();
+    await grouped(viaCube);
+    console.log('DataCube: Save of that cube, reopened from Open… after a reload, grouped by Side');
   } finally {
     await other.close();
   }

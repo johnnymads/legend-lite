@@ -27,7 +27,12 @@ import {
   type CubeDocument,
   type CubeSource,
   type FileSource,
+  type QuerySource,
 } from '../src/cube-document.ts';
+
+/** A saved cube over a file: what reopening one needs is that file back. */
+type FileCube = CubeDocument & { readonly source: FileSource };
+const isFileCube = (doc: CubeDocument): doc is FileCube => doc.source._type === 'file';
 import {
   BrowserRecords,
   MemoryRecords,
@@ -730,7 +735,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     // came from (a Save then saves over it).
     let library: CubeLibrary | undefined;
     let current: {
-      source?: FileSource;
+      source?: CubeSource;
       file?: File;
       handle?: FileHandle;
       cubeId?: string;
@@ -774,7 +779,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     };
     // Leaving the page with unsaved changes asks, the browser's way.
     work.add(() => (dirty() ? 'unsaved changes' : undefined));
-    work.add(() => (current.source && !current.source.sample
+    work.add(() => (current.source?._type === 'file' && !current.source.sample
       ? `the file opened in this tab (${current.source.name})` : undefined));
     window.addEventListener('beforeunload', (event) => {
       if (leaving || work.what() === undefined) return;
@@ -813,7 +818,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           // overtaken: nothing of this open is kept -- unless a newer open, or the cube on
           // screen, reads a table of the same name
           const mine = tableNameOf(file.name);
-          if (mine !== latestTable && (!current.source || tableNameOf(current.source.name) !== mine)) {
+          if (mine !== latestTable && (current.source?._type !== 'file' || tableNameOf(current.source.name) !== mine)) {
             await forgetUpload(engine, db, file.name).catch(() => {});
           }
           return [];
@@ -833,7 +838,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           config = cube.configuration;
           tree = cube.tree;
           notes = [
-            ...(source.sha256 !== saved.doc.source.sha256
+            ...(saved.doc.source._type !== 'file' || source.sha256 !== saved.doc.source.sha256
               ? [`${file.name} is not the file this cube was saved over (its contents differ)`]
               : []),
             ...cube.notes,
@@ -920,7 +925,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
      * otherwise the user is asked for it.
      */
     async function fileFor(
-      doc: CubeDocument,
+      doc: FileCube,
       id: string | undefined,
     ): Promise<{ file: File; handle?: FileHandle } | undefined> {
       const src = doc.source;
@@ -930,7 +935,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           return { file: new File([s.build(src.sample.rows)], src.name, { type: mimeOf(s) }) };
         }
       }
-      if (current.file && current.source?.sha256 === src.sha256) {
+      if (current.file && current.source?._type === 'file' && current.source.sha256 === src.sha256) {
         return { file: current.file, ...(current.handle ? { handle: current.handle } : {}) };
       }
       const kept = id !== undefined ? await handles?.get(id) : undefined;
@@ -956,7 +961,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     }
 
     /** Ask the user for the file, naming the one the cube was saved over. */
-    function chooseFile(doc: CubeDocument): Promise<{ file: File; handle?: FileHandle } | undefined> {
+    function chooseFile(doc: FileCube): Promise<{ file: File; handle?: FileHandle } | undefined> {
       return new Promise((resolve) => {
         const src = doc.source;
         const choose = document.createElement('button');
@@ -1008,6 +1013,16 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
 
     /** Open a saved cube (from the store, or a file someone handed over), with the page around it. */
     async function openDocument(doc: CubeDocument, id: string | undefined, page?: PageDocument): Promise<void> {
+      if (doc.source._type === 'savedQuery') {
+        const notes = await openQueryCube(await openedRecord(await pageConfig(), doc.source.query), { doc, ...(id !== undefined ? { id } : {}), ...(page ? { page } : {}) });
+        library?.say(notes.length === 0
+          ? `opened "${doc.name}"`
+          : `opened "${doc.name}", with changes since it was saved:\n${notes.map((n) => `- ${n}`).join('\n')}`,
+        notes.length === 0 ? 'ok' : 'warn');
+        if (notes.length === 0) closeCubes?.();
+        return;
+      }
+      if (!isFileCube(doc)) throw new Error(`"${doc.name}" reads a source this page cannot open`);
       const got = await fileFor(doc, id);
       if (!got) {
         library?.say('not opened: no file chosen', 'warn');
@@ -1032,7 +1047,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       const refused = app.saveRefusal();
       if (refused) throw new Error(refused);
       const form = savedForm(name);
-      if (!form) throw new Error('This cube cannot be saved yet: only cubes over a file are.');
+      if (!form) throw new Error('This cube cannot be saved yet: only cubes over a file or a saved query are.');
       const id = !asNew && current.cubeId !== undefined ? current.cubeId : crypto.randomUUID();
       const record = { id, name, content: form.content };
       if (id === current.cubeId) await store.update(id, record);
@@ -1133,9 +1148,11 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
           'Its formats, widths, colours and settings',
         ];
         const src = current.source;
-        const leaves = src?.sample
-          ? `Not the rows: the example (${src.sample.rows.toLocaleString()} rows) is generated again when it opens.`
-          : `Not the rows: opening it reads ${src?.name ?? 'its file'} again, from your computer.`;
+        const leaves = src?._type === 'savedQuery'
+          ? `Not the rows: opening it runs the saved query “${src.name}” again.`
+          : src?.sample
+            ? `Not the rows: the example (${src.sample.rows.toLocaleString()} rows) is generated again when it opens.`
+            : `Not the rows: opening it reads ${src?.name ?? 'its file'} again, from your computer.`;
         await saveDialog(document, {
           purpose: asNew ? 'saveAs' : 'save',
           name: offered,
@@ -1180,9 +1197,12 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       }
       const link = shareLink(location.href, page);
       field.value = link.url;
-      const needs = page.cubes[0]?.cube.source.sample
-        ? 'it rebuilds its sample on its own'
-        : `whoever opens it needs ${page.cubes[0]?.cube.source.name ?? 'the same file'}`;
+      const src = page.cubes[0]?.cube.source;
+      const needs = src?._type === 'savedQuery'
+        ? `it reads the saved query “${src.name}” again, where its project (${src.query.groupId}:${src.query.artifactId}) is known`
+        : src?.sample
+          ? 'it rebuilds its sample on its own'
+          : `whoever opens it needs ${src?.name ?? 'the same file'}`;
       const about = `It holds the page's settings, filter values included, not its data; ${needs}.`;
       const put = async (): Promise<void> => {
         field.select();
@@ -1227,7 +1247,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
     /** Tables this page's added sources read: none may replace another's, or the cube's. */
     const taken = new Set<string>();
     const freshTable = (base: string): string => {
-      const busy = (t: string): boolean => taken.has(t) || (current.source !== undefined && tableNameOf(current.source.name) === t);
+      const busy = (t: string): boolean => taken.has(t) || (current.source?._type === 'file' && tableNameOf(current.source.name) === t);
       let name = base;
       for (let n = 2; busy(name); n += 1) name = `${base}_${n}`;
       taken.add(name);
@@ -1272,6 +1292,8 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       readonly columns: CubeSnapshot['columns'];
       /** A planner over its model, the one that typed it. */
       readonly planner: Planner;
+      /** The cube's source, as Save and Share write it down: the query itself (cube-document.ts). */
+      readonly cubeSource: QuerySource;
     };
     const fetchText = async (url: string): Promise<string> => {
       const r = await fetch(url);
@@ -1327,14 +1349,19 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       // rule 4: an enumeration column is read as its value's name
       const named = new Set((await own.relationType(lambda([], source))).filter((c) => c.enumeration).map((c) => c.name));
       if (named.size > 0) source = enumsAsStrings(source, named);
-      return { label: q.name, model, runtime: context.runtime, how, source, columns: await sourceColumns(own, source), planner: own };
+      const columns = await sourceColumns(own, source);
+      const { sharedPart } = await queryStores();
+      const cubeSource: QuerySource = {
+        _type: 'savedQuery', name: q.name, query: sharedPart(q), columns: columns.map((c) => ({ name: c.name, type: c.type })),
+      };
+      return { label: q.name, model, runtime: context.runtime, how, source, columns, planner: own, cubeSource };
     }
 
     /** A grid over the chosen source, beside the others: its own planner over its own model. */
     async function gridOver(chosen: Chosen): Promise<GridSource> {
       if (chosen.kind === 'saved') {
         const o = chosen.query;
-        return { snapshot: rawRows(o.source, o.columns), place: { engine, planner: o.planner }, label: o.label };
+        return { snapshot: rawRows(o.source, o.columns), place: { engine, planner: o.planner }, cubeSource: o.cubeSource, label: o.label };
       }
       if (chosen.kind === 'file') {
         const opened = await ingestFile(engine, db, chosen.file, { table: freshTable(tableNameOf(chosen.file.name)) });
@@ -1366,14 +1393,44 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       };
     }
 
+    /**
+     * A saved query's cube IN PLACE of the one on screen: fresh over the query, or -- `saved` -- a
+     * saved (or shared) cube rebuilt over it, its grouping, filters and charts put back. Its
+     * source is the query itself, so Save and Share write it down (cube-document.ts QuerySource).
+     */
+    async function openQueryCube(
+      o: OpenedQuery,
+      saved?: { readonly doc: CubeDocument; readonly id?: string; readonly page?: PageDocument },
+    ): Promise<readonly string[]> {
+      local.use(o.model, o.runtime, o.how);
+      const cubeSource = saved?.doc.source._type === 'savedQuery' ? saved.doc.source : o.cubeSource;
+      const cube = saved ? openCube(saved.doc, { query: o.source }, o.columns) : undefined;
+      app.dispose();
+      app = makeApp(cube?.snapshot ?? rawRows(o.source, o.columns),
+        cube?.configuration ?? { ...DEFAULT_CONFIGURATION, reportTitle: o.label }, [],
+        { cubeSource, ...(cube?.tree ? { tree: cube.tree } : {}) });
+      current = {
+        source: cubeSource,
+        ...(saved?.id ? { cubeId: saved.id } : {}),
+        ...(saved ? { name: saved.doc.name } : {}),
+        ...(saved?.doc.unknown ? { unknown: saved.doc.unknown } : {}),
+        ...(saved?.page?.unknown ? { pageUnknown: saved.page.unknown } : {}),
+      };
+      await app.open();
+      if (saved?.page) app.restoreViews(saved.page);
+      const notes = cube?.notes ?? [];
+      const landed = savedForm(current.name ?? 'cube');
+      current = { ...current, ...(landed ? { baseline: landed.definition } : {}), lost: notes.filter((n) => n.startsWith('left out')) };
+      onCubeView?.();
+      library?.sync();
+      return notes;
+    }
+
     /** The chosen source IN PLACE of the cube. */
     async function openInPlace(chosen: Chosen): Promise<void> {
       if (chosen.kind === 'saved') {
-        const o = chosen.query;
-        local.use(o.model, o.runtime, o.how);
-        app.dispose();
-        app = makeApp(rawRows(o.source, o.columns), { ...DEFAULT_CONFIGURATION, reportTitle: o.label }, []);
-        await app.open();
+        if (dirty() && !window.confirm(`The cube on screen has unsaved changes. Open ${chosen.query.label} anyway?`)) return;
+        await openQueryCube(chosen.query);
         return;
       }
       if (chosen.kind === 'file') {

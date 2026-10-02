@@ -147,7 +147,8 @@ describe('a saved cube reopens in a fresh app over its file', () => {
 
     // the file again, a fresh app
     const again = await read('trades.csv', CSV);
-    assert.equal(again.source.sha256, saved.source.sha256, 'the same file, by its fingerprint');
+    assert.equal(saved.source._type, 'file');
+    assert.equal(again.source.sha256, saved.source._type === 'file' ? saved.source.sha256 : '', 'the same file, by its fingerprint');
     const opened = openCube(readCube(text), { query: again.relation }, again.columns);
     assert.deepEqual(opened.notes, []);
     const b = await openApp(opened.snapshot, opened.configuration, again.source, opened.tree);
