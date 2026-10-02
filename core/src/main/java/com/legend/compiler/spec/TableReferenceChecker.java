@@ -117,6 +117,12 @@ final class TableReferenceChecker {
                 .map(d -> d.columns().stream().filter(c -> c.quoted()).map(c -> c.name())
                         .collect(java.util.stream.Collectors.toUnmodifiableSet()))
                 .orElse(java.util.Set.of());
+        // each column's DECLARED store type: what the database holds, which the relation type (the
+        // value as read) does not say -- the dialect reads what the platform cannot use as held
+        java.util.Map<String, com.legend.sql.SqlDdl.ColumnType> stored = def
+                .map(d -> d.columns().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        c -> c.name(), c -> com.legend.compiler.element.StoreCompiler.declaredType(c.dataType()))))
+                .orElse(java.util.Map.of());
         // a TABULAR FUNCTION is read as a call
         boolean call = def.map(d -> d.function()).orElse(false);
         return new TypedTableReference(dbRef.fullPath(), carried,
@@ -126,7 +132,7 @@ final class TableReferenceChecker {
                 new ExprType(new Type.GenericType(
                         com.legend.compiler.element.type.PlatformTypes.RELATION_STORE_ACCESSOR,
                         java.util.List.of(schema)), sig.output().multiplicity()),
-                n == 2, null, quoted, call);
+                n == 2, null, quoted, call, stored);
     }
 
     /**

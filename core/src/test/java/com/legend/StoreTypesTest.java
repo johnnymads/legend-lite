@@ -5,7 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.legend.compiler.element.type.Type;
+import com.legend.sql.SqlDdl;
+import com.legend.sql.SqlQuery;
+import com.legend.sql.SqlRewriter;
+import com.legend.sql.SqlSource;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -16,6 +22,10 @@ import org.junit.jupiter.api.Test;
  * a nested value -- ARRAY, OBJECT, SEMISTRUCTURED -- is a Variant. Until then a table holding one
  * OTHER column did not compile at all, even for a query that never read it (step 0's probe, now
  * these). A milestoning date declared OTHER stays refused: compared as text it would be silently wrong.
+ *
+ * <p>Step 3, the stamp: every scan of a table carries its columns' declared types, by whichever road
+ * the query reached it -- the relation accessor, a class mapping, a join hop, a view -- because the
+ * dialect reads a stored value at every reference (step 4). Nothing reads the stamp yet.
  */
 class StoreTypesTest {
 
@@ -78,6 +88,73 @@ class StoreTypesTest {
                 """;
         RuntimeException e = assertThrows(RuntimeException.class, () -> Compiler.compileModel(model));
         assertTrue(String.valueOf(e.getMessage()).contains("milestoning column 'FROM_Z'"), e.getMessage());
+    }
+
+    private static final SqlDdl.ColumnType OTHER = new SqlDdl.ColumnType.Plain(SqlDdl.ColumnType.Kind.OTHER);
+    private static final SqlDdl.ColumnType JSON = new SqlDdl.ColumnType.Plain(SqlDdl.ColumnType.Kind.JSON);
+
+    @Test
+    void theAccessorsScanCarriesEveryColumnsDeclaredType() {
+        Map<String, SqlDdl.ColumnType> stored = scanOf(MODEL, "#>{s::DB.HOSTS}#->select(~[ID])", "HOSTS");
+        assertEquals(OTHER, stored.get("ADDR"), stored.toString());
+        assertEquals(JSON, stored.get("META"), stored.toString());
+        assertEquals(new SqlDdl.ColumnType.Sized("VARCHAR", 32), stored.get("NAME"), stored.toString());
+        assertEquals(new SqlDdl.ColumnType.Plain(SqlDdl.ColumnType.Kind.INTEGER), stored.get("ID"), stored.toString());
+        assertEquals(5, stored.size(), stored.toString());
+    }
+
+    @Test
+    void aClassMappingsScanCarriesThem() {
+        assertEquals(OTHER, scanOf(MODEL, "s::Host.all()->project(~[addr: h|$h.addr])", "HOSTS").get("ADDR"));
+    }
+
+    @Test
+    void aJoinHopsScanCarriesThem() {
+        String model = """
+                ###Pure
+                Class s::Host { id: Integer[1]; loc: String[0..1]; }
+                ###Relational
+                Database s::DB ( Table HOSTS (ID INTEGER PRIMARY KEY)
+                    Table SITES (ID INTEGER PRIMARY KEY, HOST_ID INTEGER, LOC OTHER)
+                    Join HostSite(HOSTS.ID = SITES.HOST_ID) )
+                ###Mapping
+                Mapping s::M (
+                  *s::Host: Relational { ~mainTable [s::DB] HOSTS
+                    id: HOSTS.ID, loc: @HostSite | SITES.LOC }
+                )
+                ###Connection
+                RelationalDatabaseConnection s::Conn { store: s::DB; type: DuckDB;
+                  specification: DuckDB { }; auth: Test; }
+                ###Runtime
+                Runtime s::RT { mappings: [s::M]; connections: [ s::DB: [ c1: s::Conn ] ]; }
+                """;
+        assertEquals(OTHER, scanOf(model, "s::Host.all()->project(~[loc: h|$h.loc])", "SITES").get("LOC"));
+    }
+
+    @Test
+    void aViewsScanOfItsTableCarriesThem() {
+        String model = MODEL.replace("META SEMISTRUCTURED) )",
+                "META SEMISTRUCTURED)\n    View HOST_ADDRS (id: HOSTS.ID, addr: HOSTS.ADDR) )");
+        assertEquals(OTHER, scanOf(model, "#>{s::DB.HOST_ADDRS}#", "HOSTS").get("ADDR"));
+    }
+
+    /** The stored types the ONE scan of {@code table} carries, in the query's lowered MIR. */
+    private static Map<String, SqlDdl.ColumnType> scanOf(String model, String query, String table) {
+        SqlQuery lowered = Compiler.lowerResolved(
+                com.legend.compiler.NameResolver.resolveQuery(com.legend.testing.Own.spec(query)),
+                Compiler.compileModel(model), "s::RT", false);
+        List<SqlSource.Table> scans = new ArrayList<>();
+        new SqlRewriter() {
+            @Override
+            protected SqlSource source(SqlSource s) {
+                if (s instanceof SqlSource.Table t && t.name().equals(table)) {
+                    scans.add(t);
+                }
+                return s;
+            }
+        }.rewrite(lowered);
+        assertEquals(1, scans.size(), "scans of " + table + ": " + scans);
+        return scans.get(0).storedTypes();
     }
 
     private static Map<String, String> columnTypes(String query) {

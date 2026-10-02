@@ -344,7 +344,12 @@ class TypedSpecChildrenTest {
             // TypedFrameRef.plan (leg 3.4 step 2): the planned frame's SQL —
             // a lowered artifact the reference carries, not a typed child
             return com.legend.sql.SqlSelect.starOf(
-                    new com.legend.sql.SqlSource.Table("T", "t0", List.of(), false));
+                    new com.legend.sql.SqlSource.Table("T", "t0", List.of(), false, java.util.Map.of()));
+        }
+        if (type == com.legend.sql.SqlDdl.ColumnType.class) {
+            // TypedTableReference.storedTypes (store types, step 3): a column's
+            // declared store type — a value, not a typed child
+            return new com.legend.sql.SqlDdl.ColumnType.Plain(com.legend.sql.SqlDdl.ColumnType.Kind.OTHER);
         }
         throw new IllegalStateException("TypedSpecChildrenTest needs a dummy rule for "
                 + type.getName() + " — add one when introducing new node component types");
