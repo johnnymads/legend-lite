@@ -18,7 +18,10 @@ npm_link_all_packages(name = "node_modules")
 js_library(
     name = "strict_reporter",
     srcs = ["test/strict-reporter.mjs"],
-    visibility = ["//pure-protocol:__pkg__"],
+    visibility = [
+        "//pure-protocol:__pkg__",
+        "//query-store:__pkg__",
+    ],
 )
 
 # the app's sources as the tests read them; package.json carries
@@ -181,6 +184,7 @@ typescript.tsc_test(
         "package.json",
         "tsconfig.json",
         "//pure-protocol:typescript_sources",
+        "//query-store:typescript_sources",
         ":node_modules/@duckdb/duckdb-wasm",
         ":node_modules/@types/jsdom",
         ":node_modules/apache-arrow",

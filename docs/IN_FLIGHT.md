@@ -160,6 +160,18 @@ project a saved query compiles against -- the same files, not a copy that could 
 `->from(mapping, runtime)` outermost as Query runs it; the model's enumerations; `modelElements`), `src/relation-type.ts`,
 `demo/boot.ts`, `demo/page-config.ts`, `demo/config.json`. Reads `fixtures/saved-queries/`, writes nothing there.
 
+**2026-10-01, the DataCube and Query lines: one query store, in a package of its own** (the user: "the right
+architecture", "i really do want the private browser sharing mode with no server", "a share link that encodes everything
+you need about a Saved Query"). A new top-level package `query-store/`: upstream's `Query` records, ONE typed client
+(`QueryStoreClient`, read-only `QueryReader` for DataCube) over a `fetch`, and an IN-PAGE server -- upstream's
+`/api/pure/v1/query` answered from IndexedDB, ported from legend-lite's `SavedQueries.java` -- that the client is handed
+in place of the network when no server is configured. One wire-level suite runs against both: the in-page server and
+legend-lite (`//core:server`, `--query-store`). And a saved query's share link (`#q1.`). **Moves out of `query/`**:
+`src/backend/local-store.ts` and the `Query` types of `src/backend/wire.ts` (re-exported there); `HttpEngine`'s store
+calls go through the client; `query/BUILD.bazel`, `query/tsconfig.json`, `query/demo/main.ts`. In `datacube/`:
+`src/saved-queries.ts` loses its own client. Then one site serving both apps from one origin, so the browser store is
+shared. Nothing in `core/`.
+
 ## Rules between sessions
 
 1. Never force-push; never bare `git stash` (the stash stack is shared by every worktree).
