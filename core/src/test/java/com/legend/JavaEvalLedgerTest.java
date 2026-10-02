@@ -86,7 +86,11 @@ class JavaEvalLedgerTest {
             // 107 -> 109 (feature-flag leg, 2026-09-12): the adapter sets ONE
             // execution option (CORRECT_SQL_SUBSTRING_INDEXING) on the call —
             // a runner default, evaluated nowhere in Java
-            Map.entry("pct/src/test/java/org/finos/legend/lite/pct/extension/PctExecuteNative.java", 109),
+            // 109 -> 110 (store types step 5, 2026-10-02): ONE call to the
+            // DEBUG-ONLY census recorder (PctCaseRecorder: a no-op unless
+            // LL_PCT_CASES is set; tools/census/README.md) -- records the
+            // case, evaluates nothing in Java
+            Map.entry("pct/src/test/java/org/finos/legend/lite/pct/extension/PctExecuteNative.java", 110),
             // 250 -> 259 (B4): the no-shadowing WALL — a fixture function
             // colliding with a lite-native name refuses injection loudly;
             // guard growth, anti-compensation
