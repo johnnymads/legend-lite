@@ -50,11 +50,15 @@ class DialectBoundaryTest {
     private static final Map<String, Integer> RAW_H2_CALLERS = Map.of(
             "CsvSeed.java", 1);   // adaptRaw — the raw-SQL boundary (moved from StatementExecutor 2026-09-27 with the setup loop, CsvSeed.run; one site still)
 
-    /** Lines naming a target ({@code DatabaseType.H2} / {@code .DuckDB})
+    /** Lines naming a target ({@code DatabaseType.H2} / {@code .DuckDB} / {@code .Postgres})
      *  outside the dialect package, by file. Carrying a type as DATA needs
      *  no literal; naming one is a decision. */
+    // 2026-10-01 W5.5/P1 Postgres dialect: the census now counts Postgres too, and
+    // Compiler.java went 1 -> 2 — the JDBC dialectOf's PostgreSQL session requires its
+    // runtime to declare Postgres, as the H2 session requires H2 (one shared check,
+    // requireDeclared; still dialect resolution, the one seam)
     private static final Map<String, Integer> DATABASE_TYPE_DECISIONS = Map.of(
-            "Compiler.java", 1);            // dialectOf — dialect resolution
+            "Compiler.java", 2);            // dialectOf — dialect resolution (H2, Postgres sessions)
 
     @Test
     void targetsAreDecidedInsideTheDialect() throws IOException {
@@ -64,7 +68,7 @@ class DialectBoundaryTest {
                         + " a target is decided inside its dialect (render it), never by"
                         + " a ternary at the call site");
         assertEquals(new TreeMap<>(DATABASE_TYPE_DECISIONS),
-                census(Pattern.compile("\\bDatabaseType\\s*\\.\\s*(H2|DuckDB)\\b")),
+                census(Pattern.compile("\\bDatabaseType\\s*\\.\\s*(H2|DuckDB|Postgres)\\b")),
                 "DatabaseType comparisons outside com.legend.sql.dialect drifted —"
                         + " only dialect resolution maps a declared type to a dialect");
         assertEquals(new TreeMap<>(), census(Pattern.compile("\\bFlavor\\.(H2_EXEC|DUCK_EXEC|ENGINE_TEXT)\\b")),

@@ -757,6 +757,20 @@ public final class Compiler {
             @com.legend.base.Nullable String runtimeFqn,
             java.sql.Connection connection) {
         String product = metadata(connection, true);
+        if ("PostgreSQL".equals(product)) {
+            // a Postgres session renders Postgres SQL whatever the runtime's
+            // metadata says (2026-10-01 W5.5/P1 Postgres dialect: it used to get
+            // DuckDB SQL silently); a declared non-Postgres connection is LOUD
+            requireDeclared(ctx, runtimeFqn,
+                    com.legend.model.ConnectionDefinition.DatabaseType.Postgres, "Postgres");
+            var pg = new com.legend.sql.dialect.Postgres();
+            for (String s : pg.sessionSetup()) {
+                try (var __o = com.legend.exec.StatementOrigin.enter(com.legend.exec.StatementOrigin.SESSION)) {
+                    com.legend.exec.Executor.executeRaw(connection, s);
+                }
+            }
+            return pg;
+        }
         if (!"H2".equals(product)) {
             // B6: session setup rides the connection-dialect resolution —
             // the ONE seam every connection-bearing entry passes through;
@@ -769,25 +783,8 @@ public final class Compiler {
             }
             return d;
         }
-        if (runtimeFqn != null) {
-            var rt = ctx.findRuntime(runtimeFqn);
-            if (rt.isPresent()) {
-                var bound = new java.util.TreeSet<String>();
-                rt.get().connectionBindings().values().forEach(bound::addAll);
-                for (String connFqn : bound) {
-                    var decl = ctx.findConnection(connFqn);
-                    if (decl.isPresent() && decl.get().databaseType()
-                            != com.legend.model.ConnectionDefinition
-                                    .DatabaseType.H2) {
-                        throw new com.legend.error.NotImplementedException(
-                                "session is H2 but connection '" + connFqn
-                                + "' of runtime '" + runtimeFqn
-                                + "' declares " + decl.get().databaseType()
-                                + " — dialect/connection mismatch");
-                    }
-                }
-            }
-        }
+        requireDeclared(ctx, runtimeFqn,
+                com.legend.model.ConnectionDefinition.DatabaseType.H2, "H2");
         // CAPABILITY BY CONNECTED VERSION (the session-policy seam):
         // 2.3+ has typed-JSON navigation ((j)."f", 1-based [i]) — the
         // modern profile spells it natively; the 2.1 engine-parity
@@ -802,6 +799,32 @@ public final class Compiler {
             }
         }
         return h2d;
+    }
+
+    /** A session's dialect requires every declared connection of the runtime to
+     *  declare that database: a dialect paired with a connection it does not render
+     *  for is silent corruption (H5.4). */
+    private static void requireDeclared(ModelContext ctx, @com.legend.base.Nullable String runtimeFqn,
+            com.legend.model.ConnectionDefinition.DatabaseType session, String sessionName) {
+        if (runtimeFqn == null) {
+            return;
+        }
+        var rt = ctx.findRuntime(runtimeFqn);
+        if (rt.isEmpty()) {
+            return;
+        }
+        var bound = new java.util.TreeSet<String>();
+        rt.get().connectionBindings().values().forEach(bound::addAll);
+        for (String connFqn : bound) {
+            var decl = ctx.findConnection(connFqn);
+            if (decl.isPresent() && decl.get().databaseType() != session) {
+                throw new com.legend.error.NotImplementedException(
+                        "session is " + sessionName + " but connection '" + connFqn
+                        + "' of runtime '" + runtimeFqn
+                        + "' declares " + decl.get().databaseType()
+                        + " — dialect/connection mismatch");
+            }
+        }
     }
 
     /** The driver's ONE metadata read, at the JDBC boundary
@@ -850,6 +873,9 @@ public final class Compiler {
                 // executes H2-typed connections on the session's DuckDB, and
                 // every emission H2 sees is the ANSI subset.
                 case H2 -> distinct.add("DuckDB");
+                // the browser planner's path (2026-10-01 W5.5/P1 Postgres dialect):
+                // a plan-only Postgres runtime renders Postgres SQL
+                case Postgres -> distinct.add("Postgres");
                 default -> throw new com.legend.error.NotImplementedException(
                         "SQL dialect for database type '" + e.getValue()
                                 + "' (connection '" + e.getKey() + "' of runtime '"
@@ -860,6 +886,9 @@ public final class Compiler {
             throw new com.legend.error.NotImplementedException(
                     "runtime '" + runtimeFqn + "' mixes database types "
                             + distinct + " — one dialect per query is supported");
+        }
+        if (distinct.contains("Postgres")) {
+            return new com.legend.sql.dialect.Postgres();
         }
         // SQLite differs from the ANSI baseline ONLY lexically — it is a
         // Lexicon row, not a dialect subclass (remediation T3.2).

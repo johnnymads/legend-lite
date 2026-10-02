@@ -44,6 +44,31 @@ public record Spellings(Map<SqlFn, String> fnNames) {
         return m;
     }
 
+    /** PostgreSQL 16+ EXECUTION spellings (2026-10-01 W5.5/P1 Postgres dialect): ONLY the
+     * DuckDB rows whose name exists in Postgres with the same arguments and the same
+     * meaning. Never inherited: {@code regexp_matches} for MATCHES (set-returning on
+     * Postgres — a projection of it DELETES rows, POSTGRES_BACKEND.md §4.1) and the
+     * DuckDB-only names (date_diff, strftime, string_split, regexp_full_match, len,
+     * epoch, epoch_ms, …). Everything absent here is a coded arm or a wall in the
+     * {@code Postgres} dialect, decided there by an exhaustive switch. */
+    public static final Spellings POSTGRES = new Spellings(postgres());
+
+    private static Map<SqlFn, String> postgres() {
+        Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
+        for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ASCII_CODE, SqlFn.ATAN, SqlFn.ATAN2,
+                SqlFn.CBRT, SqlFn.CHR, SqlFn.COALESCE, SqlFn.COS, SqlFn.COSH, SqlFn.COT,
+                SqlFn.DEGREES, SqlFn.EXP, SqlFn.FLOOR_RAW, SqlFn.GREATEST, SqlFn.LEAST,
+                SqlFn.LEFT, SqlFn.LN, SqlFn.LOG10, SqlFn.LOWER, SqlFn.LTRIM, SqlFn.MD5,
+                SqlFn.POW, SqlFn.RADIANS, SqlFn.REGEXP_REPLACE, SqlFn.REPEAT_STR,
+                SqlFn.REPLACE, SqlFn.REVERSE_STRING, SqlFn.RIGHT, SqlFn.RTRIM, SqlFn.SIN,
+                SqlFn.SINH, SqlFn.SPLIT_PART, SqlFn.SQRT, SqlFn.STARTS_WITH, SqlFn.STRPOS,
+                SqlFn.SUBSTRING, SqlFn.TAN, SqlFn.TANH, SqlFn.TIMEZONE, SqlFn.TRIM,
+                SqlFn.UPPER}) {
+            m.put(f, DUCKDB.fnNames().get(f));
+        }
+        return m;
+    }
+
     private static Map<SqlFn, String> build() {
         Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
         m.put(SqlFn.ABS, "abs");

@@ -37,6 +37,18 @@ public record TypeNames(Map<SqlType.Scalar, String> scalarNames,
      * 2.7/2.0/-3.9); JSON casts spell JSON (the R5a variant carrier). */
     public static final TypeNames H2 = new TypeNames(h2(), false);
 
+    /** PostgreSQL 16+ (2026-10-01 W5.5/P1 Postgres dialect): DOUBLE PRECISION (a bare
+     * {@code DOUBLE} is no Postgres type); HUGEINT as NUMERIC(38); JSON as JSONB, the
+     * collection and variant carrier (POSTGRES_BACKEND.md §5); no STRUCT. */
+    public static final TypeNames POSTGRES = new TypeNames(postgres(), false);
+
+    private static Map<SqlType.Scalar, String> postgres() {
+        Map<SqlType.Scalar, String> m = base();
+        m.put(SqlType.Scalar.HUGEINT, "NUMERIC(38)");
+        m.put(SqlType.Scalar.JSON, "JSONB");
+        return m;
+    }
+
     private static Map<SqlType.Scalar, String> h2() {
         Map<SqlType.Scalar, String> m = base();
         m.put(SqlType.Scalar.HUGEINT, "NUMERIC(38)");

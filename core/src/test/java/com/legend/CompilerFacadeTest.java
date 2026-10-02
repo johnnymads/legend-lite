@@ -99,7 +99,8 @@ class CompilerFacadeTest {
 
     @Test
     void undeclaredDialectIsHonestlyUnbuilt() {
-        String pgModel = MODEL + """
+        // 2026-10-01 W5.5/P1: Postgres is built now; Snowflake stands in as the unbuilt dialect
+        String sfModel = MODEL + """
 
                 ###Mapping
                 Mapping test::M (
@@ -108,7 +109,7 @@ class CompilerFacadeTest {
                 )
                 ###Connection
                 RelationalDatabaseConnection test::Conn {
-                  store: test::DB; type: Postgres;
+                  store: test::DB; type: Snowflake;
                   specification: DuckDB { }; auth: Test; }
                 ###Runtime
                 Runtime test::RT { mappings: [test::M];
@@ -116,10 +117,10 @@ class CompilerFacadeTest {
                 """;
         com.legend.error.NotImplementedException ex =
                 assertThrows(com.legend.error.NotImplementedException.class,
-                        () -> Compiler.compile(pgModel,
+                        () -> Compiler.compile(sfModel,
                                 "test::Person.all()->project(~[name: p|$p.name])",
                                 "test::RT"));
-        assertTrue(String.valueOf(ex.getMessage()).contains("Postgres"),
+        assertTrue(String.valueOf(ex.getMessage()).contains("Snowflake"),
                 "the error must name the undeclared dialect: " + ex.getMessage());
     }
 }

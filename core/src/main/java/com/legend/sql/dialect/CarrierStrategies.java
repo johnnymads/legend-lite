@@ -54,11 +54,16 @@ public final class CarrierStrategies extends SqlRewriter {
      * lists; H2 has neither; DuckDB has everything). Strategy rules
      * dispatch on these. */
     public record Caps(boolean nativeLists, boolean correlatedExplode,
-            boolean jsonCarrier) {
-        public static final Caps DUCKDB = new Caps(true, true, true);
+            boolean jsonCarrier, boolean nativeFullOuter) {
+        public static final Caps DUCKDB = new Caps(true, true, true, true);
         /** H2: no native lists, no correlated explosion (the ONLY probed
          * backend without it), JSON constructors only. */
-        public static final Caps H2 = new Caps(false, false, false);
+        public static final Caps H2 = new Caps(false, false, false, false);
+        /** Postgres (2026-10-01 W5.5/P1 Postgres dialect): the portable
+         * strategies (no native-list carrier — jsonb, POSTGRES_BACKEND.md §5)
+         * WITHOUT H2's FULL OUTER emulation: Postgres joins FULL OUTER
+         * natively. */
+        public static final Caps POSTGRES = new Caps(false, true, true, true);
     }
 
     private final Caps caps;
@@ -87,7 +92,8 @@ public final class CarrierStrategies extends SqlRewriter {
         // JOIN outright, RIGHT works — probed): LEFT branch UNION ALL
         // RIGHT branch anti-joined on a fresh copy of the LEFT source
         // (rows already covered by the LEFT branch drop out).
-        if (s.from() instanceof com.legend.sql.SqlSource.Join fj
+        if (!caps.nativeFullOuter()
+                && s.from() instanceof com.legend.sql.SqlSource.Join fj
                 && fj.kind() == com.legend.sql.SqlSource.Join.Kind.FULL
                 && fj.on() != null) {
             com.legend.sql.SqlSource leftCopy =

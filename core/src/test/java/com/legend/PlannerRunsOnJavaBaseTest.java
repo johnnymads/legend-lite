@@ -37,5 +37,9 @@ class PlannerRunsOnJavaBaseTest {
         assertEquals(0, p.waitFor(), "the planner needs more than java.base:\n" + out);
         assertTrue(out.contains("java.sql visible: false"), "java.sql was visible:\n" + out);
         assertTrue(out.contains("SELECT") && out.contains("GROUP BY"), "no SQL planned:\n" + out);
+        // 2026-10-01 W5.5/P1 Postgres dialect: a Postgres-runtime plan, quoted identifiers
+        // and QUALIFY as a wrapping select
+        assertTrue(out.contains("postgres: SELECT") && out.contains("FROM \"FIRM\"")
+                && out.contains("\"qualify_src\""), "no Postgres SQL planned:\n" + out);
     }
 }

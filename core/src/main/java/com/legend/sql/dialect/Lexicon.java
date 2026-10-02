@@ -92,4 +92,24 @@ public record Lexicon(char quoteChar, Set<String> reservedWords) {
                     .collect(java.util.stream.Collectors.toUnmodifiableSet()));
 
     public static final Lexicon ENGINE_STYLE = new Lexicon('"', Set.of());
+
+    /** PostgreSQL 16+ (2026-10-01 W5.5/P1 Postgres dialect). The {@code Postgres} dialect
+     * QUOTES EVERY identifier (Postgres folds an unquoted name to lowercase, so a bare
+     * {@code NAME} reads {@code name}), so this list never decides a spelling there; it
+     * is the documented reserved set (SQL key words appendix, "reserved" in the
+     * PostgreSQL column) for any reader that asks. */
+    public static final Lexicon POSTGRES = new Lexicon('"', Set.of(
+            "all", "analyse", "analyze", "and", "any", "array", "as", "asc", "asymmetric",
+            "authorization", "binary", "both", "case", "cast", "check", "collate", "collation",
+            "column", "concurrently", "constraint", "create", "cross", "current_catalog",
+            "current_date", "current_role", "current_schema", "current_time",
+            "current_timestamp", "current_user", "default", "deferrable", "desc", "distinct",
+            "do", "else", "end", "except", "false", "fetch", "for", "foreign", "freeze", "from",
+            "full", "grant", "group", "having", "ilike", "in", "initially", "inner", "intersect",
+            "into", "is", "isnull", "join", "lateral", "leading", "left", "like", "limit",
+            "localtime", "localtimestamp", "natural", "not", "notnull", "null", "offset", "on",
+            "only", "or", "order", "outer", "overlaps", "placing", "primary", "references",
+            "returning", "right", "select", "session_user", "similar", "some", "symmetric",
+            "system_user", "table", "tablesample", "then", "to", "trailing", "true", "union",
+            "unique", "user", "using", "variadic", "verbose", "when", "where", "window", "with"));
 }
