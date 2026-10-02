@@ -351,7 +351,7 @@ public class EngineStyleH2 extends AnsiSqlRenderer {
 
     @Override
     public String render(SqlQuery query) {
-        for (com.legend.sql.SqlRewriter pass : passes()) {
+        for (com.legend.sql.SqlRewriter pass : renderPasses()) {
             query = pass.rewriteRoot(query);
         }
         query = wrapTdsJoinTop(query);

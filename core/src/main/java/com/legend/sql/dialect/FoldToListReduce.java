@@ -63,6 +63,8 @@ final class FoldToListReduce extends SqlRewriter {
                     SqlExpr.Call.of(SqlFn.LIST_GET,
                             SqlExpr.Column.derived(null, elem), new SqlExpr.IntLit(1));
             case SqlExpr.Column c -> c;
+            // a stored read reads a table column, never a lambda's element
+            case SqlExpr.StoredRead sr -> sr;
             case SqlExpr.RowOrder r2 -> r2;
             case SqlExpr.ReduceCollection rc -> rc;
             case SqlExpr.Membership m2 -> m2;

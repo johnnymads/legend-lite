@@ -22,7 +22,7 @@ public sealed interface SqlExpr
                 SqlExpr.Lambda, SqlExpr.Cast, SqlExpr.FoldCall, SqlExpr.JsonObject,
                 SqlExpr.JsonArrayAgg, SqlExpr.PlanParam, SqlExpr.Group,
                 SqlExpr.RowOrder, SqlExpr.ReduceCollection, SqlExpr.Membership,
-                SqlExpr.TempTableInSplice,
+                SqlExpr.TempTableInSplice, SqlExpr.StoredRead,
                 SqlAgg.Reducer {
 
     /**
@@ -46,6 +46,7 @@ public sealed interface SqlExpr
     default List<SqlExpr> children() {
         return switch (this) {
             case Column ignored -> List.of();
+            case StoredRead r -> List.of(r.column());
             case RowOrder ignored -> List.of();
             case Membership m -> List.of(m.needle(), m.collection());
             case ReduceCollection rc -> {
@@ -137,6 +138,12 @@ public sealed interface SqlExpr
     default SqlExpr withChildren(List<SqlExpr> cs) {
         return switch (this) {
             case Column ignored -> this;
+            case StoredRead r -> {
+                if (!(cs.get(0) instanceof Column c)) {
+                    throw new IllegalStateException("a stored read reads a table column, not " + cs.get(0));
+                }
+                yield new StoredRead(c, r.stored());
+            }
             case RowOrder ignored -> this;
             case ReduceCollection rc -> new ReduceCollection(rc.reducer(),
                     cs.get(0), cs.subList(1, cs.size()));
@@ -283,6 +290,22 @@ public sealed interface SqlExpr
 
         public RowOrder(@com.legend.base.Nullable String table) {
             this(table, SqlTyping.UNKNOWN);
+        }
+    }
+
+    /** A STORED READ (docs/STORE_TYPES_HOMEWORK_2026_10_02.md, 4.3): a table column read by its
+     * DECLARED store type, where the dialect cannot use the value as the database holds it -- a
+     * type Pure cannot name ({@code OTHER}) read as text, a Postgres {@code json} read as
+     * {@code jsonb}. Built only by the dialect's {@code StoredReads} pass, at every reference to
+     * such a column; the dialect spells the read. The value's type is the column's: what the
+     * read delivers is what the typing already said the column holds. */
+    record StoredRead(Column column, SqlDdl.ColumnType stored, TypeFact type) implements SqlExpr {
+        public StoredRead {
+            type = column.type();
+        }
+
+        public StoredRead(Column column, SqlDdl.ColumnType stored) {
+            this(column, stored, column.type());
         }
     }
 

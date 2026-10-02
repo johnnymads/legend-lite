@@ -175,6 +175,7 @@ final class SubselectPrune {
     private static void collectExpr(SqlExpr e, Refs r) {
         switch (e) {
             case SqlExpr.Column c -> r.col(c.table(), c.name());
+            case SqlExpr.StoredRead sr -> collectExpr(sr.column(), r);
             case SqlExpr.RowOrder ro -> { }
             case SqlExpr.TempTableInSplice ignored -> { }
             case SqlExpr.Membership m -> {

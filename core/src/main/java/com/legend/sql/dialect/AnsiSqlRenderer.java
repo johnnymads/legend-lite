@@ -81,7 +81,7 @@ public class AnsiSqlRenderer implements SqlDialect {
     @Override
     public String render(SqlQuery query) {
         SqlQuery q = query;
-        for (com.legend.sql.SqlRewriter pass : passes()) {
+        for (com.legend.sql.SqlRewriter pass : renderPasses()) {
             q = pass.rewriteRoot(q);
         }
         StringBuilder sb = new StringBuilder();
@@ -103,6 +103,47 @@ public class AnsiSqlRenderer implements SqlDialect {
         return supportsQualify()
                 ? java.util.List.of(carriers)
                 : java.util.List.of(carriers, new QualifyToSubselect());
+    }
+
+    /** What {@code render()} runs: this dialect's {@link #passes()}, then the STORED READS LAST
+     *  (docs/STORE_TYPES_HOMEWORK_2026_10_02.md, 4.3) -- every source the passes introduced is in
+     *  scope, and every reference they built reads what the store holds. One owner, so no
+     *  dialect's pass list can leave the reads out. */
+    protected final java.util.List<com.legend.sql.SqlRewriter> renderPasses() {
+        java.util.List<com.legend.sql.SqlRewriter> ps = new java.util.ArrayList<>(passes());
+        ps.add(new StoredReads(this::readsStored));
+        return java.util.List.copyOf(ps);
+    }
+
+    /** Whether this dialect reads a column STORED as {@code t} other than as the database holds
+     *  it ({@link SqlExpr.StoredRead}). Base: a type Pure cannot name ({@code OTHER},
+     *  {@code DISTINCT}) is a Pure String, read as text; every other type is read as held -- a
+     *  nested value ({@code JSON}, {@code ARRAY}, {@code OBJECT}) included, as the database
+     *  holds it (ruled 2026-10-02). */
+    protected boolean readsStored(com.legend.sql.SqlDdl.ColumnType t) {
+        return readsAsText(t);
+    }
+
+    /** The read of a column whose stored type {@link #readsStored} names: base, as text. */
+    protected String storedRead(SqlExpr.StoredRead r) {
+        if (readsAsText(r.stored())) {
+            return "CAST(" + columnRef(r.column()) + " AS " + castTypeName(com.legend.sql.SqlType.Scalar.VARCHAR) + ")";
+        }
+        throw new DialectCapability("this dialect reads a column stored as " + r.stored()
+                + " as the database holds it: a stored read of it is a pass defect");
+    }
+
+    /** A type Pure cannot name: a Pure String, read as text on every dialect. */
+    protected static boolean readsAsText(com.legend.sql.SqlDdl.ColumnType t) {
+        return switch (t) {
+            case com.legend.sql.SqlDdl.ColumnType.Plain p -> switch (p.kind()) {
+                case OTHER, DISTINCT -> true;
+                case BIGINT, SMALLINT, TINYINT, INTEGER, FLOAT, DOUBLE, REAL, BIT, TIMESTAMP, DATE,
+                        JSON, VARCHAR, ARRAY, OBJECT -> false;
+            };
+            case com.legend.sql.SqlDdl.ColumnType.Sized ignored -> false;
+            case com.legend.sql.SqlDdl.ColumnType.Scaled ignored -> false;
+        };
     }
 
     // ==================================================================
@@ -233,7 +274,18 @@ public class AnsiSqlRenderer implements SqlDialect {
                 // materialized (leg 3.4 step 2: a frame CTE's NULL column)
                 ? "CAST(NULL AS " + castTypeName(p.out().type()) + ")"
                 : expr(p.expr(), 0);
-        return p.alias() == null ? e : e + " AS " + aliasIdent(p.alias());
+        if (p.alias() != null) {
+            return e + " AS " + aliasIdent(p.alias());
+        }
+        String label = implicitLabel(p);
+        return label == null ? e : e + " AS " + label;
+    }
+
+    /** The label an alias-less projection spells, or null for none. Base: a STORED READ keeps
+     *  its column's own label, spelled as the reference is -- the name the bare column labeled
+     *  itself with before the read wrapped it, on every database's identifier folding. */
+    protected @com.legend.base.Nullable String implicitLabel(SqlSelect.Projection p) {
+        return p.expr() instanceof SqlExpr.StoredRead r ? columnName(r.column()) : null;
     }
 
     /** The scalar slot types a typed NULL spells; the label carriers
@@ -457,6 +509,7 @@ public class AnsiSqlRenderer implements SqlDialect {
             // lowerer aliases every FROM source) — it spells with the
             // alias rule; the NAME spells by its ORIGIN (columnName)
             case SqlExpr.Column c -> columnRef(c);
+            case SqlExpr.StoredRead r -> storedRead(r);
             case SqlExpr.Star s -> s.table() == null ? "*" : aliasIdent(s.table()) + ".*";
             // DuckDB's EXCLUDE spelling (the one PIVOT backend); the dropped
             // names quote UNCONDITIONALLY — the corpus pins the quoted form.

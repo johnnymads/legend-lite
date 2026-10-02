@@ -89,13 +89,48 @@ public final class Postgres extends AnsiSqlRenderer {
         return c.materialized() ? " AS MATERIALIZED (" : " AS (";
     }
 
+    /** Postgres also reads a nested value as {@code jsonb}, the one nested type it can group,
+     *  compare and navigate alike: a {@code json} column has no equality operator ({@code GROUP BY}
+     *  refuses it), and an array or a composite is not JSON at all (measured on Postgres 17,
+     *  docs/STORE_TYPES_HOMEWORK_2026_10_02.md, section 3). */
+    @Override
+    protected boolean readsStored(com.legend.sql.SqlDdl.ColumnType t) {
+        return readsAsText(t) || jsonbRead(t) != JsonbRead.NONE;
+    }
+
+    @Override
+    protected String storedRead(com.legend.sql.SqlExpr.StoredRead r) {
+        String ref = columnRef(r.column());
+        return switch (jsonbRead(r.stored())) {
+            case CAST -> "CAST(" + ref + " AS JSONB)";
+            case CONVERT -> "to_jsonb(" + ref + ")";
+            case NONE -> super.storedRead(r);
+        };
+    }
+
+    /** How a stored type reads as {@code jsonb}: {@code json} is cast; an array or a composite
+     *  cannot be cast, and is converted ({@code to_jsonb}); any other type is not nested. */
+    private enum JsonbRead { CAST, CONVERT, NONE }
+
+    private static JsonbRead jsonbRead(com.legend.sql.SqlDdl.ColumnType t) {
+        return switch (t) {
+            case com.legend.sql.SqlDdl.ColumnType.Plain p -> switch (p.kind()) {
+                case JSON -> JsonbRead.CAST;
+                case ARRAY, OBJECT -> JsonbRead.CONVERT;
+                case BIGINT, SMALLINT, TINYINT, INTEGER, FLOAT, DOUBLE, REAL, BIT, TIMESTAMP, DATE,
+                        VARCHAR, OTHER, DISTINCT -> JsonbRead.NONE;
+            };
+            case com.legend.sql.SqlDdl.ColumnType.Sized ignored -> JsonbRead.NONE;
+            case com.legend.sql.SqlDdl.ColumnType.Scaled ignored -> JsonbRead.NONE;
+        };
+    }
+
     /** Alias-less projections label EXPLICITLY from the declared output: Postgres
      * labels an expression {@code ?column?}, and the product wrapper selects
      * columns by name. */
     @Override
-    protected String projection(com.legend.sql.SqlSelect.Projection p) {
-        String e = super.projection(p);
-        return p.alias() == null && p.out() != null ? e + " AS " + aliasIdent(p.out().name()) : e;
+    protected @com.legend.base.Nullable String implicitLabel(com.legend.sql.SqlSelect.Projection p) {
+        return p.out() != null ? aliasIdent(p.out().name()) : super.implicitLabel(p);
     }
 
     /** Every identifier quoted (Postgres folds a bare one to lowercase); a

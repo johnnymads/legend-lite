@@ -154,7 +154,9 @@ public record SqlSelect(List<Projection> projections, boolean distinct,
          */
         public @Nullable String outputName() {
             return alias != null ? alias
-                    : expr instanceof SqlExpr.Column c ? c.name() : null;
+                    : expr instanceof SqlExpr.Column c ? c.name()
+                    // a stored read keeps its column's name (StoredReads)
+                    : expr instanceof SqlExpr.StoredRead r ? r.column().name() : null;
         }
 
     }

@@ -1,6 +1,7 @@
 package com.legend;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,6 +10,9 @@ import com.legend.sql.SqlDdl;
 import com.legend.sql.SqlQuery;
 import com.legend.sql.SqlRewriter;
 import com.legend.sql.SqlSource;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,7 +29,12 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Step 3, the stamp: every scan of a table carries its columns' declared types, by whichever road
  * the query reached it -- the relation accessor, a class mapping, a join hop, a view -- because the
- * dialect reads a stored value at every reference (step 4). Nothing reads the stamp yet.
+ * dialect reads a stored value at every reference (step 4).
+ *
+ * <p>Step 4, the read: a column stored as a type Pure cannot name is read as text at every
+ * reference -- projected, filtered, grouped, spelled out of a star -- on every dialect; Postgres
+ * also reads a nested value as {@code jsonb}. Run on DuckDB, a UUID column declared OTHER filters
+ * and groups as the text it shows.
  */
 class StoreTypesTest {
 
@@ -90,6 +99,25 @@ class StoreTypesTest {
         assertTrue(String.valueOf(e.getMessage()).contains("milestoning column 'FROM_Z'"), e.getMessage());
     }
 
+    private static final String JOIN_MODEL = """
+            ###Pure
+            Class s::Host { id: Integer[1]; loc: String[0..1]; }
+            ###Relational
+            Database s::DB ( Table HOSTS (ID INTEGER PRIMARY KEY)
+                Table SITES (ID INTEGER PRIMARY KEY, HOST_ID INTEGER, LOC OTHER)
+                Join HostSite(HOSTS.ID = SITES.HOST_ID) )
+            ###Mapping
+            Mapping s::M (
+              *s::Host: Relational { ~mainTable [s::DB] HOSTS
+                id: HOSTS.ID, loc: @HostSite | SITES.LOC }
+            )
+            ###Connection
+            RelationalDatabaseConnection s::Conn { store: s::DB; type: DuckDB;
+              specification: DuckDB { }; auth: Test; }
+            ###Runtime
+            Runtime s::RT { mappings: [s::M]; connections: [ s::DB: [ c1: s::Conn ] ]; }
+            """;
+
     private static final SqlDdl.ColumnType OTHER = new SqlDdl.ColumnType.Plain(SqlDdl.ColumnType.Kind.OTHER);
     private static final SqlDdl.ColumnType JSON = new SqlDdl.ColumnType.Plain(SqlDdl.ColumnType.Kind.JSON);
 
@@ -110,25 +138,7 @@ class StoreTypesTest {
 
     @Test
     void aJoinHopsScanCarriesThem() {
-        String model = """
-                ###Pure
-                Class s::Host { id: Integer[1]; loc: String[0..1]; }
-                ###Relational
-                Database s::DB ( Table HOSTS (ID INTEGER PRIMARY KEY)
-                    Table SITES (ID INTEGER PRIMARY KEY, HOST_ID INTEGER, LOC OTHER)
-                    Join HostSite(HOSTS.ID = SITES.HOST_ID) )
-                ###Mapping
-                Mapping s::M (
-                  *s::Host: Relational { ~mainTable [s::DB] HOSTS
-                    id: HOSTS.ID, loc: @HostSite | SITES.LOC }
-                )
-                ###Connection
-                RelationalDatabaseConnection s::Conn { store: s::DB; type: DuckDB;
-                  specification: DuckDB { }; auth: Test; }
-                ###Runtime
-                Runtime s::RT { mappings: [s::M]; connections: [ s::DB: [ c1: s::Conn ] ]; }
-                """;
-        assertEquals(OTHER, scanOf(model, "s::Host.all()->project(~[loc: h|$h.loc])", "SITES").get("LOC"));
+        assertEquals(OTHER, scanOf(JOIN_MODEL, "s::Host.all()->project(~[loc: h|$h.loc])", "SITES").get("LOC"));
     }
 
     @Test
@@ -136,6 +146,111 @@ class StoreTypesTest {
         String model = MODEL.replace("META SEMISTRUCTURED) )",
                 "META SEMISTRUCTURED)\n    View HOST_ADDRS (id: HOSTS.ID, addr: HOSTS.ADDR) )");
         assertEquals(OTHER, scanOf(model, "#>{s::DB.HOST_ADDRS}#", "HOSTS").get("ADDR"));
+    }
+
+    // ---- step 4: the read ----
+
+    /** {@code CAST(<qualified ref to col> AS VARCHAR)}, however the dialect quotes the reference. */
+    private static String textRead(String col) {
+        return "CAST\\(\"?\\w+\"?\\.\"?" + col + "\"?\\s+AS VARCHAR\\)";
+    }
+
+    private static String sql(String model, String query) {
+        return Compiler.plan(model, query, "s::RT").sql();
+    }
+
+    private static String on(String type) {
+        return type.equals("H2") ? MODEL.replace("type: DuckDB;\n  specification: DuckDB { }; auth: Test;",
+                "type: H2;\n  specification: LocalH2 { }; auth: DefaultH2;") : MODEL.replace("type: DuckDB;", "type: " + type + ";");
+    }
+
+    @Test
+    void anOtherColumnIsReadAsTextOnEveryDialect() {
+        for (String type : List.of("DuckDB", "H2", "Postgres")) {
+            String q = sql(on(type), "#>{s::DB.HOSTS}#->select(~[ID, ADDR])");
+            assertTrue(java.util.regex.Pattern.compile(textRead("ADDR")).matcher(q).find(), type + ": " + q);
+        }
+    }
+
+    @Test
+    void theReadAppliesAtEveryReference() {
+        String q = sql(MODEL, "#>{s::DB.HOSTS}#->filter(x|$x.ADDR->toOne()->contains('10.'))"
+                + "->groupBy(~[ADDR], ~[n: x|$x.ID : y|$y->count()])->sort([~ADDR->ascending()])");
+        var m = java.util.regex.Pattern.compile(textRead("ADDR")).matcher(q);
+        int reads = 0;
+        while (m.find()) {
+            reads++;
+        }
+        // the filter, the group key, and its projection, at least
+        assertTrue(reads >= 3, q);
+        // and no reference reads the raw value
+        assertFalse(java.util.regex.Pattern.compile("\\w\\.ADDR\\b").matcher(q.replaceAll(textRead("ADDR"), "")).find(), q);
+    }
+
+    @Test
+    void aWholeTableSpellsItsColumnsOutSoTheReadReachesThem() {
+        String q = sql(MODEL, "#>{s::DB.HOSTS}#");
+        assertTrue(java.util.regex.Pattern.compile(textRead("ADDR") + " AS ADDR").matcher(q).find(), q);
+        assertFalse(q.contains("*"), q);
+    }
+
+    @Test
+    void aClassMappingAJoinHopAndAViewReadIt() {
+        assertTrue(java.util.regex.Pattern.compile(textRead("ADDR")).matcher(
+                sql(MODEL, "s::Host.all()->project(~[addr: h|$h.addr])")).find());
+        assertTrue(java.util.regex.Pattern.compile(textRead("LOC")).matcher(
+                sql(JOIN_MODEL, "s::Host.all()->project(~[loc: h|$h.loc])")).find());
+        String view = MODEL.replace("META SEMISTRUCTURED) )",
+                "META SEMISTRUCTURED)\n    View HOST_ADDRS (id: HOSTS.ID, addr: HOSTS.ADDR) )");
+        assertTrue(java.util.regex.Pattern.compile(textRead("ADDR")).matcher(
+                sql(view, "#>{s::DB.HOST_ADDRS}#")).find());
+    }
+
+    @Test
+    void aNestedValueIsReadAsStoredOnDuckDbAndAsJsonbOnPostgres() {
+        String duck = sql(MODEL, "#>{s::DB.HOSTS}#->select(~[META])");
+        assertFalse(duck.contains("JSONB"), duck);
+        String pg = sql(on("Postgres"), "#>{s::DB.HOSTS}#->select(~[META])");
+        assertTrue(java.util.regex.Pattern.compile("CAST\\(\"\\w+\"\\.\"META\" AS JSONB\\)").matcher(pg).find(), pg);
+    }
+
+    @Test
+    void aTableWithoutSuchAColumnRendersAsItDid() {
+        String plain = """
+                ###Relational
+                Database s::DB ( Table HOSTS (ID INTEGER PRIMARY KEY, NAME VARCHAR(32)) )
+                ###Connection
+                RelationalDatabaseConnection s::Conn { store: s::DB; type: DuckDB;
+                  specification: DuckDB { }; auth: Test; }
+                ###Runtime
+                Runtime s::RT { mappings: []; connections: [ s::DB: [ c1: s::Conn ] ]; }
+                """;
+        String q = sql(plain, "#>{s::DB.HOSTS}#");
+        assertFalse(q.contains("CAST"), q);
+    }
+
+    @Test
+    void aUuidDeclaredOtherFiltersAndGroupsAsTheTextItShowsOnDuckDb() throws Exception {
+        String model = """
+                ###Relational
+                Database s::DB ( Table HOSTS (ID INTEGER PRIMARY KEY, REF OTHER) )
+                ###Connection
+                RelationalDatabaseConnection s::Conn { store: s::DB; type: DuckDB;
+                  specification: DuckDB { }; auth: Test; }
+                ###Runtime
+                Runtime s::RT { mappings: []; connections: [ s::DB: [ c1: s::Conn ] ]; }
+                """;
+        try (Connection c = DriverManager.getConnection("jdbc:duckdb:")) {
+            try (Statement st = c.createStatement()) {
+                st.execute("CREATE TABLE HOSTS (ID INTEGER, REF UUID)");
+                st.execute("INSERT INTO HOSTS VALUES (1, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'),"
+                        + " (2, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'), (3, 'b1ffcd00-0000-4000-8000-000000000001')");
+            }
+            var r = Compiler.execute(model, "|#>{s::DB.HOSTS}#->filter(x|$x.REF->toOne()->startsWith('a0ee'))"
+                    + "->groupBy(~[REF], ~[n: x|$x.ID : y|$y->count()])", "s::RT", c);
+            assertEquals(List.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11|2"),
+                    r.rows().stream().map(row -> row.get(0) + "|" + row.get(1)).toList());
+        }
     }
 
     /** The stored types the ONE scan of {@code table} carries, in the query's lowered MIR. */

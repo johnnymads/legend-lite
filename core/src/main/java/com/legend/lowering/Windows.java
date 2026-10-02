@@ -179,6 +179,7 @@ final class Windows {
             // Leaves: no reducer can hide below.
             case SqlExpr.PlanParam ignored -> e;
             case SqlExpr.Column ignored -> e;
+            case SqlExpr.StoredRead ignored -> e;   // a column read: no reducer inside
             case SqlExpr.RowOrder ignored -> e;
             case SqlExpr.ReduceCollection ignored -> e;
             case SqlExpr.Membership ignored -> e;

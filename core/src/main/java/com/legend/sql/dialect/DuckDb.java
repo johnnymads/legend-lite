@@ -595,10 +595,8 @@ public final class DuckDb extends AnsiSqlRenderer {
     }
 
     @Override
-    protected String projection(com.legend.sql.SqlSelect.Projection p) {
-        String out = super.projection(p);
-        return p.alias() == null && storedVariant(p.expr())
-                ? out + " AS " + aliasIdent(((SqlExpr.Column) p.expr()).name()) : out;
+    protected @com.legend.base.Nullable String implicitLabel(com.legend.sql.SqlSelect.Projection p) {
+        return storedVariant(p.expr()) ? aliasIdent(((SqlExpr.Column) p.expr()).name()) : super.implicitLabel(p);
     }
 
     @Override

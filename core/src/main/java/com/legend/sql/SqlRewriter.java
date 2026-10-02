@@ -131,9 +131,22 @@ public abstract class SqlRewriter {
         return source(out);
     }
 
+    private static SqlExpr.Column asColumn(SqlExpr e) {
+        if (e instanceof SqlExpr.Column c) {
+            return c;
+        }
+        throw new IllegalStateException("a pass rewrote a stored read's column into " + e
+                + ": a stored read reads a table column, nothing else");
+    }
+
     protected final SqlExpr rewriteExpr(SqlExpr e) {
         SqlExpr out = switch (e) {
             case SqlExpr.Column c -> c;
+            case SqlExpr.StoredRead r -> {
+                // the read's column is a reference like any other; it stays one
+                SqlExpr c = rewriteExpr(r.column());
+                yield c == r.column() ? r : new SqlExpr.StoredRead(asColumn(c), r.stored());
+            }
             case SqlExpr.RowOrder r -> r;
             case SqlExpr.TempTableInSplice t -> t;
             case SqlExpr.Membership m -> {
