@@ -57,7 +57,8 @@ class PostgresDialectTest {
                 SELECT "t0"."sym" AS "sym", COUNT("t0"."id") AS "n", CAST(AVG(1.0 * "t0"."qty") AS DOUBLE PRECISION) AS "a", \
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY "t0"."f8") AS "med", mode() WITHIN GROUP (ORDER BY "t0"."qty") AS "md"
                 FROM "trades" AS "t0"
-                GROUP BY "t0"."sym\"""", plan("->groupBy(~[sym], ~[n: r|$r.id : y|$y->count(),"
+                GROUP BY "t0"."sym"\
+                """, plan("->groupBy(~[sym], ~[n: r|$r.id : y|$y->count(),"
                 + " a: r|$r.qty : y|$y->average(), med: r|$r.f8 : y|$y->median(),"
                 + " md: r|$r.qty : y|$y->mode()])"));
     }
@@ -143,7 +144,8 @@ class PostgresDialectTest {
                 CAST((extract(year FROM DATE '2026-03-01') - extract(year FROM "t0"."d")) * 12 \
                 + (extract(month FROM DATE '2026-03-01') - extract(month FROM "t0"."d")) AS BIGINT) AS "mm", \
                 to_char(CAST("t0"."d" AS TIMESTAMP), 'FMDay') AS "wd"
-                FROM "trades" AS "t0\"""", plan("->extend(~[fm: r|$r.d->toOne()->firstDayOfMonth(),"
+                FROM "trades" AS "t0"\
+                """, plan("->extend(~[fm: r|$r.d->toOne()->firstDayOfMonth(),"
                 + " plus: r|$r.ts->toOne()->adjust(-90, DurationUnit.MINUTES),"
                 + " mm: r|dateDiff($r.d->toOne(), %2026-03-01, DurationUnit.MONTHS),"
                 + " wd: r|$r.d->toOne()->dayOfWeek()])->select(~[fm, plus, mm, wd])"));
@@ -200,6 +202,7 @@ class PostgresDialectTest {
                 FROM trades AS t0""", duck);
         assertEquals("""
                 SELECT "t0"."id" AS "id", CAST(round(CAST("t0"."f8" AS DOUBLE PRECISION)) AS BIGINT) AS "r"
-                FROM "trades" AS "t0\"""", plan("->extend(~[r: r|$r.f8->toOne()->round()])->select(~[id, r])"));
+                FROM "trades" AS "t0"\
+                """, plan("->extend(~[r: r|$r.f8->toOne()->round()])->select(~[id, r])"));
     }
 }

@@ -151,7 +151,7 @@ public final class Postgres extends AnsiSqlRenderer {
     /** Postgres text cannot hold NUL ({@code chr(0)} raises). */
     @Override
     protected String stringLit(String value) {
-        if (value.indexOf('\u0000') >= 0) {
+        if (value.indexOf(0) >= 0) {   // NUL, by code point
             throw new DialectCapability("a string holding NUL reached Postgres, whose text"
                     + " type cannot hold it");
         }
