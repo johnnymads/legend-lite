@@ -616,7 +616,7 @@ async function freshCube() {
     await settle();
     return;
   }
-  await page.goto(`${URL_BASE}/demo/index.html?queryStore=${encodeURIComponent(URL_BASE)}${PLANNER ? `&planner=${PLANNER}` : ''}`);
+  await page.goto(`${URL_BASE}/demo/index.html?queryStore=${encodeURIComponent(`${URL_BASE}/api`)}${PLANNER ? `&planner=${PLANNER}` : ''}`);
   await page.waitForSelector('.dc-row', { timeout: 90_000 });
   pageLoaded = true;
   if (!DATA) return;

@@ -1,6 +1,6 @@
-// SAVED QUERIES as a cube's source (the user, 2026-10-01: "load from a saved Query"): read from
-// upstream's query store, `/api/pure/v1/query` (legend-lite's `--query-store`, or legend-engine's),
-// never from Query's own browser storage. The record is upstream's `Query`, and the reading rules
+// SAVED QUERIES as a cube's source (the user, 2026-10-01: "load from a saved Query"): read through
+// the one query-store client (query-store/README.md) -- a server's `/api/pure/v1/query`, or the same
+// API answered in the page from this origin's browser store, which the Query app shares. The record is upstream's `Query`, and the reading rules
 // are the ones Query writes by (fixtures/saved-queries/README.md, tested against those records):
 //
 //   1. the execution context names the mapping and runtime: `explicitExecutionContext` directly;
@@ -25,74 +25,7 @@
 import {
   findAll, fn, isLambda, transform, type ColSpec, type Lambda, type ValueSpecification,
 } from '../../pure-protocol/src/index.ts';
-
-/** Upstream's saved `Query`, the fields a cube reads. */
-export interface SavedQuery {
-  readonly id: string;
-  readonly name: string;
-  readonly owner?: string | null;
-  readonly groupId: string;
-  readonly artifactId: string;
-  readonly versionId: string;
-  readonly content: string;
-  readonly executionContext?: SavedExecutionContext | null;
-  readonly defaultParameterValues?: readonly { readonly name: string; readonly content: string }[] | null;
-  readonly lastUpdatedAt?: number | null;
-}
-
-/** `explicitExecutionContext` (mapping, runtime) or `dataSpaceExecutionContext` (dataSpacePath, executionKey); others are refused. */
-export interface SavedExecutionContext {
-  readonly _type: string;
-  readonly mapping?: string;
-  readonly runtime?: string;
-  readonly dataSpacePath?: string;
-  readonly executionKey?: string | null;
-}
-
-/** The store: get and search, as upstream serves them. */
-export class QueryStore {
-  readonly #base: string;
-  readonly #fetch: typeof fetch;
-
-  constructor(baseUrl: string, fetcher: typeof fetch = globalThis.fetch.bind(globalThis)) {
-    this.#base = baseUrl.replace(/\/$/, '');
-    this.#fetch = fetcher;
-  }
-
-  /** `POST /api/pure/v1/query/search`: by name (and owner), newest first. */
-  search(text: string, mineOnly: boolean, limit = 50): Promise<SavedQuery[]> {
-    return this.#json('POST', '/api/pure/v1/query/search', {
-      ...(text ? { searchTermSpecification: { searchTerm: text, includeOwner: true } } : {}),
-      showCurrentUserQueriesOnly: mineOnly,
-      sortByOption: 'SORT_BY_UPDATE',
-      limit,
-    });
-  }
-
-  /** `GET /api/pure/v1/query/{id}`. */
-  get(id: string): Promise<SavedQuery> {
-    return this.#json('GET', `/api/pure/v1/query/${encodeURIComponent(id)}`);
-  }
-
-  async #json<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const r = await this.#fetch(`${this.#base}${path}`, {
-      method,
-      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    const text = await r.text();
-    if (!r.ok) {
-      let message = text;
-      try {
-        message = (JSON.parse(text) as { message?: string }).message ?? text;
-      } catch {
-        // not JSON: the text is the message
-      }
-      throw new Error(`the query store answered ${r.status}: ${message.slice(0, 300)}`);
-    }
-    return JSON.parse(text) as T;
-  }
-}
+import type { Query } from '../../query-store/src/wire.ts';
 
 /** A project's model as the compiler gives it (PureModelContextData elements): what is read here. */
 export interface ModelElement {
@@ -115,7 +48,7 @@ export function enumerationsOf(elements: readonly ModelElement[]): ReadonlySet<s
 }
 
 /** Rule 1: the mapping and runtime a saved query runs on. */
-export function contextOf(q: SavedQuery, elements: readonly ModelElement[]): { readonly mapping: string; readonly runtime: string } {
+export function contextOf(q: Query, elements: readonly ModelElement[]): { readonly mapping: string; readonly runtime: string } {
   const ctx = q.executionContext;
   if (ctx?._type === 'explicitExecutionContext' && ctx.mapping && ctx.runtime) {
     return { mapping: ctx.mapping, runtime: ctx.runtime };
@@ -135,7 +68,7 @@ export function contextOf(q: SavedQuery, elements: readonly ModelElement[]): { r
 }
 
 /** The project a saved query belongs to, as config.json's `projects[]` names one. */
-export function projectOf(q: SavedQuery): string {
+export function projectOf(q: Pick<Query, 'groupId' | 'artifactId' | 'versionId'>): string {
   return `${q.groupId}:${q.artifactId}:${q.versionId}`;
 }
 

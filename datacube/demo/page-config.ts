@@ -15,8 +15,14 @@ export interface PageConfig {
   readonly legendEngine: string;
   /** The warehouse the Data window offers first. Empty: none. */
   readonly warehouse: string;
-  /** Where saved queries are kept: upstream's `/api/pure/v1/query`, on legend-lite (`--query-store`) or legend-engine. Empty: none. */
+  /**
+   * Where saved queries are kept: a server's API root (`http://host:port/api`) answering upstream's
+   * `/api/pure/v1/query` -- legend-lite started with `--query-store`, or legend-engine. Empty: this
+   * browser's own store, the one Legend Query keeps when it runs without a server.
+   */
   readonly queryStore: string;
+  /** Who this page's caller is to the browser's own store ("Mine only"): Legend Query's in-browser user. */
+  readonly user: string;
   /** The projects a saved query can belong to, as the Query app's config.json names them. */
   readonly projects: readonly ProjectConfig[];
 }
@@ -35,7 +41,7 @@ export interface ProjectConfig {
   readonly seed: readonly string[];
 }
 
-const EMPTY: PageConfig = { legendLite: '', legendEngine: '', warehouse: '', queryStore: '', projects: [] };
+const EMPTY: PageConfig = { legendLite: '', legendEngine: '', warehouse: '', queryStore: '', user: '', projects: [] };
 
 const texts = (v: unknown): string[] => (Array.isArray(v) ? v.map(text).filter((t) => t !== '') : []);
 
@@ -77,7 +83,7 @@ export async function pageConfig(location: Location = window.location): Promise<
       const raw = await r.json() as Record<string, unknown>;
       file = {
         legendLite: text(raw['legendLite']), legendEngine: text(raw['legendEngine']), warehouse: text(raw['warehouse']),
-        queryStore: text(raw['queryStore']), projects: projects(raw['projects'], url.href),
+        queryStore: text(raw['queryStore']), user: text(raw['user']), projects: projects(raw['projects'], url.href),
       };
     }
   } catch {
@@ -89,6 +95,7 @@ export async function pageConfig(location: Location = window.location): Promise<
     legendEngine: text(q.get('engine')) || file.legendEngine,
     warehouse: text(q.get('warehouse')) || file.warehouse,
     queryStore: text(q.get('queryStore')) || file.queryStore,
+    user: file.user,
     projects: file.projects,
   };
 }

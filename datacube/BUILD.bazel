@@ -37,6 +37,8 @@ js_library(
     deps = [
         # the protocol library (T4b): the cube's queries built as protocol JSON
         "//pure-protocol:pure_protocol",
+        # saved queries: the one client, and the store answered in the page (query-store/README.md)
+        "//query-store:query_store",
         ":node_modules/@duckdb/duckdb-wasm",
         # Arrow JS: the warehouse's result chunks are Arrow IPC streams (warehouse.ts). The same
         # 17.0.0 DuckDB-WASM already brings, so the bundle carries one copy.

@@ -54,8 +54,11 @@ import {
 import { inferModel } from '../src/infer.ts';
 import { pageConfig, type PageConfig, type ProjectConfig } from './page-config.ts';
 import {
-  contextOf, enumerationsOf, enumsAsStrings, projectOf, QueryStore, sourceOf, type ModelElement, type SavedQuery,
+  contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf, type ModelElement,
 } from '../src/saved-queries.ts';
+import {
+  BrowserRecords as BrowserQueryRecords, LOCAL_API, localQueryServer, QueryStoreClient, type Query, type QueryReader,
+} from '../../query-store/src/index.ts';
 import {
   connect,
   WarehouseEngine,
@@ -1287,10 +1290,10 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       }
       return p;
     };
-    const projectFor = (config: PageConfig, q: Pick<SavedQuery, 'groupId' | 'artifactId' | 'versionId'>): ProjectConfig | undefined =>
+    const projectFor = (config: PageConfig, q: Pick<Query, 'groupId' | 'artifactId' | 'versionId'>): ProjectConfig | undefined =>
       config.projects.find((p) => p.groupId === q.groupId && p.artifactId === q.artifactId && p.versionId === q.versionId);
 
-    async function openedQuery(config: PageConfig, store: QueryStore, id: string): Promise<OpenedQuery> {
+    async function openedQuery(config: PageConfig, store: QueryReader, id: string): Promise<OpenedQuery> {
       const q = await store.get(id);
       const project = projectFor(config, q);
       if (!project) throw new Error(`“${q.name}” belongs to ${projectOf(q)}, which this page has no model for (config.json projects[])`);
@@ -1386,11 +1389,21 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
       await app.open();
     }
 
-    /** The query store config.json names, one client per address. */
-    let stores: { readonly url: string; readonly store: QueryStore } | undefined;
-    const queryStore = (config: PageConfig): QueryStore => {
-      if (stores?.url !== config.queryStore) stores = { url: config.queryStore, store: new QueryStore(config.queryStore) };
-      return stores.store;
+    // THE QUERY STORE, through the one client (query-store/README.md): the server config.json names,
+    // or -- none named -- the same API answered in this page from this origin's browser store, the
+    // one Legend Query keeps its saved queries in when it runs without a server.
+    let stores: { readonly url: string; readonly store: QueryReader; readonly where: string } | undefined;
+    const queryStore = (config: PageConfig): { readonly store: QueryReader; readonly where: string } => {
+      if (stores?.url !== config.queryStore) {
+        stores = config.queryStore
+          ? { url: config.queryStore, store: new QueryStoreClient(config.queryStore), where: new URL(config.queryStore).host }
+          : {
+            url: '',
+            store: new QueryStoreClient(LOCAL_API, localQueryServer({ records: new BrowserQueryRecords(), user: config.user }).fetch),
+            where: 'this browser',
+          };
+      }
+      return stores;
     };
 
     picker = async (purpose: 'add' | 'open'): Promise<GridSource | undefined> => {
@@ -1426,8 +1439,14 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
             URL.revokeObjectURL(url);
           },
         },
-        saved: config.queryStore ? {
-          search: async (text, mineOnly) => (await queryStore(config).search(text, mineOnly)).map((q) => {
+        saved: {
+          where: queryStore(config).where,
+          search: async (text, mineOnly) => (await queryStore(config).store.search({
+            ...(text ? { searchTermSpecification: { searchTerm: text, includeOwner: true } } : {}),
+            showCurrentUserQueriesOnly: mineOnly,
+            sortByOption: 'SORT_BY_UPDATE',
+            limit: 50,
+          })).map((q) => {
             const project = projectFor(config, q);
             return {
               id: q.id,
@@ -1438,11 +1457,7 @@ export async function boot(makePlanner: MakePlanner): Promise<void> {
               ...(project ? {} : { unusable: 'This page has no model for its project' }),
             };
           }),
-          open: async (id) => act({ kind: 'saved', query: await openedQuery(config, queryStore(config), id) }),
-        } : {
-          unavailable: 'This page has no query store: set "queryStore" in config.json (legend-lite started with --query-store, or legend-engine).',
-          search: async () => [],
-          open: () => Promise.reject(new Error('no query store')),
+          open: async (id) => act({ kind: 'saved', query: await openedQuery(config, queryStore(config).store, id) }),
         },
         database: {
           ...((config.warehouse || rememberedWarehouse()) ? { url: config.warehouse || rememberedWarehouse() } : {}),

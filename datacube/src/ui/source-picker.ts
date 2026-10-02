@@ -79,6 +79,8 @@ export interface PickerSections<T> {
   readonly saved?: {
     /** Set when the page has no query store: said instead of a search that cannot answer. */
     readonly unavailable?: string;
+    /** Where the list comes from, for the person: "this browser", "localhost:8080". */
+    readonly where?: string;
     search(text: string, mineOnly: boolean): Promise<readonly SavedQueryCard[]>;
     open(id: string): Promise<T>;
   };
@@ -369,7 +371,9 @@ export function pickSource<T>(doc: Document, options: PickSourceOptions<T>): Pro
 
       saved: (host) => {
         const saved = options.sections.saved!;
-        heading(host, 'Open a saved query', 'Its rows become the cube’s source, typed by the compiler.');
+        heading(host, 'Open a saved query', saved.where
+          ? `Saved in ${saved.where}. Its rows become the cube’s source, typed by the compiler.`
+          : 'Its rows become the cube’s source, typed by the compiler.');
         if (saved.unavailable) {
           el(doc, 'div', 'dc-picker-note', host, saved.unavailable);
           return;

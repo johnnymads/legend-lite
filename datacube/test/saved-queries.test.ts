@@ -11,8 +11,9 @@ import { after, before, describe, it } from 'node:test';
 
 import { DuckDbEngine, type ArrowishConnection } from '../src/duckdb.ts';
 import {
-  contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf, unusable, type ModelElement, type SavedQuery,
+  contextOf, enumerationsOf, enumsAsStrings, projectOf, sourceOf, unusable, type ModelElement,
 } from '../src/saved-queries.ts';
+import type { Query } from '../../query-store/src/wire.ts';
 import { sourceColumns } from '../src/source-columns.ts';
 import { WasmPlanner } from '../src/wasm-planner.ts';
 import {
@@ -23,7 +24,7 @@ import { plannerFor } from './catalog-builder.ts';
 const FIXTURES = '../fixtures/saved-queries';
 // the trading project as the site serves it (BUILD.bazel `:projects`, from query/demo/models)
 const MODELS = 'demo/projects/trading';
-const record = (name: string): SavedQuery => JSON.parse(readFileSync(`${FIXTURES}/${name}.json`, 'utf8')) as SavedQuery;
+const record = (name: string): Query => JSON.parse(readFileSync(`${FIXTURES}/${name}.json`, 'utf8')) as Query;
 const MODEL = readFileSync(`${MODELS}/trading.pure`, 'utf8') + '\n' + readFileSync(`${MODELS}/runtime-duckdb.pure`, 'utf8');
 
 let engine: DuckDbEngine;
@@ -56,7 +57,7 @@ after(async () => {
 });
 
 /** The page's steps: parse, bind the saved values, read through the context, enumerations as names. */
-async function opened(q: SavedQuery): Promise<{ source: ValueSpecification; planner: WasmPlanner }> {
+async function opened(q: Query): Promise<{ source: ValueSpecification; planner: WasmPlanner }> {
   const context = contextOf(q, elements);
   const values = new Map<string, ValueSpecification>();
   for (const v of q.defaultParameterValues ?? []) values.set(v.name, (await parser.parse(`|${v.content}`)).body[0]!);

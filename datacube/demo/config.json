@@ -2,15 +2,21 @@
   "legendLite": "http://localhost:8080",
   "legendEngine": "http://127.0.0.1:6300",
   "warehouse": "",
-  "queryStore": "http://localhost:8080",
+  "queryStore": "",
+  "user": "me",
   "projects": [
     {
       "groupId": "demo",
       "artifactId": "trading",
       "versionId": "0.0.0",
       "title": "Trading demo",
-      "models": ["./projects/trading/trading.pure", "./projects/trading/runtime-duckdb.pure"],
-      "seed": ["./projects/trading/trading-seed.sql"]
+      "models": [
+        "./projects/trading/trading.pure",
+        "./projects/trading/runtime-duckdb.pure"
+      ],
+      "seed": [
+        "./projects/trading/trading-seed.sql"
+      ]
     }
   ]
 }
