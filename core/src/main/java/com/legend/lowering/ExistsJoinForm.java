@@ -156,8 +156,32 @@ final class ExistsJoinForm {
         // BY THEIR OWN SEMANTICS, and the engine's own
         // buildExistsAsJoinWithNullCheck shape. Predicate-reads left this
         // channel for the fan-out route (charter decision 2).
-        return outer.withFrom(from).withWhere(
+        SqlSelect joined = outer.withFrom(from).withWhere(
                 Fold.mergeAnd(keep.toArray(SqlExpr[]::new)));
+        // a bare `*` stood for the OUTER sources' columns: over the join it would carry the keys
+        // too, a second column of the key's name (Postgres: ambiguous; H2: duplicate; DuckDB renamed
+        // it silently) -- so it names each original source (found by the Postgres PCT lane,
+        // 2026-10-02, testExistsSelfReferencing)
+        if (outer.projections().isEmpty()) {
+            List<SqlSelect.Projection> stars = new ArrayList<>();
+            for (SqlSource src : leaves(outer.from())) {
+                stars.add(new SqlSelect.Projection(new SqlExpr.Star(src.alias()), null, null));
+            }
+            joined = joined.withProjections(stars);
+        }
+        return joined;
+    }
+
+    /** The sources a FROM names directly, in order (through joins). */
+    private static List<SqlSource> leaves(SqlSource s) {
+        List<SqlSource> out = new ArrayList<>();
+        if (s instanceof SqlSource.Join j) {
+            out.addAll(leaves(j.left()));
+            out.addAll(leaves(j.right()));
+        } else {
+            out.add(s);
+        }
+        return out;
     }
 
     /** An {@code outerCol = innerCol} correlation equality. */

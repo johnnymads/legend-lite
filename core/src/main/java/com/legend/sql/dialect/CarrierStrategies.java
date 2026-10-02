@@ -159,17 +159,23 @@ public final class CarrierStrategies extends SqlRewriter {
         return s;
     }
 
-    /** The list under the ordered-dedup idiom, or null: either the bare
+    /** The ordered-dedup idiom: its list, and the filter that keeps x at index i iff x's key first
+     * occurs there ({@code (x, i) -> LIST_POSITION(keys, key(x)) = i}; the key is x itself for a plain
+     * dedup, a lambda's result for removeDuplicatesBy). */
+    private record Dedup(SqlExpr list, SqlExpr.Lambda keep) {
+    }
+
+    /** The ordered-dedup idiom, or null: either the bare
      * {@code LIST_FILTER(list, (x, i) -> ...)} two-parameter filter or its
      * subquery-carrying form {@code (SELECT LIST_FILTER(_ddc.l, ...) AS v
      * FROM (SELECT list AS l) AS _ddc)}. */
-    private static @com.legend.base.Nullable SqlExpr dedupList(SqlExpr e) {
+    private static @com.legend.base.Nullable Dedup dedupList(SqlExpr e) {
         if (e instanceof SqlExpr.Call f
                 && f.fn() == com.legend.sql.SqlFn.LIST_FILTER
                 && f.args().size() == 2
                 && f.args().get(1) instanceof SqlExpr.Lambda l
                 && l.params().size() == 2) {
-            return f.args().get(0);
+            return new Dedup(f.args().get(0), l);
         }
         if (e instanceof SqlExpr.ScalarSubquery sq
                 && sq.subquery() instanceof SqlSelect sel
@@ -185,7 +191,20 @@ public final class CarrierStrategies extends SqlRewriter {
                 && carry.alias().equals(lc.table())
                 && f2.args().get(1) instanceof SqlExpr.Lambda l2
                 && l2.params().size() == 2) {
-            return cs.projections().get(0).expr();
+            return new Dedup(cs.projections().get(0).expr(), l2);
+        }
+        return null;
+    }
+
+    /** The key the idiom compares {@code value} by: the filter's {@code key(x)} with x := value; null when
+     * the filter is not {@code LIST_POSITION(keys, key(x)) = i}. */
+    private static @com.legend.base.Nullable SqlExpr dedupKey(SqlExpr.Lambda keep, SqlExpr value) {
+        if (keep.body() instanceof SqlExpr.Call eq && eq.fn() == com.legend.sql.SqlFn.EQUAL && eq.args().size() == 2
+                && eq.args().get(0) instanceof SqlExpr.Call pos && pos.fn() == com.legend.sql.SqlFn.LIST_POSITION
+                && pos.args().size() == 2
+                && eq.args().get(1) instanceof SqlExpr.Column i && i.table() == null
+                && i.name().equals(keep.params().get(1))) {
+            return substParam(pos.args().get(1), keep.params().get(0), value);
         }
         return null;
     }
@@ -208,10 +227,69 @@ public final class CarrierStrategies extends SqlRewriter {
                 : SqlExpr.Call.of(com.legend.sql.SqlFn.AND, sel.where(), cond));
     }
 
-    /** DISTINCT over an exploded query: a select marks itself distinct
-     * (its order keys drop — a set has no order); a union wraps. */
-    private static com.legend.sql.SqlQuery distinctOf(
-            com.legend.sql.SqlQuery q, SqlSelect outer) {
+    /** The ORDERED dedup over an exploded query (Pure's removeDuplicates / removeDuplicatesBy keep each
+     * value at the FIRST position its key occurs at). A UNION ALL of branches in list order -- a literal
+     * list, a concatenation -- keeps the list's order: each branch carries its value's key and its index,
+     * and a value is kept when it is the first of its key ({@code ROW_NUMBER() OVER (PARTITION BY key
+     * ORDER BY index) = 1}), in index order. A plain DISTINCT over the union promised no order, and a
+     * hashing database (Postgres) returns its own (found by the Postgres PCT lane, 2026-10-02: [1, 3, 2]
+     * for [1, 2, 1, 3, ...]); nor did it compare by the key. A single select's rows have no order of their
+     * own: it marks itself distinct (its order keys drop) when the key is the value itself. Null: an
+     * unwitnessed shape, left to the renderer's named refusal. */
+    private static com.legend.sql.@com.legend.base.Nullable SqlQuery distinctOf(
+            com.legend.sql.SqlQuery q, SqlSelect outer, SqlExpr.Lambda keep) {
+        if (q instanceof com.legend.sql.SqlUnion u && u.all() && outer.outputs().size() == 1
+                && u.branches().stream().allMatch(b -> b instanceof SqlSelect bs && bs.projections().size() == 1)) {
+            com.legend.sql.OutputCol value = outer.outputs().get(0);
+            com.legend.sql.OutputCol index = new com.legend.sql.OutputCol("__dd_index",
+                    com.legend.sql.SqlType.Scalar.BIGINT, false);
+            com.legend.sql.OutputCol first = new com.legend.sql.OutputCol("__dd_first",
+                    com.legend.sql.SqlType.Scalar.BIGINT, false);
+            com.legend.sql.@com.legend.base.Nullable OutputCol keyCol = null;
+            List<com.legend.sql.SqlQuery> indexed = new ArrayList<>();
+            for (int i = 0; i < u.branches().size(); i++) {
+                SqlSelect b = (SqlSelect) u.branches().get(i);
+                SqlExpr v = b.projections().get(0).expr();
+                SqlExpr key = dedupKey(keep, v);
+                if (key == null) {
+                    return null;
+                }
+                if (keyCol == null) {
+                    keyCol = new com.legend.sql.OutputCol("__dd_key", key.type() instanceof com.legend.sql.TypeFact.Typed t
+                            ? t.type() : value.type(), true);
+                }
+                indexed.add(b.withProjections(List.of(
+                        new SqlSelect.Projection(v, value.name(), value),
+                        new SqlSelect.Projection(key, keyCol.name(), keyCol),
+                        new SqlSelect.Projection(new SqlExpr.IntLit(i), index.name(), index))));
+            }
+            if (keyCol == null) {
+                return null;
+            }
+            com.legend.sql.SqlSource src = new com.legend.sql.SqlSource.Subselect(
+                    new com.legend.sql.SqlUnion(indexed, true, List.of(value, keyCol, index)), "dedup_src", null);
+            SqlExpr rn = new SqlExpr.WindowCall(new com.legend.sql.SqlAgg.RankingFn(com.legend.sql.SqlAgg.Fn.ROW_NUMBER, List.of()),
+                    List.of(SqlExpr.Column.of("dedup_src", keyCol)),
+                    List.of(new SqlSelect.SortKey(SqlExpr.Column.of("dedup_src", index), true, null, null)), null);
+            SqlSelect ranked = new SqlSelect(List.of(
+                    new SqlSelect.Projection(SqlExpr.Column.of("dedup_src", value), value.name(), value),
+                    new SqlSelect.Projection(SqlExpr.Column.of("dedup_src", index), index.name(), index),
+                    new SqlSelect.Projection(rn, first.name(), first)), false, src,
+                    null, List.of(), null, null, List.of(), null, null, List.of(value, index, first));
+            com.legend.sql.SqlSource firsts = new com.legend.sql.SqlSource.Subselect(ranked, "dedup_first", null);
+            return new SqlSelect(List.of(new SqlSelect.Projection(SqlExpr.Column.of("dedup_first", value), null, value)),
+                    false, firsts,
+                    SqlExpr.Call.of(com.legend.sql.SqlFn.EQUAL, SqlExpr.Column.of("dedup_first", first), new SqlExpr.IntLit(1)),
+                    List.of(), null, null,
+                    List.of(new SqlSelect.SortKey(SqlExpr.Column.of("dedup_first", index), true, null, null)),
+                    null, null, outer.outputs());
+        }
+        // a single select's rows have no order of their own: by the value itself it is DISTINCT; by a key,
+        // one row per key (the first ROW_NUMBER in no order -- any of them, as the rows are unordered)
+        SqlExpr.Column self = SqlExpr.Column.derived(null, keep.params().get(0));
+        if (!self.equals(dedupKey(keep, self))) {
+            return keyedDistinct(q, outer, keep);
+        }
         if (q instanceof SqlSelect sel) {
             return new SqlSelect(sel.projections(), true, sel.from(),
                     sel.where(), sel.groupBy(), sel.having(), sel.qualify(),
@@ -224,6 +302,37 @@ public final class CarrierStrategies extends SqlRewriter {
                         null),
                 null, List.of(), null, null, List.of(), null, null,
                 outer.outputs());
+    }
+
+    /** One row per key of a single select's value ({@link #distinctOf}), or null for an unwitnessed shape. */
+    private static com.legend.sql.@com.legend.base.Nullable SqlQuery keyedDistinct(com.legend.sql.SqlQuery q,
+            SqlSelect outer, SqlExpr.Lambda keep) {
+        if (!(q instanceof SqlSelect sel) || sel.projections().size() != 1 || outer.outputs().size() != 1) {
+            return null;
+        }
+        com.legend.sql.OutputCol value = outer.outputs().get(0);
+        SqlExpr v = sel.projections().get(0).expr();
+        SqlExpr key = dedupKey(keep, v);
+        if (key == null) {
+            return null;
+        }
+        com.legend.sql.OutputCol keyCol = new com.legend.sql.OutputCol("__dd_key",
+                key.type() instanceof com.legend.sql.TypeFact.Typed t ? t.type() : value.type(), true);
+        com.legend.sql.OutputCol first = new com.legend.sql.OutputCol("__dd_first",
+                com.legend.sql.SqlType.Scalar.BIGINT, false);
+        SqlSelect keyed = sel.withProjections(List.of(new SqlSelect.Projection(v, value.name(), value),
+                new SqlSelect.Projection(key, keyCol.name(), keyCol)));
+        com.legend.sql.SqlSource src = new com.legend.sql.SqlSource.Subselect(keyed, "dedup_src", null);
+        SqlExpr rn = new SqlExpr.WindowCall(new com.legend.sql.SqlAgg.RankingFn(com.legend.sql.SqlAgg.Fn.ROW_NUMBER, List.of()),
+                List.of(SqlExpr.Column.of("dedup_src", keyCol)), List.of(), null);
+        SqlSelect ranked = new SqlSelect(List.of(
+                new SqlSelect.Projection(SqlExpr.Column.of("dedup_src", value), value.name(), value),
+                new SqlSelect.Projection(rn, first.name(), first)), false, src,
+                null, List.of(), null, null, List.of(), null, null, List.of(value, first));
+        return new SqlSelect(List.of(new SqlSelect.Projection(SqlExpr.Column.of("dedup_first", value), null, value)),
+                false, new com.legend.sql.SqlSource.Subselect(ranked, "dedup_first", null),
+                SqlExpr.Call.of(com.legend.sql.SqlFn.EQUAL, SqlExpr.Column.of("dedup_first", first), new SqlExpr.IntLit(1)),
+                List.of(), null, null, List.of(), null, null, outer.outputs());
     }
 
     /** STATIC PIVOT EMULATION (PV1, witnessed: the PCT pivot family):
@@ -357,7 +466,7 @@ public final class CarrierStrategies extends SqlRewriter {
     /** A fresh re-aliased copy of a simple source (Table / Subselect /
      * Values), or null — the correlated-copy pattern the ASOF and FULL
      * emulations share. */
-    private static com.legend.sql.@com.legend.base.Nullable SqlSource copyWithAlias(
+    static com.legend.sql.@com.legend.base.Nullable SqlSource copyWithAlias(
             com.legend.sql.SqlSource src, String alias) {
         return switch (src) {
             case com.legend.sql.SqlSource.Table t ->
@@ -435,7 +544,7 @@ public final class CarrierStrategies extends SqlRewriter {
                 k.ascending(), k.nullOrder(), out.name());
     }
 
-    private static SqlExpr remapAlias(SqlExpr e, String from, String to) {
+    static SqlExpr remapAlias(SqlExpr e, String from, String to) {
         if (e instanceof SqlExpr.Column c && from.equals(c.table())) {
             // alias remap transports the stamped type (M2: a derived
             // reference never drops leaf knowledge)
@@ -571,11 +680,11 @@ public final class CarrierStrategies extends SqlRewriter {
         // the ORDERED-DEDUP idiom (ListEncodings.orderedDedup: keep x at
         // index i iff its first position is i) over rows is DISTINCT —
         // witnessed by `->map(...)->distinct()` over a class query
-        SqlExpr dedupped = dedupList(arg);
+        Dedup dedupped = dedupList(arg);
         if (dual && dedupped != null) {
-            com.legend.sql.SqlQuery inner = explode(dedupped, s, alias);
+            com.legend.sql.SqlQuery inner = explode(dedupped.list(), s, alias);
             if (inner != null) {
-                return distinctOf(inner, s);
+                return distinctOf(inner, s, dedupped.keep());
             }
         }
         if (dual && arg instanceof SqlExpr.Call cc

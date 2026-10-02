@@ -71,9 +71,7 @@ public class Test_LegendLite_H2_RelationFunctions_PCT extends PCTReportConfigura
             one("meta::pure::functions::relation::tests::lateral::testLateralJoin_CorrelatedColumnNameAlsoOnInner_Function_1__Boolean_1_", "Function \"LATERAL\" not found"),
             one("meta::pure::functions::relation::tests::project::testSimpleProject_Function_1__Boolean_1_", "Function \"LATERAL\" not found"),   // lite only: the engine passes it on H2
             one("meta::pure::functions::relation::tests::project::testSimpleProjectList_Function_1__Boolean_1_", "Function \"LATERAL\" not found"),   // lite only: the engine passes it on H2
-            one("meta::pure::functions::relation::tests::composition::testFilterPostProject_Function_1__Boolean_1_", "Function \"LATERAL\" not found"),   // lite only: the engine passes it on H2
-            // a lite defect on H2: a self-referencing exists renders two columns named id
-            one("meta::pure::functions::relation::tests::exists::testExistsSelfReferencing_Function_1__Boolean_1_", "Duplicate column name \"id\"")   // lite only: the engine passes it on H2
+            one("meta::pure::functions::relation::tests::composition::testFilterPostProject_Function_1__Boolean_1_", "Function \"LATERAL\" not found")   // lite only: the engine passes it on H2
     );
 
     public static Test suite() {

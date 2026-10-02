@@ -97,21 +97,8 @@ public class Test_LegendLite_Postgres_StandardFunctions_PCT extends PCTReportCon
             one("meta::pure::functions::math::tests::variance::testVariance_Population_Function_1__Boolean_1_", "collection reduction 'VAR_POP' reached a dialect without a list encoding"),
             one("meta::pure::functions::math::tests::variance::testVariance_Sample_Function_1__Boolean_1_", "collection reduction 'VAR_SAMP' reached a dialect without a list encoding"),
             // refused by name: a construct the Postgres dialect does not spell yet
-            one("meta::pure::functions::date::tests::timeBucket::dateTime::testTimeBucketMonths_Function_1__Boolean_1_", "a month time bucket reached Postgres, whose date_bin bins fixed-length intervals only"),
-            one("meta::pure::functions::date::tests::timeBucket::dateTime::testTimeBucketYears_Function_1__Boolean_1_", "a year time bucket reached Postgres, whose date_bin bins fixed-length intervals only"),
-            one("meta::pure::functions::date::tests::timeBucket::strictDate::testTimeBucketMonths_Function_1__Boolean_1_", "a month time bucket reached Postgres, whose date_bin bins fixed-length intervals only"),
-            one("meta::pure::functions::date::tests::timeBucket::strictDate::testTimeBucketYears_Function_1__Boolean_1_", "a year time bucket reached Postgres, whose date_bin bins fixed-length intervals only"),
             one("meta::pure::functions::hashCode::tests::testHashCode_Function_1__Boolean_1_", "signed 64-bit hashCode reached a dialect without a spelling"),
-            one("meta::pure::functions::math::hashCode::tests::testHashCodeAggregate_Function_1__Boolean_1_", "signed 64-bit hashCode reached a dialect without a spelling"),
-            one("meta::pure::functions::math::tests::maxBy::testSimpleGroupByMaxBy_Function_1__Boolean_1_", "ARG_MAX reached Postgres, which has no arg_max/arg_min (an ordered-pick rewrite is unbuilt)"),
-            one("meta::pure::functions::math::tests::median::testMedian_Floats_Relation_Window_Function_1__Boolean_1_", "MEDIAN over a window reached Postgres, where ordered-set aggregates take no OVER clause"),
-            one("meta::pure::functions::math::tests::median::testMedian_Integers_Relation_Window_Function_1__Boolean_1_", "MEDIAN over a window reached Postgres, where ordered-set aggregates take no OVER clause"),
-            one("meta::pure::functions::math::tests::median::testMedian_Numbers_Relation_Window_Function_1__Boolean_1_", "MEDIAN over a window reached Postgres, where ordered-set aggregates take no OVER clause"),
-            one("meta::pure::functions::math::tests::minBy::testSimpleGroupByMinBy_Function_1__Boolean_1_", "ARG_MIN reached Postgres, which has no arg_max/arg_min (an ordered-pick rewrite is unbuilt)"),
-            one("meta::pure::functions::math::tests::mode::testMode_Floats_Relation_Window_Function_1__Boolean_1_", "MODE over a window reached Postgres, where ordered-set aggregates take no OVER clause"),
-            one("meta::pure::functions::math::tests::mode::testMode_Integer_Relation_Window_Function_1__Boolean_1_", "MODE over a window reached Postgres, where ordered-set aggregates take no OVER clause"),
-            one("meta::pure::functions::math::tests::mode::testMode_Number_Relation_Window_Function_1__Boolean_1_", "MODE over a window reached Postgres, where ordered-set aggregates take no OVER clause"),
-            one("meta::pure::functions::math::tests::percentile::testPercentile_Relation_Window_Function_1__Boolean_1_", "QUANTILE_CONT over a window reached Postgres, where ordered-set aggregates take no OVER clause")
+            one("meta::pure::functions::math::hashCode::tests::testHashCodeAggregate_Function_1__Boolean_1_", "signed 64-bit hashCode reached a dialect without a spelling")
     );
 
     public static Test suite() {

@@ -127,7 +127,10 @@ public final class PctCensusGate {
     // leg P4). Its driver's own spellings (int8, text, bool ...) are names, not divergence
     // (SqlTypeCensus.normalizeMeta). Every other pin holds at its DuckDB/H2 value on this lane too.
     private static final boolean POSTGRES = "postgres".equals(System.getenv("LEGENDLITE_PCT_BACKEND"));
-    private static final long MAX_WIRE_DIVERGE = POSTGRES ? 53 : 0;
+    // 53 -> 57 (2026-10-02, tier 1: multi-column pivots, whole-partition medians, half-even rounding to a
+    // scale and calendar buckets now RUN on Postgres): the same classes, more of their plans -- a decimal
+    // rounded exactly is a computed numeric with no declared precision
+    private static final long MAX_WIRE_DIVERGE = POSTGRES ? 57 : 0;
     private static final long MAX_ADOPT_PENDING = 0;
     // THE NULLABILITY LEDGER (§4bZ-V E, 2026-08-26 — §4Z ledger #4):
     // this lane carried 6 literal-NullLit DOUBLE value-frames (the

@@ -158,6 +158,8 @@ public final class Postgres extends AnsiSqlRenderer {
     @Override
     protected List<com.legend.sql.SqlRewriter> passes() {
         return List.of(new CarrierStrategies(CarrierStrategies.Caps.POSTGRES),
+                new StarExceptToColumns(),
+                new WholePartitionOrderedSets(),
                 new SubstringClamp(), new H2AvgDelivers(), new QualifyToSubselect(true),
                 new ConstantKeysAsExpressions());
     }
@@ -302,12 +304,16 @@ public final class Postgres extends AnsiSqlRenderer {
                  BIT_AND, BIT_OR, BIT_XOR, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, ROUND, HASH,
                  // Spellings.POSTGRES rows
                  ABS, ASCII_CODE, ATAN, ATAN2, CBRT, CHR, COALESCE, COS, COSH, COT, DEGREES,
-                 EXP, FLOOR_RAW, GREATEST, LEAST, LEFT, LN, LOG10, LOWER, LTRIM, MD5, POW,
+                 EXP, FLOOR_RAW, GREATEST, LEAST, LEFT, LN, LOG10, LOWER, LTRIM, MD5,
                  RADIANS, REGEXP_REPLACE, REPEAT_STR, REPLACE, REVERSE_STRING, RIGHT, RTRIM,
                  SIN, SINH, SPLIT_PART, SQRT, STARTS_WITH, STRPOS, SUBSTRING, TAN, TANH,
                  TIMEZONE, TRIM, UPPER -> super.call(c, parentPrec);
 
             // ---- arithmetic
+            // Pure's pow is a Float, as DuckDB's power answers; Postgres's power over numeric is numeric
+            // (9.0 delivered as 9.0000000000000000, found by the Postgres PCT lane, 2026-10-02)
+            case POW -> "power(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION), CAST("
+                    + expr(a.get(1), 0) + " AS DOUBLE PRECISION))";
             // Pure's divide is a Float division: both operands DOUBLE PRECISION
             case DIVIDE -> "(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION) / CAST("
                     + expr(a.get(1), 0) + " AS DOUBLE PRECISION))";
@@ -414,17 +420,28 @@ public final class Postgres extends AnsiSqlRenderer {
                     + expr(a.get(1), 6) + " * INTERVAL '1 "
                     + intervalUnit(literal(a.get(0), c.fn().name())) + "'", parentPrec);
             case DATE_DIFF -> dateDiff(a);
-            // date_bin cannot bin months or years; the origins are the base's
-            // (weeks align to the Monday 1969-12-29, everything else to 1970)
+            // the origins are the base's (weeks align to the Monday 1969-12-29, everything else to
+            // 1970); date_bin bins fixed-length intervals, so months and years count whole calendar
+            // months from 1970-01 and floor to the bucket's multiple, as DuckDB's time_bucket does
+            // (before 1970 too: floor, not truncation)
             case TIME_BUCKET -> {
                 String unit = intervalUnit(literal(a.get(0), "TIME_BUCKET"));
                 String origin = BUCKET_ORIGINS.get(unit);
-                if (origin == null) {
-                    throw new DialectCapability("a " + unit + " time bucket reached Postgres,"
-                            + " whose date_bin bins fixed-length intervals only");
+                if (origin != null) {
+                    yield "date_bin(" + expr(a.get(1), 6) + " * INTERVAL '1 " + unit + "', "
+                            + naive(a.get(2)) + ", " + origin + ")";
                 }
-                yield "date_bin(" + expr(a.get(1), 6) + " * INTERVAL '1 " + unit + "', "
-                        + naive(a.get(2)) + ", " + origin + ")";
+                Integer monthsPerUnit = CALENDAR_UNITS.get(unit);
+                if (monthsPerUnit == null) {
+                    throw new DialectCapability("a " + unit + " time bucket has no Postgres spelling");
+                }
+                // the month index since 1970-01, floored to the bucket's size in months: n months, or
+                // 12n for n years (a year bucket of the month index is the year's own, before 1970 too)
+                String t = naive(a.get(2));
+                String size = "(CAST(" + expr(a.get(1), 0) + " AS INTEGER) * " + monthsPerUnit + ")";
+                yield "(TIMESTAMP '1970-01-01 00:00:00' + CAST(floor(((extract(year FROM " + t
+                        + ") - 1970) * 12 + extract(month FROM " + t + ") - 1) / " + size + ") AS INTEGER) * "
+                        + size + " * INTERVAL '1 month')";
             }
             // DuckDB's epoch(ts) is DOUBLE seconds; epoch_ms truncates toward zero
             case EPOCH_SECONDS -> "CAST(extract(epoch FROM " + expr(a.get(0), 0)
@@ -603,6 +620,9 @@ public final class Postgres extends AnsiSqlRenderer {
             "to_hours", "hour", "to_minutes", "minute", "to_seconds", "second",
             "to_milliseconds", "millisecond", "to_microseconds", "microsecond");
 
+    /** The calendar units date_bin cannot bin, by their length in months. */
+    private static final java.util.Map<String, Integer> CALENDAR_UNITS = java.util.Map.of("month", 1, "year", 12);
+
     /** date_bin's fixed-length units and their origins (month and year are absent). */
     private static final java.util.Map<String, String> BUCKET_ORIGINS = bucketOrigins();
 
@@ -620,11 +640,23 @@ public final class Postgres extends AnsiSqlRenderer {
      * half-even round is unprobed, so it walls. */
     @Override
     protected String roundHalfEven(List<SqlExpr> a) {
-        if (a.size() != 1) {
-            throw new DialectCapability("a half-even round to a scale reached Postgres,"
-                    + " which has no round(double precision, int)");
+        if (a.size() == 1) {
+            return "round(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION))";
         }
-        return "round(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION))";
+        String scale = "CAST(" + expr(a.get(1), 0) + " AS INTEGER)";
+        if (isDouble(a.get(0))) {
+            // a Float to a scale: scaled, rounded half-even (round(double precision) is rint), scaled
+            // back -- DuckDB's ROUND_EVEN(x, s) and H2's form, in double precision
+            String p = "power(CAST(10 AS DOUBLE PRECISION), " + scale + ")";
+            return "(round(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION) * " + p + ") / " + p + ")";
+        }
+        // an exact decimal: numeric rounds half AWAY from zero, so an exact .5 of the scaled value
+        // steps to its even neighbour (H2's banker's form, in numeric: exact)
+        String p = "power(CAST(10 AS NUMERIC), " + scale + ")";
+        String v = "(CAST(" + expr(a.get(0), 0) + " AS NUMERIC) * " + p + ")";
+        return "(CASE WHEN " + v + " - floor(" + v + ") = 0.5 THEN (CASE WHEN mod(floor(" + v
+                + "), 2) = 0 THEN floor(" + v + ") ELSE floor(" + v + ") + 1 END) ELSE round(" + v
+                + ") END / " + p + ")";
     }
 
     /** BIGINT bit operators: an INTEGER shift is masked to 32 bits ({@code 1 << 40}
@@ -700,8 +732,17 @@ public final class Postgres extends AnsiSqlRenderer {
             }
             case LIST -> throw new DialectCapability("a LIST aggregate reached Postgres before"
                     + " the jsonb collection carrier (leg P4)");
-            case ARG_MAX, ARG_MIN -> throw new DialectCapability(r.fn() + " reached Postgres,"
-                    + " which has no arg_max/arg_min (an ordered-pick rewrite is unbuilt)");
+            // no arg_max/arg_min: the value at the first row in the key's order, rows of a NULL key
+            // ignored, as DuckDB's arg_max/arg_min (a flat, internal array: never a carrier)
+            case ARG_MAX, ARG_MIN -> {
+                if (r.args().size() != 2 || r.distinct() || !r.orderBy().isEmpty()) {
+                    throw new DialectCapability(r.fn() + " of this shape reached Postgres");
+                }
+                String key = expr(r.args().get(1), 0);
+                yield "(array_agg(" + expr(r.args().get(0), 0) + " ORDER BY " + key
+                        + (r.fn() == SqlAgg.Fn.ARG_MAX ? " DESC" : " ASC") + ") FILTER (WHERE " + key
+                        + " IS NOT NULL))[1]";
+            }
             case WAVG, HASH_LIST, IS_DISTINCT_MARK, UNIQUE_VALUE_ONLY ->
                     throw new IllegalStateException("lowering marker " + r.fn()
                             + " reached the renderer");

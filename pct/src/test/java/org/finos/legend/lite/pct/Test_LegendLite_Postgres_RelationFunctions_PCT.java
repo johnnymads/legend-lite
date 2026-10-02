@@ -34,8 +34,6 @@ public class Test_LegendLite_Postgres_RelationFunctions_PCT extends PCTReportCon
 
     // Pinned by a STABLE part of the message (the runner matches by containment): no per-run id.
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
-            // Postgres raises differently (its own error, or a different position or wording)
-            one("meta::pure::functions::relation::tests::exists::testExistsSelfReferencing_Function_1__Boolean_1_", "ERROR: column reference \"id\" is ambiguous"),
             // collections and Variant over the jsonb carrier: leg P4
             one("meta::pure::functions::relation::tests::composition::testCoalesceInPreFilter_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::relation::tests::composition::testFilterPostProject_Function_1__Boolean_1_", "a struct extraction reached a dialect without struct support"),
@@ -74,14 +72,7 @@ public class Test_LegendLite_Postgres_RelationFunctions_PCT extends PCTReportCon
             one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Extend_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_LateralJoin_Nested_Function_1__Boolean_1_", "a cast to JSON reached Postgres before the jsonb carrier (leg P4)"),
             one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_Variant_Array_Function_1__Boolean_1_", "a cast to JSON reached Postgres before the jsonb carrier (leg P4)"),
-            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_Variant_Map_Function_1__Boolean_1_", "a cast to JSON reached Postgres before the jsonb carrier (leg P4)"),
-            // refused by name: a construct the Postgres dialect does not spell yet
-            one("meta::pure::functions::relation::tests::cumulativeDistribution::testOLAPWithPartitionAndOrderCummulativeDistribution_Function_1__Boolean_1_", "a half-even round to a scale reached Postgres, which has no round(double precision, int)"),
-            one("meta::pure::functions::relation::tests::pivot::testPivot_MultipleMultiple_Dynamic_Aggregation_Function_1__Boolean_1_", "SELECT * EXCLUDE reached Postgres, which has no star exclusion; the column list must be expanded upstream"),
-            one("meta::pure::functions::relation::tests::pivot::testPivot_MultipleMultiple_Function_1__Boolean_1_", "SELECT * EXCLUDE reached Postgres, which has no star exclusion; the column list must be expanded upstream"),
-            one("meta::pure::functions::relation::tests::pivot::testPivot_MultipleMultiple_MultipleExpressions_Function_1__Boolean_1_", "SELECT * EXCLUDE reached Postgres, which has no star exclusion; the column list must be expanded upstream"),
-            one("meta::pure::functions::relation::tests::pivot::testPivot_MultipleSingle_Function_1__Boolean_1_", "SELECT * EXCLUDE reached Postgres, which has no star exclusion; the column list must be expanded upstream"),
-            one("meta::pure::functions::relation::tests::pivot::testPivot_MultipleSingle_MultipleExpressions_Function_1__Boolean_1_", "SELECT * EXCLUDE reached Postgres, which has no star exclusion; the column list must be expanded upstream")
+            one("meta::pure::functions::relation::variant::tests::flatten::testFlatten_Variant_Map_Function_1__Boolean_1_", "a cast to JSON reached Postgres before the jsonb carrier (leg P4)")
     );
 
     public static Test suite() {

@@ -36,11 +36,7 @@ public class Test_LegendLite_Postgres_EssentialFunctions_PCT extends PCTReportCo
     private static final MutableList<ExclusionSpecification> expectedFailures = Lists.mutable.with(
             // WRONG ANSWERS: a result Pure does not give -- a dialect defect, fixed before P4 closes
             one("meta::pure::functions::collection::tests::indexof::testIndexOfOneElement_Function_1__Boolean_1_", "expected: 0\nactual:   1"),
-            one("meta::pure::functions::collection::tests::removeDuplicates::testRemoveDuplicatesPrimitiveStandardFunctionExplicit_Function_1__Boolean_1_", "expected: [1, 2, 3]\nactual:   [1, 3, 2]"),
-            one("meta::pure::functions::collection::tests::removeDuplicatesBy::testRemoveDuplicatesByPrimitive_Function_1__Boolean_1_", "expected: [1, 2, '3']\nactual:   [3, '3', '1', 2, 1]"),
             one("meta::pure::functions::math::tests::abs::testBigFloatAbs_Function_1__Boolean_1_", "expected: 123456789123456789.99\nactual:   123456789123456780.0"),
-            one("meta::pure::functions::math::tests::pow::testNumberPow_Function_1__Boolean_1_", "expected: 9.0\nactual:   9.0000000000000000D"),
-            one("meta::pure::functions::math::tests::pow::testSimplePow_Function_1__Boolean_1_", "expected: 16.0\nactual:   16.000000000000000D"),
             one("meta::pure::functions::string::tests::indexOf::testFromIndex_Function_1__Boolean_1_", "expected: 1\nactual:   2"),
             one("meta::pure::functions::string::tests::indexOf::testSimple_Function_1__Boolean_1_", "expected: 4\nactual:   5"),
             // Postgres raises differently (its own error, or a different position or wording)
@@ -60,6 +56,7 @@ public class Test_LegendLite_Postgres_EssentialFunctions_PCT extends PCTReportCo
             one("meta::pure::functions::math::tests::trigonometry::testArcCosineError_Function_1__Boolean_1_", "Execution error message mismatch.\nThe actual message was \"Infinite or NaN"),
             one("meta::pure::functions::math::tests::trigonometry::testArcSineError_Function_1__Boolean_1_", "Execution error message mismatch.\nThe actual message was \"Infinite or NaN"),
             // collections and Variant over the jsonb carrier: leg P4
+            one("meta::pure::functions::collection::tests::removeDuplicates::testRemoveDuplicatesPrimitiveStandardFunctionExplicit_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::collection::tests::add::testAddWithOffset_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::collection::tests::add::testAdd_Function_1__Boolean_1_", "UNNEST reached Postgres: collections over the jsonb carrier are leg P4"),
             one("meta::pure::functions::collection::tests::at::testAtOtherScenario_Function_1__Boolean_1_", "LIST_LENGTH reached Postgres: collections over the jsonb carrier are leg P4"),
@@ -126,8 +123,6 @@ public class Test_LegendLite_Postgres_EssentialFunctions_PCT extends PCTReportCo
             one("meta::pure::functions::collection::tests::fold::testFoldToMany_Function_1__Boolean_1_", "'otherNames' is not a known class, mapping, runtime, connection, or database — user elements in a query need a fully qualified name"),
             one("meta::pure::functions::collection::tests::fold::testFold_Function_1__Boolean_1_", "'lastName' is not a known class, mapping, runtime, connection, or database — user elements in a query need a fully qualified name"),
             one("meta::pure::functions::lang::tests::match::testMatchWithMixedReturnType_Function_1__Boolean_1_", "scalar lowering not yet implemented for TypedDeactivate"),
-            one("meta::pure::functions::math::tests::round::testDecimalRound_Function_1__Boolean_1_", "a half-even round to a scale reached Postgres, which has no round(double precision, int)"),
-            one("meta::pure::functions::math::tests::round::testFloatRoundWithScale_Function_1__Boolean_1_", "a half-even round to a scale reached Postgres, which has no round(double precision, int)"),
             one("meta::pure::functions::string::tests::format::testFormatBoolean_Function_1__Boolean_1_", "FORMAT reached Postgres: Postgres' format() has no %d/%f"),
             one("meta::pure::functions::string::tests::format::testFormatDate_Function_1__Boolean_1_", "FORMAT reached Postgres: Postgres' format() has no %d/%f"),
             one("meta::pure::functions::string::tests::format::testFormatFloatWithRounding_Function_1__Boolean_1_", "FORMAT reached Postgres: Postgres' format() has no %d/%f"),

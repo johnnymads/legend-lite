@@ -193,9 +193,11 @@ class PostgresDialectTest {
         // a wall is honest; a guessed spelling is a silent wrong answer
         assertThrows(DialectCapability.class, () -> plan("->extend(~[h: r|$r.sym->toOne()->hashCode()])"
                 + "->select(~[id, h])"));
-        // round(double precision, int) does not exist; a scaled half-even round is unprobed
-        assertThrows(DialectCapability.class, () -> plan("->extend(~[r: r|$r.f8->toOne()->round(2)])"
-                + "->select(~[id, r])"));
+        // round(double precision, int) does not exist: a Float to a scale is scaled, rounded half-even
+        // (round(double precision) is rint) and scaled back, as DuckDB's ROUND_EVEN(x, s)
+        assertTrue(plan("->extend(~[r: r|$r.f8->toOne()->round(2)])->select(~[id, r])").contains(
+                "(round(CAST(\"t0\".\"f8\" AS DOUBLE PRECISION) * power(CAST(10 AS DOUBLE PRECISION), CAST(2 AS INTEGER)))"
+                        + " / power(CAST(10 AS DOUBLE PRECISION), CAST(2 AS INTEGER)))"));
         // a dynamic pivot needs a key-discovery round trip a planner cannot make
         assertThrows(DialectCapability.class, () -> plan("->pivot(~[ok], ~[t: r|$r.qty : y|$y->sum()])"));
         // DuckDB's trim-zeros %g has no to_char code

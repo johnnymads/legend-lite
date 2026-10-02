@@ -104,8 +104,7 @@ final class StoredReads extends SqlRewriter {
 
     @Override
     protected SqlQuery select(SqlSelect s) {
-        List<SqlSource> leaves = new ArrayList<>();
-        sources(s.from(), leaves);
+        List<SqlSource> leaves = Stars.sources(s.from());
         Map<String, String> unqualified = new HashMap<>();   // read column -> its table
         boolean any = false;
         for (SqlSource l : leaves) {
@@ -150,19 +149,7 @@ final class StoredReads extends SqlRewriter {
     /** The columns {@code *} (or {@code table.*}) stands for, in FROM order, each read as stored. */
     private List<SqlSelect.Projection> everyColumn(List<SqlSource> leaves,
             @com.legend.base.Nullable String table, List<String> except) {
-        List<SqlSelect.Projection> out = new ArrayList<>();
-        for (SqlSource l : leaves) {
-            // a FROM-less select has no columns to spell
-            if (l instanceof SqlSource.Dual || table != null && !table.equals(l.alias())) {
-                continue;
-            }
-            for (OutputCol oc : l.outputs()) {
-                if (!except.contains(oc.name())) {
-                    out.add(new SqlSelect.Projection(expr(SqlExpr.Column.of(l.alias(), oc)), null, null));
-                }
-            }
-        }
-        return out;
+        return Stars.columns(leaves, table, except, this::expr);
     }
 
     private static SqlSelect withProjections(SqlSelect s, List<SqlSelect.Projection> ps) {
@@ -213,20 +200,8 @@ final class StoredReads extends SqlRewriter {
         }
     }
 
-    /** The sources a select's FROM names directly, in order: through joins, not into them. */
-    private static void sources(SqlSource s, List<SqlSource> out) {
-        if (s instanceof SqlSource.Join j) {
-            sources(j.left(), out);
-            sources(j.right(), out);
-        } else {
-            out.add(s);
-        }
-    }
-
     private static void leaves(SqlSource s, List<SqlSource.Table> out) {
-        List<SqlSource> all = new ArrayList<>();
-        sources(s, all);
-        for (SqlSource l : all) {
+        for (SqlSource l : Stars.sources(s)) {
             if (l instanceof SqlSource.Table t) {
                 out.add(t);
             }
