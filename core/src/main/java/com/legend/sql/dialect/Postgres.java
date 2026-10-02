@@ -73,11 +73,14 @@ public final class Postgres extends AnsiSqlRenderer {
     /** The portable carrier strategies (static pivot, as-of emulation; FULL OUTER
      * stays native), the substring start clamp (Postgres counts empties before 1,
      * like DuckDB), averages delivered as DOUBLE ({@code avg(int)} is numeric here),
-     * and QUALIFY as a wrapping subselect (Postgres has no QUALIFY). */
+     * QUALIFY as a wrapping subselect (Postgres has no QUALIFY), and a constant GROUP BY or
+     * ORDER BY key as a typed expression (Postgres reads a bare one as a position, or refuses
+     * it). */
     @Override
     protected List<com.legend.sql.SqlRewriter> passes() {
         return List.of(new CarrierStrategies(CarrierStrategies.Caps.POSTGRES),
-                new SubstringClamp(), new H2AvgDelivers(), new QualifyToSubselect(true));
+                new SubstringClamp(), new H2AvgDelivers(), new QualifyToSubselect(true),
+                new ConstantKeysAsExpressions());
     }
 
     /** Postgres 12+ evaluates a {@code MATERIALIZED} CTE once. */

@@ -72,6 +72,33 @@ class PostgresDialectTest {
     }
 
     @Test
+    void aConstantKeyIsATypedExpression() {
+        // DataCube's root row groups by the constant '[ROOT]': Postgres refuses a bare
+        // non-integer constant in GROUP BY and reads an integer as a position (found driving
+        // DataCube Live on Postgres, 2026-10-02)
+        assertEquals("""
+                SELECT '[ROOT]' AS "root", COUNT("t0"."id") AS "n"
+                FROM "trades" AS "t0"
+                GROUP BY CAST('[ROOT]' AS VARCHAR)""", plan("->extend(~root: r|'[ROOT]')->groupBy(~[root], ~[n: r|$r.id : y|$y->count()])"));
+        // a bare 7 would be "the seventh output"
+        assertEquals("""
+                SELECT 7 AS "k", COUNT("t0"."id") AS "n"
+                FROM "trades" AS "t0"
+                GROUP BY CAST(7 AS BIGINT)""", plan("->extend(~k: r|7)->groupBy(~[k], ~[n: r|$r.id : y|$y->count()])"));
+        // ORDER BY reads a constant the same way (no Pure query of today sorts on one, so
+        // the plan is built by hand)
+        var k = new com.legend.sql.SqlExpr.StringLit("x");
+        var q = new com.legend.sql.SqlSelect(
+                java.util.List.of(new com.legend.sql.SqlSelect.Projection(k, "k", null)), false,
+                new com.legend.sql.SqlSource.Dual(), null, java.util.List.of(), null, null,
+                java.util.List.of(com.legend.sql.SqlSelect.SortKey.asc(k)), null, null,
+                java.util.List.of(new com.legend.sql.OutputCol("k", com.legend.sql.SqlType.Scalar.VARCHAR, false)));
+        assertEquals("""
+                SELECT 'x' AS "k"
+                ORDER BY CAST('x' AS VARCHAR) NULLS LAST""", new Postgres().render(q));
+    }
+
+    @Test
     void qualifyWrapsAndReadsThroughOutputs() {
         // no QUALIFY on Postgres: the window the filter reads is a hidden inner column,
         // the outer select lists the declared outputs, and the sort and limit run
