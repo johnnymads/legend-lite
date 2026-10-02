@@ -563,9 +563,11 @@ public final class Lowerer {
                     new SqlSource.SourceUrl(su.url(), nextAlias(), outputsOf(su.info(), OutputCol.Origin.PHYSICAL)));
             case TypedTableReference t -> t.frame() != null
                     // rung 12: the class extent's rows are a planned frame's CTE
+                    // (its body reads the table, so the CTE's columns keep the table's
+                    // declared spelling: a quoted one stays quoted at every reader)
                     ? SqlSelect.starOf(new SqlSource.Cte(t.frame(),
                             com.legend.sql.AliasPrefix.frameReader(t.frame(), nextAlias()),
-                            outputsOf(t.info(), OutputCol.Origin.PHYSICAL)))
+                            OutputCol.declaredQuoted(outputsOf(t.info(), OutputCol.Origin.PHYSICAL), t.quotedColumns())))
                     : SqlSelect.starOf(
                     new SqlSource.Table(t.table(), nextAlias(),
                             OutputCol.declaredQuoted(outputsOf(t.info(), OutputCol.Origin.PHYSICAL), t.quotedColumns()), t.call(),
