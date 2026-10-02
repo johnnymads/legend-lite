@@ -247,7 +247,7 @@ public final class SqlTypeCensus {
             }
             for (int i = 0; i < outs.size(); i++) {
                 String label = wireSpelling(outs.get(i).type());
-                String meta = normalizeMeta(md.getColumnTypeName(i + 1));
+                String meta = sized(normalizeMeta(md.getColumnTypeName(i + 1)), md, i + 1);
                 // E2E-audit CONVERSE tripwire (measure-first): a label
                 // promising always-present is a claim the wire can
                 // refute — watch every nullable=false column for NULL
@@ -565,6 +565,12 @@ public final class SqlTypeCensus {
         if (label == SqlType.Scalar.DOUBLE && meta.startsWith("DECIMAL(")) {
             return true;
         }
+        // HUGEINT's own spelling where the database has no 128-bit integer
+        // (TypeNames: NUMERIC(38) on Postgres and H2) -- the cast the root
+        // delivers it by (RootNumericTypes)
+        if (label == SqlType.Scalar.HUGEINT && meta.equals("DECIMAL(38,0)")) {
+            return true;
+        }
         // decimal narrowing at the same scale
         if (label instanceof SqlType.Decimal d && meta.startsWith("DECIMAL(")) {
             try {
@@ -619,6 +625,15 @@ public final class SqlTypeCensus {
             return "MAP";
         }
         return null;
+    }
+
+    /** A decimal whose type NAME carries no precision (Postgres's driver names every numeric
+     * {@code numeric}) is sized by the column's own precision and scale, when it has them (a
+     * numeric(p,s) does; a computed numeric, no typmod, reports precision 0 and stays unsized). */
+    private static String sized(String meta, java.sql.ResultSetMetaData md, int column)
+            throws java.sql.SQLException {
+        return meta.equals("DECIMAL") && md.getPrecision(column) > 0
+                ? "DECIMAL(" + md.getPrecision(column) + "," + md.getScale(column) + ")" : meta;
     }
 
     private static String normalizeMeta(@com.legend.base.Nullable String name) {

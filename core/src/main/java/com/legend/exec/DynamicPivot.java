@@ -69,6 +69,12 @@ public final class DynamicPivot {
                         key))
                 .withOrderBy(List.of(SqlSelect.SortKey.asc(
                         SqlExpr.Column.derived(null, "v"))));
+        // the key's DECLARED type drives the decode (Executor.unwrap's rule): an integer key
+        // arriving as a numeric (Postgres delivers HUGEINT, a sum of integers, as NUMERIC(38)) is
+        // an integer literal
+        boolean integral = key.type() instanceof com.legend.sql.TypeFact.Typed t && java.util.Set.of(
+                com.legend.sql.SqlType.Scalar.INTEGER, com.legend.sql.SqlType.Scalar.BIGINT,
+                com.legend.sql.SqlType.Scalar.HUGEINT).contains(t.type());
         List<SqlExpr> in = new ArrayList<>();
         StatementOrigin.count(StatementOrigin.PROBE);
         try (Statement st = connection.createStatement();
@@ -83,6 +89,7 @@ public final class DynamicPivot {
                     case Integer i -> new SqlExpr.IntLit(i);
                     case Long l -> new SqlExpr.IntLit(l);
                     case Boolean b -> new SqlExpr.BoolLit(b);
+                    case java.math.BigDecimal d when integral -> new SqlExpr.IntLit(d.longValueExact());
                     case java.math.BigDecimal d -> new SqlExpr.DecimalLit(d);
                     case Double d -> new SqlExpr.FloatLit(d);
                     // audit 2026-08-18 finding D: a bare (double) widen

@@ -965,29 +965,10 @@ public final class CarrierStrategies extends SqlRewriter {
                                         sel.where(), pred)));
             }
         }
-        // literal reducer folds (R5d, witnessed): BOOL_AND/BOOL_OR/SUM/
-        // PRODUCT over a compile-time collection — the exact
-        // null-ignoring aggregate fold (all-null -> NULL, probed).
         if (e instanceof SqlExpr.Call lr && lr.args().size() == 1
                 && lr.args().get(0) instanceof SqlExpr.ArrayLit lra
                 && !lra.elements().isEmpty()) {
-            SqlExpr folded = switch (lr.fn()) {
-                case LIST_BOOL_AND -> litFold(lra.elements(),
-                        new SqlExpr.BoolLit(true), com.legend.sql.SqlFn.AND,
-                        null);
-                case LIST_BOOL_OR -> litFold(lra.elements(),
-                        new SqlExpr.BoolLit(false), com.legend.sql.SqlFn.OR,
-                        null);
-                case LIST_SUM -> litFold(lra.elements(),
-                        new SqlExpr.IntLit(0), com.legend.sql.SqlFn.PLUS,
-                        null);
-                // list product is DOUBLE on the reference (probed 4.0)
-                // — the leading 1.0 factor pins the type.
-                case LIST_PRODUCT -> litFold(lra.elements(),
-                        new SqlExpr.IntLit(1), com.legend.sql.SqlFn.TIMES,
-                        new SqlExpr.FloatLit(1.0));
-                default -> null;
-            };
+            SqlExpr folded = literalFold(lr, lra);
             if (folded != null) {
                 return folded;
             }
@@ -1433,6 +1414,28 @@ public final class CarrierStrategies extends SqlRewriter {
      * elements: {@code CASE WHEN all null THEN NULL ELSE op-chain of
      * COALESCE(e, neutral) END} (probed: all-null -> NULL, otherwise
      * NULLs drop out). {@code lead} prepends a type-pinning factor. */
+    /** Literal reducer folds (R5d, witnessed): BOOL_AND/BOOL_OR/SUM/PRODUCT over a compile-time
+     *  collection -- the exact null-ignoring aggregate fold (all-null -> NULL, probed) -- delivering
+     *  the reduction's own type (a sum of integers is HUGEINT, its additions are not); null for any
+     *  other reduction. */
+    private static @com.legend.base.Nullable SqlExpr literalFold(SqlExpr.Call lr, SqlExpr.ArrayLit lra) {
+        SqlExpr folded = switch (lr.fn()) {
+            case LIST_BOOL_AND -> litFold(lra.elements(), new SqlExpr.BoolLit(true), com.legend.sql.SqlFn.AND, null);
+            case LIST_BOOL_OR -> litFold(lra.elements(), new SqlExpr.BoolLit(false), com.legend.sql.SqlFn.OR, null);
+            case LIST_SUM -> litFold(lra.elements(), new SqlExpr.IntLit(0), com.legend.sql.SqlFn.PLUS, null);
+            // list product is DOUBLE on the reference (probed 4.0) -- the leading 1.0 factor pins the type.
+            case LIST_PRODUCT -> litFold(lra.elements(), new SqlExpr.IntLit(1), com.legend.sql.SqlFn.TIMES,
+                    new SqlExpr.FloatLit(1.0));
+            default -> null;
+        };
+        if (folded == null) {
+            return null;
+        }
+        return lr.type() instanceof com.legend.sql.TypeFact.Typed t
+                && !(folded.type() instanceof com.legend.sql.TypeFact.Typed f && f.type().equals(t.type()))
+                ? new SqlExpr.Cast(folded, t.type(), false) : folded;
+    }
+
     private static SqlExpr litFold(List<SqlExpr> elements, SqlExpr neutral,
             com.legend.sql.SqlFn op, @com.legend.base.Nullable SqlExpr lead) {
         SqlExpr allNull = null;

@@ -159,7 +159,10 @@ class JavaEvalLedgerTest {
             // toOne spellings inline (invariant 6d keeps exec off the
             // frontend) — recognition lines, not evaluation.
             // 106 -> 107 (2026-09-20, statement-origin census): the pivot-key probe counts itself
-            Map.entry("core/src/main/java/com/legend/exec/DynamicPivot.java", 107),
+            // 107 -> 111 (2026-10-02, Postgres delivers HUGEINT as NUMERIC(38)): the probed key decodes by
+            // its DECLARED type, Executor.unwrap's rule -- an integer key arriving as a numeric is an
+            // integer literal (a decode, not evaluation)
+            Map.entry("core/src/main/java/com/legend/exec/DynamicPivot.java", 111),
             // Phase 1c endgame: the boundary resolver (stamp + marker
             // substitution over stamped schema — the DynamicPivot model;
             // audit 2026-08-18 Tier-3: size-pinned so the resolver never

@@ -161,7 +161,7 @@ public final class Postgres extends AnsiSqlRenderer {
                 new StarExceptToColumns(),
                 new WholePartitionOrderedSets(),
                 new SubstringClamp(), new H2AvgDelivers(), new QualifyToSubselect(true),
-                new ConstantKeysAsExpressions());
+                new ConstantKeysAsExpressions(), new RootNumericTypes());
     }
 
     /** Postgres 12+ evaluates a {@code MATERIALIZED} CTE once. */
@@ -730,10 +730,16 @@ public final class Postgres extends AnsiSqlRenderer {
                  BIT_AND, BIT_OR, BIT_XOR, BIT_SHIFT_LEFT, BIT_SHIFT_RIGHT, ROUND, HASH,
                  // Spellings.POSTGRES rows
                  ABS, ASCII_CODE, ATAN, ATAN2, CBRT, CHR, COALESCE, COS, COSH, COT, DEGREES,
-                 EXP, FLOOR_RAW, GREATEST, LEAST, LEFT, LN, LOG10, LOWER, LTRIM, MD5,
+                 FLOOR_RAW, GREATEST, LEAST, LEFT, LOWER, LTRIM, MD5,
                  RADIANS, REGEXP_REPLACE, REPEAT_STR, REPLACE, REVERSE_STRING, RIGHT, RTRIM,
-                 SIN, SINH, SPLIT_PART, SQRT, STARTS_WITH, STRPOS, SUBSTRING, TAN, TANH,
+                 SIN, SINH, SPLIT_PART, STARTS_WITH, STRPOS, SUBSTRING, TAN, TANH,
                  TIMEZONE, TRIM, UPPER -> super.call(c, parentPrec);
+            // a Float, as DuckDB's answers; each of these has a numeric overload on Postgres, which a
+            // numeric argument would pick (sqrt(9.0) is 3.000000000000000)
+            case SQRT -> "sqrt(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION))";
+            case EXP -> "exp(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION))";
+            case LN -> "ln(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION))";
+            case LOG10 -> "log10(CAST(" + expr(a.get(0), 0) + " AS DOUBLE PRECISION))";
 
             // ---- arithmetic
             // Pure's pow is a Float, as DuckDB's power answers; Postgres's power over numeric is numeric
@@ -1156,10 +1162,17 @@ public final class Postgres extends AnsiSqlRenderer {
             // ANY_VALUE is Postgres 16+; ordered aggregates keep the base's spelling —
             // Postgres' default null placement (ASC last, DESC first) IS the
             // reference's NULL-largest
-            case SUM, COUNT, AVG, MIN, MAX, ANY_VALUE, STDDEV_SAMP, STDDEV_POP, VAR_SAMP,
-                 VAR_POP, STRING_AGG, CORR, COVAR_SAMP, COVAR_POP, BOOL_AND, BOOL_OR,
-                 VARIANCE, STDDEV, ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST,
+            case SUM, COUNT, AVG, MIN, MAX, ANY_VALUE, STRING_AGG, BOOL_AND, BOOL_OR,
+                 ROW_NUMBER, RANK, DENSE_RANK, PERCENT_RANK, CUME_DIST,
                  NTILE, LAG, LEAD, FIRST_VALUE, LAST_VALUE, NTH_VALUE -> super.reducer(r);
+            // the moments are a Float, computed in double (DuckDB's); Postgres's over an integer or a
+            // numeric is numeric (stdDev of 1, 2, 3 delivered as 1.00000000000000000000, the Postgres
+            // PCT lane, 2026-10-02), so they read their arguments as double precision -- in a window
+            // too, where this is the function before OVER
+            case STDDEV_SAMP, STDDEV_POP, VAR_SAMP, VAR_POP, VARIANCE, STDDEV, CORR, COVAR_SAMP,
+                 COVAR_POP -> r.fn() + "(" + (r.distinct() ? "DISTINCT " : "") + r.args().stream()
+                         .map(x -> "CAST(" + expr(x, 0) + " AS DOUBLE PRECISION)")
+                         .collect(java.util.stream.Collectors.joining(", ")) + ")";
             // DuckDB's median interpolates numbers; a median of anything else walls
             case MEDIAN -> {
                 if (r.args().size() != 1 || r.distinct() || !r.orderBy().isEmpty()

@@ -37,15 +37,6 @@ public class Test_LegendLite_Postgres_StandardFunctions_PCT extends PCTReportCon
             // WRONG ANSWERS: a result Pure does not give -- a dialect defect
             one("meta::pure::functions::math::tests::maxBy::testMaxBy_Function_1__Boolean_1_", "expected: 2\nactual:   1"),
             one("meta::pure::functions::math::tests::minBy::testMinBy_Function_1__Boolean_1_", "expected: 2020\nactual:   1001"),
-            one("meta::pure::functions::math::tests::stdDev::testFloatStdDev_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
-            one("meta::pure::functions::math::tests::stdDev::testIntStdDev_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
-            one("meta::pure::functions::math::tests::stdDev::testMixedStdDev_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
-            one("meta::pure::functions::math::tests::stdDev::testNegativeNumberStdDev_Function_1__Boolean_1_", "expected: 2.0\nactual:   2.0000000000000000D"),
-            one("meta::pure::functions::math::tests::stdDev::testPopulationStandardDeviation_Function_1__Boolean_1_", "expected: 0.5\nactual:   0.50000000000000000000D"),
-            one("meta::pure::functions::math::tests::variance::testVariancePopulation_Function_1__Boolean_1_", "expected: 0.25\nactual:   0.25000000000000000000D"),
-            one("meta::pure::functions::math::tests::variance::testVarianceSample_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
-            one("meta::pure::functions::math::tests::variance::testVariance_Population_Function_1__Boolean_1_", "expected: 0.25\nactual:   0.25000000000000000000D"),
-            one("meta::pure::functions::math::tests::variance::testVariance_Sample_Function_1__Boolean_1_", "expected: 1.0\nactual:   1.00000000000000000000D"),
             // Postgres raises differently (its own error, or a different position or wording)
             one("meta::pure::functions::collection::tests::greatest::testGreatest_Boolean_Function_1__Boolean_1_", "ERROR: function max(boolean) does not exist"),
             one("meta::pure::functions::collection::tests::least::testLeast_Boolean_Function_1__Boolean_1_", "ERROR: function min(boolean) does not exist"),

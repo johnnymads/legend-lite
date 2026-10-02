@@ -57,11 +57,11 @@ public record Spellings(Map<SqlFn, String> fnNames) {
         Map<SqlFn, String> m = new EnumMap<>(SqlFn.class);
         for (SqlFn f : new SqlFn[] {SqlFn.ABS, SqlFn.ASCII_CODE, SqlFn.ATAN, SqlFn.ATAN2,
                 SqlFn.CBRT, SqlFn.CHR, SqlFn.COALESCE, SqlFn.COS, SqlFn.COSH, SqlFn.COT,
-                SqlFn.DEGREES, SqlFn.EXP, SqlFn.FLOOR_RAW, SqlFn.GREATEST, SqlFn.LEAST,
-                SqlFn.LEFT, SqlFn.LN, SqlFn.LOG10, SqlFn.LOWER, SqlFn.LTRIM, SqlFn.MD5,
+                SqlFn.DEGREES, SqlFn.FLOOR_RAW, SqlFn.GREATEST, SqlFn.LEAST,
+                SqlFn.LEFT, SqlFn.LOWER, SqlFn.LTRIM, SqlFn.MD5,
                 SqlFn.POW, SqlFn.RADIANS, SqlFn.REGEXP_REPLACE, SqlFn.REPEAT_STR,
                 SqlFn.REPLACE, SqlFn.REVERSE_STRING, SqlFn.RIGHT, SqlFn.RTRIM, SqlFn.SIN,
-                SqlFn.SINH, SqlFn.SPLIT_PART, SqlFn.SQRT, SqlFn.STARTS_WITH, SqlFn.STRPOS,
+                SqlFn.SINH, SqlFn.SPLIT_PART, SqlFn.STARTS_WITH, SqlFn.STRPOS,
                 SqlFn.SUBSTRING, SqlFn.TAN, SqlFn.TANH, SqlFn.TIMEZONE, SqlFn.TRIM,
                 SqlFn.UPPER}) {
             m.put(f, DUCKDB.fnNames().get(f));

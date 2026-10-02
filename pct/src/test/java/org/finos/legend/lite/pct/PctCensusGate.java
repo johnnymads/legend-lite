@@ -134,7 +134,12 @@ public final class PctCensusGate {
     // the same classes)
     // 63 -> 76 (2026-10-02, structs and non-scalar lists as jsonb): one new class -- a struct delivered as
     // jsonb (label STRUCT, wire JSON), Postgres's representation by design -- and more plans of the others
-    private static final long MAX_WIRE_DIVERGE = POSTGRES ? 76 : 0;
+    // 76 -> 16 (2026-10-02, Postgres DELIVERS the platform's numeric types, as H2 does): the moments and
+    // sqrt/exp/ln/log10 compute in double precision; the root casts its DECIMAL(p,s) and HUGEINT columns
+    // (RootNumericTypes), whose precision the census now reads where the driver's type name has none; a
+    // literal sum's fold keeps its HUGEINT. Left: a struct, jsonb on Postgres by design (STRUCT <- JSON,
+    // 13), or text (STRUCT <- VARCHAR, 3)
+    private static final long MAX_WIRE_DIVERGE = POSTGRES ? 16 : 0;
     private static final long MAX_ADOPT_PENDING = 0;
     // THE NULLABILITY LEDGER (§4bZ-V E, 2026-08-26 — §4Z ledger #4):
     // this lane carried 6 literal-NullLit DOUBLE value-frames (the
