@@ -96,12 +96,8 @@ junit_test(
 # path, which Bazel supplies -- the same jars `bazel run //warehouse:server` runs. Everything
 # must link when the image is built (--link-at-build-time): a class missing from the class
 # path fails the build, where native-image's default compiles each method that names it into a
-# NoSuchMethodError at run time (the 2026-09-26 break). Not on Windows yet (its toolchain is owed).
-NOT_ON_WINDOWS = select({
-    "@platforms//os:windows": ["@platforms//:incompatible"],
-    "//conditions:default": [],
-})
-
+# NoSuchMethodError at run time (the 2026-09-26 break). On Windows it links with Visual Studio's
+# MSVC, which Bazel's C++ toolchain finds (docs/WINDOWS_APP_DESIGN_2026_10_02.md).
 native_image(
     name = "server_native",
     extra_args = [
@@ -109,7 +105,6 @@ native_image(
         "--enable-native-access=ALL-UNNAMED",
     ],
     main_class = "com.legend.warehouse.server.WarehouseServer",
-    target_compatible_with = NOT_ON_WINDOWS,
     deps = [":server_lib"],
 )
 
@@ -141,7 +136,6 @@ junit_test(
     },
     select = ["--select-class=com.legend.warehouse.WarehousePostgresLiveTest"],
     tags = ["manual"],
-    target_compatible_with = NOT_ON_WINDOWS,
     runtime_deps = [":tests_lib"],
 )
 
@@ -161,6 +155,14 @@ config_setting(
     ],
 )
 
+config_setting(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
 # DuckDB's native library for this platform, out of its JDBC jar: what the image loads.
 jar_entry(
     name = "duckdb_library",
@@ -168,9 +170,9 @@ jar_entry(
         "@platforms//os:macos": "libduckdb_java.so_osx_universal",
         ":linux_x86_64": "libduckdb_java.so_linux_amd64",
         ":linux_aarch64": "libduckdb_java.so_linux_arm64",
+        ":windows_x86_64": "libduckdb_java.so_windows_amd64",
     }),
     jar = "@maven_warehouse//:org_duckdb_duckdb_jdbc",
-    target_compatible_with = NOT_ON_WINDOWS,
 )
 
 # The same suite, judging the native binary instead of an in-process server (TestServer).
@@ -187,9 +189,15 @@ junit_test(
         "WAREHOUSE_DUCKDB_LIBRARY": "$(rootpath :duckdb_library)",
     },
     select = ["--select-package=com.legend.warehouse"],
-    target_compatible_with = NOT_ON_WINDOWS,
     runtime_deps = [":tests_lib"],
 )
+
+# `bazel run` cannot start warehouse_run's bash launcher on Windows; Task 2 of
+# docs/WINDOWS_APP_PLAN_2026_10_02.md gives Windows its own and removes this.
+NOT_ON_WINDOWS = select({
+    "@platforms//os:windows": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+})
 
 # THE WAREHOUSE, BUILT AND RUN IN ONE STEP: the native server, DuckDB's library and DuckDB's postgres
 # extension (pinned per platform in MODULE.bazel), all from Bazel. Flags pass through:

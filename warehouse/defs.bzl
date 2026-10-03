@@ -44,6 +44,7 @@ POSTGRES_EXTENSION = select({
     "//warehouse:macos_x86_64": "@duckdb_postgres_extension_osx_amd64//file",
     "//warehouse:linux_x86_64": "@duckdb_postgres_extension_linux_amd64//file",
     "//warehouse:linux_aarch64": "@duckdb_postgres_extension_linux_arm64//file",
+    "//warehouse:windows_x86_64": "@duckdb_postgres_extension_windows_amd64//file",
 })
 
 def _warehouse_run_impl(ctx):
