@@ -177,3 +177,22 @@ fixing hermetic-launcher; releases and installers.
 4. CI.
 5. The docs.
 6. End to end on the desk: the app, `verify_app`, Ctrl+C.
+
+## Measured (Windows 11 x64, 2026-10-02)
+
+- `bazel test //...`: 150 tests, all pass, none skipped. (Bazel's test cache served them;
+  `//warehouse:tests_native`, `//warehouse:launcher_test` and `//datacube:live_snap_test`, the three
+  that Windows newly runs, were also run uncached: pass.)
+- The app against Postgres 16.15 (the embedded binaries, port 5433, the guide's sample), started with
+  `--port 8766 --table sales.orders`: it printed `warehouse listening on 127.0.0.1:8766, catalogs
+  [main, shop]` and an address ending `&table=sales.orders`, and served the site (HTTP 200). A Ctrl+C
+  sent to its console stopped it: no process left, and its one temporary directory
+  (`%TEMP%\datacube-*`) removed. `bazel` reported the exit as `-1073741510`, which is `0xC000013A`, as
+  the guide says.
+- `bazel run --run_in_cwd //warehouse:serve -- --data <a relative path>`, started in the repository
+  root: the data directory was created there, as the guide says. `taskkill /t /f` on the `bazel`
+  process stopped the launcher and the server with it.
+- `bazel run //datacube:verify_app`: every line `ok:` (9 lines, among them `opened sales.orders
+  Live` and `grouped by channel: 3 groups`), exit 0, no `server_native` process left. It stops the
+  server with `taskkill /t /f`, which skips the server's shutdown hook (a Ctrl+C runs it), so each
+  run leaves one `%TEMP%\datacube-*` directory behind; this one was removed by hand.
