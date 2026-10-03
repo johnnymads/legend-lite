@@ -720,10 +720,6 @@ warehouse_run(
     postgres_extension_gz = POSTGRES_EXTENSION,
     server = "//warehouse:server_native",
     site = ":dist",
-    target_compatible_with = select({
-        "@platforms//os:windows": ["@platforms//:incompatible"],
-        "//conditions:default": [],
-    }),
 )
 
 # `bazel build //datacube:dist`: the site as a folder for any static host — no

@@ -1,11 +1,14 @@
-"""jar_entry: one file out of a Java library's jar, as a build output.
+"""The warehouse's build helpers: jar_entry, POSTGRES_EXTENSION and warehouse_run.
 
-The warehouse's native image loads DuckDB's native library from beside it (or from
---duckdb-library), and that library rides inside DuckDB's JDBC jar, one per platform. This
-takes it out with Bazel's own zipper, in an action, so the file is an ordinary Bazel output
-with a runfiles path -- never unzipped by a script.
+jar_entry takes one file out of a Java library's jar, as a build output. The warehouse's native
+image loads DuckDB's native library from beside it (or from --duckdb-library), and that library
+rides inside DuckDB's JDBC jar, one per platform. This takes it out with Bazel's own zipper, in an
+action, so the file is an ordinary Bazel output with a runfiles path -- never unzipped by a script.
+
+warehouse_run is `bazel run`'s launcher for the native warehouse (docs/WINDOWS_APP_DESIGN_2026_10_02.md).
 """
 
+load("@hermetic_launcher//launcher:launcher_binary.bzl", "launcher_binary")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 
 def _jar_entry_impl(ctx):
@@ -47,19 +50,29 @@ POSTGRES_EXTENSION = select({
     "//warehouse:windows_x86_64": "@duckdb_postgres_extension_windows_amd64//file",
 })
 
-def _warehouse_run_impl(ctx):
-    # DuckDB loads an extension file by name: the download is gzipped, so it is unpacked here, under
-    # the exact name the server looks for in --duckdb-extensions
-    ext = ctx.actions.declare_file(ctx.label.name + "_extensions/postgres_scanner.duckdb_extension")
+def _duckdb_extensions_impl(ctx):
+    # DuckDB loads an extension file by name: the download is gzipped, so it is unpacked here, under the
+    # exact name the server looks for, into a directory of its own -- what --duckdb-extensions names, and
+    # what a launcher can name too (a runfiles manifest lists a directory output, not a file's parent)
+    out = ctx.actions.declare_directory(ctx.label.name)
     ctx.actions.run_shell(
-        inputs = [ctx.file.postgres_extension_gz],
-        outputs = [ext],
-        command = "gzip -dc \"$1\" > \"$2\"",
-        arguments = [ctx.file.postgres_extension_gz.path, ext.path],
+        inputs = [ctx.file.gz],
+        outputs = [out],
+        command = "mkdir -p \"$2\" && gzip -dc \"$1\" > \"$2/postgres_scanner.duckdb_extension\"",
+        arguments = [ctx.file.gz.path, out.path],
         mnemonic = "GunzipDuckdbExtension",
     )
+    return [DefaultInfo(files = depset([out]))]
+
+_duckdb_extensions = rule(
+    implementation = _duckdb_extensions_impl,
+    attrs = {"gz": attr.label(allow_single_file = True, mandatory = True)},
+    doc = "DuckDB's postgres extension, gunzipped into a directory of its own.",
+)
+
+def _posix_launcher_impl(ctx):
     server = ctx.executable.server
-    files = [server, ctx.file.library, ext]
+    files = [server, ctx.file.library, ctx.file.extensions]
     fixed = ""
     if ctx.file.site:
         files.append(ctx.file.site)
@@ -76,25 +89,87 @@ here="${{RUNFILES_DIR:-$0.runfiles}}/_main"
 [[ -d "$here" ]] || here="$(pwd)"
 server="$here/{server}"
 library="$here/{library}"
-extensions="$(dirname "$here/{ext}")"
+extensions="$here/{extensions}"
 cd "${{BUILD_WORKING_DIRECTORY:-.}}"
 exec "$server" --duckdb-library "$library" --duckdb-extensions "$extensions"{fixed} "$@"
-""".format(server = server.short_path, library = ctx.file.library.short_path, ext = ext.short_path, fixed = fixed))
+""".format(
+        server = server.short_path,
+        library = ctx.file.library.short_path,
+        extensions = ctx.file.extensions.short_path,
+        fixed = fixed,
+    ))
     runfiles = ctx.runfiles(files = files).merge(ctx.attr.server[DefaultInfo].default_runfiles)
     return [DefaultInfo(executable = script, runfiles = runfiles)]
 
 def shell_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
-warehouse_run = rule(
-    implementation = _warehouse_run_impl,
+_posix_launcher = rule(
+    implementation = _posix_launcher_impl,
     executable = True,
     attrs = {
         "server": attr.label(executable = True, cfg = "target", mandatory = True),
         "library": attr.label(allow_single_file = True, mandatory = True),
-        "postgres_extension_gz": attr.label(allow_single_file = True, mandatory = True),
+        "extensions": attr.label(allow_single_file = True, mandatory = True, doc = "A directory (--duckdb-extensions)."),
         "site": attr.label(allow_single_file = True, doc = "A directory served as the page (--site)."),
         "args_before": attr.string_list(doc = "Fixed arguments, before the caller's."),
     },
-    doc = "Runs the native warehouse with DuckDB's library and extensions (and a site) beside it: one `bazel run`.",
+    doc = "macOS and Linux: a bash script that execs the native warehouse with its files from runfiles.",
 )
+
+def warehouse_run(name, server, library, postgres_extension_gz, site = None, args_before = []):
+    """`bazel run`'s launcher for the native warehouse, one name on every platform.
+
+    DuckDB's library, its postgres extension and (for the app) a site go beside the server, then the
+    caller's arguments. On macOS and Linux a bash script execs the server where `bazel run` was started.
+    On Windows `bazel run` can start no script, and a .bat or Bazel's bash launcher splits a Postgres URL
+    at '&', so a hermetic-launcher stub starts the server with its arguments intact; it runs the server in
+    the runfiles folder (docs/WINDOWS_APP_DESIGN_2026_10_02.md, §2 and its known limits).
+
+    Args:
+        name: the target `bazel run` runs (an alias of <name>_posix or <name>_windows).
+        server: the native warehouse (//warehouse:server_native).
+        library: DuckDB's native library for the platform (//warehouse:duckdb_library).
+        postgres_extension_gz: DuckDB's postgres extension download (POSTGRES_EXTENSION).
+        site: a directory served as the page (--site), or None.
+        args_before: fixed arguments, before the caller's.
+    """
+    extensions = name + "_extensions"
+    _duckdb_extensions(name = extensions, gz = postgres_extension_gz)
+    _posix_launcher(
+        name = name + "_posix",
+        server = server,
+        library = library,
+        extensions = ":" + extensions,
+        site = site,
+        args_before = args_before,
+        target_compatible_with = select({
+            "@platforms//os:windows": ["@platforms//:incompatible"],
+            "//conditions:default": [],
+        }),
+    )
+    embedded = [
+        "--duckdb-library",
+        "$(rlocationpath %s)" % library,
+        "--duckdb-extensions",
+        "$(rlocationpath :%s)" % extensions,
+    ]
+    data = [library, ":" + extensions]
+    if site:
+        embedded += ["--site", "$(rlocationpath %s)" % site]
+        data.append(site)
+    launcher_binary(
+        name = name + "_windows",
+        # the stub holds ten arguments, the entrypoint among them: the app uses nine
+        entrypoint = server,
+        embedded_args = embedded + args_before,
+        data = data,
+        target_compatible_with = ["@platforms//os:windows"],
+    )
+    native.alias(
+        name = name,
+        actual = select({
+            "@platforms//os:windows": ":" + name + "_windows",
+            "//conditions:default": ":" + name + "_posix",
+        }),
+    )

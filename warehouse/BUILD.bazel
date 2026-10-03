@@ -71,7 +71,11 @@ java_binary(
 java_library(
     name = "tests_lib",
     testonly = True,
-    srcs = glob(["src/test/java/**/*.java"]),
+    # launcher/ is :launcher_test's alone: it needs the launcher and a Postgres in its runfiles
+    srcs = glob(
+        ["src/test/java/**/*.java"],
+        exclude = ["src/test/java/com/legend/warehouse/launcher/**"],
+    ),
     deps = [
         ":client",
         ":server_lib",
@@ -192,13 +196,6 @@ junit_test(
     runtime_deps = [":tests_lib"],
 )
 
-# `bazel run` cannot start warehouse_run's bash launcher on Windows; Task 2 of
-# docs/WINDOWS_APP_PLAN_2026_10_02.md gives Windows its own and removes this.
-NOT_ON_WINDOWS = select({
-    "@platforms//os:windows": ["@platforms//:incompatible"],
-    "//conditions:default": [],
-})
-
 # THE WAREHOUSE, BUILT AND RUN IN ONE STEP: the native server, DuckDB's library and DuckDB's postgres
 # extension (pinned per platform in MODULE.bazel), all from Bazel. Flags pass through:
 #   bazel run //warehouse:serve -- --postgres shop='host=db dbname=shop user=reader password=secret'
@@ -207,7 +204,28 @@ warehouse_run(
     library = ":duckdb_library",
     postgres_extension_gz = POSTGRES_EXTENSION,
     server = ":server_native",
-    target_compatible_with = NOT_ON_WINDOWS,
+)
+
+# THE LAUNCHER, JUDGED (docs/WINDOWS_APP_DESIGN_2026_10_02.md, §3): //warehouse:serve as `bazel run`
+# starts it, on every platform -- the caller's arguments intact, the exit code back, and the server,
+# DuckDB's library and the postgres extension resolved through it, attaching the Postgres 16 that
+# gate 7P starts (@embedded_postgres, //testing EmbeddedPostgres).
+junit_test(
+    name = "launcher_test",
+    size = "medium",
+    srcs = ["src/test/java/com/legend/warehouse/launcher/LauncherTest.java"],
+    data = [
+        ":serve",
+        "@embedded_postgres//:pg/PG_ROOT",
+        "@embedded_postgres//:postgres",
+    ],
+    env = {"WAREHOUSE_SERVE": "$(rootpath :serve)"},
+    jvm_flags = ["-Dembedded.postgres.root=$(rlocationpath @embedded_postgres//:pg/PG_ROOT)"],
+    select = ["--select-class=com.legend.warehouse.launcher.LauncherTest"],
+    deps = [
+        "//testing",
+        "@maven_test//:org_junit_jupiter_junit_jupiter_api",
+    ],
 )
 
 config_setting(
