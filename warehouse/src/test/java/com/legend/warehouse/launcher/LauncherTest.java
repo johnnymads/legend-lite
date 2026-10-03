@@ -32,19 +32,22 @@ class LauncherTest {
 
     @Test
     void theCallersArgumentsReachTheServerAndItsExitCodeComesBack() throws Exception {
-        // an unquoted '&': a .bat, or Bazel's bash launcher on Windows, cuts the argument there
-        Process p = start(List.of("--port", "x&y"));
+        // one argument holding both an '&' and a space: a .bat, or Bazel's bash launcher on Windows, cuts it
+        // at the '&', and a launcher that leaves the space unquoted splits it in two
+        Process p = start(List.of("--port", "x&y z"));
         List<String> said = linesUntilExit(p);
         assertEquals(2, p.exitValue(), String.join("\n", said));
-        assertTrue(said.contains("warehouse: For input string: \"x&y\""), String.join("\n", said));
+        assertTrue(said.contains("warehouse: For input string: \"x&y z\""), String.join("\n", said));
     }
 
     @Test
-    void theServerItsLibraryAndThePostgresExtensionResolveThroughTheLauncher() throws Exception {
+    void theServerAndThePostgresExtensionDirectoryResolveThroughTheLauncher() throws Exception {
         EmbeddedPostgres pg = EmbeddedPostgres.shared();
         Path data = Files.createTempDirectory(Path.of(required("TEST_TMPDIR")), "launcher-data");
         // a catalog by URL, '&' and all: attaching it loads the postgres extension from the directory the
-        // launcher named
+        // launcher named (without --duckdb-extensions a native server looks beside its executable, where
+        // no extension sits). DuckDB's library is not judged here: the launcher passes --duckdb-library,
+        // but the server would find the library beside itself too, where Bazel puts it.
         String url = "postgresql://" + EmbeddedPostgres.USER + "@127.0.0.1:" + pg.port()
                 + "/postgres?sslmode=disable&connect_timeout=10";
         Process p = start(List.of("--data", data.toString(), "--port", "0", "--user", "alice:alice-pw", url));
@@ -79,6 +82,8 @@ class LauncherTest {
 
     /** The first line starting with {@code prefix}, within two minutes; failing that, what was printed. */
     private static String awaitLine(Process p, String prefix) throws Exception {
+        // the reader appends while a failure message is built: join a copy (toArray holds the list's lock;
+        // iterating a synchronized list does not)
         List<String> seen = Collections.synchronizedList(new ArrayList<>());
         CompletableFuture<String> found = new CompletableFuture<>();
         Thread reader = new Thread(() -> {
@@ -92,14 +97,15 @@ class LauncherTest {
                 found.completeExceptionally(e);
             }
             found.completeExceptionally(new IllegalStateException(
-                    "the launcher exited before printing '" + prefix + "':\n" + String.join("\n", seen)));
+                    "the launcher exited before printing '" + prefix + "':\n"
+                            + String.join("\n", seen.toArray(String[]::new))));
         }, "launcher-output");
         reader.setDaemon(true);
         reader.start();
         try {
             return found.get(120, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
-            return fail("no line '" + prefix + "…' in 120 s:\n" + String.join("\n", seen));
+            return fail("no line '" + prefix + "…' in 120 s:\n" + String.join("\n", seen.toArray(String[]::new)));
         }
     }
 

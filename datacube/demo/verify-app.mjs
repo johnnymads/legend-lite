@@ -150,9 +150,19 @@ try {
   }
 } finally {
   await browser.close();
-  // on Windows the launcher and the server are two processes, and kill() would stop the launcher alone
-  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f']);
-  else server.kill('SIGTERM');
+  if (process.platform === 'win32') {
+    // On Windows the launcher and the server are two processes, and kill() would stop the launcher alone.
+    // taskkill takes the PID of a child that is still running: once it has exited, Node has released its
+    // handle and Windows may have given the PID to another process, whose tree /t /f would then stop.
+    if (server.exitCode === null && server.signalCode === null) {
+      const r = spawnSync('taskkill', ['/pid', String(server.pid), '/t', '/f'], { encoding: 'utf8' });
+      // a taskkill that failed leaves the server running, still holding its port and its data directory
+      if (r.error) bad(`taskkill did not run: ${r.error.message}`);
+      else if (r.status !== 0) {
+        bad(`taskkill did not stop the warehouse (status ${r.status}): ${r.stdout}${r.stderr}`.trim());
+      }
+    }
+  } else server.kill('SIGTERM');
   await rm(work, { recursive: true, force: true });
 }
 process.exit(failed ? 1 : 0);
