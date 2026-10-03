@@ -199,6 +199,9 @@ junit_test(
 # THE WAREHOUSE, BUILT AND RUN IN ONE STEP: the native server, DuckDB's library and DuckDB's postgres
 # extension (pinned per platform in MODULE.bazel), all from Bazel. Flags pass through:
 #   bazel run //warehouse:serve -- --postgres shop='host=db dbname=shop user=reader password=secret'
+# On Windows the server runs in Bazel's runfiles folder (the launcher has no working-directory option),
+# so the default `--data warehouse-data` lands in Bazel's output tree, which `bazel clean` removes: pass
+# an absolute --data, or run `bazel run --run_in_cwd //warehouse:serve -- ...`.
 warehouse_run(
     name = "serve",
     library = ":duckdb_library",
@@ -207,9 +210,11 @@ warehouse_run(
 )
 
 # THE LAUNCHER, JUDGED (docs/WINDOWS_APP_DESIGN_2026_10_02.md, §3): //warehouse:serve as `bazel run`
-# starts it, on every platform -- the caller's arguments intact, the exit code back, and the server,
-# DuckDB's library and the postgres extension resolved through it, attaching the Postgres 16 that
-# gate 7P starts (@embedded_postgres, //testing EmbeddedPostgres).
+# starts it, on every platform -- the caller's arguments intact, the exit code back, and the server and
+# the postgres extension's directory resolved through it, attaching the Postgres 16 that gate 7P starts
+# (@embedded_postgres, //testing EmbeddedPostgres). DuckDB's library is passed too, but the native
+# server would also find it beside itself (DuckLibrary), where Bazel puts it, so this test does not
+# judge that flag on its own.
 junit_test(
     name = "launcher_test",
     size = "medium",

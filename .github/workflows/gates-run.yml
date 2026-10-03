@@ -63,7 +63,7 @@ jobs:
             {"key":"9",      "name":"gate 9 Channel B dual-verdict",   "targets":"//pct:pct_channel_b"},
             {"key":"10",     "name":"gate 10 stress corpus",           "targets":"//core:stress_suites"},
             {"key":"app",    "name":"DataCube app, WASM planner, warehouse", "targets":"//datacube:tests //wasm:all //warehouse:tests"},
-            {"key":"native", "name":"warehouse as a native image, and its launcher", "targets":"//warehouse:tests_native //warehouse:launcher_test"},
+            {"key":"native", "name":"warehouse as a native image, and its launcher", "targets":"//warehouse:tests_native //warehouse:launcher_test //datacube:app"},
             {"key":"browser", "name":"DataCube in a real browser, and live against the warehouse", "targets":"//datacube:live_snap_test"}
           ]')
           # the browser lane runs on Linux only: its harnesses drive DuckDB-WASM in Chromium, the same on

@@ -339,7 +339,7 @@ core changes). Linux, macOS and, since 2026-10-02, Windows (docs/WINDOWS_APP_DES
   the script that did it is gone. Needed only when the server's FFM or reflection use changes.
 - **`GET /sql/v1/history`:** the caller's own statements, newest first (the history test reads it
   through the API, so it judges the binary too; another user's statements are not in yours).
-- **CI:** the `native` lane (Linux, macOS and, since 2026-10-02, Windows) runs `bazel test //warehouse:tests_native //warehouse:launcher_test`, with the Arrow
+- **CI:** the `native` lane (Linux, macOS and, since 2026-10-02, Windows) runs `bazel test //warehouse:tests_native //warehouse:launcher_test //datacube:app`, with the Arrow
   check required.
 
 **Measured (this machine, GraalVM CE 25.0.1, a 21.5 MB binary, built in ~23 s):**

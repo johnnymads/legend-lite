@@ -105,23 +105,28 @@ published with the Linux build).
 - **`//warehouse:launcher_test`**, new, a `junit_test` on every platform. Nothing runs a
   `warehouse_run` launcher today (`verify_app` is manual). It runs `//warehouse:serve` (from runfiles,
   `$(rlocationpath :serve)`) twice:
-  1. `--port x&y`: the launcher exits 2 and the server said `warehouse: For input string: "x&y"`.
-     The arguments reached the server intact, and its exit code came back.
+  1. `--port` with the one argument `x&y z` (an `&` and a space): the launcher exits 2 and the server
+     said `warehouse: For input string: "x&y z"`. The arguments reached the server intact, and its
+     exit code came back.
   2. `--data <the test's temporary directory> --port 0 --user alice:alice-pw` and a Postgres catalog
      by URL, `postgresql://postgres@127.0.0.1:<port>/postgres?sslmode=disable&connect_timeout=10`, on
      the embedded Postgres 16 that gate 7P starts (`//testing` `EmbeddedPostgres`,
      `@embedded_postgres`): the server prints `warehouse listening on 127.0.0.1:<n>, catalogs [main,
-     postgres]`. The server, DuckDB's library and the extension directory all resolved through the
-     launcher, and the extension loaded and attached. The test then stops the launcher's descendants
-     and the launcher.
+     postgres]`. The server and the extension directory resolved through the launcher (without
+     `--duckdb-extensions` a native server looks beside its executable, where no extension sits), and
+     the extension loaded and attached. DuckDB's library is passed too, but the native server would
+     also find it beside itself (`DuckLibrary`), where Bazel puts it, so this test does not judge that
+     flag on its own. The test then stops the launcher's descendants and the launcher.
 - **`//datacube:verify_app`** (manual) takes the launcher from Bazel
   (`env = {"WAREHOUSE_SERVE": "$(rlocationpath //warehouse:serve)"}`) instead of naming
   `warehouse/serve.sh`, and stops it with `taskkill /t /f` on Windows (the launcher and the server
   are two processes there; `kill()` would stop the launcher alone, as `lite_test` found) and
   `kill('SIGTERM')` elsewhere.
 - **CI** (`gates-run.yml`): the `native` lane is no longer filtered out on Windows, and runs
-  `//warehouse:tests_native //warehouse:launcher_test` on all three platforms. The `browser` lane
-  stays Linux-only, as designed.
+  `//warehouse:tests_native //warehouse:launcher_test` on all three platforms, and builds
+  `//datacube:app` on each (no lane built it, and its Windows stub holds 9 of hermetic-launcher's 10
+  arguments: one more `args_before` entry would break `bazel build //...` on Windows desks while CI
+  stayed green). The `browser` lane stays Linux-only, as designed.
 
 ### 4. Docs
 
@@ -151,6 +156,10 @@ published with the Linux build).
    intact). Postgres URLs and libpq DSNs, which quote with `'`, contain neither.
 3. **Windows x64 only.**
 4. **Visual Studio installed after Bazel first ran** needs `bazel fetch --configure --force` once.
+5. **`bazel run //datacube:verify_app` leaves a temporary directory behind.** It stops the app with
+   `taskkill /t /f` (TerminateProcess), so the server's shutdown hook does not run, and each run on
+   Windows leaves one `%TEMP%\datacube-*` (the single-user server's temporary data directory);
+   remove it by hand.
 
 1 and 2 are for hermetic-launcher upstream: a request for a working-directory option and a bug report.
 
@@ -186,9 +195,9 @@ fixing hermetic-launcher; releases and installers.
 - The app against Postgres 16.15 (the embedded binaries, port 5433, the guide's sample), started with
   `--port 8766 --table sales.orders`: it printed `warehouse listening on 127.0.0.1:8766, catalogs
   [main, shop]` and an address ending `&table=sales.orders`, and served the site (HTTP 200). A Ctrl+C
-  sent to its console stopped it: no process left, and its one temporary directory
-  (`%TEMP%\datacube-*`) removed. `bazel` reported the exit as `-1073741510`, which is `0xC000013A`, as
-  the guide says.
+  sent to its console (scripted, by `GenerateConsoleCtrlEvent`, not a keypress) stopped it: no
+  process left, and its one temporary directory (`%TEMP%\datacube-*`) removed. `bazel` reported the
+  exit as `-1073741510`, which is `0xC000013A`, as the guide says.
 - `bazel run --run_in_cwd //warehouse:serve -- --data <a relative path>`, started in the repository
   root: the data directory was created there, as the guide says. `taskkill /t /f` on the `bazel`
   process stopped the launcher and the server with it.
@@ -196,3 +205,5 @@ fixing hermetic-launcher; releases and installers.
   Live` and `grouped by channel: 3 groups`), exit 0, no `server_native` process left. It stops the
   server with `taskkill /t /f`, which skips the server's shutdown hook (a Ctrl+C runs it), so each
   run leaves one `%TEMP%\datacube-*` directory behind; this one was removed by hand.
+- **Not observed on Windows:** the browser tab that `--open` opens (`rundll32`), and the terminal's
+  password prompt (with no `PGPASSWORD`). Both are left to a person at the desk.

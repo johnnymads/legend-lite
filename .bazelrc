@@ -11,8 +11,9 @@ build --tool_java_language_version=21
 # on this runtime, so it must be one they were compiled for.
 build --tool_java_runtime_version=remotejdk_25
 # the engine's test clock (legend-engine minted its goldens in GMT) — one clock, everywhere.
-# Not on Windows: there the JVM and DuckDB read the system's zone and ignore TZ, so a test
-# that compares zoned text sets its session's zone itself (WarehouseJdbcTest, 2026-10-02).
+# Not on Windows: there DuckDB, and any JVM not started through junit_test (which sets
+# -Duser.timezone=GMT itself: tools/junit/defs.bzl), read the system's zone and ignore TZ, so a
+# test that compares zoned text sets its session's zone itself (WarehouseJdbcTest, 2026-10-02).
 test --test_env=TZ=GMT
 
 # Windows: tests read the upstream trees and sibling modules through RUNFILES by

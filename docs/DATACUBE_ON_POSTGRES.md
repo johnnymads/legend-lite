@@ -19,7 +19,7 @@ app actually prints.
 
 | | |
 |---|---|
-| **OS** | macOS (Apple silicon or Intel), Linux (x86-64 or ARM64), or Windows 10/11 (x64). |
+| **OS** | macOS (Apple silicon or Intel), Linux (x86-64 or ARM64), or Windows 11 (x64). |
 | **Bazelisk** | Installed as `bazel` ([github.com/bazelbuild/bazelisk](https://github.com/bazelbuild/bazelisk)). It runs the Bazel version the repository pins. Bazel fetches everything else: the JDK, GraalVM, DuckDB and its Postgres extension, Node and the web app's packages. |
 | **A C toolchain** | The app is compiled to a native binary by GraalVM's `native-image`, which links with your system's compiler. On macOS: `xcode-select --install`. On Linux: `gcc`, plus the glibc and zlib development headers (Debian/Ubuntu: `sudo apt install build-essential zlib1g-dev`). On Windows: Visual Studio 2022 Build Tools with "Desktop development with C++" (`winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"`). Install it before your first build; if Bazel ran first, run `bazel fetch --configure --force` once so that it finds the compiler. |
 | **On Windows, also** | Developer Mode on (Settings → System → For developers) and Git for Windows at its default path; see the README's Windows prerequisites. Run the commands below in PowerShell. |
@@ -131,7 +131,9 @@ The `--` separates Bazel's own arguments from the app's. Everything after it goe
 
 On Windows, libpq's password file is `%APPDATA%\postgresql\pgpass.conf` (same line format; no file
 mode to set), and the variable is set in PowerShell with
-`$env:PGPASSWORD = 'secret'; bazel run //datacube:app -- ...`.
+`$env:PGPASSWORD = 'secret'; bazel run //datacube:app -- ...`. Unlike bash's one-command form, that
+lasts for the whole PowerShell session, so the password prompt never appears afterwards;
+`Remove-Item Env:PGPASSWORD` clears it.
 
 You *can* write `postgresql://reader:secret@...`, but then the password sits in your shell history.
 
@@ -295,6 +297,10 @@ $env:DATACUBE_APP_TABLE = 'sales.orders'; $env:DATACUBE_APP_GROUP = 'channel'
 bazel run //datacube:verify_app
 ```
 
+Unlike bash's one-command form, these variables stay set for the whole PowerShell session (the
+password in `DATACUBE_APP_PG` with them). Clear them with
+`Remove-Item Env:DATACUBE_APP_PG, Env:DATACUBE_APP_TABLE, Env:DATACUBE_APP_GROUP`.
+
 Every line should start with `ok:`. Against the sample database of section 3, the grouping step
 reports `grouped by channel: 3 groups`.
 
@@ -311,5 +317,5 @@ macOS and Linux use. Three differences:
   Postgres URLs and connection strings, which quote with `'`, are unaffected.
 - **x64 only.** Windows on ARM is not supported.
 
-Ctrl+C stops the app as on the other platforms; Windows then reports the exit as `0xC000013A`
-(stopped by Ctrl+C), which is not an error.
+Ctrl+C stops the app as on the other platforms; PowerShell then shows the exit code as `-1073741510`,
+which is `0xC000013A` (stopped by Ctrl+C) and not an error.
