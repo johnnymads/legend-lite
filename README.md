@@ -256,7 +256,7 @@ counterpart that supersedes it. See `AGENTS.md`.
   sources the tests read as the spec (pinned by sha256).
 - An IDE: IntelliJ with the Bazel plugin opens the BUILD files as the project.
 
-**On Windows**, three more things, once:
+**On Windows**, four more things, once:
 
 - **Developer Mode** on (Settings → System → For developers). Bazel makes real symlinks for
   the tests' runfiles (`.bazelrc`), which Windows allows only in Developer Mode or as admin.
@@ -266,6 +266,9 @@ counterpart that supersedes it. See `AGENTS.md`.
 - **Bazelisk** as `bazel`: `winget install Bazel.Bazelisk` installs it as `bazelisk`, then, in
   a new PowerShell,
   `New-Item -ItemType SymbolicLink -Path "$env:LOCALAPPDATA\Microsoft\WinGet\Links\bazel.exe" -Target (Get-Command bazelisk).Source`.
+- **Visual Studio 2022 Build Tools**, "Desktop development with C++": `bazel build //...` builds the
+  native warehouse, which links with MSVC. Install it before Bazel first runs, or run
+  `bazel fetch --configure --force` once after, since Bazel keeps the C++ toolchain it found first.
 
 Line endings need nothing: `.gitattributes` checks every file out exactly as committed,
 whatever `core.autocrlf` says (the corpus and the generated files are compared byte for byte).
