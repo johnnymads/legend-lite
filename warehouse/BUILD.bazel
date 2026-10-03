@@ -1,5 +1,6 @@
 # The warehouse: a DuckDB server behind the HTTP SQL API
 # (docs/SERVER_PROGRAM_2026_09_26.md, docs/WAREHOUSE_W1_DESIGN_2026_09_26.md).
+load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_graalvm//graalvm:defs.bzl", "native_image")
 load("@rules_java//java:defs.bzl", "java_binary", "java_library")
 load("//tools/junit:defs.bzl", "junit_test")
@@ -209,22 +210,46 @@ warehouse_run(
     server = ":server_native",
 )
 
+# The launcher as //datacube:app has it -- a site and fixed arguments before the caller's -- without
+# the app's --open (no browser in a test) and without building the DataCube site: :launcher_test's.
+copy_to_directory(
+    name = "launcher_test_site",
+    testonly = True,
+    srcs = ["src/test/launcher-site/index.html"],
+    root_paths = ["warehouse/src/test/launcher-site"],
+)
+
+warehouse_run(
+    name = "launcher_test_serve_site",
+    args_before = ["--single-user"],
+    library = ":duckdb_library",
+    postgres_extension_gz = POSTGRES_EXTENSION,
+    server = ":server_native",
+    site = ":launcher_test_site",
+    testonly = True,
+)
+
 # THE LAUNCHER, JUDGED (docs/WINDOWS_APP_DESIGN_2026_10_02.md, §3): //warehouse:serve as `bazel run`
 # starts it, on every platform -- the caller's arguments intact, the exit code back, and the server and
 # the postgres extension's directory resolved through it, attaching the Postgres 16 that gate 7P starts
-# (@embedded_postgres, //testing EmbeddedPostgres). DuckDB's library is passed too, but the native
-# server would also find it beside itself (DuckLibrary), where Bazel puts it, so this test does not
-# judge that flag on its own.
+# (@embedded_postgres, //testing EmbeddedPostgres); and :launcher_test_serve_site, the app's shape: the
+# site's directory resolved through the launcher and served, the fixed arguments reaching the server.
+# DuckDB's library is passed too, but the native server would also find it beside itself (DuckLibrary),
+# where Bazel puts it, so this test does not judge that flag on its own.
 junit_test(
     name = "launcher_test",
     size = "medium",
     srcs = ["src/test/java/com/legend/warehouse/launcher/LauncherTest.java"],
     data = [
+        ":launcher_test_serve_site",
         ":serve",
         "@embedded_postgres//:pg/PG_ROOT",
         "@embedded_postgres//:postgres",
     ],
-    env = {"WAREHOUSE_SERVE": "$(rootpath :serve)"},
+    env = {
+        "WAREHOUSE_SERVE": "$(rootpath :serve)",
+        "WAREHOUSE_SERVE_SITE": "$(rootpath :launcher_test_serve_site)",
+    },
     jvm_flags = ["-Dembedded.postgres.root=$(rlocationpath @embedded_postgres//:pg/PG_ROOT)"],
     select = ["--select-class=com.legend.warehouse.launcher.LauncherTest"],
     deps = [

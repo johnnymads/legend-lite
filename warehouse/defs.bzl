@@ -117,7 +117,7 @@ _posix_launcher = rule(
     doc = "macOS and Linux: a bash script that execs the native warehouse with its files from runfiles.",
 )
 
-def warehouse_run(name, server, library, postgres_extension_gz, site = None, args_before = []):
+def warehouse_run(name, server, library, postgres_extension_gz, site = None, args_before = [], testonly = False):
     """`bazel run`'s launcher for the native warehouse, one name on every platform.
 
     DuckDB's library, its postgres extension and (for the app) a site go beside the server, then the
@@ -133,9 +133,10 @@ def warehouse_run(name, server, library, postgres_extension_gz, site = None, arg
         postgres_extension_gz: DuckDB's postgres extension download (POSTGRES_EXTENSION).
         site: a directory served as the page (--site), or None.
         args_before: fixed arguments, before the caller's.
+        testonly: for a launcher only tests run (//warehouse:launcher_test_serve_site).
     """
     extensions = name + "_extensions"
-    _duckdb_extensions(name = extensions, gz = postgres_extension_gz)
+    _duckdb_extensions(name = extensions, gz = postgres_extension_gz, testonly = testonly)
     _posix_launcher(
         name = name + "_posix",
         server = server,
@@ -143,6 +144,7 @@ def warehouse_run(name, server, library, postgres_extension_gz, site = None, arg
         extensions = ":" + extensions,
         site = site,
         args_before = args_before,
+        testonly = testonly,
         target_compatible_with = select({
             "@platforms//os:windows": ["@platforms//:incompatible"],
             "//conditions:default": [],
@@ -158,12 +160,20 @@ def warehouse_run(name, server, library, postgres_extension_gz, site = None, arg
     if site:
         embedded += ["--site", "$(rlocationpath %s)" % site]
         data.append(site)
+
+    # the stub holds ten arguments, the entrypoint among them (hermetic-launcher 0.0.16's finalizer:
+    # "Maximum 10 arguments supported"); the app uses nine. The finalizer runs only when the Windows
+    # target is built, so one more would break only Windows desks: refused here, on every platform,
+    # when the BUILD file loads (measured 2026-10-03: ten built, eleven refused).
+    if 1 + len(embedded) + len(args_before) > 10:
+        fail("warehouse_run %s: %d launcher arguments (the server, %d fixed, %d args_before); hermetic-launcher's Windows stub holds 10" %
+             (name, 1 + len(embedded) + len(args_before), len(embedded), len(args_before)))
     launcher_binary(
         name = name + "_windows",
-        # the stub holds ten arguments, the entrypoint among them: the app uses nine
         entrypoint = server,
         embedded_args = embedded + args_before,
         data = data,
+        testonly = testonly,
         target_compatible_with = ["@platforms//os:windows"],
     )
     native.alias(
@@ -172,4 +182,5 @@ def warehouse_run(name, server, library, postgres_extension_gz, site = None, arg
             "@platforms//os:windows": ":" + name + "_windows",
             "//conditions:default": ":" + name + "_posix",
         }),
+        testonly = testonly,
     )

@@ -92,7 +92,9 @@ published with the Linux build).
   `--duckdb-extensions $(rlocationpath <name>_extensions)`, then, given a site,
   `--site $(rlocationpath <site>)`, then `args_before`; `data` holds the library, the extension
   directory and the site; Windows only. The app's launcher uses 9 of the stub's 10 embedded arguments
-  (the entrypoint counts).
+  (the entrypoint counts). The stub's finalizer refuses an eleventh ("Maximum 10 arguments
+  supported"), but only when the Windows target is built, so `warehouse_run` counts them itself and
+  `fail()`s when the BUILD file loads, on every platform (added 2026-10-03, review).
 - **`<name>`**: an `alias` selecting `<name>_windows` on `@platforms//os:windows`, `<name>_posix`
   elsewhere. `bazel run //datacube:app` and `bazel run //warehouse:serve` keep their names and their
   arguments.
@@ -117,6 +119,13 @@ published with the Linux build).
      the extension loaded and attached. DuckDB's library is passed too, but the native server would
      also find it beside itself (`DuckLibrary`), where Bazel puts it, so this test does not judge that
      flag on its own. The test then stops the launcher's descendants and the launcher.
+  3. `//warehouse:launcher_test_serve_site`, a test-only `warehouse_run` in the app's shape (a site, a
+     small directory of its own, and `args_before = ["--single-user"]`; not the app itself, whose
+     `--open` would start a browser), with `--data <the test's temporary directory> --port 0`: the
+     server prints `DataCube: http://127.0.0.1:<n>/#key=…` (only with `--site` and `--single-user`,
+     so the fixed argument arrived), and `GET /` answers the site's `index.html` (so the site's
+     directory resolved through runfiles). Added 2026-10-03, review: no automated test ran a
+     launcher with a site or fixed arguments before.
 - **`//datacube:verify_app`** (manual) takes the launcher from Bazel
   (`env = {"WAREHOUSE_SERVE": "$(rlocationpath //warehouse:serve)"}`) instead of naming
   `warehouse/serve.sh`, and stops it with `taskkill /t /f` on Windows (the launcher and the server
@@ -124,9 +133,8 @@ published with the Linux build).
   `kill('SIGTERM')` elsewhere.
 - **CI** (`gates-run.yml`): the `native` lane is no longer filtered out on Windows, and runs
   `//warehouse:tests_native //warehouse:launcher_test` on all three platforms, and builds
-  `//datacube:app` on each (no lane built it, and its Windows stub holds 9 of hermetic-launcher's 10
-  arguments: one more `args_before` entry would break `bazel build //...` on Windows desks while CI
-  stayed green). The `browser` lane stays Linux-only, as designed.
+  `//datacube:app` on each (no lane built it; on Windows that builds its stub, which holds 9 of
+  hermetic-launcher's 10 arguments). The `browser` lane stays Linux-only, as designed.
 
 ### 4. Docs
 
