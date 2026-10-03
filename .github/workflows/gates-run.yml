@@ -63,11 +63,9 @@ jobs:
             {"key":"9",      "name":"gate 9 Channel B dual-verdict",   "targets":"//pct:pct_channel_b"},
             {"key":"10",     "name":"gate 10 stress corpus",           "targets":"//core:stress_suites"},
             {"key":"app",    "name":"DataCube app, WASM planner, warehouse", "targets":"//datacube:tests //wasm:all //warehouse:tests"},
-            {"key":"native", "name":"warehouse as a native image",     "targets":"//warehouse:tests_native"},
+            {"key":"native", "name":"warehouse as a native image, and its launcher", "targets":"//warehouse:tests_native //warehouse:launcher_test"},
             {"key":"browser", "name":"DataCube in a real browser, and live against the warehouse", "targets":"//datacube:live_snap_test"}
           ]')
-          # the native image is built on Linux and macOS (Windows needs its own toolchain setup: owed)
-          if [ "$PLATFORM" = windows ]; then all=$(printf '%s' "$all" | jq -c '[.[] | select(.key != "native")]'); fi
           # the browser lane runs on Linux only: its harnesses drive DuckDB-WASM in Chromium, the same on
           # every platform, and live-vs-snap compares the native warehouse on x86_64 with the arm64 laptops'
           if [ "$PLATFORM" != linux ]; then all=$(printf '%s' "$all" | jq -c '[.[] | select(.key != "browser")]'); fi
